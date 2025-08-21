@@ -1,0 +1,119 @@
+@startuml RustBD Architecture
+
+!define RECTANGLE class
+
+package "Клиентский слой" {
+    [CLI Client] as CLI
+    [Network Client] as NET
+}
+
+package "Сетевой слой" {
+    [Network Server] as NS
+    [Connection Pool] as CP
+}
+
+package "Основной сервер" {
+    [Main Server] as MS
+    [Session Manager] as SM
+}
+
+package "Парсер и планировщик" {
+    [SQL Parser] as SP
+    [Query Planner] as QP
+    [Query Optimizer] as QO
+    [AST Builder] as AST
+}
+
+package "Исполнитель запросов" {
+    [Query Executor] as QE
+    [Operator Tree] as OT
+    [Result Set] as RS
+}
+
+package "Ядро базы данных" {
+    [Transaction Manager] as TM
+    [Lock Manager] as LM
+    [Recovery Manager] as RM
+    [Buffer Manager] as BM
+}
+
+package "Хранилище данных" {
+    [Page Manager] as PM
+    [File Manager] as FM
+    [Index Manager] as IM
+    [Table Manager] as TBM
+}
+
+package "Каталог метаданных" {
+    [Schema Manager] as SC
+    [Statistics Manager] as ST
+    [Access Control] as AC
+}
+
+package "Физическое хранение" {
+    [Data Files] as DF
+    [Index Files] as IF
+    [Log Files] as LF
+    [System Catalog] as SYSCAT
+}
+
+' Внешние взаимодействия
+CLI --> NS : SQL запросы
+NET --> NS : Сетевые запросы
+
+' Сетевой слой
+NS --> CP : Создание соединений
+CP --> MS : Передача запросов
+MS --> SM : Управление сессиями
+
+' Парсинг и планирование
+SM --> SP : SQL запрос
+SP --> AST : Построение AST
+AST --> QP : Абстрактное синтаксическое дерево
+QP --> QO : План запроса
+QO --> QE : Оптимизированный план
+
+' Выполнение запросов
+QE --> OT : Создание дерева операторов
+OT --> QE : Результаты операций
+QE --> RS : Формирование результата
+
+' Взаимодействие с ядром
+QE --> TM : Запрос транзакции
+TM --> LM : Управление блокировками
+TM --> RM : Логирование операций
+QE --> BM : Запрос страниц
+
+' Хранилище данных
+BM --> PM : Запрос страниц
+PM --> FM : Работа с файлами
+QE --> IM : Запрос индексов
+QE --> TBM : Работа с таблицами
+
+' Каталог метаданных
+QP --> SC : Схема таблиц
+QO --> ST : Статистика данных
+SM --> AC : Проверка прав
+
+' Физическое хранение
+FM --> DF : Чтение/запись данных
+IM --> IF : Работа с индексами
+RM --> LF : Запись в лог
+SC --> SYSCAT : Метаданные
+
+' Обратные связи
+RS --> MS : Результат запроса
+MS --> NS : Отправка ответа
+NS --> CLI : Результат клиенту
+
+' Внутренние взаимодействия в ядре
+TM --> BM : Управление буферами
+LM --> TM : Информация о блокировках
+RM --> TM : Состояние восстановления
+
+' Взаимодействия в хранилище
+PM --> BM : Уведомления об изменениях
+TBM --> PM : Запросы страниц
+IM --> PM : Работа с индексными страницами
+
+@enduml

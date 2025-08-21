@@ -1,0 +1,54 @@
+[package]
+name = "rustbd"
+version = "0.1.0"
+edition = "2021"
+authors = ["RustBD Team"]
+description = "Реализация реляционной базы данных на Rust"
+license = "MIT"
+repository = "https://github.com/your-username/rustbd"
+keywords = ["database", "sql", "relational", "rust"]
+categories = ["database"]
+
+[dependencies]
+# Основные зависимости
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+thiserror = "1.0"
+
+# CLI интерфейс
+clap = { version = "4.0", features = ["derive"] }
+
+# Логирование
+log = "0.4"
+env_logger = "0.10"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Работа с файлами и I/O
+memmap2 = "0.9"
+crossbeam = "0.8"
+parking_lot = "0.12"
+
+# Тестирование
+criterion = { version = "0.5", optional = true }
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3.8"
+rand = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[[bench]]
+name = "benchmarks"
+harness = false
