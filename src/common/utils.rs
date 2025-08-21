@@ -21,12 +21,12 @@ pub fn is_valid_table_name(name: &str) -> bool {
     if name.is_empty() || name.len() > MAX_TABLE_NAME_LENGTH {
         return false;
     }
-    
+
     // Проверяем, что имя начинается с буквы или подчеркивания
     if !name.chars().next().unwrap().is_alphabetic() && !name.starts_with('_') {
         return false;
     }
-    
+
     // Проверяем, что имя содержит только буквы, цифры и подчеркивания
     name.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
@@ -36,12 +36,12 @@ pub fn is_valid_column_name(name: &str) -> bool {
     if name.is_empty() || name.len() > MAX_COLUMN_NAME_LENGTH {
         return false;
     }
-    
+
     // Проверяем, что имя начинается с буквы или подчеркивания
     if !name.chars().next().unwrap().is_alphabetic() && !name.starts_with('_') {
         return false;
     }
-    
+
     // Проверяем, что имя содержит только буквы, цифры и подчеркивания
     name.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
@@ -51,12 +51,12 @@ pub fn is_valid_index_name(name: &str) -> bool {
     if name.is_empty() || name.len() > MAX_INDEX_NAME_LENGTH {
         return false;
     }
-    
+
     // Проверяем, что имя начинается с буквы или подчеркивания
     if !name.chars().next().unwrap().is_alphabetic() && !name.starts_with('_') {
         return false;
     }
-    
+
     // Проверяем, что имя содержит только буквы, цифры и подчеркивания
     name.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
@@ -82,7 +82,7 @@ pub fn calculate_pages_needed(data_size: usize, page_size: usize) -> usize {
     if max_record_size == 0 {
         return 0;
     }
-    
+
     (data_size + max_record_size - 1) / max_record_size
 }
 
@@ -93,7 +93,7 @@ pub fn calculate_optimal_page_size(record_size: usize) -> usize {
             return page_size;
         }
     }
-    
+
     // Если не можем подобрать оптимальный размер, возвращаем максимальный
     MAX_PAGE_SIZE
 }
@@ -115,12 +115,12 @@ pub fn calculate_optimal_btree_order(key_size: usize) -> usize {
     let page_size = DEFAULT_PAGE_SIZE;
     let header_size = calculate_page_header_size(page_size);
     let available_space = page_size - header_size;
-    
+
     // Каждый узел содержит ключи и указатели
     // Упрощенная формула: (available_space - sizeof(pointer)) / (key_size + sizeof(pointer))
     let pointer_size = std::mem::size_of::<usize>();
     let order = (available_space - pointer_size) / (key_size + pointer_size);
-    
+
     // Ограничиваем порядок допустимыми значениями
     order.clamp(MIN_BTREE_ORDER, MAX_BTREE_ORDER)
 }
@@ -129,13 +129,13 @@ pub fn calculate_optimal_btree_order(key_size: usize) -> usize {
 pub fn calculate_optimal_hash_table_size(element_count: usize) -> usize {
     let load_factor = DEFAULT_HASH_LOAD_FACTOR;
     let optimal_size = (element_count as f64 / load_factor) as usize;
-    
+
     // Округляем до ближайшей степени 2
     let mut size = 1;
     while size < optimal_size {
         size *= 2;
     }
-    
+
     // Ограничиваем размер допустимыми значениями
     size.clamp(DEFAULT_HASH_TABLE_SIZE, MAX_HASH_TABLE_SIZE)
 }
@@ -155,15 +155,15 @@ pub fn should_shrink_hash_table(current_size: usize, element_count: usize) -> bo
 /// Форматирует размер в байтах в читаемый вид
 pub fn format_bytes(bytes: usize) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
-    
+
     let mut size = bytes as f64;
     let mut unit_index = 0;
-    
+
     while size >= 1024.0 && unit_index < UNITS.len() - 1 {
         size /= 1024.0;
         unit_index += 1;
     }
-    
+
     if unit_index == 0 {
         format!("{} {}", bytes, UNITS[unit_index])
     } else {
@@ -204,7 +204,7 @@ pub fn next_power_of_two(n: usize) -> usize {
     if n == 0 {
         return 1;
     }
-    
+
     let mut power = 1;
     while power < n {
         power *= 2;
@@ -217,7 +217,7 @@ pub fn prev_power_of_two(n: usize) -> usize {
     if n == 0 {
         return 0;
     }
-    
+
     let mut power = 1;
     while power * 2 <= n {
         power *= 2;

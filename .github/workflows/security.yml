@@ -1,0 +1,115 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Запуск каждый день в 2:00 UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  # Аудит зависимостей на уязвимости
+  security_audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run security audit
+        run: cargo audit
+
+  # Проверка лицензий зависимостей
+  license_check:
+    name: License Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-license
+        run: cargo install cargo-license
+
+      - name: Check licenses
+        run: cargo license --json > licenses.json
+
+      - name: Upload license report
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-report
+          path: licenses.json
+
+  # Проверка на небезопасный код
+  unsafe_check:
+    name: Unsafe Code Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - name: Install cargo-geiger
+        run: cargo install cargo-geiger
+
+      - name: Check unsafe code usage
+        run: cargo geiger --output-format GitHubMarkdown >> $GITHUB_STEP_SUMMARY
+
+  # Статический анализ кода
+  static_analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - name: Install cargo-semver-checks
+        run: cargo install cargo-semver-checks
+
+      - name: Check semver compatibility
+        run: cargo semver-checks check-release
+        continue-on-error: true
+
+  # Проверка на потенциальные проблемы с памятью
+  memory_safety:
+    name: Memory Safety Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Run Miri
+        run: |
+          cargo miri setup
+          cargo miri test
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance

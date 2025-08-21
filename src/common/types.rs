@@ -77,24 +77,28 @@ impl DataType {
             DataType::Date(_) => 10,
             DataType::Time(_) => 8,
             DataType::Timestamp(_) => 19,
-            DataType::Blob(b) => b.len() + 8,    // +8 для длины
+            DataType::Blob(b) => b.len() + 8, // +8 для длины
         }
     }
-    
+
     /// Проверяет, является ли тип NULL
     pub fn is_null(&self) -> bool {
         matches!(self, DataType::Null)
     }
-    
+
     /// Проверяет, является ли тип числовым
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
-            DataType::TinyInt(_) | DataType::SmallInt(_) | DataType::Integer(_) | 
-            DataType::BigInt(_) | DataType::Float(_) | DataType::Double(_)
+            DataType::TinyInt(_)
+                | DataType::SmallInt(_)
+                | DataType::Integer(_)
+                | DataType::BigInt(_)
+                | DataType::Float(_)
+                | DataType::Double(_)
         )
     }
-    
+
     /// Проверяет, является ли тип строковым
     pub fn is_string(&self) -> bool {
         matches!(
@@ -119,7 +123,7 @@ impl ColumnValue {
         let is_null = data_type.is_null();
         Self { data_type, is_null }
     }
-    
+
     /// Создает NULL значение
     pub fn null() -> Self {
         Self {
@@ -127,7 +131,7 @@ impl ColumnValue {
             is_null: true,
         }
     }
-    
+
     /// Проверяет, является ли значение NULL
     pub fn is_null(&self) -> bool {
         self.is_null
@@ -160,19 +164,19 @@ impl Column {
             comment: None,
         }
     }
-    
+
     /// Устанавливает флаг NOT NULL
     pub fn not_null(mut self) -> Self {
         self.not_null = true;
         self
     }
-    
+
     /// Устанавливает значение по умолчанию
     pub fn default_value(mut self, value: ColumnValue) -> Self {
         self.default_value = Some(value);
         self
     }
-    
+
     /// Устанавливает комментарий
     pub fn comment(mut self, comment: String) -> Self {
         self.comment = Some(comment);
@@ -209,31 +213,31 @@ impl Schema {
             indexes: Vec::new(),
         }
     }
-    
+
     /// Добавляет колонку в схему
     pub fn add_column(mut self, column: Column) -> Self {
         self.columns.push(column);
         self
     }
-    
+
     /// Устанавливает первичный ключ
     pub fn primary_key(mut self, columns: Vec<String>) -> Self {
         self.primary_key = Some(columns);
         self
     }
-    
+
     /// Добавляет уникальное ограничение
     pub fn unique(mut self, columns: Vec<String>) -> Self {
         self.unique_constraints.push(columns);
         self
     }
-    
+
     /// Добавляет внешний ключ
     pub fn foreign_key(mut self, fk: ForeignKey) -> Self {
         self.foreign_keys.push(fk);
         self
     }
-    
+
     /// Добавляет индекс
     pub fn index(mut self, index: Index) -> Self {
         self.indexes.push(index);
@@ -317,7 +321,7 @@ impl Row {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         Self {
             values: HashMap::new(),
             version: 1,
@@ -325,7 +329,7 @@ impl Row {
             updated_at: now,
         }
     }
-    
+
     /// Устанавливает значение колонки
     pub fn set_value(&mut self, column: &str, value: ColumnValue) {
         self.values.insert(column.to_string(), value);
@@ -334,12 +338,12 @@ impl Row {
             .unwrap()
             .as_secs();
     }
-    
+
     /// Получает значение колонки
     pub fn get_value(&self, column: &str) -> Option<&ColumnValue> {
         self.values.get(column)
     }
-    
+
     /// Проверяет, содержит ли запись колонку
     pub fn has_column(&self, column: &str) -> bool {
         self.values.contains_key(column)

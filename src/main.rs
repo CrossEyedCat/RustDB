@@ -10,7 +10,7 @@ use rustbd::{Database, VERSION};
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
-    
+
     /// Путь к файлу базы данных
     #[arg(short, long)]
     database: Option<String>,
@@ -39,7 +39,7 @@ enum Commands {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    
+
     match &cli.command {
         Some(Commands::Create { path }) => {
             println!("Создание новой базы данных: {}", path);
@@ -66,6 +66,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Используйте --help для получения справки");
         }
     }
-    
+
     Ok(())
 }

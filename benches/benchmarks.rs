@@ -20,5 +20,9 @@ fn database_open_benchmark(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, database_creation_benchmark, database_open_benchmark);
+criterion_group!(
+    benches,
+    database_creation_benchmark,
+    database_open_benchmark
+);
 criterion_main!(benches);

@@ -1,0 +1,22 @@
+# Конфигурация для rustfmt (только стабильные опции)
+# Подробнее: https://rust-lang.github.io/rustfmt/
+
+# Основные настройки
+edition = "2021"
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+
+# Импорты
+reorder_imports = true
+
+# Форматирование
+newline_style = "Unix"
+use_small_heuristics = "Default"
+
+# Функции
+fn_params_layout = "Tall"
+
+# Массивы
+array_width = 60
+chain_width = 60

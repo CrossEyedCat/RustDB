@@ -1,6 +1,6 @@
 //! Планировщик запросов RustBD
 
-pub mod planner;
 pub mod optimizer;
+pub mod planner;
 
 // TODO: Реализовать планировщик запросов

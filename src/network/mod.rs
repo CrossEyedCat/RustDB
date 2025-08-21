@@ -1,6 +1,6 @@
 //! Сетевой слой RustBD
 
-pub mod server;
 pub mod connection;
+pub mod server;
 
 // TODO: Реализовать сетевой слой

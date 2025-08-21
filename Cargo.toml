@@ -2,12 +2,27 @@
 name = "rustbd"
 version = "0.1.0"
 edition = "2021"
-authors = ["RustBD Team"]
+authors = ["RustBD Team <rustbd@example.com>"]
 description = "Реализация реляционной базы данных на Rust"
 license = "MIT"
-repository = "https://github.com/your-username/rustbd"
-keywords = ["database", "sql", "relational", "rust"]
-categories = ["database"]
+repository = "https://github.com/CrossEyedCat/RustDB"
+homepage = "https://crosseyedcat.github.io/RustDB"
+documentation = "https://crosseyedcat.github.io/RustDB/docs"
+readme = "README.md"
+keywords = ["database", "sql", "relational", "rust", "storage"]
+categories = ["database", "database-implementations"]
+rust-version = "1.70.0"
+exclude = [
+    ".github/",
+    "target/",
+    "*.db",
+    "*.db-*",
+    ".git/",
+    "architecture.puml",
+    "DEVELOPMENT.md",
+    "IMPLEMENTATION_CHECKLIST.md",
+    "ARCHITECTURE.md",
+]
 
 [dependencies]
 # Основные зависимости

@@ -1,7 +1,7 @@
 //! Каталог метаданных RustBD
 
+pub mod access;
 pub mod schema;
 pub mod statistics;
-pub mod access;
 
 // TODO: Реализовать каталог метаданных

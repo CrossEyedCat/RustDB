@@ -1,16 +1,16 @@
 //! RustBD - Реализация реляционной базы данных на Rust
-//! 
+//!
 //! Этот модуль предоставляет основную функциональность для работы с реляционной базой данных,
 //! включая управление данными, SQL парсинг, выполнение запросов и транзакции.
 
+pub mod catalog;
+pub mod common;
 pub mod core;
-pub mod storage;
+pub mod executor;
+pub mod network;
 pub mod parser;
 pub mod planner;
-pub mod executor;
-pub mod catalog;
-pub mod network;
-pub mod common;
+pub mod storage;
 
 pub use common::error::{Error, Result};
 pub use common::types::*;
@@ -29,13 +29,13 @@ impl Database {
         // TODO: Инициализация БД
         Ok(Self {})
     }
-    
+
     /// Открывает существующую базу данных
     pub fn open(_path: &str) -> Result<Self> {
         // TODO: Открытие существующей БД
         Ok(Self {})
     }
-    
+
     /// Закрывает базу данных
     pub fn close(&mut self) -> Result<()> {
         // TODO: Корректное закрытие БД

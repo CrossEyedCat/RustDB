@@ -1,0 +1,36 @@
+# Конфигурация для Clippy
+# Подробнее: https://doc.rust-lang.org/clippy/configuration.html
+
+# Максимальная сложность функций
+cognitive-complexity-threshold = 30
+
+# Длина строки
+max-suggested-slice-pattern-length = 3
+single-char-binding-names-threshold = 4
+
+# Размеры
+type-complexity-threshold = 250
+trivial-copy-size-limit = 128
+pass-by-value-size-limit = 256
+too-many-arguments-threshold = 7
+too-many-lines-threshold = 100
+
+# Именование
+enum-variant-name-threshold = 3
+max-struct-bools = 3
+
+# Литералы
+literal-representation-threshold = 10
+
+# Векторы
+vec-box-size-threshold = 4096
+
+# Избегать паники в коде
+avoid-breaking-exported-api = true
+
+# Разрешенные lint'ы
+allow-expect-in-tests = true
+allow-unwrap-in-tests = true
+
+# Разрешенные имена переменных
+allowed-scripts = ["Latin", "Cyrillic"]

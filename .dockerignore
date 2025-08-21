@@ -1,0 +1,43 @@
+# Git
+.git/
+.gitignore
+
+# Rust
+target/
+**/*.rs.bk
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+docs/
+
+# CI/CD
+.github/
+
+# Logs
+*.log
+
+# Database files
+*.db
+*.db-*
+
+# Temporary files
+*.tmp
+*.temp
+
+# Docker
+Dockerfile*
+.dockerignore
+
+# Other
+LICENSE
+architecture.puml
