@@ -1,7 +1,7 @@
 # Многоэтапная сборка для оптимизации размера образа
 
 # Этап сборки
-FROM rust:1.75-slim as builder
+FROM rust:1.89-slim as builder
 
 # Установка зависимостей для сборки
 RUN apt-get update && apt-get install -y \
