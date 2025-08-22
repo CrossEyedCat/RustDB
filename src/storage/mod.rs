@@ -1,8 +1,9 @@
 //! Хранилище данных RustBD
 
-pub mod file;
-pub mod index;
+pub mod block;
 pub mod page;
-pub mod table;
+pub mod tuple;
+pub mod row;
+pub mod schema_manager;
 
 // TODO: Реализовать компоненты хранения данных

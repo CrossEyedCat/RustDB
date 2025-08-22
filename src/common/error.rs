@@ -1,6 +1,7 @@
 //! Обработка ошибок для RustBD
 
 use thiserror::Error;
+use bincode;
 
 /// Основной тип ошибки для RustBD
 #[derive(Error, Debug)]
@@ -9,9 +10,13 @@ pub enum Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// Ошибка сериализации/десериализации
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
+    /// Ошибка сериализации/десериализации JSON
+    #[error("JSON serialization error: {0}")]
+    JsonSerialization(#[from] serde_json::Error),
+
+    /// Ошибка сериализации/десериализации bincode
+    #[error("Bincode serialization error: {0}")]
+    BincodeSerialization(#[from] Box<bincode::ErrorKind>),
 
     /// Ошибка базы данных
     #[error("Database error: {message}")]
