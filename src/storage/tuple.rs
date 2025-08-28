@@ -287,7 +287,7 @@ impl Constraint {
 }
 
 /// Тип ограничения
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ConstraintType {
     /// Проверочное ограничение
     Check,
@@ -334,7 +334,7 @@ impl Trigger {
 }
 
 /// Событие триггера
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TriggerEvent {
     /// Вставка
     Insert,
@@ -345,7 +345,7 @@ pub enum TriggerEvent {
 }
 
 /// Время выполнения триггера
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TriggerTiming {
     /// До выполнения операции
     Before,

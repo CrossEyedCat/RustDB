@@ -68,3 +68,7 @@ debug = true
 [[bench]]
 name = "benchmarks"
 harness = false
+
+[[bench]]
+name = "io_benchmarks"
+harness = false
