@@ -6,6 +6,9 @@ use std::collections::HashMap;
 /// Идентификатор страницы
 pub type PageId = u64;
 
+/// Идентификатор записи
+pub type RecordId = u64;
+
 /// Идентификатор транзакции
 pub type TransactionId = u64;
 

@@ -7,6 +7,7 @@ pub mod catalog;
 pub mod common;
 pub mod core;
 pub mod executor;
+pub mod logging;
 pub mod network;
 pub mod parser;
 pub mod planner;

@@ -475,7 +475,7 @@ mod tests {
     #[test]
     fn test_add_and_get_page() {
         let mut manager = BufferManager::new(10, EvictionStrategy::LRU);
-        let page = Page::new(1, PageType::Data);
+        let page = Page::new(1);
         
         manager.add_page(page).unwrap();
         assert_eq!(manager.page_count(), 1);
@@ -490,9 +490,9 @@ mod tests {
         let mut manager = BufferManager::new(2, EvictionStrategy::LRU);
         
         // Добавляем 3 страницы
-        manager.add_page(Page::new(1, PageType::Data)).unwrap();
-        manager.add_page(Page::new(2, PageType::Data)).unwrap();
-        manager.add_page(Page::new(3, PageType::Data)).unwrap();
+        manager.add_page(Page::new(1)).unwrap();
+        manager.add_page(Page::new(2)).unwrap();
+        manager.add_page(Page::new(3)).unwrap();
         
         // Должна быть вытеснена первая страница
         assert_eq!(manager.page_count(), 2);
@@ -505,12 +505,12 @@ mod tests {
     fn test_page_pinning() {
         let mut manager = BufferManager::new(2, EvictionStrategy::LRU);
         
-        manager.add_page(Page::new(1, PageType::Data)).unwrap();
+        manager.add_page(Page::new(1)).unwrap();
         manager.pin_page(1).unwrap();
         
         // Добавляем еще 2 страницы
-        manager.add_page(Page::new(2, PageType::Data)).unwrap();
-        manager.add_page(Page::new(3, PageType::Data)).unwrap();
+        manager.add_page(Page::new(2)).unwrap();
+        manager.add_page(Page::new(3)).unwrap();
         
         // Зафиксированная страница не должна быть вытеснена
         assert!(manager.contains_page(1));
@@ -520,7 +520,7 @@ mod tests {
     #[test]
     fn test_buffer_stats() {
         let mut manager = BufferManager::new(10, EvictionStrategy::LRU);
-        let page = Page::new(1, PageType::Data);
+        let page = Page::new(1);
         
         manager.add_page(page).unwrap();
         manager.get_page(1);

@@ -147,10 +147,15 @@ pub struct Page {
 }
 
 impl Page {
-    /// Создает новую пустую страницу
-    pub fn new(page_id: PageId, page_type: PageType) -> Self {
-        let mut data = vec![0u8; PAGE_SIZE];
-        let mut free_space_map = vec![true; PAGE_SIZE - PAGE_HEADER_SIZE];
+    /// Создает новую пустую страницу данных
+    pub fn new(page_id: PageId) -> Self {
+        Self::new_with_type(page_id, PageType::Data)
+    }
+    
+    /// Создает новую пустую страницу с указанным типом
+    pub fn new_with_type(page_id: PageId, page_type: PageType) -> Self {
+        let data = vec![0u8; PAGE_SIZE];
+        let free_space_map = vec![true; PAGE_SIZE - PAGE_HEADER_SIZE];
 
         Self {
             header: PageHeader::new(page_id, page_type),
@@ -161,7 +166,28 @@ impl Page {
     }
 
     /// Создает страницу из байтов (десериализация)
-    pub fn from_bytes(bytes: &[u8], page_id: PageId) -> Result<Self> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != PAGE_SIZE {
+            return Err(Error::validation("Неверный размер страницы"));
+        }
+
+        // TODO: Реализовать полную десериализацию
+        // Пока используем простую реализацию
+        let page_id = 0; // Извлекается из заголовка
+        let header = PageHeader::new(page_id, PageType::Data);
+        let data = bytes.to_vec();
+        let free_space_map = vec![true; PAGE_SIZE - PAGE_HEADER_SIZE];
+
+        Ok(Self {
+            header,
+            slots: Vec::new(),
+            data,
+            free_space_map,
+        })
+    }
+    
+    /// Создает страницу из байтов с указанием page_id
+    pub fn from_bytes_with_id(bytes: &[u8], page_id: PageId) -> Result<Self> {
         if bytes.len() != PAGE_SIZE {
             return Err(Error::validation("Неверный размер страницы"));
         }
@@ -370,13 +396,144 @@ impl Page {
     }
 
     /// Очищает страницу
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self) -> Result<()> {
         self.slots.clear();
         self.data.fill(0);
         self.free_space_map.fill(true);
         self.header.record_count = 0;
         self.header.free_space = MAX_RECORD_SIZE as u32;
         self.header.mark_dirty();
+        Ok(())
+    }
+    
+    /// Получает коэффициент заполнения страницы (0.0 - 1.0)
+    pub fn get_fill_factor(&self) -> f64 {
+        let used_space = MAX_RECORD_SIZE as u32 - self.header.free_space;
+        used_space as f64 / MAX_RECORD_SIZE as f64
+    }
+    
+    /// Получает количество записей
+    pub fn get_record_count(&self) -> u32 {
+        self.header.record_count
+    }
+    
+    /// Получает размер свободного места
+    pub fn get_free_space(&self) -> u32 {
+        self.header.free_space
+    }
+    
+    /// Проверяет, нужна ли дефрагментация
+    pub fn needs_defragmentation(&self) -> bool {
+        // Простая эвристика: если есть удаленные записи
+        self.slots.iter().any(|slot| slot.is_deleted)
+    }
+    
+    /// Выполняет дефрагментацию страницы
+    pub fn defragment(&mut self) -> Result<()> {
+        // Собираем все активные записи
+        let mut active_records = Vec::new();
+        for slot in &self.slots {
+            if !slot.is_deleted {
+                let start = slot.offset as usize;
+                let end = start + slot.size as usize;
+                let record_data = self.data[start..end].to_vec();
+                active_records.push((slot.record_id, record_data));
+            }
+        }
+        
+        // Очищаем страницу
+        self.clear()?;
+        
+        // Добавляем записи обратно
+        for (record_id, record_data) in active_records {
+            self.add_record(&record_data, record_id)?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Сканирует все записи на странице
+    pub fn scan_records(&self) -> Result<Vec<(u32, Vec<u8>)>> {
+        let mut records = Vec::new();
+        
+        for slot in &self.slots {
+            if !slot.is_deleted {
+                let start = slot.offset as usize;
+                let end = start + slot.size as usize;
+                let record_data = self.data[start..end].to_vec();
+                records.push((slot.offset, record_data));
+            }
+        }
+        
+        Ok(records)
+    }
+    
+    /// Получает все записи на странице
+    pub fn get_all_records(&self) -> Result<Vec<Vec<u8>>> {
+        let mut records = Vec::new();
+        
+        for slot in &self.slots {
+            if !slot.is_deleted {
+                let start = slot.offset as usize;
+                let end = start + slot.size as usize;
+                let record_data = self.data[start..end].to_vec();
+                records.push(record_data);
+            }
+        }
+        
+        Ok(records)
+    }
+    
+    /// Обновляет запись по offset
+    pub fn update_record_by_offset(&mut self, offset: u32, new_data: &[u8]) -> Result<()> {
+        // Ищем слот по offset
+        if let Some(slot) = self.slots.iter_mut().find(|s| s.offset == offset && !s.is_deleted) {
+            if new_data.len() <= slot.size as usize {
+                // Обновляем данные in-place
+                let start = offset as usize;
+                let end = start + new_data.len();
+                self.data[start..end].copy_from_slice(new_data);
+                
+                // Обновляем размер слота если нужно
+                if new_data.len() < slot.size as usize {
+                    let size_diff = slot.size as usize - new_data.len();
+                    let old_slot_end = start + slot.size as usize;
+                    slot.size = new_data.len() as u32;
+                    self.header.free_space += size_diff as u32;
+                    
+                    // Обновляем карту свободного места
+                    self.update_free_space_map(end, old_slot_end, true);
+                }
+                
+                self.header.mark_dirty();
+                Ok(())
+            } else {
+                Err(Error::validation("Новые данные не помещаются в слот"))
+            }
+        } else {
+            Err(Error::validation("Запись не найдена"))
+        }
+    }
+    
+    /// Удаляет запись по offset
+    pub fn delete_record_by_offset(&mut self, offset: u32) -> Result<()> {
+        if let Some(slot) = self.slots.iter_mut().find(|s| s.offset == offset && !s.is_deleted) {
+            slot.mark_deleted();
+            
+            // Сохраняем значения перед изменением заимствования
+            let start = slot.offset as usize;
+            let end = start + slot.size as usize;
+            let slot_size = slot.size;
+            
+            // Освобождаем место
+            self.update_free_space_map(start, end, true);
+            self.header.free_space += slot_size;
+            self.header.mark_dirty();
+            
+            Ok(())
+        } else {
+            Err(Error::validation("Запись не найдена"))
+        }
     }
 }
 
@@ -450,7 +607,7 @@ mod tests {
 
     #[test]
     fn test_page_creation() {
-        let page = Page::new(1, PageType::Data);
+        let page = Page::new(1);
         assert_eq!(page.header.page_id, 1);
         assert_eq!(page.header.page_type, PageType::Data);
         assert_eq!(page.data.len(), PAGE_SIZE);
@@ -459,7 +616,7 @@ mod tests {
 
     #[test]
     fn test_add_record() {
-        let mut page = Page::new(1, PageType::Data);
+        let mut page = Page::new(1);
         let record_data = b"test record";
         let record_id = 123;
         
@@ -474,7 +631,7 @@ mod tests {
 
     #[test]
     fn test_delete_record() {
-        let mut page = Page::new(1, PageType::Data);
+        let mut page = Page::new(1);
         let record_data = b"test record";
         let record_id = 123;
         
@@ -492,9 +649,9 @@ mod tests {
     #[test]
     fn test_page_manager() {
         let mut manager = PageManager::new(2);
-        let page1 = Page::new(1, PageType::Data);
-        let page2 = Page::new(2, PageType::Data);
-        let page3 = Page::new(3, PageType::Data);
+        let page1 = Page::new(1);
+        let page2 = Page::new(2);
+        let page3 = Page::new(3);
         
         manager.add_page(page1);
         manager.add_page(page2);
