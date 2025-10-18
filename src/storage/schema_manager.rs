@@ -1,4 +1,4 @@
-//! Управление схемой таблиц для RustBD
+//! Управление схемой таблиц для rustdb
 
 use crate::common::{Error, Result, types::{Column, DataType, ColumnValue, Schema as BaseSchema}};
 use crate::storage::tuple::{Schema, Constraint, Trigger, TableOptions};
@@ -564,6 +564,16 @@ pub enum SchemaOperationType {
     Drop,
 }
 
+impl std::fmt::Display for SchemaOperationType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SchemaOperationType::Create => write!(f, "CREATE"),
+            SchemaOperationType::Alter => write!(f, "ALTER"),
+            SchemaOperationType::Drop => write!(f, "DROP"),
+        }
+    }
+}
+
 /// Запись об изменении схемы
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaChange {
@@ -677,7 +687,9 @@ mod tests {
     #[test]
     fn test_basic_validator() {
         let validator = BasicSchemaValidator;
-        let schema = Schema::new("users".to_string());
+        let schema = Schema::new("users".to_string())
+            .add_column(Column::new("id".to_string(), DataType::Integer(0)))
+            .add_column(Column::new("name".to_string(), DataType::Text("50".to_string())));
         
         assert!(validator.validate_schema(&schema).is_ok());
     }

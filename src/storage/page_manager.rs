@@ -1,4 +1,4 @@
-//! Менеджер страниц для RustBD
+//! Менеджер страниц для rustdb
 //! 
 //! Этот модуль предоставляет высокоуровневый интерфейс для управления страницами данных,
 //! включая CRUD операции, разделение/объединение страниц и оптимизации.
@@ -348,7 +348,15 @@ impl PageManager {
     
     /// Загружает информацию о существующих страницах
     fn load_existing_pages(&mut self) -> Result<()> {
-        // TODO: Реализовать сканирование существующих страниц
+        let page_ids = self.get_all_page_ids()?;
+        
+        for page_id in page_ids {
+            // Загружаем страницу и добавляем её информацию в кеш
+            let page_data = self.file_manager.read_page(self.file_id, page_id)?;
+            let page = Page::from_bytes(&page_data)?;
+            self.update_page_cache(page_id, &page);
+        }
+        
         Ok(())
     }
     
@@ -455,8 +463,12 @@ impl PageManager {
         };
         
         if needs_merge {
-            // TODO: Реализовать объединение страниц
-            self.statistics.page_merges += 1;
+            // Пытаемся объединить страницу с соседней
+            if let Ok(merged) = self.try_merge_page(page_id) {
+                if merged {
+                    self.statistics.page_merges += 1;
+                }
+            }
         }
         
         Ok(DeleteResult {
@@ -510,8 +522,148 @@ impl PageManager {
     }
     
     /// Получает все ID страниц
-    fn get_all_page_ids(&self) -> Result<Vec<PageId>> {
-        // TODO: Реализовать получение всех страниц из файла
-        Ok(self.page_cache.keys().cloned().collect())
+    fn get_all_page_ids(&mut self) -> Result<Vec<PageId>> {
+        // Получаем информацию о файле и подсчитываем количество страниц
+        let file_info = self.file_manager.get_file_info(self.file_id)
+            .ok_or_else(|| crate::common::Error::database("File info not found"))?;
+        let total_pages = file_info.total_pages;
+        
+        let mut page_ids = Vec::new();
+        // Страницы начинаются с 1, а не с 0
+        for page_id in 1..=total_pages as PageId {
+            // Проверяем, что страница существует и содержит данные
+            if let Ok(page_data) = self.file_manager.read_page(self.file_id, page_id) {
+                if !page_data.iter().all(|&b| b == 0) { // Не пустая страница
+                    page_ids.push(page_id);
+                }
+            }
+        }
+        
+        Ok(page_ids)
+    }
+    
+    /// Пытается объединить страницу с соседней
+    fn try_merge_page(&mut self, page_id: PageId) -> Result<bool> {
+        // Ищем соседнюю страницу для объединения
+        let neighbor_id = self.find_merge_candidate(page_id)?;
+        
+        if let Some(neighbor_page_id) = neighbor_id {
+            self.merge_pages(page_id, neighbor_page_id)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+    
+    /// Находит кандидата для объединения страниц
+    fn find_merge_candidate(&self, page_id: PageId) -> Result<Option<PageId>> {
+        // Проверяем соседние страницы (предыдущую и следующую)
+        let candidates = vec![
+            if page_id > 0 { Some(page_id - 1) } else { None },
+            Some(page_id + 1),
+        ];
+        
+        for candidate in candidates.into_iter().flatten() {
+            if let Some(candidate_info) = self.page_cache.get(&candidate) {
+                // Проверяем, что объединенные страницы поместятся в одну
+                if let Some(current_info) = self.page_cache.get(&page_id) {
+                    let combined_records = current_info.record_count + candidate_info.record_count;
+                    let page_capacity = 4096 / 64; // Примерная оценка вместимости страницы
+                    
+                    if combined_records <= page_capacity &&
+                       candidate_info.fill_factor < self.config.max_fill_factor {
+                        return Ok(Some(candidate));
+                    }
+                }
+            }
+        }
+        
+        Ok(None)
+    }
+    
+    /// Объединяет две страницы
+    fn merge_pages(&mut self, page_id1: PageId, page_id2: PageId) -> Result<()> {
+        // Загружаем обе страницы
+        let page1_data = self.file_manager.read_page(self.file_id, page_id1)?;
+        let page2_data = self.file_manager.read_page(self.file_id, page_id2)?;
+        
+        let mut page1 = Page::from_bytes(&page1_data)?;
+        let page2 = Page::from_bytes(&page2_data)?;
+        
+        // Получаем все записи из второй страницы
+        let page2_records = page2.get_all_records()?;
+        
+        // Перемещаем записи из второй страницы в первую
+        for (i, record_data) in page2_records.iter().enumerate() {
+            page1.add_record(record_data, i as u64)?;
+        }
+        
+        // Сохраняем обновленную первую страницу
+        let serialized = page1.to_bytes()?;
+        self.file_manager.write_page(self.file_id, page_id1, &serialized)?;
+        
+        // Очищаем вторую страницу
+        let empty_page = Page::new(page_id2);
+        let empty_serialized = empty_page.to_bytes()?;
+        self.file_manager.write_page(self.file_id, page_id2, &empty_serialized)?;
+        
+        // Обновляем кеш
+        self.update_page_cache(page_id1, &page1);
+        self.update_page_cache(page_id2, &empty_page);
+        
+        Ok(())
+    }
+    
+    /// Сжимает данные страницы, если включена компрессия
+    fn compress_page_data(&self, data: &[u8]) -> Result<Vec<u8>> {
+        if self.config.enable_compression {
+            match lz4_flex::compress_prepend_size(data) {
+                compressed if compressed.len() < data.len() => Ok(compressed),
+                _ => Ok(data.to_vec()), // Если сжатие не эффективно, возвращаем оригинал
+            }
+        } else {
+            Ok(data.to_vec())
+        }
+    }
+    
+    /// Распаковывает данные страницы, если они были сжаты
+    fn decompress_page_data(&self, data: &[u8]) -> Result<Vec<u8>> {
+        if self.config.enable_compression && data.len() >= 4 {
+            // Проверяем, начинаются ли данные с размера (признак LZ4)
+            let size_bytes = [data[0], data[1], data[2], data[3]];
+            let expected_size = u32::from_le_bytes(size_bytes) as usize;
+            
+            // Если размер разумный, пытаемся распаковать
+            if expected_size > 0 && expected_size < 1024 * 1024 { // Максимум 1MB
+                match lz4_flex::decompress_size_prepended(data) {
+                    Ok(decompressed) => Ok(decompressed),
+                    Err(_) => Ok(data.to_vec()), // Если не удалось распаковать, возвращаем как есть
+                }
+            } else {
+                Ok(data.to_vec())
+            }
+        } else {
+            Ok(data.to_vec())
+        }
+    }
+    
+    /// Читает страницу с автоматической распаковкой
+    fn read_page_with_decompression(&mut self, page_id: PageId) -> Result<Vec<u8>> {
+        let raw_data = self.file_manager.read_page(self.file_id, page_id)?;
+        self.decompress_page_data(&raw_data)
+    }
+    
+    /// Записывает страницу с автоматическим сжатием
+    fn write_page_with_compression(&mut self, page_id: PageId, data: &[u8]) -> Result<()> {
+        let compressed_data = self.compress_page_data(data)?;
+        self.file_manager.write_page(self.file_id, page_id, &compressed_data)
+    }
+}
+
+impl Drop for PageManager {
+    fn drop(&mut self) {
+        // Синхронизируем и закрываем файл при уничтожении менеджера
+        let _ = self.file_manager.sync_file(self.file_id);
+        let _ = self.file_manager.close_file(self.file_id);
     }
 }

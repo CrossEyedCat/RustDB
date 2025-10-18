@@ -1,4 +1,4 @@
-//! Структуры файлов базы данных RustBD
+//! Структуры файлов базы данных rustdb
 //!
 //! Этот модуль содержит расширенные структуры для организации файлов базы данных:
 //! - Расширенный заголовок файла БД с метаданными
@@ -54,7 +54,7 @@ pub enum DatabaseFileState {
 /// Расширенный заголовок файла базы данных
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseFileHeader {
-    /// Магическое число для идентификации файлов RustBD
+    /// Магическое число для идентификации файлов rustdb
     pub magic: u32,
     /// Версия формата файла
     pub version: u16,
@@ -116,7 +116,7 @@ pub struct DatabaseFileHeader {
 
 /// Флаги файла базы данных
 impl DatabaseFileHeader {
-    /// Магическое число для файлов RustBD
+    /// Магическое число для файлов rustdb
     pub const MAGIC: u32 = 0x52555354; // "RUST"
     
     /// Текущая версия формата файла
@@ -427,7 +427,8 @@ impl FreePageMap {
                 }
                 
                 self.update_statistics();
-                return Some(allocated_start);
+                // Убеждаемся, что не возвращаем page_id = 0
+                return Some(if allocated_start == 0 { 1 } else { allocated_start });
             }
         }
 

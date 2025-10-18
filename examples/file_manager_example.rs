@@ -1,4 +1,4 @@
-//! Пример использования менеджера файлов RustBD
+//! Пример использования менеджера файлов rustdb
 //! 
 //! Этот пример демонстрирует:
 //! - Создание файлов базы данных
@@ -6,13 +6,13 @@
 //! - Управление размерами файлов
 //! - Работу с заголовками файлов
 
-use rustbd::storage::file_manager::{FileManager, BLOCK_SIZE};
-use rustbd::common::Result;
+use rustdb::storage::file_manager::{FileManager, BLOCK_SIZE};
+use rustdb::common::Result;
 use tempfile::TempDir;
 
 
 fn main() -> Result<()> {
-    println!("=== Пример использования менеджера файлов RustBD ===\n");
+    println!("=== Пример использования менеджера файлов rustdb ===\n");
 
     // Создаем временную директорию для примера
     let temp_dir = TempDir::new().unwrap();
@@ -40,7 +40,7 @@ fn main() -> Result<()> {
     
     // Блок 0: Строковые данные
     let mut block0_data = vec![0u8; BLOCK_SIZE];
-    let text = "Привет, мир! Это тест менеджера файлов RustBD.";
+    let text = "Привет, мир! Это тест менеджера файлов rustdb.";
     let text_bytes = text.as_bytes();
     block0_data[..text_bytes.len()].copy_from_slice(text_bytes);
     file_manager.write_block(file_id, 0, &block0_data)?;

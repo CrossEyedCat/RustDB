@@ -1,4 +1,4 @@
-@startuml RustBD Architecture
+@startuml RustDB Architecture
 
 !define RECTANGLE class
 

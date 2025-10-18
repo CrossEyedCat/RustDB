@@ -1,4 +1,4 @@
-//! Менеджер схем для RustBD
+//! Менеджер схем для rustdb
 
 use crate::common::{Error, Result};
 

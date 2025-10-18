@@ -1,17 +1,17 @@
-//! Примеры использования базовых структур данных RustBD
+//! Примеры использования базовых структур данных RustDB
 
-use rustbd::storage::{
-    page::{Page, PageType, PageManager},
+use rustdb::storage::{
+    page::{Page, PageManager},
     block::{Block, BlockType, BlockManager},
-    tuple::{Tuple, Schema, Column, DataType, ColumnValue},
-    row::{Row, Table, TableMetadata},
+    tuple::{Tuple, Schema},
+    row::{Row, Table},
     schema_manager::{SchemaManager, SchemaOperation, BasicSchemaValidator},
 };
-use rustbd::core::buffer::{BufferManager, EvictionStrategy};
-use rustbd::common::types::{DataType as BaseDataType, Column as BaseColumn};
+use rustdb::core::buffer::{BufferManager, EvictionStrategy};
+use rustdb::common::types::{DataType, Column, ColumnValue};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Примеры использования базовых структур данных RustBD ===\n");
+    println!("=== Примеры использования базовых структур данных RustDB ===\n");
 
     // Пример 1: Работа со страницами
     example_pages()?;
@@ -40,12 +40,12 @@ fn example_pages() -> Result<(), Box<dyn std::error::Error>> {
     println!("1. Работа со страницами:");
     
     // Создаем новую страницу
-    let mut page = Page::new(1, PageType::Data);
+    let mut page = Page::new(1);
     println!("  - Создана страница ID: {}, тип: {:?}", page.header.page_id, page.header.page_type);
     
     // Добавляем записи на страницу
     let record1 = b"Hello, World!";
-    let record2 = b"RustBD is awesome!";
+    let record2 = b"RustDB is awesome!";
     
     let offset1 = page.add_record(record1, 1)?;
     let offset2 = page.add_record(record2, 2)?;
@@ -236,10 +236,10 @@ fn example_buffer_manager() -> Result<(), Box<dyn std::error::Error>> {
     println!("  - Создан менеджер буферов с максимальным размером: 3 страницы");
     
     // Создаем страницы
-    let page1 = Page::new(1, PageType::Data);
-    let page2 = Page::new(2, PageType::Data);
-    let page3 = Page::new(3, PageType::Data);
-    let page4 = Page::new(4, PageType::Data);
+    let page1 = Page::new(1);
+    let page2 = Page::new(2);
+    let page3 = Page::new(3);
+    let page4 = Page::new(4);
     
     // Добавляем страницы в буфер
     buffer_manager.add_page(page1)?;
@@ -268,7 +268,7 @@ fn example_buffer_manager() -> Result<(), Box<dyn std::error::Error>> {
     println!("  - Получена страница 2 (обновлен порядок LRU)");
     
     // Добавляем еще одну страницу (должна вытеснить страницу 3)
-    let page5 = Page::new(5, PageType::Data);
+    let page5 = Page::new(5);
     buffer_manager.add_page(page5)?;
     
     assert!(!buffer_manager.contains_page(3));

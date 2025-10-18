@@ -1,4 +1,4 @@
-//! Система восстановления данных из логов для RustBD
+//! Система восстановления данных из логов для rustdb
 //!
 //! Этот модуль реализует восстановление базы данных после сбоев:
 //! - Анализ лог-файлов и определение точки восстановления
@@ -28,7 +28,7 @@ enum RecoveryTransactionState {
 
 /// Информация о транзакции для восстановления
 #[derive(Debug, Clone)]
-struct RecoveryTransactionInfo {
+pub struct RecoveryTransactionInfo {
     /// ID транзакции
     id: TransactionId,
     /// Состояние

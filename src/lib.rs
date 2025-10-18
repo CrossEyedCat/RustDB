@@ -1,11 +1,14 @@
-//! RustBD - Реализация реляционной базы данных на Rust
+//! rustdb - Реализация реляционной базы данных на Rust
 //!
 //! Этот модуль предоставляет основную функциональность для работы с реляционной базой данных,
 //! включая управление данными, SQL парсинг, выполнение запросов и транзакции.
 
+pub mod analyzer;
 pub mod catalog;
+pub mod cli;
 pub mod common;
 pub mod core;
+pub mod debug;
 pub mod executor;
 pub mod logging;
 pub mod network;

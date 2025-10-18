@@ -105,8 +105,8 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rustbd-linux-x64
-          path: target/release/rustbd
+          name: rustdb-linux-x64
+          path: target/release/rustdb
 
   # Проверка покрытия кода
   coverage:

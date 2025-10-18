@@ -1,4 +1,4 @@
-//! Менеджер буферов для RustBD
+//! Менеджер буферов для rustdb
 
 use crate::common::{Error, Result, types::PageId};
 use crate::storage::page::{Page, PageHeader};
@@ -171,13 +171,14 @@ impl BufferManager {
 
     /// Получает страницу по ID
     pub fn get_page(&mut self, page_id: PageId) -> Option<&Page> {
-        self.stats.record_access(true);
         self.stats.record_read();
 
         if !self.cache.contains_key(&page_id) {
             self.stats.record_access(false);
             return None;
         }
+
+        self.stats.record_access(true);
 
         // Сначала обновляем LRU порядок
         self.update_lru_order(page_id);
@@ -193,13 +194,14 @@ impl BufferManager {
 
     /// Получает изменяемую ссылку на страницу
     pub fn get_page_mut(&mut self, page_id: PageId) -> Option<&mut Page> {
-        self.stats.record_access(true);
         self.stats.record_write();
 
         if !self.cache.contains_key(&page_id) {
             self.stats.record_access(false);
             return None;
         }
+
+        self.stats.record_access(true);
 
         // Сначала обновляем LRU порядок
         self.update_lru_order(page_id);
@@ -514,7 +516,10 @@ mod tests {
         
         // Зафиксированная страница не должна быть вытеснена
         assert!(manager.contains_page(1));
-        assert_eq!(manager.page_count(), 3);
+        // В буфере должно быть максимум 2 страницы (размер буфера)
+        assert_eq!(manager.page_count(), 2);
+        // Страница 3 должна быть в буфере (последняя добавленная)
+        assert!(manager.contains_page(3));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Управление доступом для RustBD
+//! Управление доступом для rustdb
 
 use crate::common::{Error, Result};
 

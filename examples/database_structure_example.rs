@@ -1,4 +1,4 @@
-//! Пример использования структуры файлов базы данных RustBD
+//! Пример использования структуры файлов базы данных RustDB
 //! 
 //! Этот пример демонстрирует:
 //! - Работу с расширенными заголовками файлов БД
@@ -6,14 +6,14 @@
 //! - Различные стратегии расширения файлов
 //! - Мониторинг и статистику использования
 
-use rustbd::storage::database_file::{
+use rustdb::storage::database_file::{
     DatabaseFileHeader, DatabaseFileType, DatabaseFileState, FreePageMap,
     FileExtensionManager, ExtensionStrategy, ExtensionReason
 };
-use rustbd::common::Result;
+use rustdb::common::Result;
 
 fn main() -> Result<()> {
-    println!("=== Пример структуры файлов базы данных RustBD ===\n");
+    println!("=== Пример структуры файлов базы данных RustDB ===\n");
 
     // Демонстрация работы с заголовком файла БД
     demonstrate_database_header()?;

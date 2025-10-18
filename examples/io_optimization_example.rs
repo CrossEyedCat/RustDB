@@ -1,4 +1,4 @@
-//! Пример использования оптимизации I/O в RustBD
+//! Пример использования оптимизации I/O в rustdb
 //!
 //! Этот пример демонстрирует:
 //! - Буферизованные операции записи
@@ -7,19 +7,19 @@
 //! - Предвыборку данных
 //! - Мониторинг производительности
 
-use rustbd::storage::{
+use rustdb::storage::{
     io_optimization::{BufferedIoManager, IoBufferConfig},
     optimized_file_manager::OptimizedFileManager,
     database_file::{DatabaseFileType, ExtensionStrategy, BLOCK_SIZE},
 };
-use rustbd::common::Result;
+use rustdb::common::Result;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use rand::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("=== Пример оптимизации I/O операций RustBD ===\n");
+    println!("=== Пример оптимизации I/O операций rustdb ===\n");
 
     // Демонстрация буферизованного I/O менеджера
     demonstrate_buffered_io().await?;
@@ -365,7 +365,7 @@ mod tests {
     #[tokio::test]
     async fn test_io_optimization_example() -> Result<()> {
         // Запускаем основную функцию как тест
-        main().await
+        main()
     }
 
     #[tokio::test]

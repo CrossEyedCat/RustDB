@@ -1,4 +1,4 @@
-//! Структуры блоков для RustBD
+//! Структуры блоков для rustdb
 
 use crate::common::{Error, Result, types::PageId};
 use serde::{Deserialize, Serialize};
@@ -119,12 +119,14 @@ impl Block {
 
     /// Добавляет страницу в блок
     pub fn add_page(&mut self, page_id: PageId, page_data: Vec<u8>) -> Result<()> {
-        if self.pages.len() >= self.header.page_count as usize {
+        // Проверяем, не превышает ли размер данных размер блока
+        let total_size: usize = self.pages.values().map(|p| p.len()).sum::<usize>() + page_data.len();
+        if total_size > (self.header.size as usize - 256) { // оставляем место для метаданных
             return Err(Error::validation("Блок переполнен"));
         }
 
         self.pages.insert(page_id, page_data);
-        self.header.page_count += 1;
+        self.header.page_count = self.pages.len() as u32;
         self.header.mark_dirty();
         Ok(())
     }
@@ -133,7 +135,7 @@ impl Block {
     pub fn remove_page(&mut self, page_id: PageId) -> Option<Vec<u8>> {
         let page_data = self.pages.remove(&page_id);
         if page_data.is_some() {
-            self.header.page_count -= 1;
+            self.header.page_count = self.pages.len() as u32;
             self.header.mark_dirty();
         }
         page_data
@@ -330,7 +332,7 @@ impl BlockManager {
     fn evict_oldest_block(&mut self) {
         if let Some((&oldest_id, _)) = self.blocks.iter()
             .filter(|(_, block)| !block.header.is_pinned)
-            .min_by_key(|(_, block)| block.header.last_modified) {
+            .min_by_key(|(id, block)| (block.header.last_modified, *id)) {
             self.blocks.remove(&oldest_id);
         }
     }

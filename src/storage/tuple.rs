@@ -1,4 +1,4 @@
-//! Структуры данных для таблиц RustBD
+//! Структуры данных для таблиц rustdb
 
 use crate::common::{Error, Result, types::{DataType, ColumnValue, Column, Schema as BaseSchema}};
 use serde::{Deserialize, Serialize};

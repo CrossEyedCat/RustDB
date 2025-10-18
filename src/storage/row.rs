@@ -1,4 +1,4 @@
-//! Структуры строк и таблиц для RustBD
+//! Структуры строк и таблиц для rustdb
 
 use crate::common::{Error, Result, types::{PageId, DataType, ColumnValue}};
 use crate::storage::tuple::{Tuple, Schema};

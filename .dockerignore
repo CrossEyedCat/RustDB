@@ -1,10 +1,10 @@
 # Git
-.git/
+.git
 .gitignore
 
-# Rust
-target/
-**/*.rs.bk
+# Documentation
+*.md
+docs/
 
 # IDE
 .vscode/
@@ -16,28 +16,36 @@ target/
 .DS_Store
 Thumbs.db
 
-# Documentation
-*.md
-docs/
+# Rust
+target/
+Cargo.lock
+
+# Logs
+*.log
+logs/
+
+# Data
+data/
+
+# Temporary files
+tmp/
+temp/
+
+# Test files
+tests/
+**/*_test.rs
+**/test_*.rs
+
+# Examples
+examples/
 
 # CI/CD
 .github/
 
-# Logs
-*.log
-
-# Database files
-*.db
-*.db-*
-
-# Temporary files
-*.tmp
-*.temp
+# Deployment
+deployment/
 
 # Docker
 Dockerfile*
+docker-compose*
 .dockerignore
-
-# Other
-LICENSE
-architecture.puml

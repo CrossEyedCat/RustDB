@@ -35,7 +35,7 @@ jobs:
       - name: Build documentation
         run: |
           cargo doc --all-features --no-deps --document-private-items
-          echo '<meta http-equiv="refresh" content="0; url=rustbd">' > target/doc/index.html
+          echo '<meta http-equiv="refresh" content="0; url=rustdb">' > target/doc/index.html
         env:
           RUSTDOCFLAGS: "--cfg docsrs -D warnings"
 

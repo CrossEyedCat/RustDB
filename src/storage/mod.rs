@@ -1,4 +1,4 @@
-//! Хранилище данных RustBD
+//! Хранилище данных rustdb
 
 pub mod block;
 pub mod page;
@@ -11,6 +11,7 @@ pub mod database_file;
 pub mod advanced_file_manager;
 pub mod io_optimization;
 pub mod optimized_file_manager;
+pub mod index;
 
 #[cfg(test)]
 pub mod tests;

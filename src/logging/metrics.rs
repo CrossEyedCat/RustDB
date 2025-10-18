@@ -1,4 +1,4 @@
-//! Система метрик и мониторинга логирования для RustBD
+//! Система метрик и мониторинга логирования для rustdb
 //!
 //! Этот модуль собирает и предоставляет метрики производительности
 //! системы логирования:
@@ -449,34 +449,34 @@ impl LoggingMetrics {
         let mut output = String::new();
         
         // Базовые метрики
-        output.push_str(&format!("# HELP rustbd_logging_uptime_seconds Uptime of the logging system\n"));
-        output.push_str(&format!("# TYPE rustbd_logging_uptime_seconds counter\n"));
-        output.push_str(&format!("rustbd_logging_uptime_seconds {}\n", self.uptime_seconds));
+        output.push_str(&format!("# HELP rustdb_logging_uptime_seconds Uptime of the logging system\n"));
+        output.push_str(&format!("# TYPE rustdb_logging_uptime_seconds counter\n"));
+        output.push_str(&format!("rustdb_logging_uptime_seconds {}\n", self.uptime_seconds));
         
-        output.push_str(&format!("# HELP rustbd_logging_operations_total Total number of logging operations\n"));
-        output.push_str(&format!("# TYPE rustbd_logging_operations_total counter\n"));
-        output.push_str(&format!("rustbd_logging_operations_total {}\n", self.total_operations()));
+        output.push_str(&format!("# HELP rustdb_logging_operations_total Total number of logging operations\n"));
+        output.push_str(&format!("# TYPE rustdb_logging_operations_total counter\n"));
+        output.push_str(&format!("rustdb_logging_operations_total {}\n", self.total_operations()));
         
         // Временные метрики
-        output.push_str(&format!("# HELP rustbd_logging_write_duration_microseconds Write operation duration\n"));
-        output.push_str(&format!("# TYPE rustbd_logging_write_duration_microseconds histogram\n"));
-        output.push_str(&format!("rustbd_logging_write_duration_microseconds_avg {}\n", self.write_timing.avg_time_us));
-        output.push_str(&format!("rustbd_logging_write_duration_microseconds_p95 {}\n", self.write_timing.p95_time_us));
-        output.push_str(&format!("rustbd_logging_write_duration_microseconds_p99 {}\n", self.write_timing.p99_time_us));
+        output.push_str(&format!("# HELP rustdb_logging_write_duration_microseconds Write operation duration\n"));
+        output.push_str(&format!("# TYPE rustdb_logging_write_duration_microseconds histogram\n"));
+        output.push_str(&format!("rustdb_logging_write_duration_microseconds_avg {}\n", self.write_timing.avg_time_us));
+        output.push_str(&format!("rustdb_logging_write_duration_microseconds_p95 {}\n", self.write_timing.p95_time_us));
+        output.push_str(&format!("rustdb_logging_write_duration_microseconds_p99 {}\n", self.write_timing.p99_time_us));
         
         // Метрики ресурсов
-        output.push_str(&format!("# HELP rustbd_logging_buffer_utilization_percent Buffer utilization percentage\n"));
-        output.push_str(&format!("# TYPE rustbd_logging_buffer_utilization_percent gauge\n"));
-        output.push_str(&format!("rustbd_logging_buffer_utilization_percent {}\n", self.buffer_utilization));
+        output.push_str(&format!("# HELP rustdb_logging_buffer_utilization_percent Buffer utilization percentage\n"));
+        output.push_str(&format!("# TYPE rustdb_logging_buffer_utilization_percent gauge\n"));
+        output.push_str(&format!("rustdb_logging_buffer_utilization_percent {}\n", self.buffer_utilization));
         
-        output.push_str(&format!("# HELP rustbd_logging_cache_hit_ratio Cache hit ratio\n"));
-        output.push_str(&format!("# TYPE rustbd_logging_cache_hit_ratio gauge\n"));
-        output.push_str(&format!("rustbd_logging_cache_hit_ratio {}\n", self.cache_hit_ratio));
+        output.push_str(&format!("# HELP rustdb_logging_cache_hit_ratio Cache hit ratio\n"));
+        output.push_str(&format!("# TYPE rustdb_logging_cache_hit_ratio gauge\n"));
+        output.push_str(&format!("rustdb_logging_cache_hit_ratio {}\n", self.cache_hit_ratio));
         
         // Пропускная способность
-        output.push_str(&format!("# HELP rustbd_logging_throughput_records_per_second Records processed per second\n"));
-        output.push_str(&format!("# TYPE rustbd_logging_throughput_records_per_second gauge\n"));
-        output.push_str(&format!("rustbd_logging_throughput_records_per_second {}\n", self.throughput_records_per_sec));
+        output.push_str(&format!("# HELP rustdb_logging_throughput_records_per_second Records processed per second\n"));
+        output.push_str(&format!("# TYPE rustdb_logging_throughput_records_per_second gauge\n"));
+        output.push_str(&format!("rustdb_logging_throughput_records_per_second {}\n", self.throughput_records_per_sec));
         
         output
     }
@@ -490,7 +490,7 @@ impl LoggingMetrics {
     pub fn generate_performance_report(&self) -> String {
         let mut report = String::new();
         
-        report.push_str("=== Отчет о производительности системы логирования RustBD ===\n\n");
+        report.push_str("=== Отчет о производительности системы логирования rustdb ===\n\n");
         
         // Общая информация
         report.push_str(&format!("Время работы: {} секунд ({:.1} часов)\n", 
@@ -744,7 +744,7 @@ mod tests {
         
         // Тестируем экспорт
         let prometheus_export = manager.export_prometheus();
-        assert!(prometheus_export.contains("rustbd_logging"));
+        assert!(prometheus_export.contains("rustdb_logging"));
         
         let json_export = manager.export_json().unwrap();
         assert!(json_export.contains("uptime_seconds"));
@@ -760,8 +760,8 @@ mod tests {
         
         assert!(export.contains("# HELP"));
         assert!(export.contains("# TYPE"));
-        assert!(export.contains("rustbd_logging_uptime_seconds"));
-        assert!(export.contains("rustbd_logging_operations_total"));
+        assert!(export.contains("rustdb_logging_uptime_seconds"));
+        assert!(export.contains("rustdb_logging_operations_total"));
     }
 
     #[test]

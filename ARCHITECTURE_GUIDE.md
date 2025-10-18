@@ -1,8 +1,8 @@
-# Руководство по архитектуре RustBD
+# Руководство по архитектуре RustDB
 
 ## 🏗️ Обзор архитектуры
 
-RustBD - это высокопроизводительная система управления базами данных, построенная на принципах модульности, масштабируемости и надежности. Архитектура системы следует принципам микросервисов и event-driven архитектуры.
+RustDB - это высокопроизводительная система управления базами данных, построенная на принципах модульности, масштабируемости и надежности. Архитектура системы следует принципам микросервисов и event-driven архитектуры.
 
 ## 🎯 Принципы проектирования
 
@@ -1061,27 +1061,27 @@ pub mod metrics {
             let registry = Registry::new();
             
             let query_counter = Counter::new(
-                "rustbd_queries_total",
+                "rustdb_queries_total",
                 "Total number of queries executed"
             ).unwrap();
             
             let query_duration = Histogram::new(
-                "rustbd_query_duration_seconds",
+                "rustdb_query_duration_seconds",
                 "Query execution duration in seconds"
             ).unwrap();
             
             let active_connections = Gauge::new(
-                "rustbd_active_connections",
+                "rustdb_active_connections",
                 "Number of active connections"
             ).unwrap();
             
             let buffer_hit_ratio = Gauge::new(
-                "rustbd_buffer_hit_ratio",
+                "rustdb_buffer_hit_ratio",
                 "Buffer cache hit ratio"
             ).unwrap();
             
             let transaction_counter = Counter::new(
-                "rustbd_transactions_total",
+                "rustdb_transactions_total",
                 "Total number of transactions"
             ).unwrap();
             

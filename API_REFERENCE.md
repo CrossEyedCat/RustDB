@@ -1,769 +1,900 @@
-# Справочник API RustBD
+# RustDB API Reference
 
-## 📚 Обзор
+## Table of Contents
+1. [Core Types](#core-types)
+2. [Database Connection](#database-connection)
+3. [Transaction Management](#transaction-management)
+4. [Query Execution](#query-execution)
+5. [Storage Layer](#storage-layer)
+6. [Logging and Recovery](#logging-and-recovery)
+7. [Concurrency Control](#concurrency-control)
+8. [Debugging and Profiling](#debugging-and-profiling)
+9. [Error Handling](#error-handling)
+10. [Configuration](#configuration)
 
-RustBD предоставляет современный, высокопроизводительный API для работы с реляционными базами данных. API построен на принципах безопасности, производительности и удобства использования.
-
-## 🏗️ Основные компоненты
+## Core Types
 
 ### Database
-Основной интерфейс для работы с базой данных.
+The main database connection type.
 
 ```rust
 pub struct Database {
-    // Приватные поля
+    // Private fields
 }
 
 impl Database {
-    /// Создает новое подключение к базе данных
-    pub async fn connect(connection_string: &str) -> Result<Self, DatabaseError>
+    /// Connect to a database instance
+    pub async fn connect(connection_string: &str) -> Result<Self, Error>;
     
-    /// Выполняет SQL запрос
-    pub async fn execute(&self, sql: &str, params: &[&dyn ToValue]) -> Result<ExecuteResult, DatabaseError>
+    /// Connect with custom configuration
+    pub async fn connect_with_config(
+        connection_string: &str, 
+        config: DatabaseConfig
+    ) -> Result<Self, Error>;
     
-    /// Выполняет SELECT запрос
-    pub async fn query(&self, sql: &str, params: &[&dyn ToValue]) -> Result<Vec<Row>, DatabaseError>
+    /// Execute a SQL statement
+    pub async fn execute(&self, sql: &str) -> Result<QueryResult, Error>;
     
-    /// Начинает новую транзакцию
-    pub async fn begin_transaction(&self) -> Result<Transaction, DatabaseError>
+    /// Execute a prepared statement
+    pub async fn execute_prepared(
+        &self, 
+        stmt: &PreparedStatement, 
+        params: &[Value]
+    ) -> Result<QueryResult, Error>;
     
-    /// Создает новую таблицу
-    pub async fn create_table(&self, schema: &TableSchema) -> Result<(), DatabaseError>
+    /// Begin a new transaction
+    pub async fn begin_transaction(
+        &self, 
+        isolation_level: IsolationLevel
+    ) -> Result<Transaction, Error>;
     
-    /// Создает новый индекс
-    pub async fn create_index(&self, table: &str, name: &str, columns: &[&str], index_type: IndexType) -> Result<(), DatabaseError>
+    /// Get database statistics
+    pub async fn get_stats(&self) -> Result<DatabaseStats, Error>;
 }
 ```
-
-### TableSchema
-Определяет структуру таблицы.
-
-```rust
-pub struct TableSchema {
-    pub name: String,
-    pub columns: Vec<ColumnDefinition>,
-    pub constraints: Vec<TableConstraint>,
-}
-
-impl TableSchema {
-    /// Создает новую схему таблицы
-    pub fn new(name: &str) -> Self
-    
-    /// Добавляет колонку в схему
-    pub fn add_column(mut self, name: &str, column_type: ColumnType, constraints: Vec<ColumnConstraint>) -> Self
-    
-    /// Добавляет ограничение на уровне таблицы
-    pub fn add_constraint(mut self, constraint: TableConstraint) -> Self
-    
-    /// Строит финальную схему
-    pub fn build(self) -> Result<Self, SchemaError>
-}
-```
-
-### ColumnType
-Поддерживаемые типы данных.
-
-```rust
-#[derive(Debug, Clone, PartialEq)]
-pub enum ColumnType {
-    /// 8-битное целое число
-    TinyInt,
-    /// 16-битное целое число
-    SmallInt,
-    /// 32-битное целое число
-    Integer,
-    /// 64-битное целое число
-    BigInt,
-    /// Число с плавающей точкой (32 бита)
-    Float,
-    /// Число с плавающей точкой (64 бита)
-    Double,
-    /// Строка фиксированной длины
-    Char(usize),
-    /// Строка переменной длины
-    Varchar(usize),
-    /// Текст неограниченной длины
-    Text,
-    /// Булево значение
-    Boolean,
-    /// Дата
-    Date,
-    /// Временная метка
-    Timestamp,
-    /// JSON данные
-    Json,
-    /// Массив
-    Array(Box<ColumnType>),
-    /// Бинарные данные
-    Blob,
-}
-```
-
-### ColumnConstraint
-Ограничения на уровне колонок.
-
-```rust
-#[derive(Debug, Clone, PartialEq)]
-pub enum ColumnConstraint {
-    /// Значение не может быть NULL
-    NotNull,
-    /// Значение должно быть уникальным
-    Unique,
-    /// Первичный ключ
-    PrimaryKey,
-    /// Автоинкремент
-    AutoIncrement,
-    /// Значение по умолчанию
-    Default(Value),
-    /// Проверка значения
-    Check(String),
-    /// Внешний ключ
-    ForeignKey {
-        table: String,
-        column: String,
-        on_delete: ForeignKeyAction,
-        on_update: ForeignKeyAction,
-    },
-}
-```
-
-### Value
-Значения, которые могут храниться в базе данных.
-
-```rust
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    /// NULL значение
-    Null,
-    /// Булево значение
-    Boolean(bool),
-    /// 8-битное целое число
-    TinyInt(i8),
-    /// 16-битное целое число
-    SmallInt(i16),
-    /// 32-битное целое число
-    Integer(i32),
-    /// 64-битное целое число
-    BigInt(i64),
-    /// Число с плавающей точкой (32 бита)
-    Float(f32),
-    /// Число с плавающей точкой (64 бита)
-    Double(f64),
-    /// Строка
-    String(String),
-    /// Дата
-    Date(NaiveDate),
-    /// Временная метка
-    Timestamp(DateTime<Utc>),
-    /// JSON данные
-    Json(serde_json::Value),
-    /// Массив
-    Array(Vec<Value>),
-    /// Бинарные данные
-    Blob(Vec<u8>),
-}
-```
-
-### Row
-Строка данных из таблицы.
-
-```rust
-pub struct Row {
-    data: HashMap<String, Value>,
-}
-
-impl Row {
-    /// Создает новую пустую строку
-    pub fn new() -> Self
-    
-    /// Устанавливает значение для колонки
-    pub fn set(mut self, column: &str, value: Value) -> Self
-    
-    /// Строит финальную строку
-    pub fn build(self) -> Result<Self, RowError>
-    
-    /// Получает значение колонки
-    pub fn get(&self, column: &str) -> Result<&Value, RowError>
-    
-    /// Получает значение колонки с приведением типа
-    pub fn get_as<T>(&self, column: &str) -> Result<T, RowError>
-    where
-        T: TryFrom<Value>,
-        T::Error: Into<RowError>,
-}
-```
-
-## 🔄 Транзакции
 
 ### Transaction
-Интерфейс для работы с транзакциями.
+Represents a database transaction.
 
 ```rust
 pub struct Transaction {
-    // Приватные поля
+    // Private fields
 }
 
 impl Transaction {
-    /// Выполняет SQL запрос в рамках транзакции
-    pub async fn execute(&self, sql: &str, params: &[&dyn ToValue]) -> Result<ExecuteResult, DatabaseError>
+    /// Execute a SQL statement within the transaction
+    pub async fn execute(&self, sql: &str) -> Result<QueryResult, Error>;
     
-    /// Выполняет SELECT запрос в рамках транзакции
-    pub async fn query(&self, sql: &str, params: &[&dyn ToValue]) -> Result<Vec<Row>, DatabaseError>
+    /// Commit the transaction
+    pub async fn commit(self) -> Result<(), Error>;
     
-    /// Подтверждает транзакцию
-    pub async fn commit(self) -> Result<(), DatabaseError>
+    /// Rollback the transaction
+    pub async fn rollback(self) -> Result<(), Error>;
     
-    /// Откатывает транзакцию
-    pub async fn rollback(self) -> Result<(), DatabaseError>
+    /// Get transaction ID
+    pub fn id(&self) -> TransactionId;
+    
+    /// Get isolation level
+    pub fn isolation_level(&self) -> IsolationLevel;
 }
 ```
 
-### Уровни изоляции
+### QueryResult
+Result of a query execution.
 
 ```rust
-#[derive(Debug, Clone, PartialEq)]
+pub struct QueryResult {
+    pub rows: Vec<Row>,
+    pub columns: Vec<ColumnInfo>,
+    pub affected_rows: usize,
+    pub execution_time: Duration,
+}
+
+pub struct Row {
+    pub values: Vec<Value>,
+}
+
+pub struct ColumnInfo {
+    pub name: String,
+    pub data_type: DataType,
+    pub nullable: bool,
+}
+```
+
+## Database Connection
+
+### Connection Methods
+
+```rust
+// Basic connection
+let db = Database::connect("localhost:8080").await?;
+
+// Connection with configuration
+let config = DatabaseConfig::default()
+    .with_timeout(Duration::from_secs(30))
+    .with_max_connections(100);
+let db = Database::connect_with_config("localhost:8080", config).await?;
+
+// Connection with authentication
+let db = Database::connect("user:password@localhost:8080/database").await?;
+```
+
+### Connection Pool
+
+```rust
+pub struct ConnectionPool {
+    // Private fields
+}
+
+impl ConnectionPool {
+    /// Create a new connection pool
+    pub fn new(config: PoolConfig) -> Self;
+    
+    /// Get a connection from the pool
+    pub async fn get_connection(&self) -> Result<PooledConnection, Error>;
+    
+    /// Get pool statistics
+    pub fn stats(&self) -> PoolStats;
+}
+
+pub struct PooledConnection {
+    connection: Database,
+    pool: Arc<ConnectionPool>,
+}
+
+impl Drop for PooledConnection {
+    fn drop(&mut self) {
+        // Return connection to pool
+    }
+}
+```
+
+## Transaction Management
+
+### Isolation Levels
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IsolationLevel {
-    /// Чтение незафиксированных данных
     ReadUncommitted,
-    /// Чтение зафиксированных данных
     ReadCommitted,
-    /// Повторяемое чтение
     RepeatableRead,
-    /// Сериализуемость
     Serializable,
 }
 ```
 
-## 🗂️ Индексы
-
-### IndexType
-Типы поддерживаемых индексов.
+### Transaction Operations
 
 ```rust
-#[derive(Debug, Clone, PartialEq)]
-pub enum IndexType {
-    /// B+ дерево (по умолчанию)
-    BTree,
-    /// Хеш-индекс
-    Hash,
-    /// Полнотекстовый индекс
-    FullText,
-    /// Пространственный индекс
-    Spatial,
+// Begin transaction with specific isolation level
+let tx = db.begin_transaction(IsolationLevel::ReadCommitted).await?;
+
+// Execute operations within transaction
+tx.execute("INSERT INTO users (name) VALUES ('John')").await?;
+tx.execute("UPDATE accounts SET balance = balance - 100").await?;
+
+// Commit or rollback
+match some_condition {
+    true => tx.commit().await?,
+    false => tx.rollback().await?,
 }
 ```
 
-### IndexStatistics
-Статистика использования индекса.
+### Savepoints
 
 ```rust
-pub struct IndexStatistics {
-    /// Количество использований индекса
-    pub usage_count: u64,
-    /// Селективность индекса (0.0 - 1.0)
-    pub selectivity: f64,
-    /// Размер индекса в байтах
-    pub size_bytes: u64,
-    /// Количество страниц в индексе
-    pub page_count: u32,
-}
-```
-
-## 🔐 Управление пользователями
-
-### User
-Информация о пользователе.
-
-```rust
-pub struct User {
-    pub username: String,
-    pub password_hash: String,
-    pub role: UserRole,
-    pub created_at: DateTime<Utc>,
-    pub last_login: Option<DateTime<Utc>>,
-    pub is_active: bool,
-}
-
-impl User {
-    /// Создает нового пользователя
-    pub fn new(username: &str) -> Self
+impl Transaction {
+    /// Create a savepoint
+    pub async fn create_savepoint(&self, name: &str) -> Result<(), Error>;
     
-    /// Устанавливает пароль
-    pub fn with_password(mut self, password: &str) -> Self
+    /// Rollback to a savepoint
+    pub async fn rollback_to_savepoint(&self, name: &str) -> Result<(), Error>;
     
-    /// Устанавливает роль
-    pub fn with_role(mut self, role: UserRole) -> Self
+    /// Release a savepoint
+    pub async fn release_savepoint(&self, name: &str) -> Result<(), Error>;
+}
+
+// Example usage
+let tx = db.begin_transaction(IsolationLevel::ReadCommitted).await?;
+tx.execute("INSERT INTO users (name) VALUES ('John')").await?;
+tx.create_savepoint("after_insert").await?;
+
+tx.execute("UPDATE accounts SET balance = balance - 100").await?;
+if some_error_condition {
+    tx.rollback_to_savepoint("after_insert").await?;
+}
+tx.commit().await?;
+```
+
+## Query Execution
+
+### Basic Query Execution
+
+```rust
+// Execute a SELECT query
+let result = db.execute("SELECT * FROM users WHERE age > 18").await?;
+for row in result.rows {
+    let name: String = row.get("name")?;
+    let age: i32 = row.get("age")?;
+    println!("Name: {}, Age: {}", name, age);
+}
+
+// Execute an INSERT query
+let result = db.execute("INSERT INTO users (name, age) VALUES ('John', 25)").await?;
+println!("Inserted {} rows", result.affected_rows);
+
+// Execute an UPDATE query
+let result = db.execute("UPDATE users SET age = 26 WHERE name = 'John'").await?;
+println!("Updated {} rows", result.affected_rows);
+```
+
+### Prepared Statements
+
+```rust
+pub struct PreparedStatement {
+    // Private fields
+}
+
+impl Database {
+    /// Prepare a SQL statement
+    pub async fn prepare(&self, sql: &str) -> Result<PreparedStatement, Error>;
+}
+
+// Example usage
+let stmt = db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").await?;
+let result = db.execute_prepared(&stmt, &[Value::String("John".to_string()), Value::Integer(25)]).await?;
+```
+
+### Batch Operations
+
+```rust
+impl Database {
+    /// Execute multiple statements in a batch
+    pub async fn execute_batch(&self, statements: &[String]) -> Result<Vec<QueryResult>, Error>;
     
-    /// Строит финального пользователя
-    pub fn build(self) -> Result<Self, UserError>
+    /// Execute a batch with parameters
+    pub async fn execute_batch_prepared(
+        &self, 
+        stmt: &PreparedStatement, 
+        param_sets: &[Vec<Value>]
+    ) -> Result<Vec<QueryResult>, Error>;
 }
+
+// Example usage
+let statements = vec![
+    "INSERT INTO users (name) VALUES ('John')".to_string(),
+    "INSERT INTO users (name) VALUES ('Jane')".to_string(),
+    "INSERT INTO users (name) VALUES ('Bob')".to_string(),
+];
+let results = db.execute_batch(&statements).await?;
 ```
 
-### UserRole
-Роли пользователей.
+## Storage Layer
+
+### Page Manager
 
 ```rust
-#[derive(Debug, Clone, PartialEq)]
-pub enum UserRole {
-    /// Администратор
-    Administrator,
-    /// Обычный пользователь
-    Regular,
-    /// Пользователь только для чтения
-    ReadOnly,
-    /// Пользователь для разработки
-    Developer,
-}
-```
-
-### Permission
-Права доступа.
-
-```rust
-#[derive(Debug, Clone, PartialEq)]
-pub enum Permission {
-    /// Чтение данных
-    Select,
-    /// Вставка данных
-    Insert,
-    /// Обновление данных
-    Update,
-    /// Удаление данных
-    Delete,
-    /// Создание таблиц
-    Create,
-    /// Удаление таблиц
-    Drop,
-    /// Создание индексов
-    CreateIndex,
-    /// Удаление индексов
-    DropIndex,
-    /// Выполнение транзакций
-    Execute,
-}
-```
-
-### PermissionLevel
-Уровни прав доступа.
-
-```rust
-#[derive(Debug, Clone, PartialEq)]
-pub enum PermissionLevel {
-    /// Права на уровне базы данных
-    Database,
-    /// Права на уровне схемы
-    Schema,
-    /// Права на уровне таблицы
-    Table,
-    /// Права на уровне колонки
-    Column,
-}
-```
-
-## 📊 Мониторинг и метрики
-
-### PerformanceMetrics
-Метрики производительности.
-
-```rust
-pub struct PerformanceMetrics {
-    /// Количество активных соединений
-    pub active_connections: u32,
-    /// Запросов в секунду
-    pub queries_per_second: f64,
-    /// Среднее время выполнения запроса
-    pub avg_query_time: Duration,
-    /// Hit ratio буфера (0.0 - 1.0)
-    pub buffer_hit_ratio: f64,
-    /// Количество транзакций в секунду
-    pub transactions_per_second: f64,
-    /// Размер буфера в байтах
-    pub buffer_size_bytes: u64,
-    /// Количество страниц в буфере
-    pub buffer_page_count: u32,
-}
-```
-
-### TableStatistics
-Статистика таблицы.
-
-```rust
-pub struct TableStatistics {
-    /// Количество строк в таблице
-    pub row_count: u64,
-    /// Размер таблицы в байтах
-    pub size_bytes: u64,
-    /// Количество страниц в таблице
-    pub page_count: u32,
-    /// Время последнего обновления статистики
-    pub last_analyzed: DateTime<Utc>,
-    /// Средний размер строки в байтах
-    pub avg_row_size: u32,
-}
-```
-
-## 🧪 Тестирование
-
-### TestDatabase
-Утилита для тестирования.
-
-```rust
-pub struct TestDatabase {
-    // Приватные поля
+pub struct PageManager {
+    // Private fields
 }
 
-impl TestDatabase {
-    /// Создает новую тестовую базу данных
-    pub async fn new() -> Self
+impl PageManager {
+    /// Create a new page manager
+    pub fn new(config: PageManagerConfig) -> Self;
     
-    /// Создает тестовую базу данных с определенной схемой
-    pub async fn with_schema(schema: &str) -> Self
+    /// Read a page
+    pub async fn read_page(&self, page_id: PageId) -> Result<Page, Error>;
     
-    /// Очищает все данные
-    pub async fn clear(&self) -> Result<(), DatabaseError>
+    /// Write a page
+    pub async fn write_page(&self, page: &Page) -> Result<(), Error>;
     
-    /// Уничтожает тестовую базу данных
-    pub async fn destroy(self) -> Result<(), DatabaseError>
+    /// Allocate a new page
+    pub async fn allocate_page(&self) -> Result<PageId, Error>;
+    
+    /// Deallocate a page
+    pub async fn deallocate_page(&self, page_id: PageId) -> Result<(), Error>;
 }
 ```
 
-## 🔧 Конфигурация
-
-### ConnectionConfig
-Конфигурация подключения.
+### Buffer Manager
 
 ```rust
-pub struct ConnectionConfig {
-    pub host: String,
-    pub port: u16,
-    pub database: String,
-    pub username: String,
-    pub password: String,
-    pub max_connections: u32,
+pub struct BufferManager {
+    // Private fields
+}
+
+impl BufferManager {
+    /// Create a new buffer manager
+    pub fn new(config: BufferConfig) -> Self;
+    
+    /// Pin a page in the buffer pool
+    pub async fn pin_page(&self, page_id: PageId) -> Result<PageRef, Error>;
+    
+    /// Unpin a page
+    pub async fn unpin_page(&self, page_id: PageId) -> Result<(), Error>;
+    
+    /// Flush dirty pages to disk
+    pub async fn flush_pages(&self) -> Result<(), Error>;
+    
+    /// Get buffer pool statistics
+    pub fn get_stats(&self) -> BufferStats;
+}
+```
+
+### Index Management
+
+```rust
+pub struct IndexManager {
+    // Private fields
+}
+
+impl IndexManager {
+    /// Create a new index
+    pub async fn create_index(
+        &self, 
+        table_name: &str, 
+        columns: &[String], 
+        index_type: IndexType
+    ) -> Result<IndexId, Error>;
+    
+    /// Drop an index
+    pub async fn drop_index(&self, index_id: IndexId) -> Result<(), Error>;
+    
+    /// Insert a key-value pair into an index
+    pub async fn insert(&self, index_id: IndexId, key: &Value, value: &Value) -> Result<(), Error>;
+    
+    /// Delete a key from an index
+    pub async fn delete(&self, index_id: IndexId, key: &Value) -> Result<(), Error>;
+    
+    /// Search for a key in an index
+    pub async fn search(&self, index_id: IndexId, key: &Value) -> Result<Option<Value>, Error>;
+    
+    /// Range scan on an index
+    pub async fn range_scan(
+        &self, 
+        index_id: IndexId, 
+        start: &Value, 
+        end: &Value
+    ) -> Result<IndexIterator, Error>;
+}
+```
+
+## Logging and Recovery
+
+### Write-Ahead Log (WAL)
+
+```rust
+pub struct WriteAheadLog {
+    // Private fields
+}
+
+impl WriteAheadLog {
+    /// Create a new WAL
+    pub fn new(config: WalConfig) -> Self;
+    
+    /// Write a log record
+    pub async fn write_record(&self, record: LogRecord) -> Result<LogSequenceNumber, Error>;
+    
+    /// Flush log to disk
+    pub async fn flush(&self) -> Result<(), Error>;
+    
+    /// Read log records from a specific LSN
+    pub async fn read_from(&self, lsn: LogSequenceNumber) -> Result<LogIterator, Error>;
+    
+    /// Get current LSN
+    pub fn current_lsn(&self) -> LogSequenceNumber;
+}
+```
+
+### Recovery Manager
+
+```rust
+pub struct RecoveryManager {
+    // Private fields
+}
+
+impl RecoveryManager {
+    /// Create a new recovery manager
+    pub fn new(config: RecoveryConfig) -> Self;
+    
+    /// Perform crash recovery
+    pub async fn recover(&self) -> Result<RecoveryResult, Error>;
+    
+    /// Create a checkpoint
+    pub async fn checkpoint(&self) -> Result<(), Error>;
+    
+    /// Get recovery statistics
+    pub fn get_stats(&self) -> RecoveryStats;
+}
+```
+
+### Log Record Types
+
+```rust
+#[derive(Debug, Clone)]
+pub enum LogRecordType {
+    BeginTransaction { transaction_id: TransactionId },
+    CommitTransaction { transaction_id: TransactionId },
+    AbortTransaction { transaction_id: TransactionId },
+    Insert { table_id: TableId, row_id: RowId, data: Vec<u8> },
+    Update { table_id: TableId, row_id: RowId, old_data: Vec<u8>, new_data: Vec<u8> },
+    Delete { table_id: TableId, row_id: RowId, data: Vec<u8> },
+    Checkpoint { lsn: LogSequenceNumber },
+}
+
+#[derive(Debug, Clone)]
+pub struct LogRecord {
+    pub lsn: LogSequenceNumber,
+    pub transaction_id: TransactionId,
+    pub record_type: LogRecordType,
+    pub timestamp: SystemTime,
+}
+```
+
+## Concurrency Control
+
+### Lock Manager
+
+```rust
+pub struct LockManager {
+    // Private fields
+}
+
+impl LockManager {
+    /// Create a new lock manager
+    pub fn new(config: LockConfig) -> Self;
+    
+    /// Acquire a lock
+    pub async fn acquire_lock(
+        &self, 
+        transaction_id: TransactionId, 
+        resource: ResourceId, 
+        lock_mode: LockMode
+    ) -> Result<(), Error>;
+    
+    /// Release a lock
+    pub async fn release_lock(
+        &self, 
+        transaction_id: TransactionId, 
+        resource: ResourceId
+    ) -> Result<(), Error>;
+    
+    /// Release all locks for a transaction
+    pub async fn release_all_locks(&self, transaction_id: TransactionId) -> Result<(), Error>;
+    
+    /// Check for deadlocks
+    pub async fn detect_deadlock(&self) -> Result<Option<Vec<TransactionId>>, Error>;
+}
+```
+
+### Lock Modes
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockMode {
+    Shared,
+    Exclusive,
+    IntentionShared,
+    IntentionExclusive,
+    SharedIntentionExclusive,
+}
+```
+
+### MVCC (Multi-Version Concurrency Control)
+
+```rust
+pub struct MVCCManager {
+    // Private fields
+}
+
+impl MVCCManager {
+    /// Create a new MVCC manager
+    pub fn new(config: MVCCConfig) -> Self;
+    
+    /// Create a new version of a row
+    pub async fn create_version(
+        &self, 
+        table_id: TableId, 
+        row_id: RowId, 
+        data: Vec<u8>
+    ) -> Result<VersionId, Error>;
+    
+    /// Get the visible version of a row for a transaction
+    pub async fn get_visible_version(
+        &self, 
+        table_id: TableId, 
+        row_id: RowId, 
+        transaction_id: TransactionId
+    ) -> Result<Option<Version>, Error>;
+    
+    /// Clean up old versions
+    pub async fn vacuum(&self, min_transaction_id: TransactionId) -> Result<(), Error>;
+}
+```
+
+## Debugging and Profiling
+
+### Debug Logger
+
+```rust
+pub struct DebugLogger {
+    // Private fields
+}
+
+impl DebugLogger {
+    /// Create a new debug logger
+    pub fn new(config: DebugLoggerConfig) -> Self;
+    
+    /// Log a debug message
+    pub fn log(&self, level: LogLevel, category: LogCategory, message: &str);
+    
+    /// Log with additional data
+    pub fn log_with_data(
+        &self, 
+        level: LogLevel, 
+        category: LogCategory, 
+        message: &str, 
+        data: &[u8]
+    );
+    
+    /// Get log entries
+    pub fn get_entries(&self, filter: LogFilter) -> Vec<LogEntry>;
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum LogCategory {
+    Transaction,
+    Query,
+    Storage,
+    Network,
+    Concurrency,
+    Recovery,
+}
+```
+
+### Query Tracer
+
+```rust
+pub struct QueryTracer {
+    // Private fields
+}
+
+impl QueryTracer {
+    /// Create a new query tracer
+    pub fn new(config: QueryTracerConfig) -> Self;
+    
+    /// Start tracing a query
+    pub fn start_query(&self, query_id: QueryId, sql: &str) -> QueryTrace;
+    
+    /// Add an event to a query trace
+    pub fn add_event(&self, trace: &mut QueryTrace, event: QueryEvent);
+    
+    /// Complete a query trace
+    pub fn complete_query(&self, trace: &mut QueryTrace, status: QueryStatus);
+    
+    /// Get query statistics
+    pub fn get_stats(&self) -> QueryStats;
+}
+```
+
+### Profiler
+
+```rust
+pub struct Profiler {
+    // Private fields
+}
+
+impl Profiler {
+    /// Create a new profiler
+    pub fn new(config: ProfilerConfig) -> Self;
+    
+    /// Start profiling
+    pub fn start(&self);
+    
+    /// Stop profiling
+    pub fn stop(&self);
+    
+    /// Take a performance snapshot
+    pub fn take_snapshot(&self) -> PerformanceSnapshot;
+    
+    /// Get performance statistics
+    pub fn get_stats(&self) -> ProfilerStats;
+    
+    /// Analyze performance trends
+    pub fn analyze_trends(&self, duration: Duration) -> TrendAnalysis;
+}
+```
+
+### Performance Analyzer
+
+```rust
+pub struct PerformanceAnalyzer {
+    // Private fields
+}
+
+impl PerformanceAnalyzer {
+    /// Create a new performance analyzer
+    pub fn new(config: PerformanceAnalyzerConfig) -> Self;
+    
+    /// Analyze performance metrics
+    pub fn analyze_metrics(&self, metrics: &[PerformanceMetric]) -> AnalysisResult;
+    
+    /// Detect bottlenecks
+    pub fn detect_bottlenecks(&self, metrics: &[PerformanceMetric]) -> Vec<Bottleneck>;
+    
+    /// Generate recommendations
+    pub fn generate_recommendations(&self, bottlenecks: &[Bottleneck]) -> Vec<String>;
+}
+```
+
+## Error Handling
+
+### Error Types
+
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Connection error: {0}")]
+    Connection(String),
+    
+    #[error("SQL parsing error: {0}")]
+    SqlParsing(String),
+    
+    #[error("Execution error: {0}")]
+    Execution(String),
+    
+    #[error("Transaction error: {0}")]
+    Transaction(String),
+    
+    #[error("Lock timeout: {0}")]
+    LockTimeout(String),
+    
+    #[error("Deadlock detected: {0}")]
+    Deadlock(String),
+    
+    #[error("Storage error: {0}")]
+    Storage(String),
+    
+    #[error("Recovery error: {0}")]
+    Recovery(String),
+    
+    #[error("Configuration error: {0}")]
+    Configuration(String),
+    
+    #[error("Internal error: {0}")]
+    Internal(String),
+}
+```
+
+### Result Type
+
+```rust
+pub type Result<T> = std::result::Result<T, Error>;
+```
+
+### Error Handling Examples
+
+```rust
+// Basic error handling
+match db.execute("SELECT * FROM users").await {
+    Ok(result) => {
+        println!("Query executed successfully: {} rows", result.rows.len());
+    }
+    Err(Error::SqlParsing(msg)) => {
+        eprintln!("SQL parsing error: {}", msg);
+    }
+    Err(Error::Execution(msg)) => {
+        eprintln!("Execution error: {}", msg);
+    }
+    Err(e) => {
+        eprintln!("Unexpected error: {}", e);
+    }
+}
+
+// Using ? operator
+let result = db.execute("SELECT * FROM users").await?;
+println!("Found {} users", result.rows.len());
+```
+
+## Configuration
+
+### Database Configuration
+
+```rust
+#[derive(Debug, Clone)]
+pub struct DatabaseConfig {
+    pub name: String,
+    pub data_directory: PathBuf,
+    pub max_connections: usize,
     pub connection_timeout: Duration,
-    pub idle_timeout: Duration,
-    pub ssl_mode: SslMode,
+    pub query_timeout: Duration,
+    pub storage: StorageConfig,
+    pub logging: LoggingConfig,
+    pub network: NetworkConfig,
+    pub performance: PerformanceConfig,
 }
 
-impl ConnectionConfig {
-    /// Создает новую конфигурацию
-    pub fn new() -> Self
-    
-    /// Устанавливает хост
-    pub fn host(mut self, host: &str) -> Self
-    
-    /// Устанавливает порт
-    pub fn port(mut self, port: u16) -> Self
-    
-    /// Устанавливает имя базы данных
-    pub fn database(mut self, database: &str) -> Self
-    
-    /// Устанавливает имя пользователя
-    pub fn username(mut self, username: &str) -> Self
-    
-    /// Устанавливает пароль
-    pub fn password(mut self, password: &str) -> Self
-    
-    /// Устанавливает максимальное количество соединений
-    pub fn max_connections(mut self, max_connections: u32) -> Self
-    
-    /// Устанавливает таймаут подключения
-    pub fn connection_timeout(mut self, timeout: Duration) -> Self
-    
-    /// Устанавливает таймаут простоя
-    pub fn idle_timeout(mut self, timeout: Duration) -> Self
-    
-    /// Устанавливает режим SSL
-    pub fn ssl_mode(mut self, ssl_mode: SslMode) -> Self
-    
-    /// Строит финальную конфигурацию
-    pub fn build(self) -> Result<Self, ConfigError>
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            name: "rustdb".to_string(),
+            data_directory: PathBuf::from("./data"),
+            max_connections: 100,
+            connection_timeout: Duration::from_secs(30),
+            query_timeout: Duration::from_secs(60),
+            storage: StorageConfig::default(),
+            logging: LoggingConfig::default(),
+            network: NetworkConfig::default(),
+            performance: PerformanceConfig::default(),
+        }
+    }
 }
 ```
 
-### SslMode
-Режимы SSL подключения.
+### Storage Configuration
 
 ```rust
-#[derive(Debug, Clone, PartialEq)]
-pub enum SslMode {
-    /// SSL отключен
-    Disable,
-    /// SSL разрешен
-    Allow,
-    /// SSL предпочтителен
-    Prefer,
-    /// SSL обязателен
-    Require,
-    /// SSL обязателен с проверкой сертификата
-    VerifyCa,
-    /// SSL обязателен с полной проверкой
-    VerifyFull,
+#[derive(Debug, Clone)]
+pub struct StorageConfig {
+    pub page_size: usize,
+    pub buffer_pool_size: usize,
+    pub checkpoint_interval: Duration,
+    pub wal_enabled: bool,
+    pub compression_enabled: bool,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            page_size: 8192,
+            buffer_pool_size: 1000,
+            checkpoint_interval: Duration::from_secs(300),
+            wal_enabled: true,
+            compression_enabled: false,
+        }
+    }
 }
 ```
 
-### LogConfig
-Конфигурация логирования.
+### Performance Configuration
 
 ```rust
-pub struct LogConfig {
-    pub level: LogLevel,
-    pub file: Option<String>,
-    pub max_size: u64,
-    pub max_files: u32,
-    pub format: LogFormat,
+#[derive(Debug, Clone)]
+pub struct PerformanceConfig {
+    pub lock_timeout: Duration,
+    pub deadlock_detection_interval: Duration,
+    pub max_query_plan_cache_size: usize,
+    pub enable_query_optimization: bool,
+    pub enable_parallel_execution: bool,
 }
 
-impl LogConfig {
-    /// Создает новую конфигурацию логирования
-    pub fn new() -> Self
-    
-    /// Устанавливает уровень логирования
-    pub fn level(mut self, level: LogLevel) -> Self
-    
-    /// Устанавливает файл для логирования
-    pub fn file(mut self, file: &str) -> Self
-    
-    /// Устанавливает максимальный размер файла
-    pub fn max_size(mut self, size: u64) -> Self
-    
-    /// Устанавливает максимальное количество файлов
-    pub fn max_files(mut self, count: u32) -> Self
-    
-    /// Устанавливает формат логирования
-    pub fn format(mut self, format: LogFormat) -> Self
-    
-    /// Строит финальную конфигурацию
-    pub fn build(self) -> Result<Self, ConfigError>
+impl Default for PerformanceConfig {
+    fn default() -> Self {
+        Self {
+            lock_timeout: Duration::from_secs(10),
+            deadlock_detection_interval: Duration::from_millis(1000),
+            max_query_plan_cache_size: 1000,
+            enable_query_optimization: true,
+            enable_parallel_execution: true,
+        }
+    }
 }
 ```
 
-### LogLevel
-Уровни логирования.
+### Configuration Loading
 
 ```rust
-#[derive(Debug, Clone, PartialEq)]
-pub enum LogLevel {
-    /// Трассировка
-    Trace,
-    /// Отладка
-    Debug,
-    /// Информация
-    Info,
-    /// Предупреждение
-    Warn,
-    /// Ошибка
-    Error,
+impl DatabaseConfig {
+    /// Load configuration from TOML file
+    pub fn from_file(path: &Path) -> Result<Self, Error>;
+    
+    /// Load configuration from environment variables
+    pub fn from_env() -> Result<Self, Error>;
+    
+    /// Merge with another configuration
+    pub fn merge(self, other: Self) -> Self;
+    
+    /// Validate configuration
+    pub fn validate(&self) -> Result<(), Error>;
 }
 ```
 
-### LogFormat
-Форматы логирования.
+## Examples
+
+### Complete Application Example
 
 ```rust
-#[derive(Debug, Clone, PartialEq)]
-pub enum LogFormat {
-    /// Простой текстовый формат
-    Simple,
-    /// JSON формат
-    Json,
-    /// Структурированный формат
-    Structured,
-}
-```
-
-## 🚨 Обработка ошибок
-
-### DatabaseError
-Основной тип ошибок базы данных.
-
-```rust
-#[derive(Error, Debug)]
-pub enum DatabaseError {
-    #[error("Ошибка подключения: {message}")]
-    ConnectionError { message: String },
-    
-    #[error("Ошибка SQL: {sql}, детали: {details}")]
-    SqlError { sql: String, details: String },
-    
-    #[error("Ошибка транзакции: {0}")]
-    TransactionError(#[from] TransactionError),
-    
-    #[error("Ошибка схемы: {0}")]
-    SchemaError(#[from] SchemaError),
-    
-    #[error("Ошибка ввода-вывода: {0}")]
-    IoError(#[from] std::io::Error),
-    
-    #[error("Ошибка аутентификации: {message}")]
-    AuthenticationError { message: String },
-    
-    #[error("Ошибка авторизации: {message}")]
-    AuthorizationError { message: String },
-    
-    #[error("Ошибка блокировки: {message}")]
-    LockError { message: String },
-    
-    #[error("Ошибка индекса: {message}")]
-    IndexError { message: String },
-    
-    #[error("Ошибка пользователя: {0}")]
-    UserError(#[from] UserError),
-    
-    #[error("Ошибка конфигурации: {0}")]
-    ConfigError(#[from] ConfigError),
-    
-    #[error("Ошибка строки: {0}")]
-    RowError(#[from] RowError),
-}
-```
-
-### Специфические ошибки
-
-```rust
-#[derive(Error, Debug)]
-pub enum TransactionError {
-    #[error("Транзакция уже завершена")]
-    AlreadyCommitted,
-    #[error("Транзакция уже откачена")]
-    AlreadyRolledBack,
-    #[error("Deadlock обнаружен")]
-    DeadlockDetected,
-    #[error("Таймаут транзакции")]
-    Timeout,
-}
-
-#[derive(Error, Debug)]
-pub enum SchemaError {
-    #[error("Таблица уже существует: {table}")]
-    TableAlreadyExists { table: String },
-    #[error("Таблица не найдена: {table}")]
-    TableNotFound { table: String },
-    #[error("Колонка уже существует: {table}.{column}")]
-    ColumnAlreadyExists { table: String, column: String },
-    #[error("Колонка не найдена: {table}.{column}")]
-    ColumnNotFound { table: String, column: String },
-    #[error("Неверный тип данных: {expected}, получен {actual}")]
-    InvalidDataType { expected: String, actual: String },
-}
-
-#[derive(Error, Debug)]
-pub enum UserError {
-    #[error("Пользователь уже существует: {username}")]
-    UserAlreadyExists { username: String },
-    #[error("Пользователь не найден: {username}")]
-    UserNotFound { username: String },
-    #[error("Неверный пароль для пользователя: {username}")]
-    InvalidPassword { username: String },
-    #[error("Пользователь неактивен: {username}")]
-    UserInactive { username: String },
-}
-```
-
-## 📝 Примеры использования
-
-### Создание и настройка базы данных
-
-```rust
-use rustbd::{Database, ConnectionConfig, LogConfig, LogLevel};
+use rustdb::{Database, DatabaseConfig, IsolationLevel};
+use tokio;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Настройка логирования
-    let log_config = LogConfig::new()
-        .level(LogLevel::Info)
-        .file("rustbd.log")
-        .max_size(100 * 1024 * 1024)
-        .max_files(5)
-        .build()?;
+    // Load configuration
+    let config = DatabaseConfig::from_file("config.toml")?;
     
-    rustbd::init_logging(log_config)?;
+    // Connect to database
+    let db = Database::connect_with_config("localhost:8080", config).await?;
     
-    // Конфигурация подключения
-    let config = ConnectionConfig::new()
-        .host("localhost")
-        .port(5432)
-        .database("mydb")
-        .username("myuser")
-        .password("mypassword")
-        .max_connections(20)
-        .connection_timeout(Duration::from_secs(30))
-        .idle_timeout(Duration::from_secs(300))
-        .build()?;
+    // Create tables
+    db.execute("CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        email VARCHAR(255) UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )").await?;
     
-    // Подключение к базе данных
-    let db = Database::connect_with_config(&config).await?;
+    // Insert data with transaction
+    let tx = db.begin_transaction(IsolationLevel::ReadCommitted).await?;
+    tx.execute("INSERT INTO users (name, email) VALUES ('John Doe', 'john@example.com')").await?;
+    tx.execute("INSERT INTO users (name, email) VALUES ('Jane Smith', 'jane@example.com')").await?;
+    tx.commit().await?;
     
-    println!("Подключение к базе данных установлено!");
-    
-    Ok(())
-}
-```
-
-### Работа с транзакциями
-
-```rust
-use rustbd::Database;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db = Database::connect("localhost:5432").await?;
-    
-    // Начало транзакции
-    let transaction = db.begin_transaction().await?;
-    
-    // Выполнение операций
-    transaction.execute("INSERT INTO users (username, email) VALUES (?, ?)", &["user1", "user1@example.com"]).await?;
-    transaction.execute("INSERT INTO users (username, email) VALUES (?, ?)", &["user2", "user2@example.com"]).await?;
-    
-    // Проверка результатов
-    let users = transaction.query("SELECT * FROM users WHERE username IN (?, ?)", &["user1", "user2"]).await?;
-    
-    if users.len() == 2 {
-        transaction.commit().await?;
-        println!("Транзакция выполнена успешно!");
-    } else {
-        transaction.rollback().await?;
-        println!("Транзакция отменена!");
+    // Query data
+    let result = db.execute("SELECT * FROM users ORDER BY name").await?;
+    for row in result.rows {
+        let id: i32 = row.get("id")?;
+        let name: String = row.get("name")?;
+        let email: String = row.get("email")?;
+        println!("ID: {}, Name: {}, Email: {}", id, name, email);
     }
     
+    // Get database statistics
+    let stats = db.get_stats().await?;
+    println!("Database statistics: {:?}", stats);
+    
     Ok(())
 }
 ```
 
-### Управление пользователями и правами
+### Advanced Transaction Example
 
 ```rust
-use rustbd::{Database, User, UserRole, Permission, PermissionLevel};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db = Database::connect("localhost:5432").await?;
+async fn transfer_money(
+    db: &Database, 
+    from_account: i32, 
+    to_account: i32, 
+    amount: f64
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tx = db.begin_transaction(IsolationLevel::Serializable).await?;
     
-    // Создание пользователя
-    let user = User::new("new_user")
-        .with_password("secure_password")
-        .with_role(UserRole::Regular)
-        .build()?;
+    // Check sender balance
+    let result = tx.execute(&format!(
+        "SELECT balance FROM accounts WHERE id = {}", from_account
+    )).await?;
     
-    db.create_user(&user).await?;
+    if result.rows.is_empty() {
+        tx.rollback().await?;
+        return Err("Sender account not found".into());
+    }
     
-    // Назначение прав
-    db.grant_permission("new_user", "users", Permission::Select, PermissionLevel::Table).await?;
-    db.grant_permission("new_user", "users", Permission::Insert, PermissionLevel::Table).await?;
+    let current_balance: f64 = result.rows[0].get("balance")?;
+    if current_balance < amount {
+        tx.rollback().await?;
+        return Err("Insufficient funds".into());
+    }
     
-    println!("Пользователь создан и права назначены!");
+    // Deduct from sender
+    tx.execute(&format!(
+        "UPDATE accounts SET balance = balance - {} WHERE id = {}", 
+        amount, from_account
+    )).await?;
     
+    // Add to receiver
+    tx.execute(&format!(
+        "UPDATE accounts SET balance = balance + {} WHERE id = {}", 
+        amount, to_account
+    )).await?;
+    
+    // Record transaction
+    tx.execute(&format!(
+        "INSERT INTO transactions (from_account, to_account, amount, timestamp) 
+         VALUES ({}, {}, {}, CURRENT_TIMESTAMP)", 
+        from_account, to_account, amount
+    )).await?;
+    
+    tx.commit().await?;
     Ok(())
 }
 ```
 
-## 🔗 Дополнительные ресурсы
-
-- [Примеры использования](EXAMPLES.md)
-- [Стандарты кодирования](CODING_STANDARDS.md)
-- [Архитектура системы](ARCHITECTURE.md)
-- [Руководство по разработке](DEVELOPMENT.md)
-- [Руководство по вкладу](CONTRIBUTING.md)
-
-Для получения дополнительной информации или помощи обратитесь к документации проекта или создайте issue в репозитории.
+This API reference provides comprehensive documentation for all major components of RustDB. For more detailed information about specific modules, refer to the inline documentation generated by `cargo doc`.

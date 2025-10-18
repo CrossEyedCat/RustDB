@@ -1,4 +1,4 @@
-//! Утилиты для RustBD
+//! Утилиты для rustdb
 
 use crate::common::constants::*;
 use std::collections::hash_map::DefaultHasher;

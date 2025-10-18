@@ -1,4 +1,4 @@
-//! Система записи логов в файл для RustBD
+//! Система записи логов в файл для rustdb
 //!
 //! Этот модуль реализует буферизованную запись лог-записей в файл
 //! с использованием оптимизированного I/O:
@@ -282,7 +282,7 @@ impl LogWriter {
         let statistics = self.statistics.clone();
         let current_file = self.current_file.clone();
         let log_files = self.log_files.clone();
-        let semaphore = self.semaphore.clone();
+        let _semaphore = self.semaphore.clone();
         let io_manager = self.io_manager.clone();
 
         // Задача обработки запросов на запись

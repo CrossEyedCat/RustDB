@@ -1,4 +1,4 @@
-//! Система логирования RustBD
+//! Система логирования rustdb
 //!
 //! Этот модуль содержит полную систему логирования для базы данных:
 //! - Write-Ahead Logging (WAL) для обеспечения ACID свойств
@@ -15,6 +15,9 @@ pub mod recovery;
 pub mod checkpoint;
 pub mod compaction;
 pub mod metrics;
+
+#[cfg(test)]
+pub mod tests;
 
 
 

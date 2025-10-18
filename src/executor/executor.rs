@@ -1,4 +1,4 @@
-//! Исполнитель запросов для RustBD
+//! Исполнитель запросов для rustdb
 
 use crate::common::{Error, Result};
 

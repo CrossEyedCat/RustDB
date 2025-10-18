@@ -1,4 +1,4 @@
-//! Результаты запросов для RustBD
+//! Результаты запросов для rustdb
 
 use crate::common::{Error, Result};
 

@@ -330,7 +330,7 @@ mod tests {
 
         // Выделяем страницы
         let page_id = manager.allocate_pages(file_id, 5).await?;
-        assert_eq!(page_id, 0);
+        assert_eq!(page_id, 1); // Страницы начинаются с 1
 
         // Записываем данные
         let test_data = vec![42u8; BLOCK_SIZE];

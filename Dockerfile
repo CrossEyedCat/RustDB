@@ -1,39 +1,34 @@
-# Многоэтапная сборка для оптимизации размера образа
-
-# Этап сборки
+# Многоэтапная сборка для RustDB
 FROM rust:1.75-slim as builder
 
-# Установка зависимостей для сборки
+# Установка системных зависимостей
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Создание рабочей директории
 WORKDIR /app
 
-# Копирование файлов конфигурации для кэширования зависимостей
+# Копирование файлов зависимостей
 COPY Cargo.toml Cargo.lock ./
 
-# Создание пустого проекта для кэширования зависимостей
-RUN mkdir src && \
-    echo "fn main() {}" > src/main.rs && \
-    echo "" > src/lib.rs
+# Создание фиктивного main.rs для кэширования зависимостей
+RUN mkdir src && echo "fn main() {}" > src/main.rs
 
-# Сборка зависимостей
-RUN cargo build --release && \
-    rm -rf src
+# Сборка зависимостей (кэширование)
+RUN cargo build --release && rm -rf src
 
 # Копирование исходного кода
-COPY src/ src/
-COPY benches/ benches/
+COPY src ./src
+COPY examples ./examples
 
-# Пересборка только нашего кода
-RUN touch src/main.rs && \
-    cargo build --release
+# Сборка приложения
+RUN cargo build --release
 
-# Этап выполнения
-FROM debian:bookworm-slim as runtime
+# Финальный образ
+FROM debian:bookworm-slim
 
 # Установка runtime зависимостей
 RUN apt-get update && apt-get install -y \
@@ -42,41 +37,37 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Создание пользователя для безопасности
-RUN useradd -r -s /bin/false rustbd
+RUN groupadd -r rustdb && useradd -r -g rustdb rustdb
 
-# Создание рабочей директории
-WORKDIR /app
+# Создание директорий
+RUN mkdir -p /app/data /app/logs /app/config && \
+    chown -R rustdb:rustdb /app
 
 # Копирование бинарного файла
-COPY --from=builder /app/target/release/rustbd /usr/local/bin/rustbd
+COPY --from=builder /app/target/release/rustdb /usr/local/bin/rustdb
 
-# Создание директории для данных
-RUN mkdir -p /data && \
-    chown rustbd:rustbd /data
+# Копирование конфигурационных файлов
+COPY config.toml /app/config/
+COPY --chown=rustdb:rustdb . /app/
 
-# Переключение на непривилегированного пользователя
-USER rustbd
+# Переключение на пользователя rustdb
+USER rustdb
 
-# Настройка переменных окружения
+# Рабочая директория
+WORKDIR /app
+
+# Открытие портов
+EXPOSE 8080 8081
+
+# Переменные окружения
 ENV RUST_LOG=info
-ENV RUSTBD_DATA_DIR=/data
+ENV RUSTDB_DATA_DIR=/app/data
+ENV RUSTDB_LOG_DIR=/app/logs
+ENV RUSTDB_CONFIG_DIR=/app/config
 
-# Открытие порта (если будет сетевой интерфейс)
-EXPOSE 5432
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD rustdb --version || exit 1
 
-# Настройка volume для данных
-VOLUME ["/data"]
-
-# Проверка здоровья контейнера
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD rustbd info || exit 1
-
-# Запуск приложения
-ENTRYPOINT ["rustbd"]
-CMD ["--help"]
-
-# Метаданные
-LABEL maintainer="CrossEyedCat"
-LABEL description="RustBD - Реляционная база данных на Rust"
-LABEL version="0.1.0"
-LABEL org.opencontainers.image.source="https://github.com/CrossEyedCat/RustDB"
+# Команда по умолчанию
+CMD ["rustdb", "--config", "/app/config/config.toml"]

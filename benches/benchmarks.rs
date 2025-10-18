@@ -1,7 +1,7 @@
-//! Бенчмарки для RustBD
+//! Бенчмарки для rustdb
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use rustbd::Database;
+use criterion::{criterion_group, criterion_main, Criterion};
+use rustdb::Database;
 
 fn database_creation_benchmark(c: &mut Criterion) {
     c.bench_function("database_creation", |b| {

@@ -1,4 +1,4 @@
-//! Базовые типы данных для RustBD
+//! Базовые типы данных для rustdb
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

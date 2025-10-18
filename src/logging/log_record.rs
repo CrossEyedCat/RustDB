@@ -1,4 +1,4 @@
-//! Структуры лог-записей для системы логирования RustBD
+//! Структуры лог-записей для системы логирования rustdb
 //!
 //! Этот модуль определяет различные типы лог-записей для отслеживания
 //! всех изменений в базе данных:
@@ -19,7 +19,7 @@ pub type LogSequenceNumber = u64;
 pub type TransactionId = u64;
 
 /// Тип лог-записи
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LogRecordType {
     /// Начало транзакции
     TransactionBegin,
@@ -50,7 +50,7 @@ pub enum LogRecordType {
 }
 
 /// Приоритет лог-записи
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum LogPriority {
     /// Низкий приоритет (фоновые операции)
     Low = 0,
@@ -93,7 +93,7 @@ pub struct TransactionOperation {
 }
 
 /// Уровень изоляции транзакции
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum IsolationLevel {
     /// Чтение незафиксированных данных
     ReadUncommitted,
@@ -230,6 +230,7 @@ impl LogRecord {
         );
         record.transaction_id = Some(transaction_id);
         record.priority = LogPriority::High;
+        record.update_size_and_checksum();
         record
     }
 
@@ -394,38 +395,9 @@ impl LogRecord {
         record
     }
 
-    /// Обновляет размер записи и контрольную сумму
-    fn update_size_and_checksum(&mut self) {
-        // Сериализуем запись для вычисления размера
-        if let Ok(serialized) = bincode::serialize(self) {
-            self.record_size = serialized.len() as u32;
-            self.checksum = Self::calculate_checksum(&serialized);
-        }
-    }
 
-    /// Вычисляет контрольную сумму данных
-    fn calculate_checksum(data: &[u8]) -> u32 {
-        // Простая контрольная сумма CRC32
-        let mut checksum = 0u32;
-        for &byte in data {
-            checksum = checksum.wrapping_mul(31).wrapping_add(byte as u32);
-        }
-        checksum
-    }
 
-    /// Проверяет целостность лог-записи
-    pub fn verify_checksum(&self) -> bool {
-        // Создаем копию записи с нулевой контрольной суммой
-        let mut temp_record = self.clone();
-        temp_record.checksum = 0;
-        
-        if let Ok(serialized) = bincode::serialize(&temp_record) {
-            let calculated_checksum = Self::calculate_checksum(&serialized);
-            calculated_checksum == self.checksum
-        } else {
-            false
-        }
-    }
+
 
     /// Возвращает размер записи в байтах
     pub fn size(&self) -> u32 {
@@ -524,6 +496,117 @@ impl LogRecord {
             LogRecordType::FileExtend => "EXTEND FILE".to_string(),
             LogRecordType::MetadataUpdate => "UPDATE METADATA".to_string(),
         }
+    }
+
+    /// Вычисляет размер записи в байтах
+    fn calculate_size(&self) -> u32 {
+        use std::mem::size_of;
+        
+        let base_size = size_of::<LogSequenceNumber>() + 
+                       size_of::<Option<TransactionId>>() +
+                       size_of::<LogRecordType>() +
+                       size_of::<LogPriority>() +
+                       size_of::<u64>() + // timestamp
+                       size_of::<u32>() + // record_size
+                       size_of::<u32>() + // checksum
+                       size_of::<Option<LogSequenceNumber>>(); // prev_lsn
+        
+        let data_size = match &self.operation_data {
+            LogOperationData::Transaction(op) => {
+                size_of::<TransactionOperation>() + 
+                op.dirty_pages.len() * size_of::<(u32, PageId)>() +
+                op.locked_resources.len() * 64 // примерный размер строки
+            },
+            LogOperationData::Record(op) => {
+                size_of::<RecordOperation>() + 
+                op.old_data.as_ref().map(|d| d.len()).unwrap_or(0) +
+                op.new_data.as_ref().map(|d| d.len()).unwrap_or(0)
+            },
+            LogOperationData::Checkpoint(op) => {
+                size_of::<CheckpointOperation>() + 
+                op.active_transactions.len() * size_of::<TransactionId>() +
+                op.dirty_pages.len() * size_of::<(u32, PageId)>()
+            },
+            LogOperationData::File(op) => {
+                size_of::<FileOperation>() + op.filename.len() + 
+                op.parameters.len() * 64 // примерный размер
+            },
+            LogOperationData::Empty => 0,
+            LogOperationData::Raw(data) => data.len(),
+        };
+        
+        let metadata_size = self.metadata.len() * 64; // примерный размер
+        
+        (base_size + data_size + metadata_size) as u32
+    }
+
+    /// Вычисляет контрольную сумму записи
+    fn calculate_checksum(&self) -> u32 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let mut hasher = DefaultHasher::new();
+        
+        // Хешируем все поля кроме checksum
+        self.lsn.hash(&mut hasher);
+        self.transaction_id.hash(&mut hasher);
+        self.record_type.hash(&mut hasher);
+        self.priority.hash(&mut hasher);
+        self.timestamp.hash(&mut hasher);
+        self.record_size.hash(&mut hasher);
+        self.prev_lsn.hash(&mut hasher);
+        
+        // Хешируем данные операции (упрощенно)
+        match &self.operation_data {
+            LogOperationData::Transaction(op) => {
+                op.dirty_pages.hash(&mut hasher);
+                op.locked_resources.hash(&mut hasher);
+                op.start_time.hash(&mut hasher);
+                op.isolation_level.hash(&mut hasher);
+            },
+            LogOperationData::Record(op) => {
+                op.file_id.hash(&mut hasher);
+                op.page_id.hash(&mut hasher);
+                op.record_offset.hash(&mut hasher);
+                op.record_size.hash(&mut hasher);
+                op.old_data.hash(&mut hasher);
+                op.new_data.hash(&mut hasher);
+            },
+            LogOperationData::Checkpoint(op) => {
+                op.checkpoint_id.hash(&mut hasher);
+                op.active_transactions.hash(&mut hasher);
+                op.dirty_pages.hash(&mut hasher);
+                op.last_lsn.hash(&mut hasher);
+                op.timestamp.hash(&mut hasher);
+            },
+            LogOperationData::File(op) => {
+                op.file_id.hash(&mut hasher);
+                op.filename.hash(&mut hasher);
+                op.file_size.hash(&mut hasher);
+                // Хешируем параметры как строки
+                for (key, value) in &op.parameters {
+                    key.hash(&mut hasher);
+                    value.hash(&mut hasher);
+                }
+            },
+            LogOperationData::Empty => {},
+            LogOperationData::Raw(data) => data.hash(&mut hasher),
+        }
+        
+        hasher.finish() as u32
+    }
+
+    /// Обновляет размер и контрольную сумму записи
+    fn update_size_and_checksum(&mut self) {
+        self.record_size = self.calculate_size();
+        self.checksum = self.calculate_checksum();
+    }
+
+    /// Проверяет корректность контрольной суммы
+    pub fn verify_checksum(&self) -> bool {
+        let current_checksum = self.checksum;
+        let calculated_checksum = self.calculate_checksum();
+        current_checksum == calculated_checksum
     }
 }
 

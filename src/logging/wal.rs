@@ -1,4 +1,4 @@
-//! Write-Ahead Logging (WAL) система для RustBD
+//! Write-Ahead Logging (WAL) система для rustdb
 //!
 //! Этот модуль реализует WAL - ключевой компонент для обеспечения ACID свойств:
 //! - Гарантирует, что изменения сначала записываются в лог, затем в данные
@@ -331,6 +331,7 @@ impl WriteAheadLog {
             let mut stats = self.statistics.write().unwrap();
             stats.total_transactions += 1;
             stats.active_transactions += 1;
+            stats.total_log_records += 1; // Считаем запись BEGIN
             stats.current_lsn = lsn;
         }
 
@@ -375,6 +376,7 @@ impl WriteAheadLog {
             let mut stats = self.statistics.write().unwrap();
             stats.committed_transactions += 1;
             stats.active_transactions = stats.active_transactions.saturating_sub(1);
+            stats.total_log_records += 1; // Считаем запись COMMIT
             stats.current_lsn = commit_lsn;
             stats.forced_syncs += 1;
         }
@@ -419,6 +421,7 @@ impl WriteAheadLog {
             let mut stats = self.statistics.write().unwrap();
             stats.aborted_transactions += 1;
             stats.active_transactions = stats.active_transactions.saturating_sub(1);
+            stats.total_log_records += 1; // Считаем запись ABORT
             stats.current_lsn = abort_lsn;
             stats.forced_syncs += 1;
         }
