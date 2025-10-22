@@ -34,7 +34,7 @@ impl Server {
     pub fn new(config: ServerConfig) -> Result<Self> {
         Ok(Self { config })
     }
-    
+
     pub fn get_statistics(&self) -> Result<ServerStatistics> {
         Ok(ServerStatistics {
             total_connections: 0,

@@ -8,12 +8,12 @@
 
 use crate::common::{Error, Result};
 use crate::logging::log_record::{LogRecord, LogRecordType, LogSequenceNumber, TransactionId};
-use crate::logging::log_writer::{LogWriter, LogFileInfo};
+use crate::logging::log_writer::{LogFileInfo, LogWriter};
 use crate::storage::database_file::PageId;
-use std::collections::{HashMap, HashSet, BTreeMap};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
 
 /// Состояние транзакции во время восстановления
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,7 +112,7 @@ impl Default for RecoveryConfig {
     fn default() -> Self {
         Self {
             max_recovery_time: Duration::from_secs(300), // 5 минут
-            read_buffer_size: 64 * 1024, // 64KB
+            read_buffer_size: 64 * 1024,                 // 64KB
             enable_parallel_recovery: true,
             recovery_threads: 4,
             enable_validation: true,
@@ -156,22 +156,37 @@ impl RecoveryManager {
         // Этап 1: Анализ логов
         println!("📊 Этап 1: Анализ лог-файлов");
         let analysis_result = self.analyze_logs(log_directory).await?;
-        
-        println!("   ✅ Обработано {} лог-записей", analysis_result.total_records);
-        println!("   ✅ Найдено {} активных транзакций", analysis_result.active_transactions.len());
-        println!("   ✅ Найдено {} зафиксированных транзакций", analysis_result.committed_transactions.len());
+
+        println!(
+            "   ✅ Обработано {} лог-записей",
+            analysis_result.total_records
+        );
+        println!(
+            "   ✅ Найдено {} активных транзакций",
+            analysis_result.active_transactions.len()
+        );
+        println!(
+            "   ✅ Найдено {} зафиксированных транзакций",
+            analysis_result.committed_transactions.len()
+        );
 
         // Этап 2: REDO операции
         println!("🔄 Этап 2: Восстановление зафиксированных транзакций (REDO)");
         self.perform_redo_operations(&analysis_result).await?;
-        
-        println!("   ✅ Выполнено {} операций REDO", self.statistics.redo_operations);
+
+        println!(
+            "   ✅ Выполнено {} операций REDO",
+            self.statistics.redo_operations
+        );
 
         // Этап 3: UNDO операции
         println!("↩️  Этап 3: Откат незавершенных транзакций (UNDO)");
         self.perform_undo_operations(&analysis_result).await?;
-        
-        println!("   ✅ Выполнено {} операций UNDO", self.statistics.undo_operations);
+
+        println!(
+            "   ✅ Выполнено {} операций UNDO",
+            self.statistics.undo_operations
+        );
 
         // Этап 4: Валидация (если включена)
         if self.config.enable_validation {
@@ -186,9 +201,18 @@ impl RecoveryManager {
         self.statistics.total_duration_ms = start_time.elapsed().as_millis() as u64;
 
         println!("🎉 Восстановление завершено успешно!");
-        println!("   ⏱️  Общее время: {} мс", self.statistics.total_duration_ms);
-        println!("   📊 Восстановлено транзакций: {}", self.statistics.recovered_transactions);
-        println!("   📊 Отменено транзакций: {}", self.statistics.rolled_back_transactions);
+        println!(
+            "   ⏱️  Общее время: {} мс",
+            self.statistics.total_duration_ms
+        );
+        println!(
+            "   📊 Восстановлено транзакций: {}",
+            self.statistics.recovered_transactions
+        );
+        println!(
+            "   📊 Отменено транзакций: {}",
+            self.statistics.rolled_back_transactions
+        );
 
         Ok(self.statistics.clone())
     }
@@ -212,10 +236,10 @@ impl RecoveryManager {
         // Обрабатываем файлы в порядке создания
         for log_file in log_files {
             println!("   📖 Обрабатываем файл: {}", log_file.filename);
-            
+
             let records = self.read_log_file(&log_file).await?;
             self.statistics.processed_log_size += log_file.size;
-            
+
             for record in records {
                 self.process_log_record(&mut result, record).await?;
                 result.total_records += 1;
@@ -245,7 +269,8 @@ impl RecoveryManager {
         })?;
 
         for entry in entries {
-            let entry = entry.map_err(|e| Error::internal(&format!("Ошибка чтения записи: {}", e)))?;
+            let entry =
+                entry.map_err(|e| Error::internal(&format!("Ошибка чтения записи: {}", e)))?;
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) == Some("log") {
@@ -254,7 +279,8 @@ impl RecoveryManager {
                 })?;
 
                 let file_info = LogFileInfo {
-                    filename: path.file_name()
+                    filename: path
+                        .file_name()
                         .and_then(|s| s.to_str())
                         .unwrap_or("unknown")
                         .to_string(),
@@ -263,12 +289,14 @@ impl RecoveryManager {
                     record_count: 0,
                     first_lsn: 0,
                     last_lsn: 0,
-                    created_at: metadata.created()
+                    created_at: metadata
+                        .created()
                         .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                         .duration_since(std::time::SystemTime::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs(),
-                    updated_at: metadata.modified()
+                    updated_at: metadata
+                        .modified()
                         .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                         .duration_since(std::time::SystemTime::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -294,7 +322,11 @@ impl RecoveryManager {
     }
 
     /// Обрабатывает одну лог-запись
-    async fn process_log_record(&mut self, result: &mut LogAnalysisResult, record: LogRecord) -> Result<()> {
+    async fn process_log_record(
+        &mut self,
+        result: &mut LogAnalysisResult,
+        record: LogRecord,
+    ) -> Result<()> {
         // Обновляем последний LSN
         if record.lsn > result.last_lsn {
             result.last_lsn = record.lsn;
@@ -355,7 +387,9 @@ impl RecoveryManager {
                         tx_info.last_lsn = record.lsn;
 
                         // Добавляем измененную страницу
-                        if let crate::logging::log_record::LogOperationData::Record(op) = &record.operation_data {
+                        if let crate::logging::log_record::LogOperationData::Record(op) =
+                            &record.operation_data
+                        {
                             let page_key = (op.file_id, op.page_id);
                             tx_info.dirty_pages.insert(page_key);
                             result.dirty_pages.insert(page_key);
@@ -387,7 +421,9 @@ impl RecoveryManager {
             for operation in &tx_info.operations {
                 if matches!(
                     operation.record_type,
-                    LogRecordType::DataInsert | LogRecordType::DataUpdate | LogRecordType::DataDelete
+                    LogRecordType::DataInsert
+                        | LogRecordType::DataUpdate
+                        | LogRecordType::DataDelete
                 ) {
                     all_operations.insert(operation.lsn, operation);
                 }
@@ -405,13 +441,18 @@ impl RecoveryManager {
         }
 
         self.statistics.redo_operations = redo_count;
-        self.statistics.recovered_transactions = analysis_result.committed_transactions.len() as u64;
+        self.statistics.recovered_transactions =
+            analysis_result.committed_transactions.len() as u64;
 
         Ok(())
     }
 
     /// Применяет одну операцию REDO
-    async fn apply_redo_operation(&mut self, _lsn: LogSequenceNumber, operation: &LogRecord) -> Result<()> {
+    async fn apply_redo_operation(
+        &mut self,
+        _lsn: LogSequenceNumber,
+        operation: &LogRecord,
+    ) -> Result<()> {
         match operation.record_type {
             LogRecordType::DataInsert => {
                 // В реальной реализации здесь была бы вставка данных
@@ -443,7 +484,9 @@ impl RecoveryManager {
             for operation in tx_info.operations.iter().rev() {
                 if matches!(
                     operation.record_type,
-                    LogRecordType::DataInsert | LogRecordType::DataUpdate | LogRecordType::DataDelete
+                    LogRecordType::DataInsert
+                        | LogRecordType::DataUpdate
+                        | LogRecordType::DataDelete
                 ) {
                     self.apply_undo_operation(operation).await?;
                     undo_count += 1;
@@ -480,7 +523,10 @@ impl RecoveryManager {
 
     /// Валидирует результат восстановления
     async fn validate_recovery(&mut self, analysis_result: &LogAnalysisResult) -> Result<()> {
-        println!("   🔍 Проверяем целостность {} страниц", analysis_result.dirty_pages.len());
+        println!(
+            "   🔍 Проверяем целостность {} страниц",
+            analysis_result.dirty_pages.len()
+        );
 
         let mut validated_pages = 0;
         for (file_id, page_id) in &analysis_result.dirty_pages {
@@ -517,26 +563,30 @@ impl RecoveryManager {
         // - Наличие незавершенных транзакций
         // - Несоответствие между логами и данными
         // - Маркеры некорректного завершения работы
-        
+
         let log_files = self.get_log_files(log_directory)?;
-        
+
         // Если есть лог-файлы, возможно требуется восстановление
         Ok(!log_files.is_empty())
     }
 
     /// Создает резервную копию перед восстановлением
-    pub async fn create_backup(&self, _data_directory: &Path, _backup_directory: &Path) -> Result<()> {
+    pub async fn create_backup(
+        &self,
+        _data_directory: &Path,
+        _backup_directory: &Path,
+    ) -> Result<()> {
         if !self.config.create_backup {
             return Ok(());
         }
 
         println!("💾 Создаем резервную копию данных...");
-        
+
         // В реальной реализации здесь было бы копирование файлов данных
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         println!("   ✅ Резервная копия создана");
-        
+
         Ok(())
     }
 }
@@ -584,8 +634,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_log_analysis() -> Result<()> {
-        use crate::logging::log_record::{LogRecord, IsolationLevel};
-        
+        use crate::logging::log_record::{IsolationLevel, LogRecord};
+
         let config = RecoveryConfig::default();
         let mut manager = RecoveryManager::new(config);
 
@@ -601,14 +651,18 @@ mod tests {
 
         // Тестируем обработку записи BEGIN
         let begin_record = LogRecord::new_transaction_begin(1, 100, IsolationLevel::ReadCommitted);
-        manager.process_log_record(&mut result, begin_record).await?;
+        manager
+            .process_log_record(&mut result, begin_record)
+            .await?;
 
         assert_eq!(result.active_transactions.len(), 1);
         assert!(result.active_transactions.contains_key(&100));
 
         // Тестируем обработку записи COMMIT
         let commit_record = LogRecord::new_transaction_commit(2, 100, vec![], Some(1));
-        manager.process_log_record(&mut result, commit_record).await?;
+        manager
+            .process_log_record(&mut result, commit_record)
+            .await?;
 
         assert_eq!(result.active_transactions.len(), 0);
         assert_eq!(result.committed_transactions.len(), 1);
@@ -620,14 +674,16 @@ mod tests {
     async fn test_backup_creation() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let backup_dir = TempDir::new().unwrap();
-        
+
         let mut config = RecoveryConfig::default();
         config.create_backup = true;
-        
+
         let manager = RecoveryManager::new(config);
-        
-        manager.create_backup(temp_dir.path(), backup_dir.path()).await?;
-        
+
+        manager
+            .create_backup(temp_dir.path(), backup_dir.path())
+            .await?;
+
         Ok(())
     }
 
@@ -635,7 +691,7 @@ mod tests {
     async fn test_statistics() {
         let config = RecoveryConfig::default();
         let manager = RecoveryManager::new(config);
-        
+
         let stats = manager.get_statistics();
         assert_eq!(stats.total_log_records, 0);
         assert_eq!(stats.redo_operations, 0);

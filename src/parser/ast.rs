@@ -2,8 +2,8 @@
 
 use crate::common::{Error, Result};
 use crate::parser::token::Token;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 /// Основной узел AST для SQL операций
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,7 +49,10 @@ pub enum SelectItem {
     /// Все колонки (*)
     Wildcard,
     /// Конкретное выражение с псевдонимом
-    Expression { expr: Expression, alias: Option<String> },
+    Expression {
+        expr: Expression,
+        alias: Option<String>,
+    },
 }
 
 /// FROM клаузула
@@ -65,7 +68,10 @@ pub enum TableReference {
     /// Простая таблица
     Table { name: String, alias: Option<String> },
     /// Подзапрос
-    Subquery { query: Box<SelectStatement>, alias: String },
+    Subquery {
+        query: Box<SelectStatement>,
+        alias: String,
+    },
 }
 
 /// JOIN операция
@@ -163,9 +169,14 @@ pub enum DataType {
     BigInt,
     Real,
     Double,
-    Decimal { precision: Option<u8>, scale: Option<u8> },
+    Decimal {
+        precision: Option<u8>,
+        scale: Option<u8>,
+    },
     Text,
-    Varchar { length: Option<u16> },
+    Varchar {
+        length: Option<u16>,
+    },
     Boolean,
     Date,
     Time,
@@ -181,7 +192,10 @@ pub enum ColumnConstraint {
     PrimaryKey,
     Default(Expression),
     Check(Expression),
-    References { table: String, column: Option<String> },
+    References {
+        table: String,
+        column: Option<String>,
+    },
 }
 
 /// Ограничение таблицы
@@ -245,10 +259,7 @@ pub enum Expression {
         expr: Box<Expression>,
     },
     /// Функция
-    Function {
-        name: String,
-        args: Vec<Expression>,
-    },
+    Function { name: String, args: Vec<Expression> },
     /// CASE выражение
     Case {
         expr: Option<Box<Expression>>,
@@ -258,10 +269,7 @@ pub enum Expression {
     /// EXISTS подзапрос
     Exists(Box<SelectStatement>),
     /// IN операция
-    In {
-        expr: Box<Expression>,
-        list: InList,
-    },
+    In { expr: Box<Expression>, list: InList },
     /// BETWEEN операция
     Between {
         expr: Box<Expression>,
@@ -361,11 +369,7 @@ impl AstBuilder {
     }
 
     /// Создает простой SELECT запрос
-    pub fn build_simple_select(
-        &self,
-        columns: Vec<String>,
-        table: String,
-    ) -> Result<SqlStatement> {
+    pub fn build_simple_select(&self, columns: Vec<String>, table: String) -> Result<SqlStatement> {
         let select_list = if columns.is_empty() || columns[0] == "*" {
             vec![SelectItem::Wildcard]
         } else {
@@ -416,7 +420,11 @@ impl AstBuilder {
 
         Ok(SqlStatement::Insert(InsertStatement {
             table,
-            columns: if columns.is_empty() { None } else { Some(columns) },
+            columns: if columns.is_empty() {
+                None
+            } else {
+                Some(columns)
+            },
             values: InsertValues::Values(insert_values),
         }))
     }

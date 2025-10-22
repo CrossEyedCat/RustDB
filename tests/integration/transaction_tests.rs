@@ -4,8 +4,8 @@
 //! изоляцию, блокировки и восстановление после сбоев.
 
 use rustdb::{
-    common::{Error, Result, types::*},
-    core::{IsolationLevel, transaction::TransactionId},
+    common::{Error, Result},
+    core::IsolationLevel,
 };
 use super::common::*;
 use std::sync::Arc;
@@ -144,7 +144,7 @@ pub async fn test_repeatable_read_isolation() -> Result<()> {
     
     // Для симуляции Repeatable Read, мы создаем снимок данных для первой транзакции
     // В реальной системе это было бы сделано автоматически
-    let snapshot_count = 1; // Снимок данных на момент начала первой транзакции
+    let _snapshot_count = 1; // Снимок данных на момент начала первой транзакции
     
     // Читаем данные в первой транзакции снова
     // В Repeatable Read первая транзакция должна видеть те же данные, что и в начале
@@ -335,7 +335,8 @@ pub async fn test_multiple_concurrent_transactions() -> Result<()> {
     
     // Ждем завершения всех транзакций
     for handle in handles {
-        handle.await.map_err(|e| Error::internal(&format!("Join error: {}", e)))?;
+        use rustdb::common::Error;
+        let _ = handle.await.map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
     
     // Проверяем, что все данные вставились

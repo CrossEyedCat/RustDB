@@ -8,10 +8,10 @@
 //! - Экспорт метрик для внешних систем мониторинга
 
 use crate::logging::log_record::LogRecordType;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 
 /// Счетчик операций
@@ -87,10 +87,10 @@ impl TimingMetric {
     /// Добавляет новое измерение времени
     pub fn record_time(&mut self, duration: Duration) {
         let time_us = duration.as_micros() as u64;
-        
+
         self.total_time_us += time_us;
         self.count += 1;
-        
+
         if self.count == 1 {
             self.min_time_us = time_us;
             self.max_time_us = time_us;
@@ -98,15 +98,15 @@ impl TimingMetric {
             self.min_time_us = self.min_time_us.min(time_us);
             self.max_time_us = self.max_time_us.max(time_us);
         }
-        
+
         self.avg_time_us = self.total_time_us / self.count;
-        
+
         // Сохраняем образец для процентилей (ограничиваем размер)
         self.samples.push(time_us);
         if self.samples.len() > 10000 {
             self.samples.remove(0);
         }
-        
+
         self.update_percentiles();
     }
 
@@ -120,11 +120,11 @@ impl TimingMetric {
         sorted_samples.sort_unstable();
 
         let len = sorted_samples.len();
-        
+
         if len > 0 {
             let p95_index = ((len as f64) * 0.95) as usize;
             let p99_index = ((len as f64) * 0.99) as usize;
-            
+
             self.p95_time_us = sorted_samples[p95_index.min(len - 1)];
             self.p99_time_us = sorted_samples[p99_index.min(len - 1)];
         }
@@ -165,7 +165,7 @@ impl SizeMetric {
     pub fn record_size(&mut self, size_bytes: u64) {
         self.total_bytes += size_bytes;
         self.count += 1;
-        
+
         if self.count == 1 {
             self.min_bytes = size_bytes;
             self.max_bytes = size_bytes;
@@ -173,7 +173,7 @@ impl SizeMetric {
             self.min_bytes = self.min_bytes.min(size_bytes);
             self.max_bytes = self.max_bytes.max(size_bytes);
         }
-        
+
         self.avg_bytes = self.total_bytes / self.count;
     }
 
@@ -197,7 +197,7 @@ pub struct LoggingMetrics {
     pub last_updated: u64,
     /// Время работы системы (секунды)
     pub uptime_seconds: u64,
-    
+
     // Счетчики операций по типам
     /// Операции с транзакциями
     pub transaction_operations: HashMap<String, OperationCounter>,
@@ -205,7 +205,7 @@ pub struct LoggingMetrics {
     pub data_operations: HashMap<String, OperationCounter>,
     /// Системные операции
     pub system_operations: HashMap<String, OperationCounter>,
-    
+
     // Временные метрики
     /// Время записи логов
     pub write_timing: TimingMetric,
@@ -215,13 +215,13 @@ pub struct LoggingMetrics {
     pub checkpoint_timing: TimingMetric,
     /// Время восстановления
     pub recovery_timing: TimingMetric,
-    
+
     // Метрики размера
     /// Размеры лог-записей
     pub log_record_size: SizeMetric,
     /// Размеры лог-файлов
     pub log_file_size: SizeMetric,
-    
+
     // Специальные метрики
     /// Использование буферов (%)
     pub buffer_utilization: f64,
@@ -273,22 +273,28 @@ impl LoggingMetrics {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         self.last_updated = now;
         self.uptime_seconds = now.saturating_sub(self.start_time);
     }
 
     /// Записывает операцию с лог-записью
-    pub fn record_log_operation(&mut self, record_type: LogRecordType, success: bool, duration: Duration, size: u64) {
+    pub fn record_log_operation(
+        &mut self,
+        record_type: LogRecordType,
+        success: bool,
+        duration: Duration,
+        size: u64,
+    ) {
         self.update_timestamp();
-        
+
         // Обновляем счетчики по типам операций
         let operation_name = match record_type {
             LogRecordType::TransactionBegin => "transaction_begin",
             LogRecordType::TransactionCommit => "transaction_commit",
             LogRecordType::TransactionAbort => "transaction_abort",
             LogRecordType::DataInsert => "data_insert",
-            LogRecordType::DataUpdate => "data_update", 
+            LogRecordType::DataUpdate => "data_update",
             LogRecordType::DataDelete => "data_delete",
             LogRecordType::Checkpoint => "checkpoint",
             LogRecordType::CheckpointEnd => "checkpoint_end",
@@ -300,15 +306,21 @@ impl LoggingMetrics {
         };
 
         let counter = match record_type {
-            LogRecordType::TransactionBegin | LogRecordType::TransactionCommit | LogRecordType::TransactionAbort => {
-                self.transaction_operations.entry(operation_name.to_string()).or_default()
-            }
+            LogRecordType::TransactionBegin
+            | LogRecordType::TransactionCommit
+            | LogRecordType::TransactionAbort => self
+                .transaction_operations
+                .entry(operation_name.to_string())
+                .or_default(),
             LogRecordType::DataInsert | LogRecordType::DataUpdate | LogRecordType::DataDelete => {
-                self.data_operations.entry(operation_name.to_string()).or_default()
+                self.data_operations
+                    .entry(operation_name.to_string())
+                    .or_default()
             }
-            _ => {
-                self.system_operations.entry(operation_name.to_string()).or_default()
-            }
+            _ => self
+                .system_operations
+                .entry(operation_name.to_string())
+                .or_default(),
         };
 
         if success {
@@ -319,10 +331,10 @@ impl LoggingMetrics {
 
         // Обновляем временные метрики
         self.write_timing.record_time(duration);
-        
+
         // Обновляем метрики размера
         self.log_record_size.record_size(size);
-        
+
         // Пересчитываем пропускную способность
         self.recalculate_throughput();
     }
@@ -330,42 +342,51 @@ impl LoggingMetrics {
     /// Записывает операцию синхронизации
     pub fn record_sync_operation(&mut self, duration: Duration, success: bool) {
         self.update_timestamp();
-        
-        let counter = self.system_operations.entry("sync".to_string()).or_default();
+
+        let counter = self
+            .system_operations
+            .entry("sync".to_string())
+            .or_default();
         if success {
             counter.increment_success();
         } else {
             counter.increment_failed();
         }
-        
+
         self.sync_timing.record_time(duration);
     }
 
     /// Записывает операцию создания контрольной точки
     pub fn record_checkpoint_operation(&mut self, duration: Duration, success: bool) {
         self.update_timestamp();
-        
-        let counter = self.system_operations.entry("checkpoint".to_string()).or_default();
+
+        let counter = self
+            .system_operations
+            .entry("checkpoint".to_string())
+            .or_default();
         if success {
             counter.increment_success();
         } else {
             counter.increment_failed();
         }
-        
+
         self.checkpoint_timing.record_time(duration);
     }
 
     /// Записывает операцию восстановления
     pub fn record_recovery_operation(&mut self, duration: Duration, success: bool) {
         self.update_timestamp();
-        
-        let counter = self.system_operations.entry("recovery".to_string()).or_default();
+
+        let counter = self
+            .system_operations
+            .entry("recovery".to_string())
+            .or_default();
         if success {
             counter.increment_success();
         } else {
             counter.increment_failed();
         }
-        
+
         self.recovery_timing.record_time(duration);
     }
 
@@ -396,8 +417,10 @@ impl LoggingMetrics {
     /// Пересчитывает пропускную способность
     fn recalculate_throughput(&mut self) {
         if self.uptime_seconds > 0 {
-            self.throughput_records_per_sec = self.log_record_size.count as f64 / self.uptime_seconds as f64;
-            self.throughput_bytes_per_sec = self.log_record_size.total_bytes as f64 / self.uptime_seconds as f64;
+            self.throughput_records_per_sec =
+                self.log_record_size.count as f64 / self.uptime_seconds as f64;
+            self.throughput_bytes_per_sec =
+                self.log_record_size.total_bytes as f64 / self.uptime_seconds as f64;
         }
     }
 
@@ -411,12 +434,24 @@ impl LoggingMetrics {
 
     /// Возвращает общий коэффициент успешности
     pub fn overall_success_rate(&self) -> f64 {
-        let total_success: u64 = self.transaction_operations.values().map(|c| c.success).sum::<u64>()
-            + self.data_operations.values().map(|c| c.success).sum::<u64>()
-            + self.system_operations.values().map(|c| c.success).sum::<u64>();
-        
+        let total_success: u64 = self
+            .transaction_operations
+            .values()
+            .map(|c| c.success)
+            .sum::<u64>()
+            + self
+                .data_operations
+                .values()
+                .map(|c| c.success)
+                .sum::<u64>()
+            + self
+                .system_operations
+                .values()
+                .map(|c| c.success)
+                .sum::<u64>();
+
         let total_ops = self.total_operations();
-        
+
         if total_ops > 0 {
             total_success as f64 / total_ops as f64
         } else {
@@ -427,19 +462,19 @@ impl LoggingMetrics {
     /// Возвращает топ операций по количеству
     pub fn top_operations_by_count(&self, limit: usize) -> Vec<(String, u64)> {
         let mut all_operations = Vec::new();
-        
+
         for (name, counter) in &self.transaction_operations {
             all_operations.push((format!("tx_{}", name), counter.total));
         }
-        
+
         for (name, counter) in &self.data_operations {
             all_operations.push((format!("data_{}", name), counter.total));
         }
-        
+
         for (name, counter) in &self.system_operations {
             all_operations.push((format!("sys_{}", name), counter.total));
         }
-        
+
         all_operations.sort_by(|a, b| b.1.cmp(&a.1));
         all_operations.into_iter().take(limit).collect()
     }
@@ -447,37 +482,79 @@ impl LoggingMetrics {
     /// Экспортирует метрики в формате Prometheus
     pub fn export_prometheus(&self) -> String {
         let mut output = String::new();
-        
+
         // Базовые метрики
-        output.push_str(&format!("# HELP rustdb_logging_uptime_seconds Uptime of the logging system\n"));
+        output.push_str(&format!(
+            "# HELP rustdb_logging_uptime_seconds Uptime of the logging system\n"
+        ));
         output.push_str(&format!("# TYPE rustdb_logging_uptime_seconds counter\n"));
-        output.push_str(&format!("rustdb_logging_uptime_seconds {}\n", self.uptime_seconds));
-        
-        output.push_str(&format!("# HELP rustdb_logging_operations_total Total number of logging operations\n"));
+        output.push_str(&format!(
+            "rustdb_logging_uptime_seconds {}\n",
+            self.uptime_seconds
+        ));
+
+        output.push_str(&format!(
+            "# HELP rustdb_logging_operations_total Total number of logging operations\n"
+        ));
         output.push_str(&format!("# TYPE rustdb_logging_operations_total counter\n"));
-        output.push_str(&format!("rustdb_logging_operations_total {}\n", self.total_operations()));
-        
+        output.push_str(&format!(
+            "rustdb_logging_operations_total {}\n",
+            self.total_operations()
+        ));
+
         // Временные метрики
-        output.push_str(&format!("# HELP rustdb_logging_write_duration_microseconds Write operation duration\n"));
-        output.push_str(&format!("# TYPE rustdb_logging_write_duration_microseconds histogram\n"));
-        output.push_str(&format!("rustdb_logging_write_duration_microseconds_avg {}\n", self.write_timing.avg_time_us));
-        output.push_str(&format!("rustdb_logging_write_duration_microseconds_p95 {}\n", self.write_timing.p95_time_us));
-        output.push_str(&format!("rustdb_logging_write_duration_microseconds_p99 {}\n", self.write_timing.p99_time_us));
-        
+        output.push_str(&format!(
+            "# HELP rustdb_logging_write_duration_microseconds Write operation duration\n"
+        ));
+        output.push_str(&format!(
+            "# TYPE rustdb_logging_write_duration_microseconds histogram\n"
+        ));
+        output.push_str(&format!(
+            "rustdb_logging_write_duration_microseconds_avg {}\n",
+            self.write_timing.avg_time_us
+        ));
+        output.push_str(&format!(
+            "rustdb_logging_write_duration_microseconds_p95 {}\n",
+            self.write_timing.p95_time_us
+        ));
+        output.push_str(&format!(
+            "rustdb_logging_write_duration_microseconds_p99 {}\n",
+            self.write_timing.p99_time_us
+        ));
+
         // Метрики ресурсов
-        output.push_str(&format!("# HELP rustdb_logging_buffer_utilization_percent Buffer utilization percentage\n"));
-        output.push_str(&format!("# TYPE rustdb_logging_buffer_utilization_percent gauge\n"));
-        output.push_str(&format!("rustdb_logging_buffer_utilization_percent {}\n", self.buffer_utilization));
-        
-        output.push_str(&format!("# HELP rustdb_logging_cache_hit_ratio Cache hit ratio\n"));
+        output.push_str(&format!(
+            "# HELP rustdb_logging_buffer_utilization_percent Buffer utilization percentage\n"
+        ));
+        output.push_str(&format!(
+            "# TYPE rustdb_logging_buffer_utilization_percent gauge\n"
+        ));
+        output.push_str(&format!(
+            "rustdb_logging_buffer_utilization_percent {}\n",
+            self.buffer_utilization
+        ));
+
+        output.push_str(&format!(
+            "# HELP rustdb_logging_cache_hit_ratio Cache hit ratio\n"
+        ));
         output.push_str(&format!("# TYPE rustdb_logging_cache_hit_ratio gauge\n"));
-        output.push_str(&format!("rustdb_logging_cache_hit_ratio {}\n", self.cache_hit_ratio));
-        
+        output.push_str(&format!(
+            "rustdb_logging_cache_hit_ratio {}\n",
+            self.cache_hit_ratio
+        ));
+
         // Пропускная способность
-        output.push_str(&format!("# HELP rustdb_logging_throughput_records_per_second Records processed per second\n"));
-        output.push_str(&format!("# TYPE rustdb_logging_throughput_records_per_second gauge\n"));
-        output.push_str(&format!("rustdb_logging_throughput_records_per_second {}\n", self.throughput_records_per_sec));
-        
+        output.push_str(&format!(
+            "# HELP rustdb_logging_throughput_records_per_second Records processed per second\n"
+        ));
+        output.push_str(&format!(
+            "# TYPE rustdb_logging_throughput_records_per_second gauge\n"
+        ));
+        output.push_str(&format!(
+            "rustdb_logging_throughput_records_per_second {}\n",
+            self.throughput_records_per_sec
+        ));
+
         output
     }
 
@@ -489,32 +566,62 @@ impl LoggingMetrics {
     /// Создает отчет о производительности
     pub fn generate_performance_report(&self) -> String {
         let mut report = String::new();
-        
+
         report.push_str("=== Отчет о производительности системы логирования rustdb ===\n\n");
-        
+
         // Общая информация
-        report.push_str(&format!("Время работы: {} секунд ({:.1} часов)\n", 
-                                self.uptime_seconds, self.uptime_seconds as f64 / 3600.0));
+        report.push_str(&format!(
+            "Время работы: {} секунд ({:.1} часов)\n",
+            self.uptime_seconds,
+            self.uptime_seconds as f64 / 3600.0
+        ));
         report.push_str(&format!("Всего операций: {}\n", self.total_operations()));
-        report.push_str(&format!("Коэффициент успешности: {:.2}%\n", self.overall_success_rate() * 100.0));
+        report.push_str(&format!(
+            "Коэффициент успешности: {:.2}%\n",
+            self.overall_success_rate() * 100.0
+        ));
         report.push_str("\n");
-        
+
         // Производительность
         report.push_str("=== Производительность ===\n");
-        report.push_str(&format!("Пропускная способность: {:.1} записей/сек\n", self.throughput_records_per_sec));
-        report.push_str(&format!("Пропускная способность: {:.1} МБ/сек\n", self.throughput_bytes_per_sec / (1024.0 * 1024.0)));
-        report.push_str(&format!("Среднее время записи: {:.2} мс\n", self.write_timing.avg_time_ms()));
-        report.push_str(&format!("95-й процентиль времени записи: {:.2} мс\n", self.write_timing.p95_time_us as f64 / 1000.0));
+        report.push_str(&format!(
+            "Пропускная способность: {:.1} записей/сек\n",
+            self.throughput_records_per_sec
+        ));
+        report.push_str(&format!(
+            "Пропускная способность: {:.1} МБ/сек\n",
+            self.throughput_bytes_per_sec / (1024.0 * 1024.0)
+        ));
+        report.push_str(&format!(
+            "Среднее время записи: {:.2} мс\n",
+            self.write_timing.avg_time_ms()
+        ));
+        report.push_str(&format!(
+            "95-й процентиль времени записи: {:.2} мс\n",
+            self.write_timing.p95_time_us as f64 / 1000.0
+        ));
         report.push_str("\n");
-        
+
         // Ресурсы
         report.push_str("=== Использование ресурсов ===\n");
-        report.push_str(&format!("Использование буферов: {:.1}%\n", self.buffer_utilization));
-        report.push_str(&format!("Коэффициент попаданий в кэш: {:.2}%\n", self.cache_hit_ratio * 100.0));
-        report.push_str(&format!("Использование диска: {:.1}%\n", self.disk_utilization));
-        report.push_str(&format!("Фрагментация логов: {:.1}%\n", self.log_fragmentation));
+        report.push_str(&format!(
+            "Использование буферов: {:.1}%\n",
+            self.buffer_utilization
+        ));
+        report.push_str(&format!(
+            "Коэффициент попаданий в кэш: {:.2}%\n",
+            self.cache_hit_ratio * 100.0
+        ));
+        report.push_str(&format!(
+            "Использование диска: {:.1}%\n",
+            self.disk_utilization
+        ));
+        report.push_str(&format!(
+            "Фрагментация логов: {:.1}%\n",
+            self.log_fragmentation
+        ));
         report.push_str("\n");
-        
+
         // Топ операций
         report.push_str("=== Топ операций ===\n");
         let top_ops = self.top_operations_by_count(5);
@@ -522,13 +629,22 @@ impl LoggingMetrics {
             report.push_str(&format!("{}. {}: {} операций\n", i + 1, name, count));
         }
         report.push_str("\n");
-        
+
         // Размеры
         report.push_str("=== Размеры данных ===\n");
-        report.push_str(&format!("Средний размер лог-записи: {:.1} КБ\n", self.log_record_size.avg_kb()));
-        report.push_str(&format!("Общий объем логов: {:.1} МБ\n", self.log_record_size.total_mb()));
-        report.push_str(&format!("Средний размер лог-файла: {:.1} МБ\n", self.log_file_size.total_mb() / self.log_file_size.count.max(1) as f64));
-        
+        report.push_str(&format!(
+            "Средний размер лог-записи: {:.1} КБ\n",
+            self.log_record_size.avg_kb()
+        ));
+        report.push_str(&format!(
+            "Общий объем логов: {:.1} МБ\n",
+            self.log_record_size.total_mb()
+        ));
+        report.push_str(&format!(
+            "Средний размер лог-файла: {:.1} МБ\n",
+            self.log_file_size.total_mb() / self.log_file_size.count.max(1) as f64
+        ));
+
         report
     }
 }
@@ -545,28 +661,28 @@ impl LoggingMetricsManager {
     /// Создает новый менеджер метрик
     pub fn new() -> Self {
         let metrics = Arc::new(RwLock::new(LoggingMetrics::new()));
-        
+
         let mut manager = Self {
             metrics: metrics.clone(),
             background_handle: None,
         };
-        
+
         // Запускаем фоновую задачу обновления метрик
         manager.start_background_updates();
-        
+
         manager
     }
 
     /// Запускает фоновые обновления метрик
     fn start_background_updates(&mut self) {
         let metrics = self.metrics.clone();
-        
+
         self.background_handle = Some(tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 {
                     let mut m = metrics.write().unwrap();
                     m.update_timestamp();
@@ -576,7 +692,13 @@ impl LoggingMetricsManager {
     }
 
     /// Записывает операцию с лог-записью
-    pub fn record_log_operation(&self, record_type: LogRecordType, success: bool, duration: Duration, size: u64) {
+    pub fn record_log_operation(
+        &self,
+        record_type: LogRecordType,
+        success: bool,
+        duration: Duration,
+        size: u64,
+    ) {
         let mut metrics = self.metrics.write().unwrap();
         metrics.record_log_operation(record_type, success, duration, size);
     }
@@ -594,7 +716,13 @@ impl LoggingMetricsManager {
     }
 
     /// Обновляет метрики ресурсов
-    pub fn update_resource_metrics(&self, buffer_util: f64, cache_hit_ratio: f64, disk_util: f64, fragmentation: f64) {
+    pub fn update_resource_metrics(
+        &self,
+        buffer_util: f64,
+        cache_hit_ratio: f64,
+        disk_util: f64,
+        fragmentation: f64,
+    ) {
         let mut metrics = self.metrics.write().unwrap();
         metrics.update_buffer_utilization(buffer_util);
         metrics.update_cache_hit_ratio(cache_hit_ratio);
@@ -652,11 +780,11 @@ mod tests {
     #[test]
     fn test_operation_counter() {
         let mut counter = OperationCounter::default();
-        
+
         counter.increment_success();
         counter.increment_success();
         counter.increment_failed();
-        
+
         assert_eq!(counter.total, 3);
         assert_eq!(counter.success, 2);
         assert_eq!(counter.failed, 1);
@@ -666,11 +794,11 @@ mod tests {
     #[test]
     fn test_timing_metric() {
         let mut timing = TimingMetric::default();
-        
+
         timing.record_time(Duration::from_millis(100));
         timing.record_time(Duration::from_millis(200));
         timing.record_time(Duration::from_millis(150));
-        
+
         assert_eq!(timing.count, 3);
         assert_eq!(timing.min_time_us, 100_000);
         assert_eq!(timing.max_time_us, 200_000);
@@ -681,11 +809,11 @@ mod tests {
     #[test]
     fn test_size_metric() {
         let mut size = SizeMetric::default();
-        
+
         size.record_size(1024);
         size.record_size(2048);
         size.record_size(1536);
-        
+
         assert_eq!(size.count, 3);
         assert_eq!(size.total_bytes, 4608);
         assert_eq!(size.avg_bytes, 1536);
@@ -696,29 +824,29 @@ mod tests {
     #[tokio::test]
     async fn test_logging_metrics() {
         let mut metrics = LoggingMetrics::new();
-        
+
         // Записываем несколько операций
         metrics.record_log_operation(
             LogRecordType::TransactionBegin,
             true,
             Duration::from_millis(10),
-            256
+            256,
         );
-        
+
         metrics.record_log_operation(
             LogRecordType::DataInsert,
             true,
             Duration::from_millis(5),
-            512
+            512,
         );
-        
+
         metrics.record_sync_operation(Duration::from_millis(50), true);
-        
+
         assert_eq!(metrics.total_operations(), 3);
         assert_eq!(metrics.overall_success_rate(), 1.0);
         assert_eq!(metrics.log_record_size.count, 2);
         assert_eq!(metrics.log_record_size.total_bytes, 768);
-        
+
         // Проверяем топ операций
         let top_ops = metrics.top_operations_by_count(5);
         assert!(!top_ops.is_empty());
@@ -727,28 +855,28 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_manager() {
         let manager = LoggingMetricsManager::new();
-        
+
         manager.record_log_operation(
             LogRecordType::TransactionCommit,
             true,
             Duration::from_millis(15),
-            1024
+            1024,
         );
-        
+
         manager.update_resource_metrics(75.0, 0.85, 60.0, 5.0);
-        
+
         let metrics = manager.get_metrics();
         assert!(metrics.total_operations() > 0);
         assert_eq!(metrics.buffer_utilization, 75.0);
         assert_eq!(metrics.cache_hit_ratio, 0.85);
-        
+
         // Тестируем экспорт
         let prometheus_export = manager.export_prometheus();
         assert!(prometheus_export.contains("rustdb_logging"));
-        
+
         let json_export = manager.export_json().unwrap();
         assert!(json_export.contains("uptime_seconds"));
-        
+
         let report = manager.generate_performance_report();
         assert!(report.contains("Отчет о производительности"));
     }
@@ -757,7 +885,7 @@ mod tests {
     fn test_prometheus_export() {
         let metrics = LoggingMetrics::new();
         let export = metrics.export_prometheus();
-        
+
         assert!(export.contains("# HELP"));
         assert!(export.contains("# TYPE"));
         assert!(export.contains("rustdb_logging_uptime_seconds"));
@@ -767,17 +895,17 @@ mod tests {
     #[test]
     fn test_performance_report() {
         let mut metrics = LoggingMetrics::new();
-        
+
         // Добавляем тестовые данные
         metrics.record_log_operation(
             LogRecordType::DataUpdate,
             true,
             Duration::from_millis(20),
-            2048
+            2048,
         );
-        
+
         let report = metrics.generate_performance_report();
-        
+
         assert!(report.contains("Отчет о производительности"));
         assert!(report.contains("Время работы"));
         assert!(report.contains("Всего операций"));

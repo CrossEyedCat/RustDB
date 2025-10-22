@@ -16,8 +16,7 @@ fn bench_basic_io_operations(c: &mut Criterion) {
 
     // Тестируем различные размеры кэша
     for cache_size in [1000, 5000, 10000].iter() {
-        let mut config = IoBufferConfig::default();
-        config.page_cache_size = *cache_size;
+        let config = IoBufferConfig { page_cache_size: *cache_size, ..Default::default() };
         
         let manager = BufferedIoManager::new(config);
         let data = vec![42u8; PAGE_SIZE];
@@ -29,7 +28,7 @@ fn bench_basic_io_operations(c: &mut Criterion) {
                 b.iter(|| {
                     // Простое тестирование без async
                     let result = manager.write_page_async(1, 1, data.clone());
-                    criterion::black_box(result);
+                    std::mem::drop(criterion::black_box(result));
                 });
             },
         );
@@ -40,7 +39,7 @@ fn bench_basic_io_operations(c: &mut Criterion) {
             |b, _| {
                 b.iter(|| {
                     let result = manager.read_page_async(1, 1);
-                    criterion::black_box(result);
+                    std::mem::drop(criterion::black_box(result));
                 });
             },
         );
@@ -52,7 +51,7 @@ fn bench_basic_io_operations(c: &mut Criterion) {
 /// Бенчмарк операций с буферизованным I/O
 fn bench_buffered_io_operations(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
-    let temp_path = temp_dir.path().join("buffered_test.db");
+    let _temp_path = temp_dir.path().join("buffered_test.db");
     
     let mut group = c.benchmark_group("buffered_io");
     group.throughput(Throughput::Bytes(PAGE_SIZE as u64));
@@ -74,7 +73,7 @@ fn bench_buffered_io_operations(c: &mut Criterion) {
             |b, _| {
                 b.iter(|| {
                     let result = manager.write_page_async(1, 1, data.clone());
-                    criterion::black_box(result);
+                    std::mem::drop(criterion::black_box(result));
                 });
             },
         );
@@ -85,7 +84,7 @@ fn bench_buffered_io_operations(c: &mut Criterion) {
             |b, _| {
                 b.iter(|| {
                     let result = manager.read_page_async(1, 1);
-                    criterion::black_box(result);
+                    std::mem::drop(criterion::black_box(result));
                 });
             },
         );
@@ -114,21 +113,21 @@ fn bench_optimized_file_manager_operations(c: &mut Criterion) {
                 1,
                 ExtensionStrategy::Linear,
             );
-            criterion::black_box(result);
+            std::mem::drop(criterion::black_box(result));
         });
     });
 
     group.bench_function("write_page", |b| {
         b.iter(|| {
             let result = manager.write_page(1, 1, &data);
-            criterion::black_box(result);
+            std::mem::drop(criterion::black_box(result));
         });
     });
 
     group.bench_function("read_page", |b| {
         b.iter(|| {
             let result = manager.read_page(1, 1);
-            criterion::black_box(result);
+            std::mem::drop(criterion::black_box(result));
         });
     });
 
@@ -148,7 +147,7 @@ fn bench_access_patterns(c: &mut Criterion) {
         b.iter(|| {
             for i in 0..10 {
                 let result = manager.write_page_async(1, i, data.clone());
-                criterion::black_box(result);
+                std::mem::drop(criterion::black_box(result));
             }
         });
     });
@@ -159,7 +158,7 @@ fn bench_access_patterns(c: &mut Criterion) {
             let pages = [1, 5, 3, 8, 2, 9, 4, 7, 6, 0];
             for &page_id in &pages {
                 let result = manager.write_page_async(1, page_id, data.clone());
-                criterion::black_box(result);
+                std::mem::drop(criterion::black_box(result));
             }
         });
     });
@@ -181,10 +180,10 @@ fn bench_read_write_ratios(c: &mut Criterion) {
             for i in 0..10 {
                 if i < 9 {
                     let result = manager.read_page_async(1, i);
-                    criterion::black_box(result);
+                    std::mem::drop(criterion::black_box(result));
                 } else {
                     let result = manager.write_page_async(1, i, data.clone());
-                    criterion::black_box(result);
+                    std::mem::drop(criterion::black_box(result));
                 }
             }
         });
@@ -196,10 +195,10 @@ fn bench_read_write_ratios(c: &mut Criterion) {
             for i in 0..10 {
                 if i % 2 == 0 {
                     let result = manager.read_page_async(1, i);
-                    criterion::black_box(result);
+                    std::mem::drop(criterion::black_box(result));
                 } else {
                     let result = manager.write_page_async(1, i, data.clone());
-                    criterion::black_box(result);
+                    std::mem::drop(criterion::black_box(result));
                 }
             }
         });
@@ -211,10 +210,10 @@ fn bench_read_write_ratios(c: &mut Criterion) {
             for i in 0..10 {
                 if i == 0 {
                     let result = manager.read_page_async(1, i);
-                    criterion::black_box(result);
+                    std::mem::drop(criterion::black_box(result));
                 } else {
                     let result = manager.write_page_async(1, i, data.clone());
-                    criterion::black_box(result);
+                    std::mem::drop(criterion::black_box(result));
                 }
             }
         });

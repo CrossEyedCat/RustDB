@@ -1,7 +1,10 @@
 //! Структуры строк и таблиц для rustdb
 
-use crate::common::{Error, Result, types::{PageId, DataType, ColumnValue}};
-use crate::storage::tuple::{Tuple, Schema};
+use crate::common::{
+    types::{ColumnValue, DataType, PageId},
+    Error, Result,
+};
+use crate::storage::tuple::{Schema, Tuple};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -27,7 +30,7 @@ impl Row {
     pub fn new(id: u64, tuple: Tuple) -> Self {
         let mut versions = HashMap::new();
         versions.insert(tuple.version, tuple.clone());
-        
+
         Self {
             id,
             current_tuple: tuple,
@@ -42,25 +45,25 @@ impl Row {
     pub fn update(&mut self, new_values: HashMap<String, ColumnValue>) -> Result<()> {
         // Создаем новую версию
         let mut new_tuple = self.current_tuple.create_new_version();
-        
+
         // Обновляем значения
         for (column, value) in new_values {
             new_tuple.set_value(&column, value);
         }
-        
+
         // Добавляем версию в историю
         self.versions.insert(new_tuple.version, new_tuple.clone());
-        
+
         // Обновляем текущую версию
         self.current_tuple = new_tuple;
-        
+
         // Обновляем статистику
         self.stats.update_count += 1;
         self.stats.last_updated = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         Ok(())
     }
 
@@ -132,14 +135,12 @@ impl Row {
 
     /// Сериализует строку в байты
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self)
-            .map_err(|e| Error::BincodeSerialization(e))
+        bincode::serialize(self).map_err(Error::BincodeSerialization)
     }
 
     /// Создает строку из байтов (десериализация)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        bincode::deserialize(bytes)
-            .map_err(|e| Error::BincodeSerialization(e))
+        bincode::deserialize(bytes).map_err(Error::BincodeSerialization)
     }
 
     /// Возвращает размер строки в байтах
@@ -161,6 +162,12 @@ pub struct RowStats {
     pub last_updated: u64,
     /// Время создания
     pub created_at: u64,
+}
+
+impl Default for RowStats {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RowStats {
@@ -256,6 +263,12 @@ pub struct TableStats {
     pub last_reset: u64,
 }
 
+impl Default for TableStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TableStats {
     /// Создает новую статистику таблицы
     pub fn new() -> Self {
@@ -307,7 +320,7 @@ impl TableStats {
 }
 
 /// Опции таблицы
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TableOptions {
     /// Максимальное количество строк
     pub max_rows: Option<u64>,
@@ -323,18 +336,6 @@ pub struct TableOptions {
     pub is_system: bool,
 }
 
-impl Default for TableOptions {
-    fn default() -> Self {
-        Self {
-            max_rows: None,
-            min_rows: None,
-            auto_increment: None,
-            comment: None,
-            is_temporary: false,
-            is_system: false,
-        }
-    }
-}
 
 /// Таблица с данными
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -363,22 +364,26 @@ impl Table {
     /// Добавляет строку в таблицу
     pub fn insert_row(&mut self, row: Row) -> Result<()> {
         let row_id = row.id;
-        
+
         // Проверяем соответствие схеме
         self.metadata.schema.validate_tuple(&row.current_tuple)?;
-        
+
         // Добавляем строку
         self.rows.insert(row_id, row);
-        
+
         // Обновляем метаданные
         self.metadata.update_row_count(self.rows.len() as u64);
         self.metadata.stats.record_insert();
-        
+
         Ok(())
     }
 
     /// Обновляет строку в таблице
-    pub fn update_row(&mut self, row_id: u64, new_values: HashMap<String, ColumnValue>) -> Result<()> {
+    pub fn update_row(
+        &mut self,
+        row_id: u64,
+        new_values: HashMap<String, ColumnValue>,
+    ) -> Result<()> {
         if let Some(row) = self.rows.get_mut(&row_id) {
             row.update(new_values)?;
             self.metadata.stats.record_update();
@@ -455,27 +460,25 @@ impl Table {
 
     /// Сериализует таблицу в байты
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self)
-            .map_err(|e| Error::BincodeSerialization(e))
+        bincode::serialize(self).map_err(Error::BincodeSerialization)
     }
 
     /// Создает таблицу из байтов (десериализация)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        bincode::deserialize(bytes)
-            .map_err(|e| Error::BincodeSerialization(e))
+        bincode::deserialize(bytes).map_err(Error::BincodeSerialization)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::types::{DataType, ColumnValue};
+    use crate::common::types::{ColumnValue, DataType};
 
     #[test]
     fn test_row_creation() {
         let tuple = Tuple::new(1);
         let row = Row::new(1, tuple);
-        
+
         assert_eq!(row.id, 1);
         assert_eq!(row.version_count(), 1);
         assert!(!row.is_deleted());
@@ -485,20 +488,23 @@ mod tests {
     fn test_row_update() {
         let tuple = Tuple::new(1);
         let mut row = Row::new(1, tuple);
-        
+
         let mut new_values = HashMap::new();
         new_values.insert("age".to_string(), ColumnValue::new(DataType::Integer(25)));
-        
+
         row.update(new_values).unwrap();
         assert_eq!(row.version_count(), 2);
-        assert_eq!(row.get_value("age").unwrap().data_type, DataType::Integer(25));
+        assert_eq!(
+            row.get_value("age").unwrap().data_type,
+            DataType::Integer(25)
+        );
     }
 
     #[test]
     fn test_row_delete() {
         let tuple = Tuple::new(1);
         let mut row = Row::new(1, tuple);
-        
+
         row.delete().unwrap();
         assert!(row.is_deleted());
     }
@@ -507,7 +513,7 @@ mod tests {
     fn test_table_creation() {
         let schema = Schema::new("users".to_string());
         let table = Table::new("users".to_string(), schema);
-        
+
         assert_eq!(table.metadata.name, "users");
         assert_eq!(table.row_count(), 0);
     }
@@ -516,10 +522,10 @@ mod tests {
     fn test_table_insert() {
         let schema = Schema::new("users".to_string());
         let mut table = Table::new("users".to_string(), schema);
-        
+
         let tuple = Tuple::new(1);
         let row = Row::new(1, tuple);
-        
+
         table.insert_row(row).unwrap();
         assert_eq!(table.row_count(), 1);
         assert!(table.contains_row(1));
@@ -529,28 +535,34 @@ mod tests {
     fn test_table_update() {
         let schema = Schema::new("users".to_string());
         let mut table = Table::new("users".to_string(), schema);
-        
+
         let tuple = Tuple::new(1);
         let row = Row::new(1, tuple);
         table.insert_row(row).unwrap();
-        
+
         let mut new_values = HashMap::new();
-        new_values.insert("name".to_string(), ColumnValue::new(DataType::Varchar("John".to_string())));
-        
+        new_values.insert(
+            "name".to_string(),
+            ColumnValue::new(DataType::Varchar("John".to_string())),
+        );
+
         table.update_row(1, new_values).unwrap();
         let updated_row = table.get_row(1).unwrap();
-        assert_eq!(updated_row.get_value("name").unwrap().data_type, DataType::Varchar("John".to_string()));
+        assert_eq!(
+            updated_row.get_value("name").unwrap().data_type,
+            DataType::Varchar("John".to_string())
+        );
     }
 
     #[test]
     fn test_table_delete() {
         let schema = Schema::new("users".to_string());
         let mut table = Table::new("users".to_string(), schema);
-        
+
         let tuple = Tuple::new(1);
         let row = Row::new(1, tuple);
         table.insert_row(row).unwrap();
-        
+
         table.delete_row(1).unwrap();
         let deleted_row = table.get_row(1).unwrap();
         assert!(deleted_row.is_deleted());

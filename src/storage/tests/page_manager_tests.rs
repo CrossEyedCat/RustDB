@@ -30,12 +30,12 @@ fn test_insert_operation() {
     if let Ok((mut manager, _temp_dir)) = create_test_page_manager() {
         let test_data = b"Hello, PageManager!";
         let result = manager.insert(test_data);
-        
+
         if let Ok(insert_result) = result {
             assert!(insert_result.record_id > 0);
             assert!(insert_result.page_id >= 0);
             assert!(!insert_result.page_split); // Первая вставка не должна вызывать разделение
-            
+
             let stats = manager.get_statistics();
             assert_eq!(stats.insert_operations, 1);
         }
@@ -47,12 +47,11 @@ fn test_insert_operation() {
 #[test]
 fn test_select_operation() {
     if let Ok((mut manager, _temp_dir)) = create_test_page_manager() {
-    
-    // Вставляем несколько записей
-    let test_data1 = b"Record 1";
-    let test_data2 = b"Record 2";
-    let test_data3 = b"Record 3";
-    
+        // Вставляем несколько записей
+        let test_data1 = b"Record 1";
+        let test_data2 = b"Record 2";
+        let test_data3 = b"Record 3";
+
         let mut successful_inserts = 0;
         if manager.insert(test_data1).is_ok() {
             successful_inserts += 1;
@@ -63,7 +62,7 @@ fn test_select_operation() {
         if manager.insert(test_data3).is_ok() {
             successful_inserts += 1;
         }
-        
+
         // Выбираем все записи
         let results = manager.select(None);
         if let Ok(records) = results {
@@ -79,17 +78,14 @@ fn test_select_operation() {
 #[test]
 fn test_select_with_condition() {
     if let Ok((mut manager, _temp_dir)) = create_test_page_manager() {
-    
         // Вставляем записи
         let _ = manager.insert(b"apple");
         let _ = manager.insert(b"banana");
         let _ = manager.insert(b"cherry");
-        
+
         // Выбираем записи, содержащие 'a'
-        let condition = Box::new(|data: &[u8]| {
-            String::from_utf8_lossy(data).contains('a')
-        });
-        
+        let condition = Box::new(|data: &[u8]| String::from_utf8_lossy(data).contains('a'));
+
         let results = manager.select(Some(condition));
         if let Ok(records) = results {
             // Если операции вставки были успешными, должно быть 2 записи с 'a' (apple, banana)
@@ -103,21 +99,20 @@ fn test_select_with_condition() {
 #[test]
 fn test_update_operation() {
     if let Ok((mut manager, _temp_dir)) = create_test_page_manager() {
-    
         // Вставляем запись
         let original_data = b"Original data";
         if let Ok(insert_result) = manager.insert(original_data) {
             let record_id = insert_result.record_id;
-            
+
             // Обновляем запись
             let new_data = b"Updated data";
             let update_result = manager.update(record_id, new_data);
-            
+
             if update_result.is_ok() {
                 let stats = manager.get_statistics();
                 assert_eq!(stats.insert_operations, 1);
                 assert_eq!(stats.update_operations, 1);
-                
+
                 // Проверяем, что запись обновлена
                 if let Ok(records) = manager.select(None) {
                     assert_eq!(records.len(), 1);
@@ -132,19 +127,18 @@ fn test_update_operation() {
 #[test]
 fn test_delete_operation() {
     if let Ok((mut manager, _temp_dir)) = create_test_page_manager() {
-    
         // Вставляем записи
         let _record1 = manager.insert(b"Record 1");
         if let Ok(record2) = manager.insert(b"Record 2") {
             let _record3 = manager.insert(b"Record 3");
-            
+
             // Удаляем среднюю запись
             let delete_result = manager.delete(record2.record_id);
             if delete_result.is_ok() {
                 let stats = manager.get_statistics();
                 assert!(stats.insert_operations >= 1);
                 assert_eq!(stats.delete_operations, 1);
-                
+
                 // Проверяем, что запись удалена
                 if let Ok(records) = manager.select(None) {
                     assert!(records.len() <= 3);
@@ -166,11 +160,11 @@ fn test_batch_insert() {
             b"Batch record 4".to_vec(),
             b"Batch record 5".to_vec(),
         ];
-        
+
         let results = manager.batch_insert(batch_data.clone());
         if let Ok(insert_results) = results {
             assert_eq!(insert_results.len(), 5);
-            
+
             let stats = manager.get_statistics();
             assert_eq!(stats.insert_operations, 5);
         }
@@ -189,20 +183,20 @@ fn test_defragmentation() {
                 record_ids.push(result.record_id);
             }
         }
-        
+
         // Удаляем некоторые записи для создания фрагментации
         for i in (0..10).step_by(2) {
             if i < record_ids.len() {
                 let _ = manager.delete(record_ids[i]);
             }
         }
-        
+
         // Выполняем дефрагментацию
         let defrag_result = manager.defragment();
         if let Ok(defragmented_count) = defrag_result {
             // Количество дефрагментированных страниц зависит от реализации
             assert!(defragmented_count >= 0);
-            
+
             let stats = manager.get_statistics();
             assert_eq!(stats.defragmentation_operations, 1);
         }
@@ -220,7 +214,7 @@ fn test_page_manager_config() {
             enable_compression: true,
             batch_size: 50,
         };
-        
+
         let manager = PageManager::new(temp_dir.path().to_path_buf(), "config_test", custom_config);
         assert!(manager.is_ok());
     }
@@ -231,25 +225,25 @@ fn test_page_manager_config() {
 fn test_open_existing_page_manager() {
     if let Ok(temp_dir) = TempDir::new() {
         let table_name = "existing_table";
-        
+
         // Создаем менеджер и вставляем данные
         {
             if let Ok(mut manager) = PageManager::new(
-                temp_dir.path().to_path_buf(), 
-                table_name, 
-                PageManagerConfig::default()
+                temp_dir.path().to_path_buf(),
+                table_name,
+                PageManagerConfig::default(),
             ) {
                 let _ = manager.insert(b"Persistent data");
             }
         }
-        
+
         // Открываем существующий менеджер
         let manager = PageManager::open(
             temp_dir.path().to_path_buf(),
             table_name,
-            PageManagerConfig::default()
+            PageManagerConfig::default(),
         );
-        
+
         let _ = manager; // Используем переменную
     }
     assert!(true);
@@ -260,7 +254,7 @@ fn test_large_record_handling() {
     if let Ok((mut manager, _temp_dir)) = create_test_page_manager() {
         // Создаем большую запись (но не превышающую MAX_RECORD_SIZE)
         let large_data = vec![b'X'; 1000]; // 1KB данных
-        
+
         let result = manager.insert(&large_data);
         if result.is_ok() {
             // Проверяем, что запись была сохранена
@@ -281,7 +275,7 @@ fn test_statistics_tracking() {
         let mut expected_updates = 0;
         let mut expected_deletes = 0;
         let mut expected_defrags = 0;
-        
+
         if let Ok(insert_result) = manager.insert(b"Test record") {
             let record_id = insert_result.record_id;
             if manager.select(None).is_ok() {
@@ -297,7 +291,7 @@ fn test_statistics_tracking() {
                 expected_defrags += 1;
             }
         }
-        
+
         let stats = manager.get_statistics();
         assert_eq!(stats.insert_operations, 1);
         assert_eq!(stats.select_operations, expected_selects);
@@ -316,7 +310,7 @@ fn test_error_handling() {
         let update_result = manager.update(invalid_record_id, b"New data");
         // Результат зависит от реализации, но не должен вызывать панику
         let _ = update_result;
-    
+
         // Попытка удалить несуществующую запись
         let delete_result = manager.delete(invalid_record_id);
         // Результат зависит от реализации, но не должен вызывать панику
@@ -336,8 +330,10 @@ fn test_page_merge() {
             enable_compression: false,
             batch_size: 10,
         };
-        
-        if let Ok(mut manager) = PageManager::new(temp_dir.path().to_path_buf(), "merge_test", config) {
+
+        if let Ok(mut manager) =
+            PageManager::new(temp_dir.path().to_path_buf(), "merge_test", config)
+        {
             // Вставляем много записей для создания нескольких страниц
             let mut record_ids = Vec::new();
             for i in 0..50 {
@@ -346,23 +342,23 @@ fn test_page_merge() {
                     record_ids.push(result.record_id);
                 }
             }
-            
+
             let stats_before = manager.get_statistics().clone();
-            
+
             // Удаляем большинство записей для снижения коэффициента заполнения
             for i in 0..45 {
                 if i < record_ids.len() {
                     let _ = manager.delete(record_ids[i]);
                 }
             }
-            
+
             let stats_after = manager.get_statistics().clone();
-            
+
             // Проверяем, что было выполнено объединение страниц (если операции прошли успешно)
             if stats_after.delete_operations > 0 {
                 assert!(stats_after.page_merges >= stats_before.page_merges);
             }
-            
+
             // Проверяем, что оставшиеся записи все еще доступны
             if let Ok(remaining_records) = manager.select(None) {
                 // Количество может варьироваться в зависимости от успешности операций
@@ -384,24 +380,26 @@ fn test_compression_functionality() {
             enable_compression: true, // Включаем компрессию
             batch_size: 100,
         };
-        
-        if let Ok(mut manager) = PageManager::new(temp_dir.path().to_path_buf(), "compression_test", config) {
+
+        if let Ok(mut manager) =
+            PageManager::new(temp_dir.path().to_path_buf(), "compression_test", config)
+        {
             // Создаем данные, которые хорошо сжимаются (повторяющиеся символы)
             let compressible_data = "AAAAAAAAAAAABBBBBBBBBBBBCCCCCCCCCCCCDDDDDDDDDDDD".repeat(10);
-            
+
             if let Ok(result) = manager.insert(compressible_data.as_bytes()) {
                 assert!(result.record_id > 0);
-                
+
                 // Проверяем, что данные правильно сохранены и извлечены
                 if let Ok(records) = manager.select(None) {
                     assert_eq!(records.len(), 1);
                     assert_eq!(records[0].1, compressible_data.as_bytes());
                 }
-                
+
                 // Вставляем несколько записей с разными типами данных
                 let _ = manager.insert(b"Short data");
                 let _ = manager.insert(b"Random data: 1234567890!@#$%^&*()");
-                
+
                 if let Ok(all_records) = manager.select(None) {
                     assert!(all_records.len() >= 1);
                 }
@@ -421,10 +419,14 @@ fn test_page_split_with_compression() {
             enable_compression: true,
             batch_size: 50,
         };
-        
-        if let Ok(mut manager) = PageManager::new(temp_dir.path().to_path_buf(), "split_compression_test", config) {
+
+        if let Ok(mut manager) = PageManager::new(
+            temp_dir.path().to_path_buf(),
+            "split_compression_test",
+            config,
+        ) {
             let mut split_occurred = false;
-            
+
             // Вставляем записи до тех пор, пока не произойдет разделение страницы
             for i in 0..100 {
                 let data = format!("Large record with compression test data {}", i).repeat(5);
@@ -435,7 +437,7 @@ fn test_page_split_with_compression() {
                     }
                 }
             }
-            
+
             // Проверяем статистику (если операции прошли успешно)
             let stats = manager.get_statistics();
             if stats.insert_operations > 0 {
@@ -456,25 +458,27 @@ fn test_compression_with_different_data_types() {
             enable_compression: true,
             ..PageManagerConfig::default()
         };
-        
-        if let Ok(mut manager) = PageManager::new(temp_dir.path().to_path_buf(), "data_types_test", config) {
+
+        if let Ok(mut manager) =
+            PageManager::new(temp_dir.path().to_path_buf(), "data_types_test", config)
+        {
             // Тестируем различные типы данных
             let test_data = vec![
-                b"".to_vec(), // Пустые данные
-                b"a".to_vec(), // Один символ
-                b"Hello, World!".to_vec(), // Обычный текст
-                vec![0u8; 100], // Нули (хорошо сжимаются)
-                (0u8..=255u8).cycle().take(500).collect::<Vec<u8>>(), // Повторяющийся паттерн
+                b"".to_vec(),                                            // Пустые данные
+                b"a".to_vec(),                                           // Один символ
+                b"Hello, World!".to_vec(),                               // Обычный текст
+                vec![0u8; 100],                                          // Нули (хорошо сжимаются)
+                (0u8..=255u8).cycle().take(500).collect::<Vec<u8>>(),    // Повторяющийся паттерн
                 (0..1000).map(|i| (i % 256) as u8).collect::<Vec<u8>>(), // Числовая последовательность
             ];
-            
+
             let mut inserted_count = 0;
             for data in test_data.iter() {
                 if manager.insert(data).is_ok() {
                     inserted_count += 1;
                 }
             }
-            
+
             // Проверяем, что данные правильно сохранены (если удалось их вставить)
             if inserted_count > 0 {
                 if let Ok(records) = manager.select(None) {

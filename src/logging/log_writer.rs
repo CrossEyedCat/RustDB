@@ -10,13 +10,13 @@
 use crate::common::{Error, Result};
 use crate::logging::log_record::{LogRecord, LogSequenceNumber};
 use crate::storage::io_optimization::{BufferedIoManager, IoBufferConfig};
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio::task::JoinHandle;
-use serde::{Deserialize, Serialize};
 
 /// Конфигурация системы записи логов
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,7 +210,8 @@ impl LogWriter {
             })?;
 
             for entry in entries {
-                let entry = entry.map_err(|e| Error::internal(&format!("Ошибка чтения записи: {}", e)))?;
+                let entry =
+                    entry.map_err(|e| Error::internal(&format!("Ошибка чтения записи: {}", e)))?;
                 let path = entry.path();
 
                 if path.extension().and_then(|s| s.to_str()) == Some("log") {
@@ -246,7 +247,8 @@ impl LogWriter {
             Error::internal(&format!("Не удалось получить метаданные файла: {}", e))
         })?;
 
-        let filename = path.file_name()
+        let filename = path
+            .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
@@ -259,12 +261,14 @@ impl LogWriter {
             record_count: 0, // Требует чтения файла
             first_lsn: 0,    // Требует чтения файла
             last_lsn: 0,     // Требует чтения файла
-            created_at: metadata.created()
+            created_at: metadata
+                .created()
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                 .duration_since(std::time::SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            updated_at: metadata.modified()
+            updated_at: metadata
+                .modified()
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                 .duration_since(std::time::SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -343,15 +347,16 @@ impl LogWriter {
         {
             let mut stats = statistics.write().unwrap();
             stats.total_records_written += 1;
-            
+
             if let Ok(serialized) = request.record.serialize() {
                 stats.total_bytes_written += serialized.len() as u64;
             }
 
             let execution_time = start_time.elapsed().as_micros() as u64;
             if stats.total_records_written > 0 {
-                stats.average_write_time_us = 
-                    (stats.average_write_time_us * (stats.total_records_written - 1) + execution_time) 
+                stats.average_write_time_us = (stats.average_write_time_us
+                    * (stats.total_records_written - 1)
+                    + execution_time)
                     / stats.total_records_written;
             }
 
@@ -392,7 +397,7 @@ impl LogWriter {
             let mut stats = statistics.write().unwrap();
             stats.sync_operations += 1;
             stats.current_buffer_size = 0;
-            
+
             // Вычисляем пропускную способность
             if stats.total_records_written > 0 && stats.average_write_time_us > 0 {
                 stats.write_throughput = 1_000_000.0 / stats.average_write_time_us as f64;
@@ -414,13 +419,13 @@ impl LogWriter {
             force_sync: false,
         };
 
-        self.write_tx.send(request).map_err(|_| {
-            Error::internal("Не удалось отправить запрос на запись лога")
-        })?;
+        self.write_tx
+            .send(request)
+            .map_err(|_| Error::internal("Не удалось отправить запрос на запись лога"))?;
 
-        response_rx.await.map_err(|_| {
-            Error::internal("Не удалось получить результат записи лога")
-        })??;
+        response_rx
+            .await
+            .map_err(|_| Error::internal("Не удалось получить результат записи лога"))??;
 
         Ok(record.lsn)
     }
@@ -452,12 +457,12 @@ impl LogWriter {
     /// Принудительно сбрасывает все буферы на диск
     pub async fn flush(&self) -> Result<()> {
         Self::flush_write_buffer(&self.write_buffer, &self.statistics).await;
-        
+
         {
             let mut stats = self.statistics.write().unwrap();
             stats.sync_operations += 1;
         }
-        
+
         Ok(())
     }
 
@@ -497,7 +502,7 @@ impl LogWriter {
             let mut stats = self.statistics.write().unwrap();
             stats.file_rotations += 1;
         }
-        
+
         Ok(())
     }
 
@@ -522,7 +527,7 @@ impl LogWriter {
 
         if files.len() > keep_files as usize {
             let files_to_remove = files.len() - keep_files as usize;
-            
+
             // В реальной реализации здесь было бы удаление файлов
             removed_count = files_to_remove as u32;
         }
@@ -560,7 +565,7 @@ impl Drop for LogWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logging::log_record::{LogRecord, LogRecordType, IsolationLevel};
+    use crate::logging::log_record::{IsolationLevel, LogRecord, LogRecordType};
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -581,15 +586,15 @@ mod tests {
         config.write_buffer_size = 10;
 
         let writer = LogWriter::new(config)?;
-        
+
         let record = LogRecord::new_transaction_begin(0, 100, IsolationLevel::ReadCommitted);
         let lsn = writer.write_log(record).await?;
-        
+
         assert!(lsn > 0);
-        
+
         let stats = writer.get_statistics();
         assert!(stats.total_records_written >= 1);
-        
+
         Ok(())
     }
 
@@ -600,15 +605,15 @@ mod tests {
         config.log_directory = temp_dir.path().to_path_buf();
 
         let writer = LogWriter::new(config)?;
-        
+
         let record = LogRecord::new_transaction_commit(0, 100, vec![(1, 10)], None);
         let lsn = writer.write_log_sync(record).await?;
-        
+
         assert!(lsn > 0);
-        
+
         let stats = writer.get_statistics();
         assert!(stats.sync_operations >= 1);
-        
+
         Ok(())
     }
 
@@ -620,22 +625,21 @@ mod tests {
         config.write_buffer_size = 5;
 
         let writer = LogWriter::new(config)?;
-        
+
         // Записываем несколько записей
         for i in 0..10 {
-            let record = LogRecord::new_data_insert(
-                0, 100 + i, 1, i as u64, 0, vec![i as u8; 10], None
-            );
+            let record =
+                LogRecord::new_data_insert(0, 100 + i, 1, i as u64, 0, vec![i as u8; 10], None);
             writer.write_log(record).await?;
         }
-        
+
         // Принудительно сбрасываем буфер
         writer.flush().await?;
-        
+
         let stats = writer.get_statistics();
         assert_eq!(stats.total_records_written, 10);
         assert!(stats.total_bytes_written > 0);
-        
+
         Ok(())
     }
 
@@ -646,16 +650,17 @@ mod tests {
         config.log_directory = temp_dir.path().to_path_buf();
 
         let writer = LogWriter::new(config)?;
-        
+
         let mut last_lsn = 0;
         for i in 0..5 {
-            let record = LogRecord::new_transaction_begin(0, 100 + i, IsolationLevel::ReadCommitted);
+            let record =
+                LogRecord::new_transaction_begin(0, 100 + i, IsolationLevel::ReadCommitted);
             let lsn = writer.write_log(record).await?;
-            
+
             assert!(lsn > last_lsn);
             last_lsn = lsn;
         }
-        
+
         Ok(())
     }
 
@@ -666,18 +671,41 @@ mod tests {
         config.log_directory = temp_dir.path().to_path_buf();
 
         let writer = LogWriter::new(config)?;
-        
+
         // Записываем несколько записей разных типов
-        writer.write_log(LogRecord::new_transaction_begin(0, 100, IsolationLevel::ReadCommitted)).await?;
-        writer.write_log(LogRecord::new_data_insert(0, 100, 1, 10, 0, vec![1, 2, 3], None)).await?;
-        writer.write_log_sync(LogRecord::new_transaction_commit(0, 100, vec![(1, 10)], None)).await?;
-        
+        writer
+            .write_log(LogRecord::new_transaction_begin(
+                0,
+                100,
+                IsolationLevel::ReadCommitted,
+            ))
+            .await?;
+        writer
+            .write_log(LogRecord::new_data_insert(
+                0,
+                100,
+                1,
+                10,
+                0,
+                vec![1, 2, 3],
+                None,
+            ))
+            .await?;
+        writer
+            .write_log_sync(LogRecord::new_transaction_commit(
+                0,
+                100,
+                vec![(1, 10)],
+                None,
+            ))
+            .await?;
+
         let stats = writer.get_statistics();
         assert_eq!(stats.total_records_written, 3);
         assert!(stats.total_bytes_written > 0);
         assert!(stats.sync_operations >= 1);
         assert!(stats.average_write_time_us > 0);
-        
+
         Ok(())
     }
 
@@ -690,19 +718,19 @@ mod tests {
         config.max_buffer_time = Duration::from_millis(50);
 
         let writer = LogWriter::new(config)?;
-        
+
         // Записываем записи, которые должны остаться в буфере
         for i in 0..2 {
             let record = LogRecord::new_data_insert(0, 100, 1, i, 0, vec![i as u8], None);
             writer.write_log(record).await?;
         }
-        
+
         // Ждем автоматического сброса буфера
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         let stats = writer.get_statistics();
         assert!(stats.sync_operations >= 1);
-        
+
         Ok(())
     }
 }

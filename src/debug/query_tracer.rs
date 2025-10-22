@@ -4,10 +4,10 @@
 //! с отслеживанием времени выполнения каждого этапа
 
 use crate::debug::DebugConfig;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -184,22 +184,22 @@ impl QueryTracer {
 
         self.background_handle = Some(tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Перемещаем завершенные трассировки
                 {
                     let mut active = active_traces.write().unwrap();
                     let mut completed = completed_traces.write().unwrap();
-                    
+
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs();
-                    
+
                     let mut to_move = Vec::new();
-                    
+
                     for (query_id, trace) in active.iter() {
                         if let Some(end_time) = trace.end_time {
                             // Перемещаем трассировки старше 1 часа
@@ -208,13 +208,13 @@ impl QueryTracer {
                             }
                         }
                     }
-                    
+
                     for query_id in to_move {
                         if let Some(trace) = active.remove(&query_id) {
                             completed.push(trace);
                         }
                     }
-                    
+
                     // Ограничиваем количество завершенных трассировок
                     let len = completed.len();
                     if len > 1000 {
@@ -412,15 +412,18 @@ impl QueryTracer {
     pub fn generate_performance_report(&self) -> String {
         let stats = self.get_stats();
         let completed_traces = self.get_completed_traces(100);
-        
+
         let mut report = String::new();
-        
+
         report.push_str("=== Отчет о производительности запросов ===\n\n");
-        
+
         // Общая статистика
         report.push_str("Общая статистика:\n");
         report.push_str(&format!("  Всего запросов: {}\n", stats.total_queries));
-        report.push_str(&format!("  Успешно завершенных: {}\n", stats.completed_queries));
+        report.push_str(&format!(
+            "  Успешно завершенных: {}\n",
+            stats.completed_queries
+        ));
         report.push_str(&format!("  С ошибками: {}\n", stats.failed_queries));
         report.push_str(&format!("  Отмененных: {}\n", stats.cancelled_queries));
         report.push_str("\n");
@@ -448,8 +451,14 @@ impl QueryTracer {
 
             report.push_str("Время выполнения:\n");
             report.push_str(&format!("  Среднее: {:.2} мс\n", avg_time as f64 / 1000.0));
-            report.push_str(&format!("  Минимальное: {:.2} мс\n", min_time as f64 / 1000.0));
-            report.push_str(&format!("  Максимальное: {:.2} мс\n", max_time as f64 / 1000.0));
+            report.push_str(&format!(
+                "  Минимальное: {:.2} мс\n",
+                min_time as f64 / 1000.0
+            ));
+            report.push_str(&format!(
+                "  Максимальное: {:.2} мс\n",
+                max_time as f64 / 1000.0
+            ));
             report.push_str("\n");
 
             report.push_str("Обработка данных:\n");
@@ -458,7 +467,8 @@ impl QueryTracer {
             report.push_str("\n");
 
             // Топ медленных запросов
-            let mut slow_queries: Vec<_> = completed_traces.iter()
+            let mut slow_queries: Vec<_> = completed_traces
+                .iter()
                 .filter(|t| t.total_duration_us.is_some())
                 .collect();
             slow_queries.sort_by(|a, b| b.total_duration_us.cmp(&a.total_duration_us));
@@ -466,8 +476,9 @@ impl QueryTracer {
             report.push_str("Топ 5 медленных запросов:\n");
             for (i, trace) in slow_queries.iter().take(5).enumerate() {
                 if let Some(duration) = trace.total_duration_us {
-                    report.push_str(&format!("  {}. {} мс - {}\n", 
-                        i + 1, 
+                    report.push_str(&format!(
+                        "  {}. {} мс - {}\n",
+                        i + 1,
                         duration as f64 / 1000.0,
                         if trace.sql_query.len() > 50 {
                             format!("{}...", &trace.sql_query[..47])
@@ -487,13 +498,14 @@ impl QueryTracer {
         let stats = self.get_stats();
         let active_count = self.active_traces.read().unwrap().len();
         let completed_count = self.completed_traces.read().unwrap().len();
-        
+
         let mut report = String::new();
-        
+
         report.push_str(&format!("Активных трассировок: {}\n", active_count));
         report.push_str(&format!("Завершенных трассировок: {}\n", completed_count));
         report.push_str(&format!("Всего запросов: {}\n", stats.total_queries));
-        report.push_str(&format!("Успешных: {} ({:.1}%)\n", 
+        report.push_str(&format!(
+            "Успешных: {} ({:.1}%)\n",
             stats.completed_queries,
             if stats.total_queries > 0 {
                 stats.completed_queries as f64 / stats.total_queries as f64 * 100.0
@@ -501,7 +513,8 @@ impl QueryTracer {
                 0.0
             }
         ));
-        report.push_str(&format!("С ошибками: {} ({:.1}%)\n",
+        report.push_str(&format!(
+            "С ошибками: {} ({:.1}%)\n",
             stats.failed_queries,
             if stats.total_queries > 0 {
                 stats.failed_queries as f64 / stats.total_queries as f64 * 100.0
@@ -509,7 +522,7 @@ impl QueryTracer {
                 0.0
             }
         ));
-        
+
         report
     }
 
@@ -593,7 +606,7 @@ mod tests {
         // Проверяем завершенные трассировки
         let completed = tracer.get_completed_traces(10);
         assert_eq!(completed.len(), 1);
-        
+
         let trace = &completed[0];
         assert_eq!(trace.query_id, query_id);
         assert_eq!(trace.sql_query, "SELECT * FROM users WHERE age > 18");
@@ -645,7 +658,7 @@ mod tests {
 
         let completed = tracer.get_completed_traces(10);
         assert_eq!(completed.len(), 1);
-        
+
         let trace = &completed[0];
         assert!(matches!(trace.status, QueryStatus::Failed));
         assert_eq!(trace.error, Some("Syntax error at line 1".to_string()));

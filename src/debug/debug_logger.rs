@@ -3,13 +3,13 @@
 //! Предоставляет расширенное логирование операций с различными уровнями детализации
 
 use crate::debug::DebugConfig;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 
 /// Уровень детализации логирования
@@ -113,12 +113,7 @@ pub struct DebugLogEntry {
 
 impl DebugLogEntry {
     /// Создает новую лог-запись
-    pub fn new(
-        level: LogLevel,
-        category: LogCategory,
-        component: &str,
-        message: &str,
-    ) -> Self {
+    pub fn new(level: LogLevel, category: LogCategory, component: &str, message: &str) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -174,18 +169,18 @@ impl DebugLogEntry {
     /// Форматирует запись для вывода
     pub fn format(&self) -> String {
         let mut formatted = String::new();
-        
+
         // Временная метка
         let datetime = SystemTime::UNIX_EPOCH + Duration::from_micros(self.timestamp);
         let datetime_str = format!("{:?}", datetime);
         formatted.push_str(&format!("[{}] ", datetime_str));
-        
+
         // Уровень и категория
         formatted.push_str(&format!("{}:{} ", self.level, self.category));
-        
+
         // Компонент
         formatted.push_str(&format!("[{}] ", self.component));
-        
+
         // ID транзакции и запроса
         if let Some(tx_id) = self.transaction_id {
             formatted.push_str(&format!("TX:{} ", tx_id));
@@ -193,25 +188,25 @@ impl DebugLogEntry {
         if let Some(query_id) = &self.query_id {
             formatted.push_str(&format!("Q:{} ", query_id));
         }
-        
+
         // Время выполнения
         if let Some(duration) = self.duration_us {
             formatted.push_str(&format!("({}μs) ", duration));
         }
-        
+
         // Размер данных
         if let Some(size) = self.data_size {
             formatted.push_str(&format!("[{}B] ", size));
         }
-        
+
         // Сообщение
         formatted.push_str(&self.message);
-        
+
         // Дополнительные данные
         if let Some(data) = &self.data {
             formatted.push_str(&format!(" | Data: {}", data));
         }
-        
+
         formatted
     }
 }
@@ -259,7 +254,7 @@ impl DebugLogger {
 
         // Инициализируем лог-файл
         logger.initialize_log_file();
-        
+
         // Запускаем фоновую задачу
         logger.start_background_task();
 
@@ -269,12 +264,8 @@ impl DebugLogger {
     /// Инициализирует лог-файл
     fn initialize_log_file(&mut self) {
         let log_path = Path::new("debug.log");
-        
-        match OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_path)
-        {
+
+        match OpenOptions::new().create(true).append(true).open(log_path) {
             Ok(file) => {
                 let writer = BufWriter::new(file);
                 *self.log_file.lock().unwrap() = Some(writer);
@@ -294,10 +285,10 @@ impl DebugLogger {
 
         self.background_handle = Some(tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(100));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Получаем записи из буфера
                 let entries = {
                     let mut buffer = log_buffer.lock().unwrap();
@@ -318,7 +309,7 @@ impl DebugLogger {
                             stats.write_errors += 1;
                         }
                     }
-                    
+
                     if let Err(e) = writer.flush() {
                         eprintln!("Ошибка сброса буфера лога: {}", e);
                     }
@@ -345,10 +336,19 @@ impl DebugLogger {
             let mut stats = self.stats.write().unwrap();
             stats.total_entries += 1;
             stats.last_entry_time = entry.timestamp;
-            
-            *stats.entries_by_level.entry(entry.level.to_string()).or_default() += 1;
-            *stats.entries_by_category.entry(entry.category.to_string()).or_default() += 1;
-            *stats.entries_by_component.entry(entry.component.clone()).or_default() += 1;
+
+            *stats
+                .entries_by_level
+                .entry(entry.level.to_string())
+                .or_default() += 1;
+            *stats
+                .entries_by_category
+                .entry(entry.category.to_string())
+                .or_default() += 1;
+            *stats
+                .entries_by_component
+                .entry(entry.component.clone())
+                .or_default() += 1;
         }
 
         // Выводим в консоль для критических ошибок
@@ -385,11 +385,11 @@ impl DebugLogger {
         );
 
         entry = entry.with_transaction_id(transaction_id);
-        
+
         if let Some(dur) = duration {
             entry = entry.with_duration(dur);
         }
-        
+
         if let Some(size) = data_size {
             entry = entry.with_data_size(size);
         }
@@ -416,7 +416,7 @@ impl DebugLogger {
         if let Some(dur) = duration {
             entry = entry.with_duration(dur);
         }
-        
+
         if let Some(size) = data_size {
             entry = entry.with_data_size(size);
         }
@@ -441,11 +441,11 @@ impl DebugLogger {
         );
 
         entry = entry.with_query_id(query_id);
-        
+
         if let Some(dur) = duration {
             entry = entry.with_duration(dur);
         }
-        
+
         if let Some(size) = data_size {
             entry = entry.with_data_size(size);
         }
@@ -461,12 +461,7 @@ impl DebugLogger {
         operation: &str,
         duration: Option<Duration>,
     ) {
-        let mut entry = self.create_entry(
-            level,
-            LogCategory::System,
-            component,
-            operation,
-        );
+        let mut entry = self.create_entry(level, LogCategory::System, component, operation);
 
         if let Some(dur) = duration {
             entry = entry.with_duration(dur);
@@ -484,25 +479,28 @@ impl DebugLogger {
     pub fn generate_status_report(&self) -> String {
         let stats = self.get_stats();
         let mut report = String::new();
-        
-        report.push_str(&format!("Общее количество записей: {}\n", stats.total_entries));
+
+        report.push_str(&format!(
+            "Общее количество записей: {}\n",
+            stats.total_entries
+        ));
         report.push_str(&format!("Размер лог-файла: {} байт\n", stats.log_file_size));
         report.push_str(&format!("Ошибки записи: {}\n", stats.write_errors));
-        
+
         if !stats.entries_by_level.is_empty() {
             report.push_str("Записи по уровням:\n");
             for (level, count) in &stats.entries_by_level {
                 report.push_str(&format!("  {}: {}\n", level, count));
             }
         }
-        
+
         if !stats.entries_by_category.is_empty() {
             report.push_str("Записи по категориям:\n");
             for (category, count) in &stats.entries_by_category {
                 report.push_str(&format!("  {}: {}\n", category, count));
             }
         }
-        
+
         report
     }
 
@@ -511,7 +509,7 @@ impl DebugLogger {
         if let Some(handle) = self.background_handle.take() {
             handle.abort();
         }
-        
+
         // Сбрасываем оставшиеся записи
         if let Some(writer) = self.log_file.lock().unwrap().as_mut() {
             let _ = writer.flush();
@@ -554,10 +552,11 @@ mod tests {
             LogCategory::Data,
             "TestComponent",
             "Test message",
-        ).with_data(data.clone())
-         .with_transaction_id(123)
-         .with_duration(Duration::from_millis(100))
-         .with_data_size(1024);
+        )
+        .with_data(data.clone())
+        .with_transaction_id(123)
+        .with_duration(Duration::from_millis(100))
+        .with_data_size(1024);
 
         assert_eq!(entry.data, Some(data));
         assert_eq!(entry.transaction_id, Some(123));
@@ -572,9 +571,10 @@ mod tests {
             LogCategory::System,
             "TestComponent",
             "Test error message",
-        ).with_transaction_id(456)
-         .with_duration(Duration::from_micros(500))
-         .with_data_size(2048);
+        )
+        .with_transaction_id(456)
+        .with_duration(Duration::from_micros(500))
+        .with_data_size(2048);
 
         let formatted = entry.format();
         assert!(formatted.contains("ERROR:SYSTEM"));

@@ -4,7 +4,7 @@ use rustdb::core::concurrency::{ConcurrencyManager, ConcurrencyConfig};
 use rustdb::core::{ResourceType, Timestamp, TransactionId, AdvancedLockMode, RowKey};
 use std::time::Duration;
 use std::sync::Arc;
-use tokio;
+// removed redundant single-component import
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -16,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Создаем менеджер конкурентности
     let concurrency_config = ConcurrencyConfig::default();
-    let mut concurrency_manager = ConcurrencyManager::new(concurrency_config);
+    let concurrency_manager = ConcurrencyManager::new(concurrency_config);
     
     // Тестируем базовую функциональность
     let tx1 = TransactionId(1);

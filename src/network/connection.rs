@@ -47,7 +47,7 @@ impl Connection {
             state: ConnectionState::New,
         })
     }
-    
+
     pub fn state(&self) -> ConnectionState {
         self.state
     }

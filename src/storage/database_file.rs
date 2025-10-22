@@ -60,7 +60,7 @@ pub struct DatabaseFileHeader {
     pub version: u16,
     /// Подверсия формата (для обратной совместимости)
     pub subversion: u16,
-    
+
     /// Размер блока/страницы
     pub page_size: u32,
     /// Общее количество страниц в файле
@@ -69,47 +69,47 @@ pub struct DatabaseFileHeader {
     pub used_pages: u64,
     /// Количество свободных страниц
     pub free_pages: u64,
-    
+
     /// Тип файла базы данных
     pub file_type: DatabaseFileType,
     /// Состояние файла
     pub file_state: DatabaseFileState,
-    
+
     /// ID базы данных (для связи файлов одной БД)
     pub database_id: u32,
     /// Порядковый номер файла в БД
     pub file_sequence: u32,
-    
+
     /// Указатель на корневую страницу каталога
     pub catalog_root_page: Option<PageId>,
     /// Указатель на первую страницу карты свободных страниц
     pub free_page_map_start: Option<PageId>,
     /// Количество страниц, занимаемых картой свободных страниц
     pub free_page_map_pages: u32,
-    
+
     /// Максимальный размер файла в страницах (0 = без ограничения)
     pub max_pages: u64,
     /// Размер расширения файла в страницах
     pub extension_size: u32,
-    
+
     /// Время создания файла (Unix timestamp)
     pub created_at: u64,
     /// Время последнего изменения
     pub modified_at: u64,
     /// Время последней проверки целостности
     pub last_check_at: u64,
-    
+
     /// Счетчик операций записи
     pub write_count: u64,
     /// Счетчик операций чтения
     pub read_count: u64,
-    
+
     /// Флаги файла (битовая маска)
     pub flags: u32,
-    
+
     /// Контрольная сумма заголовка (должна вычисляться последней)
     pub checksum: u32,
-    
+
     /// Резерв для будущих расширений (должен быть заполнен нулями)
     pub reserved: Vec<u8>,
 }
@@ -118,12 +118,12 @@ pub struct DatabaseFileHeader {
 impl DatabaseFileHeader {
     /// Магическое число для файлов rustdb
     pub const MAGIC: u32 = 0x52555354; // "RUST"
-    
+
     /// Текущая версия формата файла
     pub const VERSION: u16 = 2;
     /// Текущая подверсия формата файла
     pub const SUBVERSION: u16 = 0;
-    
+
     /// Флаг: файл сжат
     pub const FLAG_COMPRESSED: u32 = 0x0001;
     /// Флаг: файл зашифрован
@@ -132,7 +132,7 @@ impl DatabaseFileHeader {
     pub const FLAG_CHECKSUM_ENABLED: u32 = 0x0004;
     /// Флаг: файл в режиме отладки
     pub const FLAG_DEBUG_MODE: u32 = 0x0008;
-    
+
     /// Создает новый заголовок файла БД
     pub fn new(file_type: DatabaseFileType, database_id: u32) -> Self {
         let now = std::time::SystemTime::now()
@@ -155,7 +155,7 @@ impl DatabaseFileHeader {
             catalog_root_page: None,
             free_page_map_start: None,
             free_page_map_pages: 0,
-            max_pages: 0, // Без ограничения
+            max_pages: 0,         // Без ограничения
             extension_size: 1024, // Расширяем по 1024 страницы (4MB)
             created_at: now,
             modified_at: now,
@@ -222,12 +222,12 @@ impl DatabaseFileHeader {
         sum = sum.wrapping_add(self.write_count as u32);
         sum = sum.wrapping_add(self.read_count as u32);
         sum = sum.wrapping_add(self.flags);
-        
+
         // Добавляем байты из reserved
         for &byte in &self.reserved {
             sum = sum.wrapping_add(byte as u32);
         }
-        
+
         sum
     }
 
@@ -238,7 +238,7 @@ impl DatabaseFileHeader {
 
     /// Проверяет корректность заголовка
     pub fn is_valid(&self) -> bool {
-        self.magic == Self::MAGIC 
+        self.magic == Self::MAGIC
             && self.version == Self::VERSION
             && self.page_size == PAGE_SIZE as u32
             && self.checksum == self.calculate_checksum()
@@ -324,7 +324,7 @@ pub struct FreePageMapHeader {
 impl FreePageMap {
     /// Магическое число для карты свободных страниц
     pub const MAGIC: u32 = 0x46524545; // "FREE"
-    
+
     /// Версия формата карты
     pub const VERSION: u16 = 1;
 
@@ -354,16 +354,20 @@ impl FreePageMap {
     /// Добавляет свободный блок страниц
     pub fn add_free_block(&mut self, start_page: PageId, page_count: u32) -> Result<()> {
         if page_count == 0 {
-            return Err(Error::validation("Количество страниц не может быть нулевым"));
+            return Err(Error::validation(
+                "Количество страниц не может быть нулевым",
+            ));
         }
 
         // Проверяем пересечения с существующими блоками
         for entry in &self.entries {
             let entry_end = entry.start_page + entry.page_count as u64;
             let new_end = start_page + page_count as u64;
-            
+
             if start_page < entry_end && new_end > entry.start_page {
-                return Err(Error::validation("Свободный блок пересекается с существующим"));
+                return Err(Error::validation(
+                    "Свободный блок пересекается с существующим",
+                ));
             }
         }
 
@@ -400,7 +404,7 @@ impl FreePageMap {
 
         // Обновляем статистику
         self.update_statistics();
-        
+
         Ok(())
     }
 
@@ -413,10 +417,10 @@ impl FreePageMap {
         // Ищем подходящий блок (first-fit алгоритм)
         for i in 0..self.entries.len() {
             let entry = &self.entries[i];
-            
+
             if entry.page_count >= page_count {
                 let allocated_start = entry.start_page;
-                
+
                 if entry.page_count == page_count {
                     // Удаляем запись полностью
                     self.entries.remove(i);
@@ -425,10 +429,14 @@ impl FreePageMap {
                     self.entries[i].start_page += page_count as u64;
                     self.entries[i].page_count -= page_count;
                 }
-                
+
                 self.update_statistics();
                 // Убеждаемся, что не возвращаем page_id = 0
-                return Some(if allocated_start == 0 { 1 } else { allocated_start });
+                return Some(if allocated_start == 0 {
+                    1
+                } else {
+                    allocated_start
+                });
             }
         }
 
@@ -442,7 +450,8 @@ impl FreePageMap {
 
     /// Ищет наибольший непрерывный блок свободных страниц
     pub fn find_largest_free_block(&self) -> u32 {
-        self.entries.iter()
+        self.entries
+            .iter()
             .map(|entry| entry.page_count)
             .max()
             .unwrap_or(0)
@@ -450,7 +459,8 @@ impl FreePageMap {
 
     /// Возвращает общее количество свободных страниц
     pub fn total_free_pages(&self) -> u64 {
-        self.entries.iter()
+        self.entries
+            .iter()
             .map(|entry| entry.page_count as u64)
             .sum()
     }
@@ -470,11 +480,15 @@ impl FreePageMap {
     /// Проверяет целостность карты
     pub fn validate(&self) -> Result<()> {
         if self.header.magic != Self::MAGIC {
-            return Err(Error::validation("Неверное магическое число карты свободных страниц"));
+            return Err(Error::validation(
+                "Неверное магическое число карты свободных страниц",
+            ));
         }
 
         if self.header.version != Self::VERSION {
-            return Err(Error::validation("Неподдерживаемая версия карты свободных страниц"));
+            return Err(Error::validation(
+                "Неподдерживаемая версия карты свободных страниц",
+            ));
         }
 
         // Проверяем пересечения блоков
@@ -483,7 +497,7 @@ impl FreePageMap {
                 if i != j {
                     let end1 = entry1.start_page + entry1.page_count as u64;
                     let end2 = entry2.start_page + entry2.page_count as u64;
-                    
+
                     if entry1.start_page < end2 && end1 > entry2.start_page {
                         return Err(Error::validation("Обнаружены пересекающиеся блоки в карте"));
                     }
@@ -498,13 +512,13 @@ impl FreePageMap {
     pub fn defragment(&mut self) {
         // Сортируем по начальной странице
         self.entries.sort_by_key(|entry| entry.start_page);
-        
+
         // Объединяем соседние блоки
         let mut i = 0;
         while i < self.entries.len().saturating_sub(1) {
             let current_end = self.entries[i].start_page + self.entries[i].page_count as u64;
             let next_start = self.entries[i + 1].start_page;
-            
+
             if current_end == next_start {
                 // Объединяем блоки
                 self.entries[i].page_count += self.entries[i + 1].page_count;
@@ -513,7 +527,7 @@ impl FreePageMap {
                 i += 1;
             }
         }
-        
+
         self.update_statistics();
     }
 
@@ -521,19 +535,19 @@ impl FreePageMap {
     pub fn create_bitmap(&mut self, total_pages: u64) {
         let bitmap_size = ((total_pages + 7) / 8) as usize;
         let mut bitmap = vec![0u8; bitmap_size];
-        
+
         // Отмечаем свободные страницы в битовой карте
         for entry in &self.entries {
             for page in entry.start_page..entry.start_page + entry.page_count as u64 {
                 let byte_index = (page / 8) as usize;
                 let bit_index = (page % 8) as u8;
-                
+
                 if byte_index < bitmap.len() {
                     bitmap[byte_index] |= 1 << bit_index;
                 }
             }
         }
-        
+
         self.bitmap = Some(bitmap);
     }
 }
@@ -603,8 +617,8 @@ impl FileExtensionManager {
     pub fn new(strategy: ExtensionStrategy) -> Self {
         Self {
             strategy,
-            min_extension_size: 64,    // 256KB
-            max_extension_size: 4096,  // 16MB
+            min_extension_size: 64,   // 256KB
+            max_extension_size: 4096, // 16MB
             growth_factor: 1.5,
             extension_history: Vec::new(),
         }
@@ -618,20 +632,18 @@ impl FileExtensionManager {
                 // Увеличиваем на 10% от текущего размера
                 let linear_size = (current_size as f64 * 0.1) as u32;
                 linear_size.max(self.min_extension_size)
-            },
+            }
             ExtensionStrategy::Exponential => {
                 // Экспоненциальное увеличение
                 let exp_size = (current_size as f64 * (self.growth_factor - 1.0)) as u32;
                 exp_size.max(self.min_extension_size)
-            },
-            ExtensionStrategy::Adaptive => {
-                self.calculate_adaptive_size(current_size)
-            },
+            }
+            ExtensionStrategy::Adaptive => self.calculate_adaptive_size(current_size),
         };
 
         // Убеждаемся, что размер достаточен для требуемого количества страниц
         let final_size = base_size.max(required_size);
-        
+
         // Ограничиваем максимальным размером
         final_size.min(self.max_extension_size)
     }
@@ -647,8 +659,10 @@ impl FileExtensionManager {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
-        let recent_extensions: Vec<_> = self.extension_history.iter()
+
+        let recent_extensions: Vec<_> = self
+            .extension_history
+            .iter()
             .filter(|record| now - record.timestamp < 3600) // Последний час
             .collect();
 
@@ -697,7 +711,7 @@ impl FileExtensionManager {
         }
 
         let usage_ratio = (total_pages - free_pages) as f64 / total_pages as f64;
-        
+
         // Предварительно расширяем, если использовано более 80% места
         usage_ratio > 0.8
     }
@@ -709,7 +723,9 @@ impl FileExtensionManager {
             average_extension_size: if self.extension_history.is_empty() {
                 0.0
             } else {
-                let total_growth: u64 = self.extension_history.iter()
+                let total_growth: u64 = self
+                    .extension_history
+                    .iter()
                     .map(|record| record.new_size - record.old_size)
                     .sum();
                 total_growth as f64 / self.extension_history.len() as f64
@@ -737,7 +753,7 @@ mod tests {
     #[test]
     fn test_database_file_header_creation() {
         let header = DatabaseFileHeader::new(DatabaseFileType::Data, 123);
-        
+
         assert_eq!(header.magic, DatabaseFileHeader::MAGIC);
         assert_eq!(header.version, DatabaseFileHeader::VERSION);
         assert_eq!(header.database_id, 123);
@@ -751,11 +767,11 @@ mod tests {
         let mut header = DatabaseFileHeader::new(DatabaseFileType::Index, 456);
         header.update_checksum();
         assert!(header.is_valid());
-        
+
         // Изменяем данные и проверяем, что валидация не пройдет
         header.database_id = 999;
         assert!(!header.is_valid());
-        
+
         // Обновляем контрольную сумму и проверяем снова
         header.update_checksum();
         assert!(header.is_valid());
@@ -764,47 +780,47 @@ mod tests {
     #[test]
     fn test_free_page_map_basic_operations() -> Result<()> {
         let mut map = FreePageMap::new();
-        
+
         // Добавляем свободные блоки
         map.add_free_block(10, 5)?;
         map.add_free_block(20, 3)?;
-        
+
         assert_eq!(map.total_free_pages(), 8);
         assert_eq!(map.find_largest_free_block(), 5);
-        
+
         // Выделяем страницы
         let allocated = map.allocate_pages(3);
         assert_eq!(allocated, Some(10));
         assert_eq!(map.total_free_pages(), 5);
-        
+
         Ok(())
     }
 
     #[test]
     fn test_free_page_map_merge_blocks() -> Result<()> {
         let mut map = FreePageMap::new();
-        
+
         // Добавляем соседние блоки
         map.add_free_block(10, 5)?;
         map.add_free_block(15, 3)?; // Должен объединиться с предыдущим
-        
+
         assert_eq!(map.entries.len(), 1);
         assert_eq!(map.entries[0].start_page, 10);
         assert_eq!(map.entries[0].page_count, 8);
-        
+
         Ok(())
     }
 
     #[test]
     fn test_file_extension_manager() {
         let mut manager = FileExtensionManager::new(ExtensionStrategy::Fixed);
-        
+
         let extension_size = manager.calculate_extension_size(1000, 50);
         assert_eq!(extension_size, manager.min_extension_size.max(50));
-        
+
         // Записываем расширение
         manager.record_extension(1000, 1064, ExtensionReason::OutOfSpace);
-        
+
         let stats = manager.get_statistics();
         assert_eq!(stats.total_extensions, 1);
         assert_eq!(stats.average_extension_size, 64.0);
@@ -815,20 +831,20 @@ mod tests {
         let manager_fixed = FileExtensionManager::new(ExtensionStrategy::Fixed);
         let manager_linear = FileExtensionManager::new(ExtensionStrategy::Linear);
         let manager_exp = FileExtensionManager::new(ExtensionStrategy::Exponential);
-        
+
         let current_size = 1000;
         let required = 10;
-        
+
         let fixed_size = manager_fixed.calculate_extension_size(current_size, required);
         let linear_size = manager_linear.calculate_extension_size(current_size, required);
         let exp_size = manager_exp.calculate_extension_size(current_size, required);
-        
+
         // Фиксированный должен быть минимальным
         assert_eq!(fixed_size, manager_fixed.min_extension_size);
-        
+
         // Линейный должен быть больше фиксированного
         assert!(linear_size >= fixed_size);
-        
+
         // Экспоненциальный должен быть больше линейного для больших файлов
         assert!(exp_size >= linear_size);
     }
@@ -836,17 +852,17 @@ mod tests {
     #[test]
     fn test_free_page_map_validation() -> Result<()> {
         let mut map = FreePageMap::new();
-        
+
         // Добавляем корректные блоки
         map.add_free_block(10, 5)?;
         map.add_free_block(20, 3)?;
-        
+
         assert!(map.validate().is_ok());
-        
+
         // Добавляем пересекающийся блок
         let result = map.add_free_block(12, 3);
         assert!(result.is_err());
-        
+
         Ok(())
     }
 }

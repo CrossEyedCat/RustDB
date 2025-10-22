@@ -7,7 +7,7 @@
 //! - Статистика и мониторинг
 
 use rustdb::core::{
-    TransactionManager, TransactionId, IsolationLevel, TransactionManagerConfig,
+    TransactionManager, IsolationLevel, TransactionManagerConfig,
     LockType, LockMode
 };
 use std::sync::Arc;

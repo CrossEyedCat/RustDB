@@ -2,9 +2,9 @@
 
 // use crate::common::{Error, Result}; // Not used in this simplified version
 use crate::parser::ast::DataType;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use serde::{Serialize, Deserialize};
 
 /// Запись в кэше метаданных
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,7 +186,7 @@ impl Default for CacheSettings {
             max_entries: 1000,
             eviction_strategy: EvictionStrategy::LRU,
             default_ttl: Some(Duration::from_secs(3600)), // 1 час
-            cleanup_interval: Duration::from_secs(300), // 5 минут
+            cleanup_interval: Duration::from_secs(300),   // 5 минут
             enable_persistence: false,
         }
     }
@@ -266,7 +266,7 @@ impl MetadataCache {
         }
 
         let mut entry = CacheEntry::new(data);
-        
+
         // Применяем TTL по умолчанию
         if let Some(default_ttl) = self.settings.default_ttl {
             entry = entry.with_ttl(default_ttl);
@@ -330,14 +330,14 @@ impl MetadataCache {
     /// Выполняет очистку истёкших записей
     pub fn cleanup(&mut self) {
         let now = Instant::now();
-        
+
         // Проверяем, нужна ли очистка
         if now.duration_since(self.last_cleanup) < self.settings.cleanup_interval {
             return;
         }
 
         let mut expired_keys = Vec::new();
-        
+
         for (key, entry) in &self.entries {
             if entry.is_expired() {
                 expired_keys.push(key.clone());
@@ -355,7 +355,10 @@ impl MetadataCache {
 
     /// Получает статистику кэша
     pub fn statistics(&self) -> (usize, usize) {
-        (self.statistics.hits as usize, self.statistics.misses as usize)
+        (
+            self.statistics.hits as usize,
+            self.statistics.misses as usize,
+        )
     }
 
     /// Получает подробную статистику кэша
@@ -391,7 +394,7 @@ impl MetadataCache {
 
     fn evict_entries(&mut self) {
         let evict_count = self.entries.len() / 4; // Удаляем 25% записей
-        
+
         match self.settings.eviction_strategy {
             EvictionStrategy::LRU => self.evict_lru(evict_count),
             EvictionStrategy::LFU => self.evict_lfu(evict_count),
@@ -401,39 +404,52 @@ impl MetadataCache {
     }
 
     fn evict_lru(&mut self, count: usize) {
-        let mut entries: Vec<_> = self.entries.iter().map(|(k, v)| (k.clone(), v.last_accessed)).collect();
+        let mut entries: Vec<_> = self
+            .entries
+            .iter()
+            .map(|(k, v)| (k.clone(), v.last_accessed))
+            .collect();
         entries.sort_by_key(|(_, last_accessed)| *last_accessed);
-        
+
         for (key, _) in entries.into_iter().take(count) {
             self.entries.remove(&key);
         }
     }
 
     fn evict_lfu(&mut self, count: usize) {
-        let mut entries: Vec<_> = self.entries.iter().map(|(k, v)| (k.clone(), v.access_count)).collect();
+        let mut entries: Vec<_> = self
+            .entries
+            .iter()
+            .map(|(k, v)| (k.clone(), v.access_count))
+            .collect();
         entries.sort_by_key(|(_, access_count)| *access_count);
-        
+
         for (key, _) in entries.into_iter().take(count) {
             self.entries.remove(&key);
         }
     }
 
     fn evict_fifo(&mut self, count: usize) {
-        let mut entries: Vec<_> = self.entries.iter().map(|(k, v)| (k.clone(), v.created_at)).collect();
+        let mut entries: Vec<_> = self
+            .entries
+            .iter()
+            .map(|(k, v)| (k.clone(), v.created_at))
+            .collect();
         entries.sort_by_key(|(_, created_at)| *created_at);
-        
+
         for (key, _) in entries.into_iter().take(count) {
             self.entries.remove(&key);
         }
     }
 
     fn evict_expired(&mut self) {
-        let expired_keys: Vec<_> = self.entries
+        let expired_keys: Vec<_> = self
+            .entries
             .iter()
             .filter(|(_, entry)| entry.is_expired())
             .map(|(key, _)| key.clone())
             .collect();
-        
+
         for key in expired_keys {
             self.entries.remove(&key);
         }
@@ -441,11 +457,12 @@ impl MetadataCache {
 
     fn update_statistics(&mut self) {
         self.statistics.total_entries = self.entries.len();
-        self.statistics.expired_entries = self.entries
+        self.statistics.expired_entries = self
+            .entries
             .values()
             .filter(|entry| entry.is_expired())
             .count();
-        
+
         // Примерная оценка размера (очень грубая)
         self.statistics.estimated_size_bytes = self.entries.len() * 256; // ~256 байт на запись
     }
@@ -453,7 +470,13 @@ impl MetadataCache {
     // Удобные методы для работы с конкретными типами данных
 
     /// Кэширует информацию о таблице
-    pub fn cache_table_info(&mut self, table_name: &str, columns: Vec<ColumnInfo>, indexes: Vec<String>, exists: bool) {
+    pub fn cache_table_info(
+        &mut self,
+        table_name: &str,
+        columns: Vec<ColumnInfo>,
+        indexes: Vec<String>,
+        exists: bool,
+    ) {
         let key = format!("table:{}", table_name);
         let data = CacheData::TableInfo {
             name: table_name.to_string(),
@@ -465,9 +488,18 @@ impl MetadataCache {
     }
 
     /// Получает информацию о таблице из кэша
-    pub fn get_table_info(&mut self, table_name: &str) -> Option<(Vec<ColumnInfo>, Vec<String>, bool)> {
+    pub fn get_table_info(
+        &mut self,
+        table_name: &str,
+    ) -> Option<(Vec<ColumnInfo>, Vec<String>, bool)> {
         let key = format!("table:{}", table_name);
-        if let Some(CacheData::TableInfo { columns, indexes, exists, .. }) = self.get(&key) {
+        if let Some(CacheData::TableInfo {
+            columns,
+            indexes,
+            exists,
+            ..
+        }) = self.get(&key)
+        {
             Some((columns, indexes, exists))
         } else {
             None
@@ -475,7 +507,15 @@ impl MetadataCache {
     }
 
     /// Кэширует информацию о колонке
-    pub fn cache_column_info(&mut self, table_name: &str, column_name: &str, data_type: DataType, is_nullable: bool, is_primary_key: bool, exists: bool) {
+    pub fn cache_column_info(
+        &mut self,
+        table_name: &str,
+        column_name: &str,
+        data_type: DataType,
+        is_nullable: bool,
+        is_primary_key: bool,
+        exists: bool,
+    ) {
         let key = format!("column:{}:{}", table_name, column_name);
         let data = CacheData::ColumnInfo {
             table_name: table_name.to_string(),
@@ -489,9 +529,20 @@ impl MetadataCache {
     }
 
     /// Получает информацию о колонке из кэша
-    pub fn get_column_info(&mut self, table_name: &str, column_name: &str) -> Option<(DataType, bool, bool, bool)> {
+    pub fn get_column_info(
+        &mut self,
+        table_name: &str,
+        column_name: &str,
+    ) -> Option<(DataType, bool, bool, bool)> {
         let key = format!("column:{}:{}", table_name, column_name);
-        if let Some(CacheData::ColumnInfo { data_type, is_nullable, is_primary_key, exists, .. }) = self.get(&key) {
+        if let Some(CacheData::ColumnInfo {
+            data_type,
+            is_nullable,
+            is_primary_key,
+            exists,
+            ..
+        }) = self.get(&key)
+        {
             Some((data_type, is_nullable, is_primary_key, exists))
         } else {
             None
@@ -512,7 +563,12 @@ impl MetadataCache {
     /// Получает результат проверки типов из кэша
     pub fn get_type_check(&mut self, expression: &str) -> Option<(DataType, bool)> {
         let key = format!("type_check:{}", expression);
-        if let Some(CacheData::TypeCheckResult { result_type, is_valid, .. }) = self.get(&key) {
+        if let Some(CacheData::TypeCheckResult {
+            result_type,
+            is_valid,
+            ..
+        }) = self.get(&key)
+        {
             Some((result_type, is_valid))
         } else {
             None
@@ -546,7 +602,7 @@ mod tests {
             indexes: Vec::new(),
             exists: true,
         };
-        
+
         let entry = CacheEntry::new(data);
         assert_eq!(entry.access_count, 0);
         assert!(!entry.is_expired());
@@ -560,9 +616,9 @@ mod tests {
             indexes: Vec::new(),
             exists: true,
         };
-        
+
         let entry = CacheEntry::new(data).with_ttl(Duration::from_millis(1));
-        
+
         // Ждем истечения TTL
         std::thread::sleep(Duration::from_millis(2));
         assert!(entry.is_expired());
@@ -571,22 +627,22 @@ mod tests {
     #[test]
     fn test_metadata_cache_basic_operations() {
         let mut cache = MetadataCache::new(true);
-        
+
         let data = CacheData::TableInfo {
             name: "users".to_string(),
             columns: Vec::new(),
             indexes: Vec::new(),
             exists: true,
         };
-        
+
         // Добавляем запись
         cache.put("test_key".to_string(), data);
         assert!(cache.contains("test_key"));
-        
+
         // Получаем запись
         let retrieved = cache.get("test_key");
         assert!(retrieved.is_some());
-        
+
         // Удаляем запись
         assert!(cache.remove("test_key"));
         assert!(!cache.contains("test_key"));
@@ -595,23 +651,23 @@ mod tests {
     #[test]
     fn test_cache_statistics() {
         let mut cache = MetadataCache::new(true);
-        
+
         let data = CacheData::TableInfo {
             name: "users".to_string(),
             columns: Vec::new(),
             indexes: Vec::new(),
             exists: true,
         };
-        
+
         // Добавляем запись
         cache.put("test_key".to_string(), data);
-        
+
         // Попадание в кэш
         cache.get("test_key");
-        
+
         // Промах кэша
         cache.get("nonexistent_key");
-        
+
         let (hits, misses) = cache.statistics();
         assert_eq!(hits, 1);
         assert_eq!(misses, 1);
@@ -620,17 +676,17 @@ mod tests {
     #[test]
     fn test_disabled_cache() {
         let mut cache = MetadataCache::new(false);
-        
+
         let data = CacheData::TableInfo {
             name: "users".to_string(),
             columns: Vec::new(),
             indexes: Vec::new(),
             exists: true,
         };
-        
+
         // Попытка добавить в отключенный кэш
         cache.put("test_key".to_string(), data);
-        
+
         // Запись не должна быть добавлена
         assert!(!cache.contains("test_key"));
         assert!(cache.get("test_key").is_none());
@@ -645,25 +701,25 @@ mod tests {
             cleanup_interval: Duration::from_millis(1),
             enable_persistence: false,
         };
-        
+
         let mut cache = MetadataCache::with_settings(true, settings);
-        
+
         let data = CacheData::TableInfo {
             name: "users".to_string(),
             columns: Vec::new(),
             indexes: Vec::new(),
             exists: true,
         };
-        
+
         // Добавляем запись
         cache.put("test_key".to_string(), data);
-        
+
         // Ждем истечения TTL
         std::thread::sleep(Duration::from_millis(2));
-        
+
         // Выполняем очистку
         cache.cleanup();
-        
+
         // Запись должна быть удалена
         assert!(!cache.contains("test_key"));
     }
@@ -671,14 +727,14 @@ mod tests {
     #[test]
     fn test_convenience_methods() {
         let mut cache = MetadataCache::new(true);
-        
+
         // Кэшируем информацию о таблице
         cache.cache_table_info("users", Vec::new(), Vec::new(), true);
-        
+
         // Получаем информацию о таблице
         let table_info = cache.get_table_info("users");
         assert!(table_info.is_some());
-        
+
         let (columns, indexes, exists) = table_info.unwrap();
         assert!(exists);
         assert!(columns.is_empty());

@@ -1,6 +1,6 @@
 //! Тесты для CheckpointManager
 
-use crate::logging::checkpoint::{CheckpointManager, CheckpointConfig, CheckpointInfo};
+use crate::logging::checkpoint::{CheckpointConfig, CheckpointInfo, CheckpointManager};
 use crate::logging::log_writer::{LogWriter, LogWriterConfig};
 use std::sync::Arc;
 

@@ -7,7 +7,7 @@
 //! - Мониторинг и статистику использования
 
 use rustdb::storage::database_file::{
-    DatabaseFileHeader, DatabaseFileType, DatabaseFileState, FreePageMap,
+    DatabaseFileHeader, DatabaseFileType, FreePageMap,
     FileExtensionManager, ExtensionStrategy, ExtensionReason
 };
 use rustdb::common::Result;

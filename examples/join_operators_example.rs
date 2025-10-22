@@ -122,7 +122,7 @@ fn main() -> Result<()> {
 
     // Пример 4: Различные типы соединений
     println!("4. Различные типы соединений:");
-    let join_types = vec![
+    let join_types = [
         JoinType::Inner,
         JoinType::LeftOuter,
         JoinType::RightOuter,
@@ -136,7 +136,7 @@ fn main() -> Result<()> {
 
     // Пример 5: Различные операторы соединения
     println!("5. Различные операторы соединения:");
-    let join_operators = vec![
+    let join_operators = [
         JoinOperator::Equal,
         JoinOperator::NotEqual,
         JoinOperator::LessThan,
@@ -152,7 +152,7 @@ fn main() -> Result<()> {
 
     // Пример 6: Сложные условия соединения
     println!("6. Сложные условия соединения:");
-    let complex_conditions = vec![
+    let complex_conditions = [
         JoinCondition {
             left_column: "id".to_string(),
             right_column: "user_id".to_string(),
@@ -248,7 +248,7 @@ fn main() -> Result<()> {
     
     // Hash Join
     let start_time = std::time::Instant::now();
-    let hash_join_perf = HashJoinOperator::new(
+    let _hash_join_perf = HashJoinOperator::new(
         Box::new(TableScanOperator::new(
             "users".to_string(),
             users_page_manager.clone(),
@@ -270,7 +270,7 @@ fn main() -> Result<()> {
     
     // Merge Join
     let start_time = std::time::Instant::now();
-    let merge_join_perf = MergeJoinOperator::new(
+    let _merge_join_perf = MergeJoinOperator::new(
         Box::new(TableScanOperator::new(
             "users".to_string(),
             users_page_manager.clone(),

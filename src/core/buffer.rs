@@ -1,6 +1,6 @@
 //! Менеджер буферов для rustdb
 
-use crate::common::{Error, Result, types::PageId};
+use crate::common::{types::PageId, Error, Result};
 use crate::storage::page::{Page, PageHeader};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -182,7 +182,7 @@ impl BufferManager {
 
         // Сначала обновляем LRU порядок
         self.update_lru_order(page_id);
-        
+
         // Затем получаем ссылку на страницу
         if let Some(entry) = self.cache.get_mut(&page_id) {
             entry.touch();
@@ -205,7 +205,7 @@ impl BufferManager {
 
         // Сначала обновляем LRU порядок
         self.update_lru_order(page_id);
-        
+
         // Затем получаем изменяемую ссылку на страницу
         if let Some(entry) = self.cache.get_mut(&page_id) {
             entry.touch();
@@ -242,14 +242,14 @@ impl BufferManager {
     /// Обновляет существующую страницу
     pub fn update_page(&mut self, page: Page) -> Result<()> {
         let page_id = page.header.page_id;
-        
+
         if !self.cache.contains_key(&page_id) {
             return Ok(());
         }
 
         // Сначала обновляем LRU порядок
         self.update_lru_order(page_id);
-        
+
         // Затем обновляем страницу
         if let Some(entry) = self.cache.get_mut(&page_id) {
             entry.page = page;
@@ -345,14 +345,16 @@ impl BufferManager {
             attempts += 1;
         }
 
-        Err(Error::validation("Не удалось найти страницу для вытеснения"))
+        Err(Error::validation(
+            "Не удалось найти страницу для вытеснения",
+        ))
     }
 
     /// Вытесняет страницу по адаптивной стратегии
     fn evict_adaptive(&mut self) -> Result<PageId> {
         // Адаптивная стратегия: комбинация LRU и Clock
         let hit_ratio = self.stats.hit_ratio();
-        
+
         if hit_ratio > 0.8 {
             // Высокий hit ratio - используем LRU
             self.evict_lru()
@@ -423,7 +425,8 @@ impl BufferManager {
     /// Принудительно записывает все "грязные" страницы
     pub fn flush_dirty_pages(&mut self) -> Result<usize> {
         let mut flushed_count = 0;
-        let dirty_pages: Vec<PageId> = self.cache
+        let dirty_pages: Vec<PageId> = self
+            .cache
             .iter()
             .filter(|(_, entry)| entry.is_dirty)
             .map(|(&id, _)| id)
@@ -457,7 +460,10 @@ impl BufferManager {
 pub type SharedBufferManager = Arc<Mutex<BufferManager>>;
 
 /// Создает потокобезопасный менеджер буферов
-pub fn create_shared_buffer_manager(max_pages: usize, strategy: EvictionStrategy) -> SharedBufferManager {
+pub fn create_shared_buffer_manager(
+    max_pages: usize,
+    strategy: EvictionStrategy,
+) -> SharedBufferManager {
     Arc::new(Mutex::new(BufferManager::new(max_pages, strategy)))
 }
 
@@ -478,11 +484,11 @@ mod tests {
     fn test_add_and_get_page() {
         let mut manager = BufferManager::new(10, EvictionStrategy::LRU);
         let page = Page::new(1);
-        
+
         manager.add_page(page).unwrap();
         assert_eq!(manager.page_count(), 1);
         assert!(manager.contains_page(1));
-        
+
         let retrieved = manager.get_page(1);
         assert!(retrieved.is_some());
     }
@@ -490,12 +496,12 @@ mod tests {
     #[test]
     fn test_lru_eviction() {
         let mut manager = BufferManager::new(2, EvictionStrategy::LRU);
-        
+
         // Добавляем 3 страницы
         manager.add_page(Page::new(1)).unwrap();
         manager.add_page(Page::new(2)).unwrap();
         manager.add_page(Page::new(3)).unwrap();
-        
+
         // Должна быть вытеснена первая страница
         assert_eq!(manager.page_count(), 2);
         assert!(!manager.contains_page(1));
@@ -506,14 +512,14 @@ mod tests {
     #[test]
     fn test_page_pinning() {
         let mut manager = BufferManager::new(2, EvictionStrategy::LRU);
-        
+
         manager.add_page(Page::new(1)).unwrap();
         manager.pin_page(1).unwrap();
-        
+
         // Добавляем еще 2 страницы
         manager.add_page(Page::new(2)).unwrap();
         manager.add_page(Page::new(3)).unwrap();
-        
+
         // Зафиксированная страница не должна быть вытеснена
         assert!(manager.contains_page(1));
         // В буфере должно быть максимум 2 страницы (размер буфера)
@@ -526,12 +532,12 @@ mod tests {
     fn test_buffer_stats() {
         let mut manager = BufferManager::new(10, EvictionStrategy::LRU);
         let page = Page::new(1);
-        
+
         manager.add_page(page).unwrap();
         manager.get_page(1);
         manager.get_page(1);
         manager.get_page(999); // Промах
-        
+
         let stats = manager.get_stats();
         assert_eq!(stats.total_accesses, 3);
         assert_eq!(stats.cache_hits, 2);
@@ -542,11 +548,11 @@ mod tests {
     #[test]
     fn test_eviction_strategies() {
         let mut manager = BufferManager::new(2, EvictionStrategy::LRU);
-        
+
         // Тестируем смену стратегии
         manager.set_eviction_strategy(EvictionStrategy::Clock);
         assert_eq!(manager.get_eviction_strategy(), EvictionStrategy::Clock);
-        
+
         manager.set_eviction_strategy(EvictionStrategy::Adaptive);
         assert_eq!(manager.get_eviction_strategy(), EvictionStrategy::Adaptive);
     }

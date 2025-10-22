@@ -9,7 +9,7 @@ pub mod token;
 pub mod tests;
 
 // Переэкспортируем основные типы
-pub use token::{Token, TokenType, Position};
-pub use lexer::Lexer;
-pub use parser::{SqlParser, ParserSettings};
 pub use ast::*;
+pub use lexer::Lexer;
+pub use parser::{ParserSettings, SqlParser};
+pub use token::{Position, Token, TokenType};

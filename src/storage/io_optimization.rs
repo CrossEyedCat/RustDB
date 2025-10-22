@@ -8,12 +8,12 @@
 
 use crate::common::{Error, Result};
 use crate::storage::database_file::{PageId, BLOCK_SIZE};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio::task::JoinHandle;
-use serde::{Deserialize, Serialize};
 
 /// Тип операции I/O
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -183,7 +183,7 @@ impl PageCache {
     /// Получает страницу из кэша
     pub fn get(&mut self, file_id: u32, page_id: PageId) -> Option<Vec<u8>> {
         let key = (file_id, page_id);
-        
+
         if let Some((data, _)) = self.data.get(&key).cloned() {
             // Обновляем порядок доступа
             self.update_access_order(&key);
@@ -198,14 +198,14 @@ impl PageCache {
     /// Добавляет страницу в кэш
     pub fn put(&mut self, file_id: u32, page_id: PageId, data: Vec<u8>) {
         let key = (file_id, page_id);
-        
+
         // Если кэш полон, удаляем самую старую запись
         if self.data.len() >= self.max_size && !self.data.contains_key(&key) {
             if let Some(lru_key) = self.access_order.pop_front() {
                 self.data.remove(&lru_key);
             }
         }
-        
+
         // Добавляем новую запись
         self.data.insert(key, (data, Instant::now()));
         self.update_access_order(&key);
@@ -278,7 +278,7 @@ impl BufferedIoManager {
     pub fn new(config: IoBufferConfig) -> Self {
         let (request_tx, request_rx) = mpsc::unbounded_channel();
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_operations));
-        
+
         let write_buffer = Arc::new(Mutex::new(Vec::new()));
         let page_cache = Arc::new(RwLock::new(PageCache::new(config.page_cache_size)));
         let statistics = Arc::new(RwLock::new(IoStatistics::default()));
@@ -298,7 +298,7 @@ impl BufferedIoManager {
 
         // Запускаем фоновые задачи
         manager.start_background_tasks(request_rx, write_buffer, page_cache, statistics, semaphore);
-        
+
         manager
     }
 
@@ -312,17 +312,17 @@ impl BufferedIoManager {
         _semaphore: Arc<Semaphore>,
     ) {
         let config = self.config.clone();
-        
+
         // Задача обработки I/O запросов
         let io_statistics = statistics.clone();
         let io_cache = page_cache.clone();
-        
+
         self.io_handle = Some(tokio::spawn(async move {
             while let Some(request) = request_rx.recv().await {
                 // Упрощенная версия без семафора для устранения проблем с временем жизни
                 let stats = io_statistics.clone();
                 let cache = io_cache.clone();
-                
+
                 tokio::spawn(async move {
                     Self::handle_io_request(request, stats, cache).await;
                 });
@@ -332,10 +332,10 @@ impl BufferedIoManager {
         // Задача периодического сброса буфера записи
         let flush_buffer = write_buffer.clone();
         let flush_config = config.clone();
-        
+
         self.flush_handle = Some(tokio::spawn(async move {
             let mut interval = tokio::time::interval(flush_config.max_buffer_time);
-            
+
             loop {
                 interval.tick().await;
                 Self::flush_write_buffer(&flush_buffer).await;
@@ -357,7 +357,7 @@ impl BufferedIoManager {
         // Создаем запрос на чтение
         let (response_tx, response_rx) = oneshot::channel();
         let request_id = self.get_next_request_id().await;
-        
+
         let request = IoRequest {
             id: request_id,
             operation: IoOperationType::Read,
@@ -370,14 +370,14 @@ impl BufferedIoManager {
         };
 
         // Отправляем запрос
-        self.request_tx.send(request).map_err(|_| {
-            Error::internal("Не удалось отправить запрос на чтение")
-        })?;
+        self.request_tx
+            .send(request)
+            .map_err(|_| Error::internal("Не удалось отправить запрос на чтение"))?;
 
         // Ждем результат
-        let result = response_rx.await.map_err(|_| {
-            Error::internal("Не удалось получить результат чтения")
-        })??;
+        let result = response_rx
+            .await
+            .map_err(|_| Error::internal("Не удалось получить результат чтения"))??;
 
         match result {
             Some(data) => {
@@ -386,13 +386,14 @@ impl BufferedIoManager {
                     let mut cache = self.page_cache.write().unwrap();
                     cache.put(file_id, page_id, data.clone());
                 }
-                
+
                 // Запускаем предвыборку если включена
                 if self.config.enable_prefetch {
                     self.trigger_prefetch(file_id, page_id).await;
                 }
-                
-                self.update_statistics(IoOperationType::Read, data.len(), false).await;
+
+                self.update_statistics(IoOperationType::Read, data.len(), false)
+                    .await;
                 Ok(data)
             }
             None => Err(Error::internal("Не удалось прочитать страницу")),
@@ -400,7 +401,12 @@ impl BufferedIoManager {
     }
 
     /// Асинхронно записывает страницу
-    pub async fn write_page_async(&self, file_id: u32, page_id: PageId, data: Vec<u8>) -> Result<()> {
+    pub async fn write_page_async(
+        &self,
+        file_id: u32,
+        page_id: PageId,
+        data: Vec<u8>,
+    ) -> Result<()> {
         if data.len() != BLOCK_SIZE {
             return Err(Error::validation(format!(
                 "Неверный размер данных: {} (ожидается {})",
@@ -427,7 +433,7 @@ impl BufferedIoManager {
         let should_flush = {
             let mut buffer = self.write_buffer.lock().unwrap();
             buffer.push(buffered_write);
-            
+
             // Проверяем, нужно ли принудительно сбрасывать
             buffer.len() >= self.config.max_write_buffer_size
         };
@@ -436,14 +442,16 @@ impl BufferedIoManager {
             Self::flush_write_buffer(&self.write_buffer).await;
         }
 
-        self.update_statistics(IoOperationType::Write, BLOCK_SIZE, false).await;
+        self.update_statistics(IoOperationType::Write, BLOCK_SIZE, false)
+            .await;
         Ok(())
     }
 
     /// Синхронизирует все буферизованные операции записи
     pub async fn sync_all(&self) -> Result<()> {
         Self::flush_write_buffer(&self.write_buffer).await;
-        self.update_statistics(IoOperationType::Sync, 0, false).await;
+        self.update_statistics(IoOperationType::Sync, 0, false)
+            .await;
         Ok(())
     }
 
@@ -451,7 +459,7 @@ impl BufferedIoManager {
     async fn trigger_prefetch(&self, file_id: u32, base_page_id: PageId) {
         for i in 1..=self.config.prefetch_window_size {
             let prefetch_page_id = base_page_id + i as u64;
-            
+
             // Проверяем, есть ли уже в кэше
             {
                 let cache = self.page_cache.read().unwrap();
@@ -463,7 +471,7 @@ impl BufferedIoManager {
             // Создаем запрос на предвыборку
             let (response_tx, _response_rx) = oneshot::channel();
             let request_id = self.get_next_request_id().await;
-            
+
             let request = IoRequest {
                 id: request_id,
                 operation: IoOperationType::Prefetch,
@@ -487,7 +495,7 @@ impl BufferedIoManager {
         page_cache: Arc<RwLock<PageCache>>,
     ) {
         let start_time = Instant::now();
-        
+
         // Симуляция I/O операции (в реальной реализации здесь был бы вызов файлового менеджера)
         let result = match request.operation {
             IoOperationType::Read | IoOperationType::Prefetch => {
@@ -514,7 +522,8 @@ impl BufferedIoManager {
             let mut stats = statistics.write().unwrap();
             stats.total_operations += 1;
             stats.total_execution_time_us += execution_time.as_micros() as u64;
-            stats.average_execution_time_us = stats.total_execution_time_us / stats.total_operations;
+            stats.average_execution_time_us =
+                stats.total_execution_time_us / stats.total_operations;
 
             match request.operation {
                 IoOperationType::Read => {
@@ -537,7 +546,7 @@ impl BufferedIoManager {
                     stats.read_operations += 1;
                     if let Ok(Some(ref data)) = result {
                         stats.bytes_read += data.len() as u64;
-                        
+
                         // Добавляем в кэш результат предвыборки
                         let mut cache = page_cache.write().unwrap();
                         cache.put(request.file_id, request.page_id, data.clone());
@@ -557,7 +566,7 @@ impl BufferedIoManager {
             if buffer.is_empty() {
                 return;
             }
-            
+
             let writes = buffer.clone();
             buffer.clear();
             writes
@@ -587,9 +596,14 @@ impl BufferedIoManager {
     }
 
     /// Обновляет статистику операций
-    async fn update_statistics(&self, operation: IoOperationType, data_size: usize, cache_hit: bool) {
+    async fn update_statistics(
+        &self,
+        operation: IoOperationType,
+        data_size: usize,
+        cache_hit: bool,
+    ) {
         let mut stats = self.statistics.write().unwrap();
-        
+
         if cache_hit {
             stats.cache_hits += 1;
         } else {
@@ -623,12 +637,12 @@ impl BufferedIoManager {
     pub fn get_statistics(&self) -> IoStatistics {
         let stats = self.statistics.read().unwrap();
         let cache_stats = self.page_cache.read().unwrap().get_stats();
-        
+
         let mut result = stats.clone();
         result.cache_hits = cache_stats.0;
         result.cache_misses = cache_stats.1;
         result.cache_hit_ratio = cache_stats.2;
-        
+
         result
     }
 
@@ -636,7 +650,7 @@ impl BufferedIoManager {
     pub async fn clear_cache(&self) {
         let mut cache = self.page_cache.write().unwrap();
         cache.clear();
-        
+
         let mut stats = self.statistics.write().unwrap();
         *stats = IoStatistics::default();
     }
@@ -645,7 +659,7 @@ impl BufferedIoManager {
     pub fn get_buffer_info(&self) -> (usize, usize, usize) {
         let buffer = self.write_buffer.lock().unwrap();
         let cache = self.page_cache.read().unwrap();
-        
+
         (
             buffer.len(),
             self.config.max_write_buffer_size,
@@ -674,22 +688,22 @@ mod tests {
     #[tokio::test]
     async fn test_page_cache() {
         let mut cache = PageCache::new(3);
-        
+
         // Добавляем страницы
         cache.put(1, 10, vec![1; BLOCK_SIZE]);
         cache.put(1, 20, vec![2; BLOCK_SIZE]);
         cache.put(1, 30, vec![3; BLOCK_SIZE]);
-        
+
         assert_eq!(cache.size(), 3);
-        
+
         // Проверяем получение
         assert!(cache.get(1, 10).is_some());
         assert!(cache.get(1, 20).is_some());
         assert!(cache.get(1, 30).is_some());
-        
+
         // Добавляем еще одну страницу (должна вытеснить самую старую)
         cache.put(1, 40, vec![4; BLOCK_SIZE]);
-        
+
         assert_eq!(cache.size(), 3);
         assert!(cache.get(1, 10).is_none()); // Должна быть вытеснена
         assert!(cache.get(1, 40).is_some());
@@ -699,24 +713,24 @@ mod tests {
     async fn test_buffered_io_manager() -> Result<()> {
         let config = IoBufferConfig::default();
         let manager = Arc::new(BufferedIoManager::new(config));
-        
+
         // Тестируем запись
         let data = vec![42u8; BLOCK_SIZE];
         manager.write_page_async(1, 100, data.clone()).await?;
-        
+
         // Даем время на обработку асинхронных операций
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // Тестируем чтение (должно попасть в кэш)
         let read_data = manager.read_page_async(1, 100).await?;
         assert_eq!(read_data.len(), BLOCK_SIZE);
-        
+
         // Проверяем статистику (может быть асинхронной)
         let stats = manager.get_statistics();
         // Проверяем, что система работает (хотя бы одна операция должна быть)
         assert!(stats.write_operations >= 0);
         assert!(stats.cache_hits >= 0);
-        
+
         Ok(())
     }
 
@@ -724,10 +738,10 @@ mod tests {
     async fn test_async_operations() -> Result<()> {
         let config = IoBufferConfig::default();
         let manager = Arc::new(BufferedIoManager::new(config));
-        
+
         // Запускаем несколько операций параллельно
         let mut handles = Vec::new();
-        
+
         for i in 0..10 {
             let manager_clone = manager.clone();
             let handle = tokio::spawn(async move {
@@ -736,20 +750,23 @@ mod tests {
             });
             handles.push(handle);
         }
-        
+
         // Ждем завершения всех операций
         for handle in handles {
-            timeout(Duration::from_secs(5), handle).await.unwrap().unwrap()?;
+            timeout(Duration::from_secs(5), handle)
+                .await
+                .unwrap()
+                .unwrap()?;
         }
-        
+
         // Даем время на обработку асинхронных операций
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         // Проверяем статистику (асинхронная обработка)
         let stats = manager.get_statistics();
         // Проверяем, что система работает
         assert!(stats.write_operations >= 0);
-        
+
         Ok(())
     }
 
@@ -758,21 +775,21 @@ mod tests {
         let mut config = IoBufferConfig::default();
         config.max_write_buffer_size = 5;
         config.max_buffer_time = Duration::from_millis(50);
-        
+
         let manager = BufferedIoManager::new(config);
-        
+
         // Записываем больше операций чем размер буфера
         for i in 0..10 {
             let data = vec![i as u8; BLOCK_SIZE];
             manager.write_page_async(1, i, data).await?;
         }
-        
+
         // Ждем автоматического сброса буфера
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         let buffer_info = manager.get_buffer_info();
         assert!(buffer_info.0 < 10); // Буфер должен быть сброшен
-        
+
         Ok(())
     }
 
@@ -780,20 +797,20 @@ mod tests {
     async fn test_cache_hit_ratio() -> Result<()> {
         let config = IoBufferConfig::default();
         let manager = BufferedIoManager::new(config);
-        
+
         // Записываем данные
         let data = vec![123u8; BLOCK_SIZE];
         manager.write_page_async(1, 50, data).await?;
-        
+
         // Читаем несколько раз (должны быть попадания в кэш)
         for _ in 0..5 {
             let _ = manager.read_page_async(1, 50).await?;
         }
-        
+
         let stats = manager.get_statistics();
         assert!(stats.cache_hit_ratio > 0.0);
         assert!(stats.cache_hits > 0);
-        
+
         Ok(())
     }
 }

@@ -5,11 +5,26 @@ pub mod operators;
 pub mod result;
 
 pub use operators::{
-    Operator, OperatorStatistics, TableScanOperator, IndexScanOperator,
-    RangeScanOperator, ConditionalScanOperator, ScanOperatorFactory,
-    IndexCondition, IndexOperator, NestedLoopJoinOperator, HashJoinOperator,
-    MergeJoinOperator, JoinType, JoinCondition, JoinOperator,
     // Новые операторы агрегации и сортировки
-    AggregateFunction, AggregateGroup, HashGroupByOperator, SortOperator,
-    SortGroupByOperator, AggregationSortOperatorFactory
+    AggregateFunction,
+    AggregateGroup,
+    AggregationSortOperatorFactory,
+    ConditionalScanOperator,
+    HashGroupByOperator,
+    HashJoinOperator,
+    IndexCondition,
+    IndexOperator,
+    IndexScanOperator,
+    JoinCondition,
+    JoinOperator,
+    JoinType,
+    MergeJoinOperator,
+    NestedLoopJoinOperator,
+    Operator,
+    OperatorStatistics,
+    RangeScanOperator,
+    ScanOperatorFactory,
+    SortGroupByOperator,
+    SortOperator,
+    TableScanOperator,
 };

@@ -1,9 +1,9 @@
 //! Пример восстановления базы данных после сбоя
 
 use rustdb::core::{
-    AdvancedRecoveryManager, RecoveryConfig, TransactionId,
+    AdvancedRecoveryManager, RecoveryConfig,
 };
-use rustdb::logging::log_record::{LogRecord, LogRecordType, LogSequenceNumber};
+// removed unused LogRecord import
 use std::path::Path;
 use std::time::Duration;
 

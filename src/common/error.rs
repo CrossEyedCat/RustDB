@@ -1,8 +1,8 @@
 //! Обработка ошибок для rustdb
 
-use thiserror::Error;
+use crate::common::i18n::{t, t_with_params, MessageKey};
 use bincode;
-use crate::common::i18n::{MessageKey, t, t_with_params};
+use thiserror::Error;
 
 /// Основной тип ошибки для rustdb
 #[derive(Error, Debug)]
@@ -183,90 +183,80 @@ impl Error {
             message: message.into(),
         }
     }
-    
+
     /// Создает локализованную ошибку базы данных
     pub fn localized_database(key: MessageKey) -> Self {
-        Self::Database {
-            message: t(key),
-        }
+        Self::Database { message: t(key) }
     }
-    
+
     /// Создает локализованную ошибку базы данных с параметрами
     pub fn localized_database_with_params(key: MessageKey, params: &[&str]) -> Self {
         Self::Database {
             message: t_with_params(key, params),
         }
     }
-    
+
     /// Создает локализованную ошибку парсинга SQL
     pub fn localized_sql_parsing(key: MessageKey) -> Self {
-        Self::SqlParsing {
-            message: t(key),
-        }
+        Self::SqlParsing { message: t(key) }
     }
-    
+
     /// Создает локализованную ошибку парсинга SQL с параметрами
     pub fn localized_sql_parsing_with_params(key: MessageKey, params: &[&str]) -> Self {
         Self::SqlParsing {
             message: t_with_params(key, params),
         }
     }
-    
+
     /// Создает локализованную ошибку транзакции
     pub fn localized_transaction(key: MessageKey) -> Self {
         Self::TransactionError(t(key))
     }
-    
+
     /// Создает локализованную ошибку транзакции с параметрами
     pub fn localized_transaction_with_params(key: MessageKey, params: &[&str]) -> Self {
         Self::TransactionError(t_with_params(key, params))
     }
-    
+
     /// Создает локализованную ошибку блокировки
     pub fn localized_lock(key: MessageKey) -> Self {
         Self::LockError(t(key))
     }
-    
+
     /// Создает локализованную ошибку блокировки с параметрами
     pub fn localized_lock_with_params(key: MessageKey, params: &[&str]) -> Self {
         Self::LockError(t_with_params(key, params))
     }
-    
+
     /// Создает локализованную ошибку валидации
     pub fn localized_validation(key: MessageKey) -> Self {
-        Self::Validation {
-            message: t(key),
-        }
+        Self::Validation { message: t(key) }
     }
-    
+
     /// Создает локализованную ошибку валидации с параметрами
     pub fn localized_validation_with_params(key: MessageKey, params: &[&str]) -> Self {
         Self::Validation {
             message: t_with_params(key, params),
         }
     }
-    
+
     /// Создает локализованную ошибку конфигурации
     pub fn localized_configuration(key: MessageKey) -> Self {
-        Self::Configuration {
-            message: t(key),
-        }
+        Self::Configuration { message: t(key) }
     }
-    
+
     /// Создает локализованную ошибку конфигурации с параметрами
     pub fn localized_configuration_with_params(key: MessageKey, params: &[&str]) -> Self {
         Self::Configuration {
             message: t_with_params(key, params),
         }
     }
-    
+
     /// Создает локализованную внутреннюю ошибку
     pub fn localized_internal(key: MessageKey) -> Self {
-        Self::Internal {
-            message: t(key),
-        }
+        Self::Internal { message: t(key) }
     }
-    
+
     /// Создает локализованную внутреннюю ошибку с параметрами
     pub fn localized_internal_with_params(key: MessageKey, params: &[&str]) -> Self {
         Self::Internal {

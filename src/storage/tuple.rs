@@ -1,6 +1,9 @@
 //! Структуры данных для таблиц rustdb
 
-use crate::common::{Error, Result, types::{DataType, ColumnValue, Column, Schema as BaseSchema}};
+use crate::common::{
+    types::{Column, ColumnValue, DataType, Schema as BaseSchema},
+    Error, Result,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -89,23 +92,21 @@ impl Tuple {
         new_tuple.updated_at = new_tuple.created_at;
         new_tuple.prev_version = Some(self.version);
         new_tuple.next_version = None;
-        
+
         // Обновляем указатель на следующую версию
         self.next_version = Some(new_tuple.version);
-        
+
         new_tuple
     }
 
     /// Сериализует кортеж в байты
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self)
-            .map_err(|e| Error::BincodeSerialization(e))
+        bincode::serialize(self).map_err(Error::BincodeSerialization)
     }
 
     /// Создает кортеж из байтов (десериализация)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        bincode::deserialize(bytes)
-            .map_err(|e| Error::BincodeSerialization(e))
+        bincode::deserialize(bytes).map_err(Error::BincodeSerialization)
     }
 
     /// Возвращает размер кортежа в байтах
@@ -119,14 +120,16 @@ impl Tuple {
             if column.not_null {
                 if let Some(value) = self.values.get(&column.name) {
                     if value.is_null() {
-                        return Err(Error::validation(
-                            format!("Колонка {} не может быть NULL", column.name)
-                        ));
+                        return Err(Error::validation(format!(
+                            "Колонка {} не может быть NULL",
+                            column.name
+                        )));
                     }
                 } else {
-                    return Err(Error::validation(
-                        format!("Отсутствует обязательная колонка {}", column.name)
-                    ));
+                    return Err(Error::validation(format!(
+                        "Отсутствует обязательная колонка {}",
+                        column.name
+                    )));
                 }
             }
         }
@@ -139,14 +142,16 @@ impl Tuple {
             if column.not_null {
                 if let Some(value) = self.values.get(&column.name) {
                     if value.is_null() {
-                        return Err(Error::validation(
-                            format!("Колонка {} не может быть NULL", column.name)
-                        ));
+                        return Err(Error::validation(format!(
+                            "Колонка {} не может быть NULL",
+                            column.name
+                        )));
                     }
                 } else {
-                    return Err(Error::validation(
-                        format!("Отсутствует обязательная колонка {}", column.name)
-                    ));
+                    return Err(Error::validation(format!(
+                        "Отсутствует обязательная колонка {}",
+                        column.name
+                    )));
                 }
             }
         }
@@ -230,12 +235,12 @@ impl Schema {
     pub fn validate_tuple(&self, tuple: &Tuple) -> Result<()> {
         // Проверяем базовую схему
         tuple.validate_against_base_schema(&self.base)?;
-        
+
         // Проверяем дополнительные ограничения
         for constraint in &self.constraints {
             constraint.validate(tuple)?;
         }
-        
+
         Ok(())
     }
 
@@ -270,7 +275,12 @@ pub struct Constraint {
 
 impl Constraint {
     /// Создает новое ограничение
-    pub fn new(name: String, constraint_type: ConstraintType, expression: String, columns: Vec<String>) -> Self {
+    pub fn new(
+        name: String,
+        constraint_type: ConstraintType,
+        expression: String,
+        columns: Vec<String>,
+    ) -> Self {
         Self {
             name,
             constraint_type,
@@ -391,11 +401,11 @@ impl Default for TableOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::types::{DataType, ColumnValue};
+    use crate::common::types::{ColumnValue, DataType};
 
     #[test]
     fn test_tuple_creation() {
-        let mut tuple = Tuple::new(1);
+        let tuple = Tuple::new(1);
         assert_eq!(tuple.id, 1);
         assert_eq!(tuple.version, 1);
         assert!(!tuple.is_deleted);
@@ -406,17 +416,20 @@ mod tests {
     fn test_tuple_values() {
         let mut tuple = Tuple::new(1);
         let value = ColumnValue::new(DataType::Integer(42));
-        
+
         tuple.set_value("age", value);
         assert!(tuple.has_column("age"));
-        assert_eq!(tuple.get_value("age").unwrap().data_type, DataType::Integer(42));
+        assert_eq!(
+            tuple.get_value("age").unwrap().data_type,
+            DataType::Integer(42)
+        );
     }
 
     #[test]
     fn test_tuple_versioning() {
         let mut tuple = Tuple::new(1);
         let new_tuple = tuple.create_new_version();
-        
+
         assert_eq!(new_tuple.version, 2);
         assert_eq!(new_tuple.prev_version, Some(1));
         assert_eq!(tuple.next_version, Some(2));
@@ -434,10 +447,10 @@ mod tests {
     fn test_schema_validation() {
         let mut schema = Schema::new("users".to_string());
         schema = schema.add_column(Column::new("id".to_string(), DataType::Integer(0)).not_null());
-        
+
         let mut tuple = Tuple::new(1);
         tuple.set_value("id", ColumnValue::new(DataType::Integer(42)));
-        
+
         assert!(schema.validate_tuple(&tuple).is_ok());
     }
 
@@ -449,7 +462,7 @@ mod tests {
             "age >= 0".to_string(),
             vec!["age".to_string()],
         );
-        
+
         assert_eq!(constraint.name, "age_check");
         assert_eq!(constraint.constraint_type, ConstraintType::Check);
     }
@@ -462,7 +475,7 @@ mod tests {
             TriggerTiming::Before,
             "SET created_at = NOW()".to_string(),
         );
-        
+
         assert_eq!(trigger.name, "before_insert");
         assert_eq!(trigger.event, TriggerEvent::Insert);
         assert_eq!(trigger.timing, TriggerTiming::Before);

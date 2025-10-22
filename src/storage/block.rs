@@ -1,6 +1,6 @@
 //! Структуры блоков для rustdb
 
-use crate::common::{Error, Result, types::PageId};
+use crate::common::{types::PageId, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -120,8 +120,10 @@ impl Block {
     /// Добавляет страницу в блок
     pub fn add_page(&mut self, page_id: PageId, page_data: Vec<u8>) -> Result<()> {
         // Проверяем, не превышает ли размер данных размер блока
-        let total_size: usize = self.pages.values().map(|p| p.len()).sum::<usize>() + page_data.len();
-        if total_size > (self.header.size as usize - 256) { // оставляем место для метаданных
+        let total_size: usize =
+            self.pages.values().map(|p| p.len()).sum::<usize>() + page_data.len();
+        if total_size > (self.header.size as usize - 256) {
+            // оставляем место для метаданных
             return Err(Error::validation("Блок переполнен"));
         }
 
@@ -182,22 +184,22 @@ impl Block {
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         // TODO: Реализовать полную сериализацию
         let mut bytes = Vec::new();
-        
+
         // Добавляем заголовок
-        let header_bytes = bincode::serialize(&self.header)
-            .map_err(|e| Error::BincodeSerialization(e))?;
+        let header_bytes =
+            bincode::serialize(&self.header).map_err(|e| Error::BincodeSerialization(e))?;
         bytes.extend_from_slice(&header_bytes);
-        
+
         // Добавляем количество страниц
         bytes.extend_from_slice(&(self.pages.len() as u32).to_le_bytes());
-        
+
         // Добавляем страницы
         for (page_id, page_data) in &self.pages {
             bytes.extend_from_slice(&page_id.to_le_bytes());
             bytes.extend_from_slice(&(page_data.len() as u32).to_le_bytes());
             bytes.extend_from_slice(page_data);
         }
-        
+
         Ok(bytes)
     }
 
@@ -212,7 +214,7 @@ impl Block {
         let block_id = 0;
         let block_type = BlockType::Data;
         let size = bytes.len() as u32;
-        
+
         Ok(Self::new(block_id, block_type, size))
     }
 }
@@ -314,12 +316,12 @@ impl BlockManager {
     /// Добавляет блок в кэш
     pub fn add_block(&mut self, block: Block) {
         let block_id = block.header.block_id;
-        
+
         // Если превышен лимит, удаляем самый старый блок
         if self.blocks.len() >= self.max_blocks {
             self.evict_oldest_block();
         }
-        
+
         self.blocks.insert(block_id, block);
     }
 
@@ -330,9 +332,12 @@ impl BlockManager {
 
     /// Удаляет самый старый блок из кэша
     fn evict_oldest_block(&mut self) {
-        if let Some((&oldest_id, _)) = self.blocks.iter()
+        if let Some((&oldest_id, _)) = self
+            .blocks
+            .iter()
             .filter(|(_, block)| !block.header.is_pinned)
-            .min_by_key(|(id, block)| (block.header.last_modified, *id)) {
+            .min_by_key(|(id, block)| (block.header.last_modified, *id))
+        {
             self.blocks.remove(&oldest_id);
         }
     }
@@ -383,11 +388,11 @@ mod tests {
     fn test_add_page() {
         let mut block = Block::new(1, BlockType::Data, 1024);
         let page_data = vec![1, 2, 3, 4];
-        
+
         block.add_page(1, page_data.clone()).unwrap();
         assert_eq!(block.page_count(), 1);
         assert!(block.contains_page(1));
-        
+
         let retrieved = block.get_page(1).unwrap();
         assert_eq!(retrieved, &page_data);
     }
@@ -399,7 +404,7 @@ mod tests {
         links.set_prev(0);
         links.add_child(3);
         links.add_child(4);
-        
+
         assert_eq!(links.next_block, Some(2));
         assert_eq!(links.prev_block, Some(0));
         assert_eq!(links.child_count(), 2);
@@ -412,14 +417,14 @@ mod tests {
         let block1 = Block::new(1, BlockType::Data, 1024);
         let block2 = Block::new(2, BlockType::Data, 1024);
         let block3 = Block::new(3, BlockType::Data, 1024);
-        
+
         manager.add_block(block1);
         manager.add_block(block2);
         assert_eq!(manager.block_count(), 2);
-        
+
         manager.add_block(block3);
         assert_eq!(manager.block_count(), 2); // Должен быть удален самый старый блок
-        
+
         assert!(manager.contains_block(2));
         assert!(manager.contains_block(3));
     }

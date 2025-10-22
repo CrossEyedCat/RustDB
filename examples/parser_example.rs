@@ -211,7 +211,7 @@ fn main() -> Result<()> {
     // Пример 9: Комплексные DML операции
     println!("9. Комплексные DML операции:");
     
-    let dml_queries = vec![
+    let dml_queries = [
         "INSERT INTO products VALUES (1, 'Laptop', 999.99)",
         "INSERT INTO orders (id, user_id, product_id) VALUES (1, 1, 1), (2, 2, 1)",
         "UPDATE products SET price = 899.99 WHERE id = 1",

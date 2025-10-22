@@ -1,7 +1,7 @@
 //! Пример использования планировщика запросов
 
-use rustdb::planner::{QueryPlanner, QueryOptimizer, ExecutionPlan};
-use rustdb::parser::{SqlParser, SqlStatement};
+use rustdb::planner::{QueryPlanner, QueryOptimizer};
+use rustdb::parser::SqlParser;
 use rustdb::common::Result;
 
 fn main() -> Result<()> {

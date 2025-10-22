@@ -4,10 +4,10 @@
 //! и выявления узких мест
 
 use crate::debug::DebugConfig;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 
 /// Тип узкого места
@@ -174,41 +174,42 @@ impl PerformanceAnalyzer {
         let config = self.config.clone();
 
         self.background_handle = Some(tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(config.metrics_collection_interval));
-            
+            let mut interval =
+                tokio::time::interval(Duration::from_secs(config.metrics_collection_interval));
+
             loop {
                 interval.tick().await;
-                
+
                 // Собираем метрики
                 let metrics = Self::collect_performance_metrics();
-                
+
                 // Добавляем в историю
                 {
                     let mut history = metrics_history.write().unwrap();
                     history.extend(metrics.clone());
-                    
+
                     // Ограничиваем размер истории
                     let len = history.len();
                     if len > 10000 {
                         history.drain(0..len - 10000);
                     }
                 }
-                
+
                 // Выполняем анализ
                 let analysis = Self::perform_analysis(&metrics);
-                
+
                 // Сохраняем анализ
                 {
                     let mut analyses = analyses.write().unwrap();
                     analyses.push(analysis.clone());
-                    
+
                     // Ограничиваем количество анализов
                     let len = analyses.len();
                     if len > 1000 {
                         analyses.drain(0..len - 1000);
                     }
                 }
-                
+
                 // Обновляем статистику
                 Self::update_analysis_stats(&stats, &analysis);
             }
@@ -229,7 +230,10 @@ impl PerformanceAnalyzer {
                 unit: "%".to_string(),
                 timestamp,
                 component: "System".to_string(),
-                thresholds: Thresholds { warning: 70.0, critical: 90.0 },
+                thresholds: Thresholds {
+                    warning: 70.0,
+                    critical: 90.0,
+                },
             },
             PerformanceMetric {
                 name: "memory_usage".to_string(),
@@ -237,7 +241,10 @@ impl PerformanceAnalyzer {
                 unit: "%".to_string(),
                 timestamp,
                 component: "System".to_string(),
-                thresholds: Thresholds { warning: 80.0, critical: 95.0 },
+                thresholds: Thresholds {
+                    warning: 80.0,
+                    critical: 95.0,
+                },
             },
             PerformanceMetric {
                 name: "disk_io".to_string(),
@@ -245,7 +252,10 @@ impl PerformanceAnalyzer {
                 unit: "MB/s".to_string(),
                 timestamp,
                 component: "Storage".to_string(),
-                thresholds: Thresholds { warning: 100.0, critical: 200.0 },
+                thresholds: Thresholds {
+                    warning: 100.0,
+                    critical: 200.0,
+                },
             },
             PerformanceMetric {
                 name: "network_io".to_string(),
@@ -253,7 +263,10 @@ impl PerformanceAnalyzer {
                 unit: "MB/s".to_string(),
                 timestamp,
                 component: "Network".to_string(),
-                thresholds: Thresholds { warning: 50.0, critical: 100.0 },
+                thresholds: Thresholds {
+                    warning: 50.0,
+                    critical: 100.0,
+                },
             },
             PerformanceMetric {
                 name: "cache_hit_ratio".to_string(),
@@ -261,7 +274,10 @@ impl PerformanceAnalyzer {
                 unit: "%".to_string(),
                 timestamp,
                 component: "Cache".to_string(),
-                thresholds: Thresholds { warning: 80.0, critical: 60.0 },
+                thresholds: Thresholds {
+                    warning: 80.0,
+                    critical: 60.0,
+                },
             },
             PerformanceMetric {
                 name: "lock_contention".to_string(),
@@ -269,7 +285,10 @@ impl PerformanceAnalyzer {
                 unit: "%".to_string(),
                 timestamp,
                 component: "Concurrency".to_string(),
-                thresholds: Thresholds { warning: 20.0, critical: 40.0 },
+                thresholds: Thresholds {
+                    warning: 20.0,
+                    critical: 40.0,
+                },
             },
         ]
     }
@@ -297,9 +316,18 @@ impl PerformanceAnalyzer {
                 metric_bottlenecks.push(Bottleneck {
                     bottleneck_type: Self::get_bottleneck_type(&metric.name),
                     severity: SeverityLevel::Critical,
-                    description: format!("{} превышает критический порог: {:.1}{} (порог: {:.1}{})", 
-                        metric.name, metric.value, metric.unit, metric.thresholds.critical, metric.unit),
-                    recommendations: Self::get_recommendations(&metric.name, SeverityLevel::Critical),
+                    description: format!(
+                        "{} превышает критический порог: {:.1}{} (порог: {:.1}{})",
+                        metric.name,
+                        metric.value,
+                        metric.unit,
+                        metric.thresholds.critical,
+                        metric.unit
+                    ),
+                    recommendations: Self::get_recommendations(
+                        &metric.name,
+                        SeverityLevel::Critical,
+                    ),
                     detected_at: timestamp,
                     component: metric.component.clone(),
                     metrics: HashMap::from([(metric.name.clone(), metric.value)]),
@@ -312,9 +340,18 @@ impl PerformanceAnalyzer {
                 metric_bottlenecks.push(Bottleneck {
                     bottleneck_type: Self::get_bottleneck_type(&metric.name),
                     severity: SeverityLevel::Warning,
-                    description: format!("{} превышает предупреждающий порог: {:.1}{} (порог: {:.1}{})", 
-                        metric.name, metric.value, metric.unit, metric.thresholds.warning, metric.unit),
-                    recommendations: Self::get_recommendations(&metric.name, SeverityLevel::Warning),
+                    description: format!(
+                        "{} превышает предупреждающий порог: {:.1}{} (порог: {:.1}{})",
+                        metric.name,
+                        metric.value,
+                        metric.unit,
+                        metric.thresholds.warning,
+                        metric.unit
+                    ),
+                    recommendations: Self::get_recommendations(
+                        &metric.name,
+                        SeverityLevel::Warning,
+                    ),
                     detected_at: timestamp,
                     component: metric.component.clone(),
                     metrics: HashMap::from([(metric.name.clone(), metric.value)]),
@@ -332,21 +369,37 @@ impl PerformanceAnalyzer {
 
         // Генерируем общие рекомендации
         if overall_score < 70.0 {
-            recommendations.push("Критическая производительность. Требуется немедленное вмешательство.".to_string());
+            recommendations.push(
+                "Критическая производительность. Требуется немедленное вмешательство.".to_string(),
+            );
         } else if overall_score < 85.0 {
-            recommendations.push("Производительность ниже оптимальной. Рекомендуется оптимизация.".to_string());
+            recommendations.push(
+                "Производительность ниже оптимальной. Рекомендуется оптимизация.".to_string(),
+            );
         }
 
-        if bottlenecks.iter().any(|b| matches!(b.bottleneck_type, BottleneckType::Cpu)) {
-            recommendations.push("Оптимизируйте алгоритмы и рассмотрите масштабирование CPU.".to_string());
+        if bottlenecks
+            .iter()
+            .any(|b| matches!(b.bottleneck_type, BottleneckType::Cpu))
+        {
+            recommendations
+                .push("Оптимизируйте алгоритмы и рассмотрите масштабирование CPU.".to_string());
         }
 
-        if bottlenecks.iter().any(|b| matches!(b.bottleneck_type, BottleneckType::Memory)) {
-            recommendations.push("Проверьте утечки памяти и оптимизируйте использование памяти.".to_string());
+        if bottlenecks
+            .iter()
+            .any(|b| matches!(b.bottleneck_type, BottleneckType::Memory))
+        {
+            recommendations
+                .push("Проверьте утечки памяти и оптимизируйте использование памяти.".to_string());
         }
 
-        if bottlenecks.iter().any(|b| matches!(b.bottleneck_type, BottleneckType::Io)) {
-            recommendations.push("Оптимизируйте I/O операции и рассмотрите использование SSD.".to_string());
+        if bottlenecks
+            .iter()
+            .any(|b| matches!(b.bottleneck_type, BottleneckType::Io))
+        {
+            recommendations
+                .push("Оптимизируйте I/O операции и рассмотрите использование SSD.".to_string());
         }
 
         PerformanceAnalysis {
@@ -424,11 +477,16 @@ impl PerformanceAnalyzer {
         stats.total_analyses += 1;
         stats.last_analysis_time = analysis.timestamp;
         stats.total_bottlenecks += analysis.bottlenecks.len() as u64;
-        stats.critical_issues += analysis.bottlenecks.iter()
+        stats.critical_issues += analysis
+            .bottlenecks
+            .iter()
             .filter(|b| matches!(b.severity, SeverityLevel::Critical))
             .count() as u64;
-        
-        stats.avg_performance_score = (stats.avg_performance_score * (stats.total_analyses - 1) as f64 + analysis.overall_score) / stats.total_analyses as f64;
+
+        stats.avg_performance_score = (stats.avg_performance_score
+            * (stats.total_analyses - 1) as f64
+            + analysis.overall_score)
+            / stats.total_analyses as f64;
     }
 
     /// Получает использование CPU (симуляция)
@@ -436,7 +494,7 @@ impl PerformanceAnalyzer {
         // В реальной реализации здесь был бы вызов системных API
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         SystemTime::now().hash(&mut hasher);
         (hasher.finish() % 100) as f64
@@ -447,7 +505,7 @@ impl PerformanceAnalyzer {
         // В реальной реализации здесь был бы вызов системных API
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         (SystemTime::now().hash(&mut hasher), "memory").hash(&mut hasher);
         (hasher.finish() % 100) as f64
@@ -458,7 +516,7 @@ impl PerformanceAnalyzer {
         // В реальной реализации здесь был бы вызов системных API
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         (SystemTime::now().hash(&mut hasher), "disk").hash(&mut hasher);
         (hasher.finish() % 200) as f64
@@ -469,7 +527,7 @@ impl PerformanceAnalyzer {
         // В реальной реализации здесь был бы вызов системных API
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         (SystemTime::now().hash(&mut hasher), "network").hash(&mut hasher);
         (hasher.finish() % 100) as f64
@@ -480,7 +538,7 @@ impl PerformanceAnalyzer {
         // В реальной реализации здесь был бы вызов системных API
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         (SystemTime::now().hash(&mut hasher), "cache").hash(&mut hasher);
         60.0 + (hasher.finish() % 40) as f64
@@ -491,7 +549,7 @@ impl PerformanceAnalyzer {
         // В реальной реализации здесь был бы вызов системных API
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         (SystemTime::now().hash(&mut hasher), "lock").hash(&mut hasher);
         (hasher.finish() % 50) as f64
@@ -519,37 +577,53 @@ impl PerformanceAnalyzer {
     pub fn generate_performance_report(&self) -> String {
         let stats = self.get_stats();
         let latest_analysis = self.get_latest_analysis();
-        
+
         let mut report = String::new();
-        
+
         report.push_str("=== Отчет анализа производительности ===\n\n");
-        
+
         // Общая статистика
         report.push_str("Общая статистика:\n");
         report.push_str(&format!("  Всего анализов: {}\n", stats.total_analyses));
-        report.push_str(&format!("  Обнаружено узких мест: {}\n", stats.total_bottlenecks));
-        report.push_str(&format!("  Критических проблем: {}\n", stats.critical_issues));
-        report.push_str(&format!("  Средняя оценка производительности: {:.1}/100\n", stats.avg_performance_score));
+        report.push_str(&format!(
+            "  Обнаружено узких мест: {}\n",
+            stats.total_bottlenecks
+        ));
+        report.push_str(&format!(
+            "  Критических проблем: {}\n",
+            stats.critical_issues
+        ));
+        report.push_str(&format!(
+            "  Средняя оценка производительности: {:.1}/100\n",
+            stats.avg_performance_score
+        ));
         report.push_str("\n");
 
         // Последний анализ
         if let Some(analysis) = latest_analysis {
             report.push_str("Последний анализ:\n");
-            report.push_str(&format!("  Общая оценка: {:.1}/100\n", analysis.overall_score));
-            report.push_str(&format!("  Обнаружено проблем: {}\n", analysis.bottlenecks.len()));
+            report.push_str(&format!(
+                "  Общая оценка: {:.1}/100\n",
+                analysis.overall_score
+            ));
+            report.push_str(&format!(
+                "  Обнаружено проблем: {}\n",
+                analysis.bottlenecks.len()
+            ));
             report.push_str("\n");
 
             // Узкие места
             if !analysis.bottlenecks.is_empty() {
                 report.push_str("Обнаруженные узкие места:\n");
                 for (i, bottleneck) in analysis.bottlenecks.iter().enumerate() {
-                    report.push_str(&format!("  {}. [{}] {}: {}\n", 
-                        i + 1, 
-                        bottleneck.severity, 
-                        bottleneck.bottleneck_type, 
+                    report.push_str(&format!(
+                        "  {}. [{}] {}: {}\n",
+                        i + 1,
+                        bottleneck.severity,
+                        bottleneck.bottleneck_type,
                         bottleneck.description
                     ));
-                    
+
                     if !bottleneck.recommendations.is_empty() {
                         report.push_str("     Рекомендации:\n");
                         for rec in &bottleneck.recommendations {
@@ -582,15 +656,21 @@ impl PerformanceAnalyzer {
         // Рекомендации по улучшению
         report.push_str("Рекомендации по улучшению:\n");
         if stats.avg_performance_score < 70.0 {
-            report.push_str("  🔴 Критическая производительность. Требуется немедленное вмешательство.\n");
+            report.push_str(
+                "  🔴 Критическая производительность. Требуется немедленное вмешательство.\n",
+            );
         } else if stats.avg_performance_score < 85.0 {
-            report.push_str("  🟡 Производительность ниже оптимальной. Рекомендуется оптимизация.\n");
+            report
+                .push_str("  🟡 Производительность ниже оптимальной. Рекомендуется оптимизация.\n");
         } else {
             report.push_str("  🟢 Производительность в пределах нормы.\n");
         }
 
         if stats.critical_issues > 0 {
-            report.push_str(&format!("  ⚠️  Обнаружено {} критических проблем.\n", stats.critical_issues));
+            report.push_str(&format!(
+                "  ⚠️  Обнаружено {} критических проблем.\n",
+                stats.critical_issues
+            ));
         }
 
         report
@@ -601,17 +681,26 @@ impl PerformanceAnalyzer {
         let stats = self.get_stats();
         let analyses_count = self.analyses.read().unwrap().len();
         let metrics_count = self.metrics_history.read().unwrap().len();
-        
+
         let mut report = String::new();
-        
+
         report.push_str(&format!("Анализов в памяти: {}\n", analyses_count));
         report.push_str(&format!("Метрик в истории: {}\n", metrics_count));
         report.push_str(&format!("Всего анализов: {}\n", stats.total_analyses));
-        report.push_str(&format!("Обнаружено узких мест: {}\n", stats.total_bottlenecks));
+        report.push_str(&format!(
+            "Обнаружено узких мест: {}\n",
+            stats.total_bottlenecks
+        ));
         report.push_str(&format!("Критических проблем: {}\n", stats.critical_issues));
-        report.push_str(&format!("Средняя оценка: {:.1}/100\n", stats.avg_performance_score));
-        report.push_str(&format!("Интервал сбора метрик: {} сек\n", self.config.metrics_collection_interval));
-        
+        report.push_str(&format!(
+            "Средняя оценка: {:.1}/100\n",
+            stats.avg_performance_score
+        ));
+        report.push_str(&format!(
+            "Интервал сбора метрик: {} сек\n",
+            self.config.metrics_collection_interval
+        ));
+
         report
     }
 
@@ -674,7 +763,10 @@ mod tests {
                 unit: "%".to_string(),
                 timestamp: 1000,
                 component: "System".to_string(),
-                thresholds: Thresholds { warning: 70.0, critical: 90.0 },
+                thresholds: Thresholds {
+                    warning: 70.0,
+                    critical: 90.0,
+                },
             },
             PerformanceMetric {
                 name: "memory_usage".to_string(),
@@ -682,7 +774,10 @@ mod tests {
                 unit: "%".to_string(),
                 timestamp: 1000,
                 component: "System".to_string(),
-                thresholds: Thresholds { warning: 80.0, critical: 95.0 },
+                thresholds: Thresholds {
+                    warning: 80.0,
+                    critical: 95.0,
+                },
             },
         ];
 
@@ -690,24 +785,34 @@ mod tests {
 
         assert!(analysis.overall_score < 100.0);
         assert!(!analysis.bottlenecks.is_empty());
-        
-        let critical_bottlenecks: Vec<_> = analysis.bottlenecks.iter()
+
+        let critical_bottlenecks: Vec<_> = analysis
+            .bottlenecks
+            .iter()
             .filter(|b| matches!(b.severity, SeverityLevel::Critical))
             .collect();
-        
+
         assert!(!critical_bottlenecks.is_empty());
-        assert!(critical_bottlenecks.iter().any(|b| matches!(b.bottleneck_type, BottleneckType::Cpu)));
+        assert!(critical_bottlenecks
+            .iter()
+            .any(|b| matches!(b.bottleneck_type, BottleneckType::Cpu)));
     }
 
     #[test]
     fn test_recommendations() {
-        let cpu_recommendations = PerformanceAnalyzer::get_recommendations("cpu_usage", SeverityLevel::Critical);
+        let cpu_recommendations =
+            PerformanceAnalyzer::get_recommendations("cpu_usage", SeverityLevel::Critical);
         assert!(!cpu_recommendations.is_empty());
-        assert!(cpu_recommendations.iter().any(|r| r.contains("оптимизируйте")));
+        assert!(cpu_recommendations
+            .iter()
+            .any(|r| r.contains("оптимизируйте")));
 
-    let memory_recommendations = PerformanceAnalyzer::get_recommendations("memory_usage", SeverityLevel::Warning);
-    assert!(!memory_recommendations.is_empty());
-    // Проверяем, что рекомендации содержат ключевые слова
-    assert!(memory_recommendations.iter().any(|r| r.contains("память") || r.contains("объектов")));
+        let memory_recommendations =
+            PerformanceAnalyzer::get_recommendations("memory_usage", SeverityLevel::Warning);
+        assert!(!memory_recommendations.is_empty());
+        // Проверяем, что рекомендации содержат ключевые слова
+        assert!(memory_recommendations
+            .iter()
+            .any(|r| r.contains("память") || r.contains("объектов")));
     }
 }

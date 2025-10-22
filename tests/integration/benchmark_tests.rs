@@ -3,10 +3,10 @@
 //! Эти тесты измеряют производительность различных операций
 //! и компонентов системы.
 
-use rustdb::common::{Error, Result, types::*};
-use rustdb::core::{IsolationLevel, transaction::TransactionId};
+use rustdb::common::Result;
+use rustdb::core::IsolationLevel;
 use super::common::*;
-use std::time::Duration;
+// use std::time::Duration;
 
 /// Benchmark простых SELECT запросов
 #[tokio::test]

@@ -8,7 +8,7 @@
 //! - Мониторинг статистики
 
 use rustdb::storage::page_manager::{PageManager, PageManagerConfig};
-use std::path::PathBuf;
+use std::path::Path;
 use tempfile::TempDir;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Демонстрирует создание PageManager с различными конфигурациями
-fn demo_create_page_manager(data_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn demo_create_page_manager(data_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🔧 Демонстрация создания PageManager");
     println!("{}", "-".repeat(30));
     
@@ -54,7 +54,7 @@ fn demo_create_page_manager(data_dir: &PathBuf) -> Result<(), Box<dyn std::error
     println!("   - enable_compression: {}", default_config.enable_compression);
     println!("   - batch_size: {}", default_config.batch_size);
     
-    let manager_result = PageManager::new(data_dir.clone(), "demo_table", default_config);
+    let manager_result = PageManager::new(data_dir.to_path_buf(), "demo_table", default_config);
     match manager_result {
         Ok(_manager) => {
             println!("✅ PageManager создан успешно");
@@ -81,7 +81,7 @@ fn demo_create_page_manager(data_dir: &PathBuf) -> Result<(), Box<dyn std::error
     println!("   - enable_compression: {}", custom_config.enable_compression);
     println!("   - batch_size: {}", custom_config.batch_size);
     
-    let custom_manager_result = PageManager::new(data_dir.clone(), "custom_table", custom_config);
+    let custom_manager_result = PageManager::new(data_dir.to_path_buf(), "custom_table", custom_config);
     match custom_manager_result {
         Ok(_manager) => {
             println!("✅ PageManager с кастомной конфигурацией создан успешно");
@@ -95,12 +95,12 @@ fn demo_create_page_manager(data_dir: &PathBuf) -> Result<(), Box<dyn std::error
 }
 
 /// Демонстрирует CRUD операции
-fn demo_crud_operations(data_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn demo_crud_operations(data_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📝 Демонстрация CRUD операций");
     println!("{}", "-".repeat(30));
     
     let config = PageManagerConfig::default();
-    let manager_result = PageManager::new(data_dir.clone(), "crud_table", config);
+    let manager_result = PageManager::new(data_dir.to_path_buf(), "crud_table", config);
     
     let mut manager = match manager_result {
         Ok(mgr) => mgr,
@@ -112,7 +112,7 @@ fn demo_crud_operations(data_dir: &PathBuf) -> Result<(), Box<dyn std::error::Er
     
     // CREATE (INSERT) операции
     println!("📥 Вставка записей:");
-    let records = vec![
+    let records = [
         "Alice Johnson - Software Engineer".as_bytes(),
         "Bob Smith - Data Analyst".as_bytes(), 
         "Carol Davis - Project Manager".as_bytes(),
@@ -224,7 +224,7 @@ fn demo_crud_operations(data_dir: &PathBuf) -> Result<(), Box<dyn std::error::Er
 }
 
 /// Демонстрирует batch операции
-fn demo_batch_operations(data_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn demo_batch_operations(data_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📦 Демонстрация batch операций");
     println!("{}", "-".repeat(30));
     
@@ -233,7 +233,7 @@ fn demo_batch_operations(data_dir: &PathBuf) -> Result<(), Box<dyn std::error::E
         ..PageManagerConfig::default()
     };
     
-    let manager_result = PageManager::new(data_dir.clone(), "batch_table", config);
+    let manager_result = PageManager::new(data_dir.to_path_buf(), "batch_table", config);
     let mut manager = match manager_result {
         Ok(mgr) => mgr,
         Err(e) => {
@@ -299,12 +299,12 @@ fn demo_batch_operations(data_dir: &PathBuf) -> Result<(), Box<dyn std::error::E
 }
 
 /// Демонстрирует дефрагментацию страниц
-fn demo_defragmentation(data_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn demo_defragmentation(data_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🔧 Демонстрация дефрагментации");
     println!("{}", "-".repeat(30));
     
     let config = PageManagerConfig::default();
-    let manager_result = PageManager::new(data_dir.clone(), "defrag_table", config);
+    let manager_result = PageManager::new(data_dir.to_path_buf(), "defrag_table", config);
     let mut manager = match manager_result {
         Ok(mgr) => mgr,
         Err(e) => {
@@ -377,7 +377,7 @@ fn demo_defragmentation(data_dir: &PathBuf) -> Result<(), Box<dyn std::error::Er
 }
 
 /// Демонстрирует открытие существующего менеджера
-fn demo_open_existing_manager(data_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn demo_open_existing_manager(data_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🔓 Демонстрация открытия существующего менеджера");
     println!("{}", "-".repeat(30));
     
@@ -387,11 +387,11 @@ fn demo_open_existing_manager(data_dir: &PathBuf) -> Result<(), Box<dyn std::err
     // Создаем менеджер и добавляем данные
     println!("📝 Создание нового менеджера и добавление данных:");
     {
-        let manager_result = PageManager::new(data_dir.clone(), table_name, config.clone());
+        let manager_result = PageManager::new(data_dir.to_path_buf(), table_name, config.clone());
         match manager_result {
             Ok(mut manager) => {
                 // Добавляем несколько записей
-                let persistent_data = vec![
+                let persistent_data = [
                     "Persistent Record 1 - Will survive restart".as_bytes(),
                     "Persistent Record 2 - Stored on disk".as_bytes(),
                     "Persistent Record 3 - Available after reopen".as_bytes(),
@@ -420,7 +420,7 @@ fn demo_open_existing_manager(data_dir: &PathBuf) -> Result<(), Box<dyn std::err
     
     // Открываем существующий менеджер
     println!("\n🔓 Открытие существующего менеджера:");
-    match PageManager::open(data_dir.clone(), table_name, config) {
+    match PageManager::open(data_dir.to_path_buf(), table_name, config) {
         Ok(mut manager) => {
             println!("   ✅ Менеджер успешно открыт");
             

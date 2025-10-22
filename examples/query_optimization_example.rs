@@ -1,12 +1,10 @@
 //! Пример использования расширенной оптимизации запросов для RustDB
 
 use rustdb::planner::{
-    AdvancedQueryOptimizer, AdvancedOptimizerSettings, 
-    AdvancedOptimizationResult, AdvancedOptimizationStatistics
+    AdvancedQueryOptimizer, AdvancedOptimizerSettings,
 };
 use rustdb::catalog::{
-    StatisticsManager, StatisticsSettings, TableStatistics, ColumnStatistics,
-    ValueDistribution, HistogramBucket, ColumnValue
+    StatisticsManager, ValueDistribution,
 };
 use rustdb::planner::planner::{ExecutionPlan, PlanNode, TableScanNode, FilterNode, PlanMetadata, PlanStatistics};
 
@@ -102,7 +100,7 @@ fn demo_advanced_optimizer() -> Result<(), Box<dyn std::error::Error>> {
         cost_threshold: 500.0,
     };
     
-    let mut optimizer = AdvancedQueryOptimizer::with_settings(settings)?;
+    let optimizer = AdvancedQueryOptimizer::with_settings(settings)?;
     
     println!("   Настройки оптимизатора:");
     println!("     - Использование статистики: {}", optimizer.settings().enable_statistics_usage);
@@ -133,7 +131,7 @@ fn demo_optimization_with_statistics() -> Result<(), Box<dyn std::error::Error>>
     let mut optimizer = AdvancedQueryOptimizer::new()?;
     
     // Собираем статистику для таблиц в плане
-    let mut stats_manager = optimizer.statistics_manager_mut();
+    let stats_manager = optimizer.statistics_manager_mut();
     stats_manager.collect_table_statistics("users")?;
     stats_manager.collect_table_statistics("orders")?;
     
@@ -186,7 +184,7 @@ fn create_test_execution_plan() -> Result<ExecutionPlan, Box<dyn std::error::Err
         estimated_rows: 10000,
     });
     
-    let orders_scan = PlanNode::TableScan(TableScanNode {
+    let _orders_scan = PlanNode::TableScan(TableScanNode {
         table_name: "orders".to_string(),
         alias: Some("o".to_string()),
         columns: vec!["id".to_string(), "user_id".to_string(), "amount".to_string()],

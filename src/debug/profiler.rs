@@ -3,11 +3,13 @@
 //! Предоставляет инструменты для профилирования производительности
 //! и использования памяти
 
+#![allow(clippy::absurd_extreme_comparisons)]
+
 use crate::debug::DebugConfig;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 
 /// Тип профилирования
@@ -151,24 +153,24 @@ impl Profiler {
 
         self.background_handle = Some(tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(100));
-            
+
             while *is_profiling.read().unwrap() {
                 interval.tick().await;
-                
+
                 let snapshot = Self::collect_performance_snapshot(&config);
-                
+
                 // Добавляем снимок
                 {
                     let mut snapshots = snapshots.write().unwrap();
                     snapshots.push(snapshot.clone());
-                    
+
                     // Ограничиваем количество снимков
                     let len = snapshots.len();
                     if len > 10000 {
                         snapshots.drain(0..len - 10000);
                     }
                 }
-                
+
                 // Обновляем статистику
                 Self::update_stats(&stats, &snapshot);
             }
@@ -178,7 +180,7 @@ impl Profiler {
     /// Останавливает профилирование
     pub fn stop_profiling(&mut self) {
         *self.is_profiling.write().unwrap() = false;
-        
+
         if let Some(handle) = self.background_handle.take() {
             handle.abort();
         }
@@ -269,16 +271,23 @@ impl Profiler {
         stats.last_snapshot_time = snapshot.timestamp;
 
         if let Some(cpu) = &snapshot.cpu {
-            stats.avg_cpu_usage = (stats.avg_cpu_usage * (stats.total_snapshots - 1) as f64 + cpu.cpu_usage) / stats.total_snapshots as f64;
+            stats.avg_cpu_usage = (stats.avg_cpu_usage * (stats.total_snapshots - 1) as f64
+                + cpu.cpu_usage)
+                / stats.total_snapshots as f64;
             stats.max_cpu_usage = stats.max_cpu_usage.max(cpu.cpu_usage);
         }
 
         if let Some(memory) = &snapshot.memory {
-            stats.avg_memory_usage = (stats.avg_memory_usage * (stats.total_snapshots - 1) as f64 + memory.memory_usage_percent) / stats.total_snapshots as f64;
+            stats.avg_memory_usage = (stats.avg_memory_usage * (stats.total_snapshots - 1) as f64
+                + memory.memory_usage_percent)
+                / stats.total_snapshots as f64;
             stats.max_memory_usage = stats.max_memory_usage.max(memory.memory_usage_percent);
-            
+
             let process_memory_mb = memory.process_memory as f64 / (1024.0 * 1024.0);
-            stats.avg_process_memory_mb = (stats.avg_process_memory_mb * (stats.total_snapshots - 1) as f64 + process_memory_mb) / stats.total_snapshots as f64;
+            stats.avg_process_memory_mb = (stats.avg_process_memory_mb
+                * (stats.total_snapshots - 1) as f64
+                + process_memory_mb)
+                / stats.total_snapshots as f64;
             stats.max_process_memory_mb = stats.max_process_memory_mb.max(process_memory_mb);
         }
 
@@ -291,7 +300,7 @@ impl Profiler {
         // Для демонстрации возвращаем случайное значение
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         SystemTime::now().hash(&mut hasher);
         (hasher.finish() % 100) as f64
@@ -309,7 +318,8 @@ impl Profiler {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_micros() as u64 % 1000000
+            .as_micros() as u64
+            % 1000000
     }
 
     /// Получает время системы (симуляция)
@@ -318,7 +328,8 @@ impl Profiler {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_micros() as u64 % 100000
+            .as_micros() as u64
+            % 100000
     }
 
     /// Получает время простоя (симуляция)
@@ -327,7 +338,8 @@ impl Profiler {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_micros() as u64 % 1000000
+            .as_micros() as u64
+            % 1000000
     }
 
     /// Получает информацию о памяти (симуляция)
@@ -368,7 +380,8 @@ impl Profiler {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs() % 1000
+            .as_secs()
+            % 1000
     }
 
     /// Получает снимки производительности
@@ -387,67 +400,100 @@ impl Profiler {
     pub fn generate_performance_report(&self) -> String {
         let stats = self.get_stats();
         let recent_snapshots = self.get_snapshots(100);
-        
+
         let mut report = String::new();
-        
+
         report.push_str("=== Отчет о производительности системы ===\n\n");
-        
+
         // Общая информация
         report.push_str("Общая информация:\n");
-        report.push_str(&format!("  Длительность профилирования: {} секунд\n", stats.profiling_duration_seconds));
-        report.push_str(&format!("  Количество снимков: {}\n", stats.total_snapshots));
+        report.push_str(&format!(
+            "  Длительность профилирования: {} секунд\n",
+            stats.profiling_duration_seconds
+        ));
+        report.push_str(&format!(
+            "  Количество снимков: {}\n",
+            stats.total_snapshots
+        ));
         report.push_str(&format!("  Интервал снимков: 100 мс\n"));
         report.push_str("\n");
 
         // CPU статистика
         if self.config.enable_cpu_profiling {
             report.push_str("CPU статистика:\n");
-            report.push_str(&format!("  Среднее использование: {:.1}%\n", stats.avg_cpu_usage));
-            report.push_str(&format!("  Максимальное использование: {:.1}%\n", stats.max_cpu_usage));
+            report.push_str(&format!(
+                "  Среднее использование: {:.1}%\n",
+                stats.avg_cpu_usage
+            ));
+            report.push_str(&format!(
+                "  Максимальное использование: {:.1}%\n",
+                stats.max_cpu_usage
+            ));
             report.push_str("\n");
         }
 
         // Memory статистика
         if self.config.enable_memory_profiling {
             report.push_str("Memory статистика:\n");
-            report.push_str(&format!("  Среднее использование: {:.1}%\n", stats.avg_memory_usage));
-            report.push_str(&format!("  Максимальное использование: {:.1}%\n", stats.max_memory_usage));
-            report.push_str(&format!("  Средняя память процесса: {:.1} МБ\n", stats.avg_process_memory_mb));
-            report.push_str(&format!("  Максимальная память процесса: {:.1} МБ\n", stats.max_process_memory_mb));
+            report.push_str(&format!(
+                "  Среднее использование: {:.1}%\n",
+                stats.avg_memory_usage
+            ));
+            report.push_str(&format!(
+                "  Максимальное использование: {:.1}%\n",
+                stats.max_memory_usage
+            ));
+            report.push_str(&format!(
+                "  Средняя память процесса: {:.1} МБ\n",
+                stats.avg_process_memory_mb
+            ));
+            report.push_str(&format!(
+                "  Максимальная память процесса: {:.1} МБ\n",
+                stats.max_process_memory_mb
+            ));
             report.push_str("\n");
         }
 
         // Анализ трендов
         if recent_snapshots.len() >= 10 {
             report.push_str("Анализ трендов (последние 10 снимков):\n");
-            
-            let cpu_trend = Self::analyze_trend(&recent_snapshots, |s| s.cpu.as_ref().map(|c| c.cpu_usage));
-            let memory_trend = Self::analyze_trend(&recent_snapshots, |s| s.memory.as_ref().map(|m| m.memory_usage_percent));
-            
+
+            let cpu_trend =
+                Self::analyze_trend(&recent_snapshots, |s| s.cpu.as_ref().map(|c| c.cpu_usage));
+            let memory_trend = Self::analyze_trend(&recent_snapshots, |s| {
+                s.memory.as_ref().map(|m| m.memory_usage_percent)
+            });
+
             if let Some(trend) = cpu_trend {
                 report.push_str(&format!("  CPU тренд: {}\n", trend));
             }
-            
+
             if let Some(trend) = memory_trend {
                 report.push_str(&format!("  Memory тренд: {}\n", trend));
             }
-            
+
             report.push_str("\n");
         }
 
         // Рекомендации
         report.push_str("Рекомендации:\n");
         if stats.avg_cpu_usage > 80.0 {
-            report.push_str("  ⚠️  Высокое использование CPU. Рассмотрите оптимизацию алгоритмов.\n");
+            report
+                .push_str("  ⚠️  Высокое использование CPU. Рассмотрите оптимизацию алгоритмов.\n");
         }
         if stats.avg_memory_usage > 90.0 {
             report.push_str("  ⚠️  Высокое использование памяти. Проверьте утечки памяти.\n");
         }
         if stats.max_process_memory_mb > 1000.0 {
-            report.push_str("  ⚠️  Большое потребление памяти процессом. Оптимизируйте структуры данных.\n");
+            report.push_str(
+                "  ⚠️  Большое потребление памяти процессом. Оптимизируйте структуры данных.\n",
+            );
         }
-        
-        if stats.avg_cpu_usage <= 80.0 && stats.avg_memory_usage <= 90.0 && stats.max_process_memory_mb <= 1000.0 {
+
+        if stats.avg_cpu_usage <= 80.0
+            && stats.avg_memory_usage <= 90.0
+            && stats.max_process_memory_mb <= 1000.0
+        {
             report.push_str("  ✅ Система работает в пределах нормальных параметров.\n");
         }
 
@@ -459,22 +505,20 @@ impl Profiler {
     where
         F: Fn(&PerformanceSnapshot) -> Option<f64>,
     {
-        let values: Vec<f64> = snapshots.iter()
-            .filter_map(&extractor)
-            .collect();
-        
+        let values: Vec<f64> = snapshots.iter().filter_map(&extractor).collect();
+
         if values.len() < 3 {
             return None;
         }
-        
+
         let first_half = &values[..values.len() / 2];
         let second_half = &values[values.len() / 2..];
-        
+
         let first_avg = first_half.iter().sum::<f64>() / first_half.len() as f64;
         let second_avg = second_half.iter().sum::<f64>() / second_half.len() as f64;
-        
+
         let change_percent = ((second_avg - first_avg) / first_avg) * 100.0;
-        
+
         if change_percent > 5.0 {
             Some(format!("Растущий (+{:.1}%)", change_percent))
         } else if change_percent < -5.0 {
@@ -489,16 +533,31 @@ impl Profiler {
         let stats = self.get_stats();
         let is_profiling = *self.is_profiling.read().unwrap();
         let snapshot_count = self.snapshots.read().unwrap().len();
-        
+
         let mut report = String::new();
-        
+
         report.push_str(&format!("Профилирование активно: {}\n", is_profiling));
-        report.push_str(&format!("Количество снимков в памяти: {}\n", snapshot_count));
-        report.push_str(&format!("Общее количество снимков: {}\n", stats.total_snapshots));
-        report.push_str(&format!("CPU профилирование: {}\n", self.config.enable_cpu_profiling));
-        report.push_str(&format!("Memory профилирование: {}\n", self.config.enable_memory_profiling));
-        report.push_str(&format!("Длительность профилирования: {} секунд\n", stats.profiling_duration_seconds));
-        
+        report.push_str(&format!(
+            "Количество снимков в памяти: {}\n",
+            snapshot_count
+        ));
+        report.push_str(&format!(
+            "Общее количество снимков: {}\n",
+            stats.total_snapshots
+        ));
+        report.push_str(&format!(
+            "CPU профилирование: {}\n",
+            self.config.enable_cpu_profiling
+        ));
+        report.push_str(&format!(
+            "Memory профилирование: {}\n",
+            self.config.enable_memory_profiling
+        ));
+        report.push_str(&format!(
+            "Длительность профилирования: {} секунд\n",
+            stats.profiling_duration_seconds
+        ));
+
         report
     }
 
@@ -531,11 +590,11 @@ mod tests {
         // Ждем немного, чтобы накопились снимки
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Проверяем статистику
-    let stats = profiler.get_stats();
-    assert!(stats.total_snapshots > 0);
-    // Время профилирования может быть 0, если тест выполнился очень быстро
-    assert!(stats.profiling_duration_seconds >= 0);
+        // Проверяем статистику
+        let stats = profiler.get_stats();
+        assert!(stats.total_snapshots > 0);
+        // Время профилирования может быть 0, если тест выполнился очень быстро
+        assert!(stats.profiling_duration_seconds >= 0);
 
         // Проверяем снимки
         let snapshots = profiler.get_snapshots(10);
@@ -549,7 +608,7 @@ mod tests {
 
         // Останавливаем профилирование
         profiler.stop_profiling();
-        
+
         let is_profiling = *profiler.is_profiling.read().unwrap();
         assert!(!is_profiling);
     }
@@ -563,16 +622,16 @@ mod tests {
         };
 
         let snapshot = Profiler::collect_performance_snapshot(&config);
-        
+
         assert!(snapshot.timestamp > 0);
         assert!(snapshot.cpu.is_some());
         assert!(snapshot.memory.is_some());
-        
+
         if let Some(cpu) = snapshot.cpu {
             assert!(cpu.cpu_usage >= 0.0 && cpu.cpu_usage <= 100.0);
             assert!(cpu.thread_count > 0);
         }
-        
+
         if let Some(memory) = snapshot.memory {
             assert!(memory.memory_usage_percent >= 0.0 && memory.memory_usage_percent <= 100.0);
             assert!(memory.total_memory > 0);

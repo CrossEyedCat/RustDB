@@ -2,7 +2,7 @@ use rustdb::core::{
     acid_manager::{AcidManager, AcidConfig},
     advanced_lock_manager::{AdvancedLockManager, LockMode, ResourceType},
     transaction::{TransactionId, IsolationLevel},
-    recovery::RecoveryManager,
+    // recovery::RecoveryManager, // not used in this demo
 };
 use rustdb::logging::wal::{WalConfig, WriteAheadLog};
 use rustdb::storage::page_manager::{PageManager, PageManagerConfig};
@@ -190,23 +190,23 @@ async fn demo_deadlock_detection(lock_manager: Arc<AdvancedLockManager>) -> Resu
     // Транзакция 1 пытается получить ресурс B
     let handle1 = thread::spawn(move || {
         // Транзакция 1 пытается получить ресурс B
-        lock_manager_1.acquire_lock(
+        std::mem::drop(lock_manager_1.acquire_lock(
             transaction_id_1,
             ResourceType::Table("table_B".to_string()),
             LockMode::Exclusive,
             Some(Duration::from_secs(5)),
-        )
+        ));
     });
     
     // Транзакция 2 пытается получить ресурс A
     let handle2 = thread::spawn(move || {
         // Транзакция 2 пытается получить ресурс A
-        lock_manager_2.acquire_lock(
+        std::mem::drop(lock_manager_2.acquire_lock(
             transaction_id_2,
             ResourceType::Table("table_A".to_string()),
             LockMode::Exclusive,
             Some(Duration::from_secs(5)),
-        )
+        ));
     });
     
     // Ждем завершения потоков

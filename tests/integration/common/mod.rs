@@ -13,6 +13,7 @@ use tempfile::TempDir;
 
 /// Конфигурация для интеграционных тестов
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct IntegrationTestConfig {
     pub temp_dir: TempDir,
     pub database_path: String,
@@ -43,6 +44,7 @@ impl IntegrationTestConfig {
 }
 
 /// Контекст интеграционного теста
+#[allow(dead_code)]
 pub struct IntegrationTestContext {
     pub config: IntegrationTestConfig,
     pub file_manager: Arc<FileManager>,
@@ -135,7 +137,7 @@ impl IntegrationTestContext {
                 let plan = self.planner.create_plan(&statement)?;
                 
                 // Оптимизируем план
-                let optimized_plan = self.optimizer.optimize(plan)?;
+                let _optimized_plan = self.optimizer.optimize(plan)?;
                 
                 // Имитация результата для тестов - возвращаем количество записей
                 if let Some(from) = &select_stmt.from {
@@ -146,7 +148,7 @@ impl IntegrationTestContext {
                     
                     // Проверяем существование таблицы для тестов
                     if !self.inserted_records.contains_key(table_name) && !self.updated_tables.contains(table_name) {
-                        return Err(Error::internal(&format!("Таблица '{}' не существует", table_name)));
+                        return Err(Error::internal(format!("Таблица '{}' не существует", table_name)));
                     }
                     
                     let count = self.inserted_records.get(table_name).copied().unwrap_or(0);
@@ -171,7 +173,7 @@ impl IntegrationTestContext {
                 let plan = self.planner.create_plan(&statement)?;
                 
                 // Оптимизируем план
-                let optimized_plan = self.optimizer.optimize(plan)?;
+                let _optimized_plan = self.optimizer.optimize(plan)?;
                 
                 // Имитация успешного выполнения - увеличиваем счетчик
                 let table_name = &insert_stmt.table;
@@ -182,7 +184,7 @@ impl IntegrationTestContext {
                 let plan = self.planner.create_plan(&statement)?;
                 
                 // Оптимизируем план
-                let optimized_plan = self.optimizer.optimize(plan)?;
+                let _optimized_plan = self.optimizer.optimize(plan)?;
                 
                 // Имитация успешного выполнения - отмечаем что данные обновлены
                 let table_name = &update_stmt.table;
@@ -195,7 +197,7 @@ impl IntegrationTestContext {
                 let plan = self.planner.create_plan(&statement)?;
                 
                 // Оптимизируем план
-                let optimized_plan = self.optimizer.optimize(plan)?;
+                let _optimized_plan = self.optimizer.optimize(plan)?;
                 
                 // Имитация успешного выполнения - сбрасываем счетчик
                 let table_name = &delete_stmt.table;
@@ -245,6 +247,7 @@ pub mod test_data {
     use super::*;
     
     /// Создает тестовую базу данных с таблицами и данными
+    #[allow(dead_code)]
     pub async fn setup_test_database(ctx: &mut IntegrationTestContext) -> Result<()> {
         // Создаем таблицы
         ctx.create_test_table("users").await?;
@@ -260,6 +263,7 @@ pub mod test_data {
     }
     
     /// Создает таблицу для тестов производительности
+    #[allow(dead_code)]
     pub async fn setup_performance_test_table(ctx: &mut IntegrationTestContext) -> Result<()> {
         let sql = "CREATE TABLE perf_test (
             id INTEGER PRIMARY KEY,
@@ -289,6 +293,7 @@ pub mod performance {
     use std::time::{Duration, Instant};
     
     /// Измеряет время выполнения функции
+    #[allow(dead_code)]
     pub fn measure_time<F, R>(f: F) -> (R, Duration)
     where
         F: FnOnce() -> R,
@@ -300,6 +305,7 @@ pub mod performance {
     }
     
     /// Измеряет время выполнения асинхронной функции
+    #[allow(dead_code)]
     pub async fn measure_time_async<F, Fut, R>(f: F) -> (R, Duration)
     where
         F: FnOnce() -> Fut,
@@ -313,6 +319,7 @@ pub mod performance {
     
     /// Статистика производительности
     #[derive(Debug, Clone)]
+    #[allow(dead_code)]
     pub struct PerformanceStats {
         pub min_duration: Duration,
         pub max_duration: Duration,
@@ -324,6 +331,7 @@ pub mod performance {
     
     impl PerformanceStats {
         /// Создает статистику из списка измерений
+        #[allow(dead_code)]
         pub fn from_measurements(measurements: &[Duration]) -> Self {
             if measurements.is_empty() {
                 return Self {
@@ -358,6 +366,7 @@ pub mod performance {
         }
         
         /// Выводит статистику в удобном формате
+        #[allow(dead_code)]
         pub fn print_summary(&self, test_name: &str) {
             println!("=== {} ===", test_name);
             println!("Операций: {}", self.operation_count);

@@ -143,49 +143,49 @@ impl DatabaseConfig {
         let config: DatabaseConfig = toml::from_str(&content)?;
         Ok(config)
     }
-    
+
     /// Сохраняет конфигурацию в TOML файл
     pub fn to_file(&self, path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         let content = toml::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
     }
-    
+
     /// Загружает конфигурацию из переменных окружения
     pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
         let mut config = DatabaseConfig::default();
-        
+
         if let Ok(name) = std::env::var("RUSTDB_NAME") {
             config.name = name;
         }
-        
+
         if let Ok(data_dir) = std::env::var("RUSTDB_DATA_DIR") {
             config.data_directory = data_dir;
         }
-        
+
         if let Ok(max_conn) = std::env::var("RUSTDB_MAX_CONNECTIONS") {
             config.max_connections = max_conn.parse()?;
         }
-        
+
         if let Ok(lang) = std::env::var("RUSTDB_LANGUAGE") {
             config.language = lang.parse()?;
         }
-        
+
         // if let Ok(host) = std::env::var("RUSTDB_HOST") {
         //     config.network.host = host;
         // }
-        
+
         // if let Ok(port) = std::env::var("RUSTDB_PORT") {
         //     config.network.port = port.parse()?;
         // }
-        
+
         // if let Ok(log_level) = std::env::var("RUSTDB_LOG_LEVEL") {
         //     config.logging.level = log_level;
         // }
-        
+
         Ok(config)
     }
-    
+
     /// Объединяет конфигурацию с другой
     pub fn merge(mut self, other: Self) -> Self {
         if other.name != "rustdb" {
@@ -206,42 +206,42 @@ impl DatabaseConfig {
         if other.language != Language::English {
             self.language = other.language;
         }
-        
+
         // Merge nested configs
         // self.storage = self.storage.merge(other.storage);
         // self.logging = self.logging.merge(other.logging);
         // self.network = self.network.merge(other.network);
         // self.performance = self.performance.merge(other.performance);
-        
+
         self
     }
-    
+
     /// Валидирует конфигурацию
     pub fn validate(&self) -> Result<(), String> {
         if self.name.is_empty() {
             return Err("Database name cannot be empty".to_string());
         }
-        
+
         if self.max_connections == 0 {
             return Err("Max connections must be greater than 0".to_string());
         }
-        
+
         // if self.storage.page_size == 0 {
         //     return Err("Page size must be greater than 0".to_string());
         // }
-        
+
         // if self.storage.buffer_pool_size == 0 {
         //     return Err("Buffer pool size must be greater than 0".to_string());
         // }
-        
+
         // if self.network.port == 0 {
         //     return Err("Port must be greater than 0".to_string());
         // }
-        
+
         // if self.network.max_connections == 0 {
         //     return Err("Network max connections must be greater than 0".to_string());
         // }
-        
+
         Ok(())
     }
 }
@@ -338,10 +338,10 @@ mod tests {
     fn test_config_validation() {
         let mut config = DatabaseConfig::default();
         assert!(config.validate().is_ok());
-        
+
         config.name = String::new();
         assert!(config.validate().is_err());
-        
+
         config = DatabaseConfig::default();
         config.max_connections = 0;
         assert!(config.validate().is_err());
@@ -351,11 +351,11 @@ mod tests {
     fn test_config_merge() {
         let mut config1 = DatabaseConfig::default();
         let mut config2 = DatabaseConfig::default();
-        
+
         config2.name = "testdb".to_string();
         config2.connection_timeout = 60;
         config2.language = Language::Russian;
-        
+
         let merged = config1.merge(config2);
         assert_eq!(merged.name, "testdb");
         assert_eq!(merged.connection_timeout, 60);

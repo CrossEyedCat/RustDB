@@ -1,11 +1,15 @@
 //! Расширенный оптимизатор запросов для rustdb
 
+use crate::catalog::statistics::{ColumnStatistics, StatisticsManager, TableStatistics};
 use crate::common::{Error, Result};
-use crate::planner::planner::{ExecutionPlan, PlanNode, JoinNode, FilterNode, TableScanNode, IndexScanNode};
-use crate::catalog::statistics::{StatisticsManager, TableStatistics, ColumnStatistics};
-use crate::parser::ast::{SqlStatement, SelectStatement, Expression, BinaryOperator, UnaryOperator};
+use crate::parser::ast::{
+    BinaryOperator, Expression, SelectStatement, SqlStatement, UnaryOperator,
+};
+use crate::planner::planner::{
+    ExecutionPlan, FilterNode, IndexScanNode, JoinNode, PlanNode, TableScanNode,
+};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 /// Расширенный оптимизатор запросов
 pub struct AdvancedQueryOptimizer {
@@ -101,7 +105,10 @@ impl AdvancedQueryOptimizer {
     }
 
     /// Оптимизировать план выполнения с использованием статистики
-    pub fn optimize_with_statistics(&mut self, plan: ExecutionPlan) -> Result<AdvancedOptimizationResult> {
+    pub fn optimize_with_statistics(
+        &mut self,
+        plan: ExecutionPlan,
+    ) -> Result<AdvancedOptimizationResult> {
         let start_time = std::time::Instant::now();
         let original_cost = plan.metadata.estimated_cost;
         let mut optimized_plan = plan;
@@ -154,10 +161,26 @@ impl AdvancedQueryOptimizer {
             optimizations_applied,
             optimization_time_ms: optimization_time,
             cost_improvement_percent: cost_improvement,
-            query_rewrites: if self.settings.enable_query_rewriting { 1 } else { 0 },
-            expression_simplifications: if self.settings.enable_expression_simplification { 1 } else { 0 },
-            subquery_extractions: if self.settings.enable_subquery_extraction { 1 } else { 0 },
-            statistics_usage_count: if self.settings.enable_statistics_usage { 1 } else { 0 },
+            query_rewrites: if self.settings.enable_query_rewriting {
+                1
+            } else {
+                0
+            },
+            expression_simplifications: if self.settings.enable_expression_simplification {
+                1
+            } else {
+                0
+            },
+            subquery_extractions: if self.settings.enable_subquery_extraction {
+                1
+            } else {
+                0
+            },
+            statistics_usage_count: if self.settings.enable_statistics_usage {
+                1
+            } else {
+                0
+            },
         };
 
         Ok(AdvancedOptimizationResult {
@@ -171,13 +194,18 @@ impl AdvancedQueryOptimizer {
     /// Собрать статистику для всех таблиц в плане
     fn collect_statistics_for_plan(&mut self, plan: &ExecutionPlan) -> Result<()> {
         let table_names = self.extract_table_names_from_plan(plan);
-        
+
         for table_name in table_names {
-            if self.statistics_manager.get_table_statistics(&table_name).is_none() {
-                self.statistics_manager.collect_table_statistics(&table_name)?;
+            if self
+                .statistics_manager
+                .get_table_statistics(&table_name)
+                .is_none()
+            {
+                self.statistics_manager
+                    .collect_table_statistics(&table_name)?;
             }
         }
-        
+
         Ok(())
     }
 
@@ -218,7 +246,7 @@ impl AdvancedQueryOptimizer {
 
         // Применяем различные перезаписи
         new_plan.root = self.rewrite_node_recursive(&plan.root)?;
-        
+
         if new_plan.root != plan.root {
             rewritten = true;
         }
@@ -237,7 +265,7 @@ impl AdvancedQueryOptimizer {
                 // Упрощаем условие фильтра
                 let simplified_condition = self.simplify_condition(&filter.condition)?;
                 let optimized_input = self.rewrite_node_recursive(&filter.input)?;
-                
+
                 Ok(PlanNode::Filter(FilterNode {
                     condition: simplified_condition,
                     input: Box::new(optimized_input),
@@ -248,10 +276,10 @@ impl AdvancedQueryOptimizer {
             PlanNode::Join(join) => {
                 let left = self.rewrite_node_recursive(&join.left)?;
                 let right = self.rewrite_node_recursive(&join.right)?;
-                
+
                 // Оптимизируем порядок JOIN на основе статистики
                 let optimized_join = self.optimize_join_order(join, &left, &right)?;
-                
+
                 Ok(PlanNode::Join(optimized_join))
             }
             _ => {
@@ -275,11 +303,16 @@ impl AdvancedQueryOptimizer {
     }
 
     /// Оптимизировать порядок JOIN на основе статистики
-    pub fn optimize_join_order(&self, join: &JoinNode, left: &PlanNode, right: &PlanNode) -> Result<JoinNode> {
+    pub fn optimize_join_order(
+        &self,
+        join: &JoinNode,
+        left: &PlanNode,
+        right: &PlanNode,
+    ) -> Result<JoinNode> {
         // Оцениваем стоимость каждой ветки на основе статистики
         let left_cost = self.estimate_node_cost_with_statistics(left)?;
         let right_cost = self.estimate_node_cost_with_statistics(right)?;
-        
+
         // Если правая ветка дешевле, меняем местами
         if right_cost < left_cost {
             Ok(JoinNode {
@@ -304,7 +337,10 @@ impl AdvancedQueryOptimizer {
     fn estimate_node_cost_with_statistics(&self, node: &PlanNode) -> Result<f64> {
         match node {
             PlanNode::TableScan(table_scan) => {
-                if let Some(table_stats) = self.statistics_manager.get_table_statistics(&table_scan.table_name) {
+                if let Some(table_stats) = self
+                    .statistics_manager
+                    .get_table_statistics(&table_scan.table_name)
+                {
                     // Используем статистику для более точной оценки
                     Ok(table_stats.total_rows as f64 * 0.1) // Примерная стоимость чтения
                 } else {
@@ -316,18 +352,24 @@ impl AdvancedQueryOptimizer {
     }
 
     /// Упростить выражения в плане
-    fn simplify_expressions(&self, plan: &ExecutionPlan) -> Result<Option<(ExecutionPlan, String)>> {
+    fn simplify_expressions(
+        &self,
+        plan: &ExecutionPlan,
+    ) -> Result<Option<(ExecutionPlan, String)>> {
         let mut new_plan = plan.clone();
         let mut simplified = false;
 
         new_plan.root = self.simplify_expressions_recursive(&plan.root)?;
-        
+
         if new_plan.root != plan.root {
             simplified = true;
         }
 
         if simplified {
-            Ok(Some((new_plan, "Применено упрощение выражений".to_string())))
+            Ok(Some((
+                new_plan,
+                "Применено упрощение выражений".to_string(),
+            )))
         } else {
             Ok(None)
         }
@@ -345,13 +387,16 @@ impl AdvancedQueryOptimizer {
         let mut extracted = false;
 
         new_plan.root = self.extract_subqueries_recursive(&plan.root)?;
-        
+
         if new_plan.root != plan.root {
             extracted = true;
         }
 
         if extracted {
-            Ok(Some((new_plan, "Применено вынесение подзапросов".to_string())))
+            Ok(Some((
+                new_plan,
+                "Применено вынесение подзапросов".to_string(),
+            )))
         } else {
             Ok(None)
         }

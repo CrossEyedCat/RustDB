@@ -7,7 +7,7 @@
 //! - Предвыборка данных
 
 use crate::common::Result;
-use crate::storage::advanced_file_manager::{AdvancedFileManager, AdvancedFileId, FileInfo};
+use crate::storage::advanced_file_manager::{AdvancedFileId, AdvancedFileManager, FileInfo};
 use crate::storage::database_file::{DatabaseFileType, ExtensionStrategy, PageId};
 use crate::storage::io_optimization::{BufferedIoManager, IoBufferConfig, IoStatistics};
 use std::collections::HashMap;
@@ -28,12 +28,12 @@ impl OptimizedFileManager {
     /// Создает новый оптимизированный менеджер файлов
     pub fn new(root_dir: impl AsRef<std::path::Path>) -> Result<Self> {
         let advanced_manager = Arc::new(RwLock::new(AdvancedFileManager::new(root_dir)?));
-        
+
         let mut io_config = IoBufferConfig::default();
         io_config.max_write_buffer_size = 2000;
         io_config.page_cache_size = 50000;
         io_config.enable_prefetch = true;
-        
+
         let io_manager = Arc::new(BufferedIoManager::new(io_config));
         let file_mapping = Arc::new(RwLock::new(HashMap::new()));
 
@@ -53,12 +53,13 @@ impl OptimizedFileManager {
         extension_strategy: ExtensionStrategy,
     ) -> Result<AdvancedFileId> {
         let mut manager = self.advanced_manager.write().await;
-        let file_id = manager.create_database_file(filename, file_type, database_id, extension_strategy)?;
-        
+        let file_id =
+            manager.create_database_file(filename, file_type, database_id, extension_strategy)?;
+
         // Регистрируем файл в маппинге
         let mut mapping = self.file_mapping.write().await;
         mapping.insert(file_id, file_id); // Используем тот же ID для простоты
-        
+
         Ok(file_id)
     }
 
@@ -66,11 +67,11 @@ impl OptimizedFileManager {
     pub async fn open_database_file(&self, filename: &str) -> Result<AdvancedFileId> {
         let mut manager = self.advanced_manager.write().await;
         let file_id = manager.open_database_file(filename)?;
-        
+
         // Регистрируем файл в маппинге
         let mut mapping = self.file_mapping.write().await;
         mapping.insert(file_id, file_id);
-        
+
         Ok(file_id)
     }
 
@@ -81,7 +82,12 @@ impl OptimizedFileManager {
     }
 
     /// Освобождает страницы в файле
-    pub async fn free_pages(&self, file_id: AdvancedFileId, start_page: PageId, page_count: u32) -> Result<()> {
+    pub async fn free_pages(
+        &self,
+        file_id: AdvancedFileId,
+        start_page: PageId,
+        page_count: u32,
+    ) -> Result<()> {
         let mut manager = self.advanced_manager.write().await;
         manager.free_pages(file_id, start_page, page_count)
     }
@@ -95,25 +101,35 @@ impl OptimizedFileManager {
                 // Если не удалось, читаем через обычный менеджер и добавляем в кэш
                 let mut manager = self.advanced_manager.write().await;
                 let data = manager.read_page(file_id, page_id)?;
-                
+
                 // Добавляем в кэш для будущих обращений
-                let _ = self.io_manager.write_page_async(file_id, page_id, data.clone()).await;
-                
+                let _ = self
+                    .io_manager
+                    .write_page_async(file_id, page_id, data.clone())
+                    .await;
+
                 Ok(data)
             }
         }
     }
 
     /// Асинхронно записывает страницу с буферизацией
-    pub async fn write_page(&self, file_id: AdvancedFileId, page_id: PageId, data: &[u8]) -> Result<()> {
+    pub async fn write_page(
+        &self,
+        file_id: AdvancedFileId,
+        page_id: PageId,
+        data: &[u8],
+    ) -> Result<()> {
         // Записываем через I/O менеджер с буферизацией
-        self.io_manager.write_page_async(file_id, page_id, data.to_vec()).await?;
-        
+        self.io_manager
+            .write_page_async(file_id, page_id, data.to_vec())
+            .await?;
+
         // Периодически синхронизируем с диском
         if page_id % 100 == 0 {
             self.sync_file(file_id).await?;
         }
-        
+
         Ok(())
     }
 
@@ -121,7 +137,7 @@ impl OptimizedFileManager {
     pub async fn sync_file(&self, file_id: AdvancedFileId) -> Result<()> {
         // Сначала синхронизируем буферы I/O менеджера
         self.io_manager.sync_all().await?;
-        
+
         // Затем синхронизируем базовый файл
         let mut manager = self.advanced_manager.write().await;
         manager.sync_file(file_id)
@@ -130,7 +146,7 @@ impl OptimizedFileManager {
     /// Синхронизирует все файлы
     pub async fn sync_all(&self) -> Result<()> {
         self.io_manager.sync_all().await?;
-        
+
         let mut manager = self.advanced_manager.write().await;
         manager.sync_all()
     }
@@ -139,11 +155,11 @@ impl OptimizedFileManager {
     pub async fn close_file(&self, file_id: AdvancedFileId) -> Result<()> {
         // Синхронизируем перед закрытием
         self.sync_file(file_id).await?;
-        
+
         // Удаляем из маппинга
         let mut mapping = self.file_mapping.write().await;
         mapping.remove(&file_id);
-        
+
         // Закрываем в базовом менеджере
         let mut manager = self.advanced_manager.write().await;
         manager.close_file(file_id)
@@ -245,7 +261,7 @@ impl CombinedStatistics {
         let utilization_score = self.average_utilization;
         let fragmentation_score = 1.0 - self.average_fragmentation;
         let buffer_score = 1.0 - self.buffer_usage; // Меньше использование буфера = лучше
-        
+
         (cache_score + utilization_score + fragmentation_score + buffer_score) / 4.0
     }
 
@@ -266,15 +282,21 @@ impl CombinedStatistics {
         }
 
         if self.average_utilization < 0.6 {
-            recommendations.push("Низкое использование пространства, рассмотрите сжатие файлов".to_string());
+            recommendations
+                .push("Низкое использование пространства, рассмотрите сжатие файлов".to_string());
         }
 
-        if self.read_throughput < 1_000_000.0 { // < 1MB/s
-            recommendations.push("Низкая пропускная способность чтения, проверьте дисковую подсистему".to_string());
+        if self.read_throughput < 1_000_000.0 {
+            // < 1MB/s
+            recommendations.push(
+                "Низкая пропускная способность чтения, проверьте дисковую подсистему".to_string(),
+            );
         }
 
-        if self.write_throughput < 500_000.0 { // < 500KB/s
-            recommendations.push("Низкая пропускная способность записи, рассмотрите SSD".to_string());
+        if self.write_throughput < 500_000.0 {
+            // < 500KB/s
+            recommendations
+                .push("Низкая пропускная способность записи, рассмотрите SSD".to_string());
         }
 
         if recommendations.is_empty() {
@@ -288,8 +310,8 @@ impl CombinedStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use crate::storage::database_file::BLOCK_SIZE;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_optimized_file_manager_creation() -> Result<()> {
@@ -303,12 +325,14 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let manager = OptimizedFileManager::new(temp_dir.path())?;
 
-        let file_id = manager.create_database_file(
-            "test.db",
-            DatabaseFileType::Data,
-            123,
-            ExtensionStrategy::Adaptive,
-        ).await?;
+        let file_id = manager
+            .create_database_file(
+                "test.db",
+                DatabaseFileType::Data,
+                123,
+                ExtensionStrategy::Adaptive,
+            )
+            .await?;
 
         assert!(file_id > 0);
         assert!(manager.get_file_info(file_id).await.is_some());
@@ -321,12 +345,14 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let manager = OptimizedFileManager::new(temp_dir.path())?;
 
-        let file_id = manager.create_database_file(
-            "test.db",
-            DatabaseFileType::Data,
-            123,
-            ExtensionStrategy::Fixed,
-        ).await?;
+        let file_id = manager
+            .create_database_file(
+                "test.db",
+                DatabaseFileType::Data,
+                123,
+                ExtensionStrategy::Fixed,
+            )
+            .await?;
 
         // Выделяем страницы
         let page_id = manager.allocate_pages(file_id, 5).await?;
@@ -342,7 +368,7 @@ mod tests {
 
         // Даем время на обработку асинхронных операций
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        
+
         // Проверяем статистику
         let stats = manager.get_io_statistics();
         // В оптимизированном менеджере статистика может обновляться асинхронно
@@ -357,17 +383,19 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let manager = OptimizedFileManager::new(temp_dir.path())?;
 
-        let file_id = manager.create_database_file(
-            "test.db",
-            DatabaseFileType::Data,
-            123,
-            ExtensionStrategy::Linear,
-        ).await?;
+        let file_id = manager
+            .create_database_file(
+                "test.db",
+                DatabaseFileType::Data,
+                123,
+                ExtensionStrategy::Linear,
+            )
+            .await?;
 
         // Выполняем некоторые операции
         let page_id = manager.allocate_pages(file_id, 10).await?;
         let data = vec![100u8; BLOCK_SIZE];
-        
+
         for i in 0..5 {
             manager.write_page(file_id, page_id + i, &data).await?;
             let _ = manager.read_page(file_id, page_id + i).await?;
@@ -394,12 +422,14 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let manager = OptimizedFileManager::new(temp_dir.path())?;
 
-        let file_id = manager.create_database_file(
-            "test.db",
-            DatabaseFileType::Data,
-            123,
-            ExtensionStrategy::Exponential,
-        ).await?;
+        let file_id = manager
+            .create_database_file(
+                "test.db",
+                DatabaseFileType::Data,
+                123,
+                ExtensionStrategy::Exponential,
+            )
+            .await?;
 
         // Запускаем проверку обслуживания
         let extended_files = manager.maintenance_check().await?;
@@ -420,12 +450,14 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let manager = OptimizedFileManager::new(temp_dir.path())?;
 
-        let file_id = manager.create_database_file(
-            "cache_test.db",
-            DatabaseFileType::Data,
-            456,
-            ExtensionStrategy::Adaptive,
-        ).await?;
+        let file_id = manager
+            .create_database_file(
+                "cache_test.db",
+                DatabaseFileType::Data,
+                456,
+                ExtensionStrategy::Adaptive,
+            )
+            .await?;
 
         let page_id = manager.allocate_pages(file_id, 1).await?;
         let data = vec![255u8; BLOCK_SIZE];

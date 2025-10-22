@@ -15,7 +15,7 @@ use rustdb::storage::{
 use rustdb::common::Result;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use rand::prelude::*;
+// use rand::prelude::*; // unused
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -41,12 +41,14 @@ async fn demonstrate_buffered_io() -> Result<()> {
     println!("💾 === Демонстрация буферизованного I/O ===");
     
     // Создаем конфигурацию с настройками производительности
-    let mut config = IoBufferConfig::default();
-    config.max_write_buffer_size = 500;
-    config.max_buffer_time = Duration::from_millis(50);
-    config.page_cache_size = 1000;
-    config.enable_prefetch = true;
-    config.prefetch_window_size = 5;
+    let config = IoBufferConfig {
+        max_write_buffer_size: 500,
+        max_buffer_time: Duration::from_millis(50),
+        page_cache_size: 1000,
+        enable_prefetch: true,
+        prefetch_window_size: 5,
+        ..Default::default()
+    };
     
     println!("📋 Конфигурация I/O:");
     println!("   - Размер буфера записи: {} операций", config.max_write_buffer_size);

@@ -15,7 +15,7 @@ fn test_log_record_type_variants() {
         LogRecordType::Checkpoint,
         LogRecordType::CheckpointEnd,
     ];
-    
+
     assert_eq!(types.len(), 8);
 }
 
@@ -44,7 +44,7 @@ fn test_record_operation_creation() {
         old_data: Some(vec![1, 2, 3]),
         new_data: Some(vec![4, 5, 6]),
     };
-    
+
     assert_eq!(op.file_id, 1);
     assert_eq!(op.page_id, 100);
     assert_eq!(op.record_offset, 50);
@@ -61,7 +61,7 @@ fn test_transaction_operation_creation() {
         start_time: 1000,
         isolation_level: IsolationLevel::ReadCommitted,
     };
-    
+
     assert_eq!(op.dirty_pages.len(), 2);
     assert_eq!(op.locked_resources.len(), 2);
     assert_eq!(op.start_time, 1000);
@@ -75,7 +75,7 @@ fn test_isolation_levels() {
         IsolationLevel::RepeatableRead,
         IsolationLevel::Serializable,
     ];
-    
+
     assert_eq!(levels.len(), 4);
 }
 
@@ -98,7 +98,7 @@ fn test_log_operation_data_variants() {
             isolation_level: IsolationLevel::ReadCommitted,
         }),
     ];
-    
+
     assert_eq!(variants.len(), 3);
 }
 
@@ -116,7 +116,7 @@ fn test_log_record_creation_begin() {
         prev_lsn: None,
         metadata: HashMap::new(),
     };
-    
+
     assert_eq!(record.lsn, 1);
     assert_eq!(record.transaction_id, Some(100));
     assert_eq!(record.record_type, LogRecordType::TransactionBegin);
@@ -137,7 +137,7 @@ fn test_log_record_creation_commit() {
         prev_lsn: Some(9),
         metadata: HashMap::new(),
     };
-    
+
     assert_eq!(record.lsn, 10);
     assert_eq!(record.prev_lsn, Some(9));
     assert_eq!(record.record_type, LogRecordType::TransactionCommit);
@@ -148,7 +148,7 @@ fn test_log_record_with_metadata() {
     let mut metadata = HashMap::new();
     metadata.insert("key1".to_string(), "value1".to_string());
     metadata.insert("key2".to_string(), "value2".to_string());
-    
+
     let record = LogRecord {
         lsn: 5,
         transaction_id: Some(50),
@@ -161,7 +161,7 @@ fn test_log_record_with_metadata() {
         prev_lsn: Some(4),
         metadata,
     };
-    
+
     assert_eq!(record.metadata.len(), 2);
     assert_eq!(record.metadata.get("key1"), Some(&"value1".to_string()));
 }
@@ -176,7 +176,7 @@ fn test_log_record_with_operation_data() {
         old_data: Some(vec![1, 2, 3, 4]),
         new_data: Some(vec![5, 6, 7, 8]),
     });
-    
+
     let record = LogRecord {
         lsn: 20,
         transaction_id: Some(200),
@@ -189,7 +189,7 @@ fn test_log_record_with_operation_data() {
         prev_lsn: Some(19),
         metadata: HashMap::new(),
     };
-    
+
     match record.operation_data {
         LogOperationData::Record(op) => {
             assert_eq!(op.file_id, 2);
@@ -213,7 +213,7 @@ fn test_log_record_checksum() {
         prev_lsn: None,
         metadata: HashMap::new(),
     };
-    
+
     let record2 = LogRecord {
         lsn: 1,
         transaction_id: Some(1),
@@ -226,7 +226,7 @@ fn test_log_record_checksum() {
         prev_lsn: None,
         metadata: HashMap::new(),
     };
-    
+
     assert_ne!(record1.checksum, record2.checksum);
 }
 
@@ -270,7 +270,7 @@ fn test_log_record_chain() {
             metadata: HashMap::new(),
         },
     ];
-    
+
     assert_eq!(records[0].prev_lsn, None);
     assert_eq!(records[1].prev_lsn, Some(1));
     assert_eq!(records[2].prev_lsn, Some(2));
@@ -297,7 +297,6 @@ fn test_log_record_size_calculation() {
         prev_lsn: None,
         metadata: HashMap::new(),
     };
-    
+
     assert_eq!(record.record_size, 1024);
 }
-

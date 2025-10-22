@@ -1,8 +1,8 @@
 //! Пример использования MVCC (Multi-Version Concurrency Control)
 
 use rustdb::core::{
-    MVCCManager, MVCCStatistics, RowKey, Timestamp,
-    TransactionId, VersionState,
+    MVCCManager, RowKey, Timestamp,
+    TransactionId,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

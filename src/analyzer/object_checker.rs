@@ -83,9 +83,13 @@ impl ObjectChecker {
     }
 
     /// Проверяет существование таблицы (упрощенная версия для тестирования)
-    pub fn check_table_exists(&mut self, table_name: &str, _schema: &()) -> Result<ObjectCheckResult> {
+    pub fn check_table_exists(
+        &mut self,
+        table_name: &str,
+        _schema: &(),
+    ) -> Result<ObjectCheckResult> {
         let cache_key = format!("table:{}", table_name);
-        
+
         // Проверяем кэш
         if self.cache_enabled {
             if let Some(cached_result) = self.cache.get(&cache_key) {
@@ -110,9 +114,14 @@ impl ObjectChecker {
     }
 
     /// Проверяет существование колонки в таблице (упрощенная версия)
-    pub fn check_column_exists(&mut self, table_name: &str, column_name: &str, _schema: &()) -> Result<ObjectCheckResult> {
+    pub fn check_column_exists(
+        &mut self,
+        table_name: &str,
+        column_name: &str,
+        _schema: &(),
+    ) -> Result<ObjectCheckResult> {
         let cache_key = format!("column:{}:{}", table_name, column_name);
-        
+
         // Проверяем кэш
         if self.cache_enabled {
             if let Some(cached_result) = self.cache.get(&cache_key) {
@@ -138,9 +147,13 @@ impl ObjectChecker {
     }
 
     /// Проверяет существование индекса (упрощенная версия)
-    pub fn check_index_exists(&mut self, index_name: &str, _schema: &()) -> Result<ObjectCheckResult> {
+    pub fn check_index_exists(
+        &mut self,
+        index_name: &str,
+        _schema: &(),
+    ) -> Result<ObjectCheckResult> {
         let cache_key = format!("index:{}", index_name);
-        
+
         // Проверяем кэш
         if self.cache_enabled {
             if let Some(cached_result) = self.cache.get(&cache_key) {
@@ -211,7 +224,7 @@ mod tests {
         let metadata = ObjectMetadata::new("test_table".to_string())
             .with_schema("public".to_string())
             .with_property("type".to_string(), "table".to_string());
-        
+
         assert_eq!(metadata.name, "test_table");
         assert_eq!(metadata.schema_name, Some("public".to_string()));
         assert_eq!(metadata.properties.get("type"), Some(&"table".to_string()));
@@ -220,17 +233,17 @@ mod tests {
     #[test]
     fn test_cache_operations() {
         let mut checker = ObjectChecker::new();
-        
+
         // Изначально кэш пуст
         let (cache_size, cache_enabled) = checker.cache_statistics();
         assert_eq!(cache_size, 0);
         assert!(cache_enabled);
-        
+
         // Отключаем кэш
         checker.set_cache_enabled(false);
         let (_, cache_enabled) = checker.cache_statistics();
         assert!(!cache_enabled);
-        
+
         // Включаем кэш обратно
         checker.set_cache_enabled(true);
         let (_, cache_enabled) = checker.cache_statistics();
@@ -241,11 +254,11 @@ mod tests {
     fn test_table_exists_check() -> Result<()> {
         let mut checker = ObjectChecker::new();
         let result = checker.check_table_exists("users", &())?;
-        
+
         assert!(result.exists);
         assert_eq!(result.object_type, ObjectType::Table);
         assert_eq!(result.metadata.name, "users");
-        
+
         Ok(())
     }
 
@@ -253,11 +266,11 @@ mod tests {
     fn test_column_exists_check() -> Result<()> {
         let mut checker = ObjectChecker::new();
         let result = checker.check_column_exists("users", "name", &())?;
-        
+
         assert!(result.exists);
         assert_eq!(result.object_type, ObjectType::Column);
         assert_eq!(result.metadata.name, "name");
-        
+
         Ok(())
     }
 
@@ -265,11 +278,11 @@ mod tests {
     fn test_index_exists_check() -> Result<()> {
         let mut checker = ObjectChecker::new();
         let result = checker.check_index_exists("idx_users_email", &())?;
-        
+
         assert!(!result.exists); // В тестовом режиме индексы не существуют
         assert_eq!(result.object_type, ObjectType::Index);
         assert_eq!(result.metadata.name, "idx_users_email");
-        
+
         Ok(())
     }
 }

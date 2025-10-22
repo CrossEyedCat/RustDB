@@ -112,8 +112,7 @@ fn main() -> Result<()> {
     let mut custom_analyzer = SemanticAnalyzer::new(custom_settings);
     
     // Создаем контекст с пользователем
-    let mut custom_context = AnalysisContext::default();
-    custom_context.current_user = Some("test_user".to_string());
+    let custom_context = AnalysisContext { current_user: Some("test_user".to_string()), ..Default::default() };
     
     let mut parser = SqlParser::new("SELECT * FROM sensitive_data")?;
     let statement = parser.parse()?;

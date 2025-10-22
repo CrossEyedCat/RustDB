@@ -11,32 +11,28 @@ pub mod recovery_manager;
 pub mod transaction;
 
 // Переэкспортируем основные типы
-pub use acid_manager::{
-    AcidManager, AcidConfig, AcidStatistics, VersionInfo
-};
+pub use acid_manager::{AcidConfig, AcidManager, AcidStatistics, VersionInfo};
 pub use advanced_lock_manager::{
-    AdvancedLockManager, AdvancedLockConfig, AdvancedLockStatistics,
-    ResourceType, LockMode as AdvancedLockMode, AdvancedLockInfo
-};
-pub use transaction::{
-    TransactionManager, TransactionId, TransactionState, IsolationLevel,
-    TransactionInfo, TransactionManagerStats, TransactionManagerConfig
-};
-pub use lock::{
-    LockManager, LockType, LockMode, LockInfo, LockRequest,
-    LockManagerStats, WaitForGraph
-};
-pub use mvcc::{
-    MVCCManager, MVCCStatistics, RowVersion, RowKey, Timestamp,
-    VersionId, VersionState
+    AdvancedLockConfig, AdvancedLockInfo, AdvancedLockManager, AdvancedLockStatistics,
+    LockMode as AdvancedLockMode, ResourceType,
 };
 pub use concurrency::{
-    ConcurrencyManager, ConcurrencyConfig, IsolationLevel as ConcurrencyIsolationLevel,
-    LockGranularity
+    ConcurrencyConfig, ConcurrencyManager, IsolationLevel as ConcurrencyIsolationLevel,
+    LockGranularity,
+};
+pub use lock::{
+    LockInfo, LockManager, LockManagerStats, LockMode, LockRequest, LockType, WaitForGraph,
+};
+pub use mvcc::{
+    MVCCManager, MVCCStatistics, RowKey, RowVersion, Timestamp, VersionId, VersionState,
 };
 pub use recovery_manager::{
-    AdvancedRecoveryManager, RecoveryConfig, RecoveryStatistics,
-    RecoveryTransactionInfo, RecoveryTransactionState, AnalysisResult
+    AdvancedRecoveryManager, AnalysisResult, RecoveryConfig, RecoveryStatistics,
+    RecoveryTransactionInfo, RecoveryTransactionState,
+};
+pub use transaction::{
+    IsolationLevel, TransactionId, TransactionInfo, TransactionManager, TransactionManagerConfig,
+    TransactionManagerStats, TransactionState,
 };
 
 #[cfg(test)]

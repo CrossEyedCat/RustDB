@@ -3,12 +3,12 @@
 //! Эти тесты проверяют поведение системы под высокой нагрузкой
 //! и в экстремальных условиях.
 
-use rustdb::common::{Error, Result, types::*};
-use rustdb::core::{IsolationLevel, transaction::TransactionId};
+use rustdb::common::{Result, Error};
+use rustdb::core::IsolationLevel;
 use super::common::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::{sleep, Duration};
+// use tokio::time::{sleep, Duration};
 
 /// Stress тест множественных одновременных соединений
 #[tokio::test]
@@ -43,7 +43,7 @@ pub async fn stress_test_concurrent_connections() -> Result<()> {
     
     // Ждем завершения всех соединений
     for handle in handles {
-        handle.await.map_err(|e| Error::internal(&format!("Join error: {}", e)))?;
+        let _ = handle.await.map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
     
     // Проверяем, что данные вставились
@@ -96,7 +96,7 @@ pub async fn stress_test_long_transactions() -> Result<()> {
     
     // Ждем завершения всех транзакций
     for handle in handles {
-        handle.await.map_err(|e| Error::internal(&format!("Join error: {}", e)))?;
+    let _ = handle.await.map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
     
     // Проверяем данные
@@ -146,7 +146,7 @@ pub async fn stress_test_locking() -> Result<()> {
     
     // Ждем завершения всех транзакций
     for handle in handles {
-        handle.await.map_err(|e| Error::internal(&format!("Join error: {}", e)))?;
+    let _ = handle.await.map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
     
     // Проверяем, что данные вставились
@@ -190,7 +190,7 @@ pub async fn stress_test_memory_usage() -> Result<()> {
     
     // Ждем завершения всех операций
     for handle in handles {
-        handle.await.map_err(|e| Error::internal(&format!("Join error: {}", e)))?;
+    let _ = handle.await.map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
     
     // Проверяем данные
@@ -239,7 +239,7 @@ pub async fn stress_test_checkpoint_operations() -> Result<()> {
     
     // Ждем завершения всех операций
     for handle in handles {
-        handle.await.map_err(|e| Error::internal(&format!("Join error: {}", e)))?;
+    let _ = handle.await.map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
     
     // Проверяем данные
@@ -341,7 +341,7 @@ pub async fn stress_test_performance_under_load() -> Result<()> {
     
     // Ждем завершения всех операций
     for handle in handles {
-        handle.await.map_err(|e| Error::internal(&format!("Join error: {}", e)))?;
+        let _ = handle.await.map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
     
     // Проверяем, что система справилась с нагрузкой

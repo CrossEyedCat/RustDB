@@ -1,11 +1,11 @@
 //! Лексический анализатор SQL для rustdb
-//! 
+//!
 //! Преобразует входной SQL текст в последовательность токенов для дальнейшего парсинга.
 //! Поддерживает все основные конструкции SQL, включая ключевые слова, идентификаторы,
 //! литералы, операторы и комментарии.
 
 use crate::common::{Error, Result};
-use crate::parser::token::{Token, TokenType, Position, keyword_map};
+use crate::parser::token::{keyword_map, Position, Token, TokenType};
 use std::collections::HashMap;
 
 /// Лексический анализатор SQL

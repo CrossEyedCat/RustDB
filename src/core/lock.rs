@@ -1,5 +1,5 @@
 //! Менеджер блокировок для rustdb
-//! 
+//!
 //! Реализует систему блокировок с поддержкой Shared/Exclusive блокировок,
 //! обнаружения дедлоков и двухфазного блокирования (2PL).
 
@@ -93,9 +93,12 @@ pub struct WaitForGraph {
 impl WaitForGraph {
     /// Добавляет ребро в граф (transaction ждет waiting_for)
     pub fn add_edge(&mut self, transaction: TransactionId, waiting_for: TransactionId) {
-        self.edges.entry(transaction).or_insert_with(HashSet::new).insert(waiting_for);
+        self.edges
+            .entry(transaction)
+            .or_insert_with(HashSet::new)
+            .insert(waiting_for);
     }
-    
+
     /// Удаляет все рёбра, связанные с транзакцией
     pub fn remove_transaction(&mut self, transaction: TransactionId) {
         self.edges.remove(&transaction);
@@ -103,24 +106,26 @@ impl WaitForGraph {
             edges.remove(&transaction);
         }
     }
-    
+
     /// Обнаруживает циклы в графе (дедлоки)
     pub fn detect_deadlock(&self) -> Option<Vec<TransactionId>> {
         let mut visited = HashSet::new();
         let mut rec_stack = HashSet::new();
         let mut path = Vec::new();
-        
+
         for &transaction in self.edges.keys() {
             if !visited.contains(&transaction) {
-                if let Some(cycle) = self.dfs_detect_cycle(transaction, &mut visited, &mut rec_stack, &mut path) {
+                if let Some(cycle) =
+                    self.dfs_detect_cycle(transaction, &mut visited, &mut rec_stack, &mut path)
+                {
                     return Some(cycle);
                 }
             }
         }
-        
+
         None
     }
-    
+
     /// Поиск в глубину для обнаружения циклов
     fn dfs_detect_cycle(
         &self,
@@ -132,7 +137,7 @@ impl WaitForGraph {
         visited.insert(transaction);
         rec_stack.insert(transaction);
         path.push(transaction);
-        
+
         if let Some(neighbors) = self.edges.get(&transaction) {
             for &neighbor in neighbors {
                 if !visited.contains(&neighbor) {
@@ -146,7 +151,7 @@ impl WaitForGraph {
                 }
             }
         }
-        
+
         path.pop();
         rec_stack.remove(&transaction);
         None
@@ -196,7 +201,7 @@ impl LockManager {
             stats: Arc::new(Mutex::new(LockManagerStats::default())),
         })
     }
-    
+
     /// Пытается получить блокировку
     pub fn acquire_lock(
         &self,
@@ -207,23 +212,31 @@ impl LockManager {
     ) -> Result<bool> {
         // Обновляем статистику
         {
-            let mut stats = self.stats.lock()
+            let mut stats = self
+                .stats
+                .lock()
                 .map_err(|_| Error::internal("Failed to acquire stats lock".to_string()))?;
             stats.total_lock_requests += 1;
         }
-        
+
         // Проверяем совместимость с существующими блокировками
         let can_acquire = {
-            let active_locks = self.active_locks.read()
-                .map_err(|_| Error::internal("Failed to acquire read lock on active locks".to_string()))?;
-            
+            let active_locks = self.active_locks.read().map_err(|_| {
+                Error::internal("Failed to acquire read lock on active locks".to_string())
+            })?;
+
             if let Some(existing_locks) = active_locks.get(&resource) {
                 // Проверяем, может ли эта транзакция уже владеть блокировкой
-                if let Some(existing) = existing_locks.iter().find(|l| l.transaction_id == transaction_id) {
+                if let Some(existing) = existing_locks
+                    .iter()
+                    .find(|l| l.transaction_id == transaction_id)
+                {
                     // Транзакция уже владеет блокировкой - проверяем upgrade
                     if existing.lock_mode == lock_mode {
                         return Ok(true); // Уже есть нужная блокировка
-                    } else if existing.lock_mode == LockMode::Shared && lock_mode == LockMode::Exclusive {
+                    } else if existing.lock_mode == LockMode::Shared
+                        && lock_mode == LockMode::Exclusive
+                    {
                         // Пытаемся upgrade с Shared на Exclusive
                         // Это возможно только если нет других Shared блокировок
                         existing_locks.len() == 1
@@ -232,13 +245,15 @@ impl LockManager {
                     }
                 } else {
                     // Проверяем совместимость с блокировками других транзакций
-                    existing_locks.iter().all(|existing| lock_mode.is_compatible(&existing.lock_mode))
+                    existing_locks
+                        .iter()
+                        .all(|existing| lock_mode.is_compatible(&existing.lock_mode))
                 }
             } else {
                 true // Нет существующих блокировок
             }
         };
-        
+
         if can_acquire {
             // Можем получить блокировку немедленно
             self.grant_lock(transaction_id, resource, lock_type, lock_mode)?;
@@ -249,58 +264,62 @@ impl LockManager {
             Ok(false)
         }
     }
-    
+
     /// Освобождает блокировку
     pub fn release_lock(&self, transaction_id: TransactionId, resource: String) -> Result<()> {
         // Удаляем блокировку
         let removed = {
-            let mut active_locks = self.active_locks.write()
-                .map_err(|_| Error::internal("Failed to acquire write lock on active locks".to_string()))?;
-            
+            let mut active_locks = self.active_locks.write().map_err(|_| {
+                Error::internal("Failed to acquire write lock on active locks".to_string())
+            })?;
+
             let mut should_remove_resource = false;
             let removed = if let Some(locks) = active_locks.get_mut(&resource) {
                 let original_len = locks.len();
                 locks.retain(|lock| lock.transaction_id != transaction_id);
-                
+
                 if locks.is_empty() {
                     should_remove_resource = true;
                 }
-                
+
                 original_len != locks.len()
             } else {
                 false
             };
-            
+
             if should_remove_resource {
                 active_locks.remove(&resource);
             }
-            
+
             removed
         };
-        
+
         if removed {
             // Обновляем граф ожидания
             {
-                let mut graph = self.wait_for_graph.lock()
-                    .map_err(|_| Error::internal("Failed to acquire wait-for graph lock".to_string()))?;
+                let mut graph = self.wait_for_graph.lock().map_err(|_| {
+                    Error::internal("Failed to acquire wait-for graph lock".to_string())
+                })?;
                 graph.remove_transaction(transaction_id);
             }
-            
+
             // Обновляем статистику
             {
-                let mut stats = self.stats.lock()
+                let mut stats = self
+                    .stats
+                    .lock()
                     .map_err(|_| Error::internal("Failed to acquire stats lock".to_string()))?;
                 stats.locks_released += 1;
                 stats.active_locks = stats.active_locks.saturating_sub(1);
             }
-            
+
             // Проверяем очередь ожидания
             self.process_wait_queue(&resource)?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Предоставляет блокировку
     fn grant_lock(
         &self,
@@ -315,25 +334,31 @@ impl LockManager {
             lock_mode,
             acquired_at: Instant::now(),
         };
-        
+
         {
-            let mut active_locks = self.active_locks.write()
-                .map_err(|_| Error::internal("Failed to acquire write lock on active locks".to_string()))?;
-            
-            active_locks.entry(resource).or_insert_with(Vec::new).push(lock_info);
+            let mut active_locks = self.active_locks.write().map_err(|_| {
+                Error::internal("Failed to acquire write lock on active locks".to_string())
+            })?;
+
+            active_locks
+                .entry(resource)
+                .or_insert_with(Vec::new)
+                .push(lock_info);
         }
-        
+
         // Обновляем статистику
         {
-            let mut stats = self.stats.lock()
+            let mut stats = self
+                .stats
+                .lock()
                 .map_err(|_| Error::internal("Failed to acquire stats lock".to_string()))?;
             stats.locks_acquired += 1;
             stats.active_locks += 1;
         }
-        
+
         Ok(())
     }
-    
+
     /// Добавляет запрос в очередь ожидания
     fn add_to_wait_queue(
         &self,
@@ -348,46 +373,58 @@ impl LockManager {
             lock_mode,
             requested_at: Instant::now(),
         };
-        
+
         {
-            let mut wait_queues = self.wait_queues.lock()
+            let mut wait_queues = self
+                .wait_queues
+                .lock()
                 .map_err(|_| Error::internal("Failed to acquire wait queues lock".to_string()))?;
-            
-            wait_queues.entry(resource.clone()).or_insert_with(VecDeque::new).push_back(request);
+
+            wait_queues
+                .entry(resource.clone())
+                .or_insert_with(VecDeque::new)
+                .push_back(request);
         }
-        
+
         // Обновляем граф ожидания
         self.update_wait_for_graph(transaction_id, &resource)?;
-        
+
         // Обновляем статистику
         {
-            let mut stats = self.stats.lock()
+            let mut stats = self
+                .stats
+                .lock()
                 .map_err(|_| Error::internal("Failed to acquire stats lock".to_string()))?;
             stats.blocked_requests += 1;
             stats.waiting_requests += 1;
         }
-        
+
         // Проверяем на дедлок
         self.check_for_deadlock()?;
-        
+
         Ok(())
     }
-    
+
     /// Обрабатывает очередь ожидания для ресурса
     fn process_wait_queue(&self, resource: &str) -> Result<()> {
         let mut requests_to_grant = Vec::new();
-        
+
         {
-            let mut wait_queues = self.wait_queues.lock()
+            let mut wait_queues = self
+                .wait_queues
+                .lock()
                 .map_err(|_| Error::internal("Failed to acquire wait queues lock".to_string()))?;
-            
+
             if let Some(queue) = wait_queues.get_mut(resource) {
                 while let Some(request) = queue.front() {
                     // Проверяем, можно ли предоставить блокировку
                     let can_grant = {
-                        let active_locks = self.active_locks.read()
-                            .map_err(|_| Error::internal("Failed to acquire read lock on active locks".to_string()))?;
-                        
+                        let active_locks = self.active_locks.read().map_err(|_| {
+                            Error::internal(
+                                "Failed to acquire read lock on active locks".to_string(),
+                            )
+                        })?;
+
                         if let Some(existing_locks) = active_locks.get(resource) {
                             existing_locks.iter().all(|existing| {
                                 request.lock_mode.is_compatible(&existing.lock_mode)
@@ -396,7 +433,7 @@ impl LockManager {
                             true
                         }
                     };
-                    
+
                     if can_grant {
                         let request = queue.pop_front().unwrap();
                         requests_to_grant.push(request);
@@ -404,35 +441,49 @@ impl LockManager {
                         break; // Не можем предоставить - останавливаемся
                     }
                 }
-                
+
                 if queue.is_empty() {
                     wait_queues.remove(resource);
                 }
             }
         }
-        
+
         // Предоставляем блокировки вне блокировки очереди
         for request in requests_to_grant {
-            self.grant_lock(request.transaction_id, resource.to_string(), request.lock_type, request.lock_mode)?;
-            
+            self.grant_lock(
+                request.transaction_id,
+                resource.to_string(),
+                request.lock_type,
+                request.lock_mode,
+            )?;
+
             // Обновляем статистику
-            let mut stats = self.stats.lock()
+            let mut stats = self
+                .stats
+                .lock()
                 .map_err(|_| Error::internal("Failed to acquire stats lock".to_string()))?;
             stats.waiting_requests = stats.waiting_requests.saturating_sub(1);
         }
-        
+
         Ok(())
     }
-    
+
     /// Обновляет граф ожидания
-    fn update_wait_for_graph(&self, waiting_transaction: TransactionId, resource: &str) -> Result<()> {
-        let mut graph = self.wait_for_graph.lock()
+    fn update_wait_for_graph(
+        &self,
+        waiting_transaction: TransactionId,
+        resource: &str,
+    ) -> Result<()> {
+        let mut graph = self
+            .wait_for_graph
+            .lock()
             .map_err(|_| Error::internal("Failed to acquire wait-for graph lock".to_string()))?;
-        
+
         // Находим транзакции, владеющие блокировками на этот ресурс
-        let active_locks = self.active_locks.read()
-            .map_err(|_| Error::internal("Failed to acquire read lock on active locks".to_string()))?;
-        
+        let active_locks = self.active_locks.read().map_err(|_| {
+            Error::internal("Failed to acquire read lock on active locks".to_string())
+        })?;
+
         if let Some(locks) = active_locks.get(resource) {
             for lock in locks {
                 if lock.transaction_id != waiting_transaction {
@@ -440,49 +491,59 @@ impl LockManager {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Проверяет наличие дедлоков
     fn check_for_deadlock(&self) -> Result<()> {
-        let graph = self.wait_for_graph.lock()
+        let graph = self
+            .wait_for_graph
+            .lock()
             .map_err(|_| Error::internal("Failed to acquire wait-for graph lock".to_string()))?;
-        
+
         if let Some(cycle) = graph.detect_deadlock() {
             // Обновляем статистику
             {
-                let mut stats = self.stats.lock()
+                let mut stats = self
+                    .stats
+                    .lock()
                     .map_err(|_| Error::internal("Failed to acquire stats lock".to_string()))?;
                 stats.deadlocks_detected += 1;
             }
-            
+
             // Возвращаем ошибку дедлока
             return Err(Error::DeadlockDetected(format!(
-                "Deadlock detected involving transactions: {:?}", cycle
+                "Deadlock detected involving transactions: {:?}",
+                cycle
             )));
         }
-        
+
         Ok(())
     }
-    
+
     /// Получает статистику менеджера блокировок
     pub fn get_statistics(&self) -> Result<LockManagerStats> {
-        let stats = self.stats.lock()
+        let stats = self
+            .stats
+            .lock()
             .map_err(|_| Error::internal("Failed to acquire stats lock".to_string()))?;
         Ok(stats.clone())
     }
-    
+
     /// Получает информацию о всех активных блокировках
     pub fn get_active_locks(&self) -> Result<HashMap<String, Vec<LockInfo>>> {
-        let active_locks = self.active_locks.read()
-            .map_err(|_| Error::internal("Failed to acquire read lock on active locks".to_string()))?;
+        let active_locks = self.active_locks.read().map_err(|_| {
+            Error::internal("Failed to acquire read lock on active locks".to_string())
+        })?;
         Ok(active_locks.clone())
     }
-    
+
     /// Получает информацию о всех ожидающих запросах
     pub fn get_waiting_requests(&self) -> Result<HashMap<String, VecDeque<LockRequest>>> {
-        let wait_queues = self.wait_queues.lock()
+        let wait_queues = self
+            .wait_queues
+            .lock()
             .map_err(|_| Error::internal("Failed to acquire wait queues lock".to_string()))?;
         Ok(wait_queues.clone())
     }

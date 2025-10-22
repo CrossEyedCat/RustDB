@@ -2,8 +2,8 @@
 
 use crate::common::Result;
 use crate::parser::ast::*;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use serde::{Serialize, Deserialize};
 
 /// Результат проверки прав доступа
 #[derive(Debug, Clone)]
@@ -177,8 +177,10 @@ impl User {
         if !self.is_active {
             return false;
         }
-        
-        self.roles.iter().any(|role| role.has_permission(permission))
+
+        self.roles
+            .iter()
+            .any(|role| role.has_permission(permission))
     }
 
     pub fn is_admin(&self) -> bool {
@@ -288,7 +290,11 @@ impl AccessChecker {
     }
 
     /// Проверяет права доступа для SQL запроса
-    pub fn check_statement(&mut self, statement: &SqlStatement, context: &super::AnalysisContext) -> Result<AccessCheckResult> {
+    pub fn check_statement(
+        &mut self,
+        statement: &SqlStatement,
+        context: &super::AnalysisContext,
+    ) -> Result<AccessCheckResult> {
         let mut result = AccessCheckResult::new();
 
         if !self.enabled {
@@ -353,7 +359,12 @@ impl AccessChecker {
     }
 
     /// Отзывает разрешение у пользователя
-    pub fn revoke_permission(&mut self, object_name: &str, username: &str, permission: &Permission) {
+    pub fn revoke_permission(
+        &mut self,
+        object_name: &str,
+        username: &str,
+        permission: &Permission,
+    ) {
         if let Some(rule) = self.access_rules.get_mut(object_name) {
             if let Some(user_permissions) = rule.permissions.get_mut(username) {
                 user_permissions.remove(permission);
@@ -365,7 +376,12 @@ impl AccessChecker {
     }
 
     /// Проверяет разрешение пользователя на объект
-    pub fn check_permission(&self, object_name: &str, username: &str, permission: &Permission) -> bool {
+    pub fn check_permission(
+        &self,
+        object_name: &str,
+        username: &str,
+        permission: &Permission,
+    ) -> bool {
         // Если проверка отключена, разрешаем все
         if !self.enabled {
             return true;
@@ -397,7 +413,12 @@ impl AccessChecker {
 
     // Методы проверки для различных типов запросов
 
-    fn check_select_access(&mut self, select: &SelectStatement, username: &str, result: &mut AccessCheckResult) -> Result<()> {
+    fn check_select_access(
+        &mut self,
+        select: &SelectStatement,
+        username: &str,
+        result: &mut AccessCheckResult,
+    ) -> Result<()> {
         result.checks_performed += 1;
 
         // Проверяем доступ к таблицам в FROM
@@ -424,22 +445,42 @@ impl AccessChecker {
         Ok(())
     }
 
-    fn check_insert_access(&mut self, insert: &InsertStatement, username: &str, result: &mut AccessCheckResult) -> Result<()> {
+    fn check_insert_access(
+        &mut self,
+        insert: &InsertStatement,
+        username: &str,
+        result: &mut AccessCheckResult,
+    ) -> Result<()> {
         result.checks_performed += 1;
         self.check_table_access(&insert.table, username, &Permission::Insert, result)
     }
 
-    fn check_update_access(&mut self, update: &UpdateStatement, username: &str, result: &mut AccessCheckResult) -> Result<()> {
+    fn check_update_access(
+        &mut self,
+        update: &UpdateStatement,
+        username: &str,
+        result: &mut AccessCheckResult,
+    ) -> Result<()> {
         result.checks_performed += 1;
         self.check_table_access(&update.table, username, &Permission::Update, result)
     }
 
-    fn check_delete_access(&mut self, delete: &DeleteStatement, username: &str, result: &mut AccessCheckResult) -> Result<()> {
+    fn check_delete_access(
+        &mut self,
+        delete: &DeleteStatement,
+        username: &str,
+        result: &mut AccessCheckResult,
+    ) -> Result<()> {
         result.checks_performed += 1;
         self.check_table_access(&delete.table, username, &Permission::Delete, result)
     }
 
-    fn check_create_table_access(&mut self, create: &CreateTableStatement, username: &str, result: &mut AccessCheckResult) -> Result<()> {
+    fn check_create_table_access(
+        &mut self,
+        create: &CreateTableStatement,
+        username: &str,
+        result: &mut AccessCheckResult,
+    ) -> Result<()> {
         result.checks_performed += 1;
 
         if !self.check_permission("*", username, &Permission::CreateTable) {
@@ -455,25 +496,49 @@ impl AccessChecker {
         Ok(())
     }
 
-    fn check_alter_table_access(&mut self, alter: &AlterTableStatement, username: &str, result: &mut AccessCheckResult) -> Result<()> {
+    fn check_alter_table_access(
+        &mut self,
+        alter: &AlterTableStatement,
+        username: &str,
+        result: &mut AccessCheckResult,
+    ) -> Result<()> {
         result.checks_performed += 1;
         self.check_table_access(&alter.table_name, username, &Permission::AlterTable, result)
     }
 
-    fn check_drop_table_access(&mut self, drop: &DropTableStatement, username: &str, result: &mut AccessCheckResult) -> Result<()> {
+    fn check_drop_table_access(
+        &mut self,
+        drop: &DropTableStatement,
+        username: &str,
+        result: &mut AccessCheckResult,
+    ) -> Result<()> {
         result.checks_performed += 1;
         self.check_table_access(&drop.table_name, username, &Permission::DropTable, result)
     }
 
-    fn check_table_access(&mut self, table_name: &str, username: &str, permission: &Permission, result: &mut AccessCheckResult) -> Result<()> {
+    fn check_table_access(
+        &mut self,
+        table_name: &str,
+        username: &str,
+        permission: &Permission,
+        result: &mut AccessCheckResult,
+    ) -> Result<()> {
         if !self.check_permission(table_name, username, permission) {
             result.add_error(AccessCheckError {
-                message: format!("User '{}' does not have {} permission on table '{}'", 
-                    username, permission.as_str(), table_name),
+                message: format!(
+                    "User '{}' does not have {} permission on table '{}'",
+                    username,
+                    permission.as_str(),
+                    table_name
+                ),
                 location: Some(format!("table access: {}", table_name)),
                 required_permission: permission.clone(),
                 object_name: table_name.to_string(),
-                suggested_fix: Some(format!("Grant {} permission to user '{}'", permission.as_str(), username)),
+                suggested_fix: Some(format!(
+                    "Grant {} permission to user '{}'",
+                    permission.as_str(),
+                    username
+                )),
             });
         }
 
@@ -531,7 +596,7 @@ mod tests {
         let role = Role::new("test_role".to_string())
             .with_permission(Permission::Select)
             .with_permission(Permission::Insert);
-        
+
         assert_eq!(role.name, "test_role");
         assert!(role.has_permission(&Permission::Select));
         assert!(role.has_permission(&Permission::Insert));
@@ -542,7 +607,7 @@ mod tests {
     #[test]
     fn test_admin_role() {
         let admin_role = Role::admin("admin".to_string());
-        
+
         assert!(admin_role.is_admin);
         assert!(admin_role.has_permission(&Permission::Select));
         assert!(admin_role.has_permission(&Permission::CreateTable));
@@ -551,12 +616,10 @@ mod tests {
 
     #[test]
     fn test_user_permissions() {
-        let role = Role::new("reader".to_string())
-            .with_permission(Permission::Select);
-        
-        let user = User::new("test_user".to_string())
-            .with_role(role);
-        
+        let role = Role::new("reader".to_string()).with_permission(Permission::Select);
+
+        let user = User::new("test_user".to_string()).with_role(role);
+
         assert!(user.has_permission(&Permission::Select));
         assert!(!user.has_permission(&Permission::Insert));
         assert!(!user.is_admin());
@@ -567,7 +630,7 @@ mod tests {
         let rule = AccessRule::new("users".to_string(), ObjectAccessType::Table)
             .grant_to_user("alice".to_string(), Permission::Select)
             .grant_public(Permission::Select);
-        
+
         assert!(rule.check_permission("alice", &Permission::Select));
         assert!(rule.check_permission("bob", &Permission::Select)); // публичное разрешение
         assert!(!rule.check_permission("alice", &Permission::Insert));
@@ -576,7 +639,7 @@ mod tests {
     #[test]
     fn test_access_checker_creation() {
         let checker = AccessChecker::new();
-        
+
         assert!(checker.enabled);
         assert!(!checker.default_allow);
         assert!(checker.users.contains_key("admin"));
@@ -585,11 +648,11 @@ mod tests {
     #[test]
     fn test_permission_grant_revoke() {
         let mut checker = AccessChecker::new();
-        
+
         // Предоставляем разрешение
         checker.grant_permission("users", "alice", Permission::Select);
         assert!(checker.check_permission("users", "alice", &Permission::Select));
-        
+
         // Отзываем разрешение
         checker.revoke_permission("users", "alice", &Permission::Select);
         assert!(!checker.check_permission("users", "alice", &Permission::Select));
@@ -598,7 +661,7 @@ mod tests {
     #[test]
     fn test_admin_permissions() {
         let checker = AccessChecker::new();
-        
+
         // Администратор должен иметь все права
         assert!(checker.check_permission("any_table", "admin", &Permission::Select));
         assert!(checker.check_permission("any_table", "admin", &Permission::CreateTable));
@@ -608,7 +671,7 @@ mod tests {
     #[test]
     fn test_disabled_checker() {
         let checker = AccessChecker::disabled();
-        
+
         assert!(!checker.enabled);
         // Когда проверка отключена, все разрешения должны проходить
         assert!(checker.check_permission("any_table", "anyone", &Permission::Select));

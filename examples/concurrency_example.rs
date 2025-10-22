@@ -7,7 +7,8 @@ use rustdb::core::{
 use rustdb::core::concurrency::IsolationLevel as ConcIsolationLevel;
 use std::time::Duration;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Комплексный пример управления конкурентностью ===\n");
     
     // 1. Создание менеджера с настройками
@@ -32,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Транзакция {} начата", tx1);
     
     let data_v1 = b"Alice, age: 25, salary: 50000".to_vec();
-    manager.write(tx1, key.clone(), data_v1)?;
+    manager.write(tx1, key.clone(), data_v1).await?;
     println!("   ✓ Версия 1 создана транзакцией {}", tx1);
     
     manager.commit_transaction(tx1)?;
@@ -44,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Транзакция {} начата", tx2);
     
     let data_v2 = b"Alice, age: 26, salary: 55000".to_vec();
-    manager.write(tx2, key.clone(), data_v2)?;
+    manager.write(tx2, key.clone(), data_v2).await?;
     println!("   ✓ Версия 2 создана транзакцией {}", tx2);
     
     manager.commit_transaction(tx2)?;
@@ -56,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Транзакция 3 читает с snapshot до обновления
     let tx3 = TransactionId::new(3);
     manager.begin_transaction(tx3, ConcIsolationLevel::ReadCommitted)?;
-    let old_data = manager.read(tx3, &key, snapshot1)?;
+    let old_data = manager.read(tx3, &key, snapshot1).await?;
     if let Some(data) = old_data {
         println!("   TX3 читает старую версию: {:?}", String::from_utf8_lossy(&data));
     }
@@ -65,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tx4 = TransactionId::new(4);
     let snapshot2 = Timestamp::now();
     manager.begin_transaction(tx4, ConcIsolationLevel::ReadCommitted)?;
-    let new_data = manager.read(tx4, &key, snapshot2)?;
+    let new_data = manager.read(tx4, &key, snapshot2).await?;
     if let Some(data) = new_data {
         println!("   TX4 читает новую версию: {:?}", String::from_utf8_lossy(&data));
     }
@@ -77,12 +78,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let resource = ResourceType::Record(1, 200);
     
     // Получаем exclusive блокировку
-    manager.acquire_write_lock(tx5, resource.clone(), Some(Duration::from_millis(100)))?;
+    manager
+        .acquire_write_lock(tx5, resource.clone(), Some(Duration::from_millis(100)))
+        .await?;
     println!("   ✓ Транзакция {} получила exclusive блокировку", tx5);
     
     // Транзакция 6 пытается получить ту же блокировку
     let tx6 = TransactionId::new(6);
-    match manager.acquire_write_lock(tx6, resource.clone(), Some(Duration::from_millis(10))) {
+    match manager
+        .acquire_write_lock(tx6, resource.clone(), Some(Duration::from_millis(10)))
+        .await
+    {
         Ok(_) => println!("   Транзакция {} получила блокировку", tx6),
         Err(_) => println!("   ✓ Транзакция {} не смогла получить блокировку (таймаут)", tx6),
     }
@@ -98,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_tx7 = b"Bob, age: 30".to_vec();
     
     manager.begin_transaction(tx7, ConcIsolationLevel::ReadCommitted)?;
-    manager.write(tx7, key2.clone(), data_tx7)?;
+    manager.write(tx7, key2.clone(), data_tx7).await?;
     println!("   Транзакция {} создала версию", tx7);
     
     manager.abort_transaction(tx7)?;

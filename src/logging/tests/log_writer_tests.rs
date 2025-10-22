@@ -1,14 +1,14 @@
 //! Тесты для LogWriter
 
-use crate::logging::log_writer::{LogWriter, LogWriterConfig, LogFileInfo, SyncLevel};
-use crate::logging::log_record::{LogRecord, LogRecordType, LogPriority, LogOperationData};
+use crate::logging::log_record::{LogOperationData, LogPriority, LogRecord, LogRecordType};
+use crate::logging::log_writer::{LogFileInfo, LogWriter, LogWriterConfig, SyncLevel};
 use std::path::PathBuf;
 
 #[tokio::test]
 async fn test_log_writer_creation() {
     let config = LogWriterConfig::default();
     let writer = LogWriter::new(config);
-    
+
     assert!(writer.is_ok());
 }
 
@@ -25,7 +25,7 @@ fn test_log_writer_config() {
         writer_thread_pool_size: 2,
         enable_integrity_check: true,
     };
-    
+
     assert_eq!(config.log_directory, PathBuf::from("test_logs"));
     assert_eq!(config.max_log_file_size, 10 * 1024 * 1024);
     assert!(!config.enable_compression);
@@ -35,7 +35,7 @@ fn test_log_writer_config() {
 async fn test_log_writer_write() {
     let config = LogWriterConfig::default();
     let writer = LogWriter::new(config).unwrap();
-    
+
     let record = LogRecord {
         lsn: 1,
         transaction_id: Some(1),
@@ -48,7 +48,7 @@ async fn test_log_writer_write() {
         prev_lsn: None,
         metadata: std::collections::HashMap::new(),
     };
-    
+
     let result = writer.write_log(record).await;
     assert!(result.is_ok() || result.is_err()); // Может быть ошибка из-за отсутствия директории
 }
@@ -66,9 +66,9 @@ async fn test_log_writer_file_rotation() {
         writer_thread_pool_size: 1,
         enable_integrity_check: false,
     };
-    
+
     let writer = LogWriter::new(config).unwrap();
-    
+
     // Записываем много записей для триггера ротации
     for i in 1..=100 {
         let record = LogRecord {
@@ -83,7 +83,7 @@ async fn test_log_writer_file_rotation() {
             prev_lsn: if i > 1 { Some(i - 1) } else { None },
             metadata: std::collections::HashMap::new(),
         };
-        
+
         let _ = writer.write_log(record).await;
     }
 }
@@ -92,7 +92,7 @@ async fn test_log_writer_file_rotation() {
 async fn test_log_writer_flush() {
     let config = LogWriterConfig::default();
     let writer = LogWriter::new(config).unwrap();
-    
+
     let result = writer.flush().await;
     assert!(result.is_ok() || result.is_err());
 }
@@ -101,7 +101,7 @@ async fn test_log_writer_flush() {
 async fn test_log_writer_statistics() {
     let config = LogWriterConfig::default();
     let writer = LogWriter::new(config).unwrap();
-    
+
     let stats = writer.get_statistics();
     assert!(stats.total_bytes_written >= 0);
     assert!(stats.total_records_written >= 0);
@@ -115,7 +115,7 @@ async fn test_log_writer_sync_levels() {
         SyncLevel::OnCommit,
         SyncLevel::Always,
     ];
-    
+
     for sync_level in sync_levels {
         let config = LogWriterConfig {
             log_directory: PathBuf::from("test_logs"),
@@ -128,7 +128,7 @@ async fn test_log_writer_sync_levels() {
             writer_thread_pool_size: 2,
             enable_integrity_check: true,
         };
-        
+
         let writer = LogWriter::new(config);
         assert!(writer.is_ok());
     }
@@ -147,9 +147,9 @@ async fn test_log_writer_buffer_management() {
         writer_thread_pool_size: 2,
         enable_integrity_check: false,
     };
-    
+
     let writer = LogWriter::new(config).unwrap();
-    
+
     // Записываем несколько записей в буфер
     for i in 1..=10 {
         let record = LogRecord {
@@ -164,10 +164,10 @@ async fn test_log_writer_buffer_management() {
             prev_lsn: None,
             metadata: std::collections::HashMap::new(),
         };
-        
+
         let _ = writer.write_log(record).await;
     }
-    
+
     // Проверяем статистику
     let stats = writer.get_statistics();
     assert!(stats.total_records_written <= 10);
@@ -186,7 +186,7 @@ async fn test_log_writer_compression() {
         writer_thread_pool_size: 2,
         enable_integrity_check: true,
     };
-    
+
     let writer = LogWriter::new(config_with_compression);
     assert!(writer.is_ok());
 }
@@ -195,7 +195,7 @@ async fn test_log_writer_compression() {
 async fn test_log_writer_different_record_types() {
     let config = LogWriterConfig::default();
     let writer = LogWriter::new(config).unwrap();
-    
+
     let record_types = vec![
         LogRecordType::TransactionBegin,
         LogRecordType::TransactionCommit,
@@ -204,7 +204,7 @@ async fn test_log_writer_different_record_types() {
         LogRecordType::DataUpdate,
         LogRecordType::DataDelete,
     ];
-    
+
     for (i, record_type) in record_types.iter().enumerate() {
         let record = LogRecord {
             lsn: i as u64 + 1,
@@ -218,7 +218,7 @@ async fn test_log_writer_different_record_types() {
             prev_lsn: None,
             metadata: std::collections::HashMap::new(),
         };
-        
+
         let _ = writer.write_log(record).await;
     }
 }

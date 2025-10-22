@@ -8,14 +8,14 @@
 //! - Отладки проблем
 
 pub mod debug_logger;
-pub mod query_tracer;
-pub mod profiler;
 pub mod performance_analyzer;
+pub mod profiler;
+pub mod query_tracer;
 
 pub use debug_logger::DebugLogger;
-pub use query_tracer::QueryTracer;
-pub use profiler::Profiler;
 pub use performance_analyzer::PerformanceAnalyzer;
+pub use profiler::Profiler;
+pub use query_tracer::QueryTracer;
 
 /// Конфигурация отладки
 #[derive(Debug, Clone)]
@@ -135,7 +135,9 @@ impl DebugManager {
             self.query_tracer = Some(QueryTracer::new(&self.config));
         }
 
-        if (self.config.enable_cpu_profiling || self.config.enable_memory_profiling) && self.profiler.is_none() {
+        if (self.config.enable_cpu_profiling || self.config.enable_memory_profiling)
+            && self.profiler.is_none()
+        {
             self.profiler = Some(Profiler::new(&self.config));
         }
     }
@@ -143,23 +145,50 @@ impl DebugManager {
     /// Создает отчет о состоянии отладки
     pub fn generate_debug_report(&self) -> String {
         let mut report = String::new();
-        
+
         report.push_str("=== Отчет о состоянии отладки rustdb ===\n\n");
-        
+
         report.push_str("Конфигурация:\n");
-        report.push_str(&format!("  - Детальное логирование: {}\n", self.config.enable_debug_logging));
-        report.push_str(&format!("  - Трассировка запросов: {}\n", self.config.enable_query_tracing));
-        report.push_str(&format!("  - CPU профилирование: {}\n", self.config.enable_cpu_profiling));
-        report.push_str(&format!("  - Memory профилирование: {}\n", self.config.enable_memory_profiling));
-        report.push_str(&format!("  - Уровень детализации: {}\n", self.config.detail_level));
-        report.push_str(&format!("  - Экспорт Prometheus: {}\n", self.config.enable_prometheus_export));
+        report.push_str(&format!(
+            "  - Детальное логирование: {}\n",
+            self.config.enable_debug_logging
+        ));
+        report.push_str(&format!(
+            "  - Трассировка запросов: {}\n",
+            self.config.enable_query_tracing
+        ));
+        report.push_str(&format!(
+            "  - CPU профилирование: {}\n",
+            self.config.enable_cpu_profiling
+        ));
+        report.push_str(&format!(
+            "  - Memory профилирование: {}\n",
+            self.config.enable_memory_profiling
+        ));
+        report.push_str(&format!(
+            "  - Уровень детализации: {}\n",
+            self.config.detail_level
+        ));
+        report.push_str(&format!(
+            "  - Экспорт Prometheus: {}\n",
+            self.config.enable_prometheus_export
+        ));
         report.push_str("\n");
 
         report.push_str("Активные компоненты:\n");
-        report.push_str(&format!("  - Debug Logger: {}\n", self.debug_logger.is_some()));
-        report.push_str(&format!("  - Query Tracer: {}\n", self.query_tracer.is_some()));
+        report.push_str(&format!(
+            "  - Debug Logger: {}\n",
+            self.debug_logger.is_some()
+        ));
+        report.push_str(&format!(
+            "  - Query Tracer: {}\n",
+            self.query_tracer.is_some()
+        ));
         report.push_str(&format!("  - Profiler: {}\n", self.profiler.is_some()));
-        report.push_str(&format!("  - Performance Analyzer: {}\n", self.performance_analyzer.is_some()));
+        report.push_str(&format!(
+            "  - Performance Analyzer: {}\n",
+            self.performance_analyzer.is_some()
+        ));
         report.push_str("\n");
 
         // Добавляем отчеты от активных компонентов
@@ -195,15 +224,15 @@ impl DebugManager {
         if let Some(logger) = &mut self.debug_logger {
             logger.shutdown();
         }
-        
+
         if let Some(tracer) = &mut self.query_tracer {
             tracer.shutdown();
         }
-        
+
         if let Some(profiler) = &mut self.profiler {
             profiler.shutdown();
         }
-        
+
         if let Some(analyzer) = &mut self.performance_analyzer {
             analyzer.shutdown();
         }

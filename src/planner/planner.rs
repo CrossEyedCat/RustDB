@@ -1,10 +1,12 @@
 //! Планировщик запросов для rustdb
 
+use crate::analyzer::{AnalysisContext, SemanticAnalyzer};
 use crate::common::{Error, Result};
-use crate::parser::ast::{SqlStatement, SelectStatement, InsertStatement, UpdateStatement, DeleteStatement};
-use crate::analyzer::{SemanticAnalyzer, AnalysisContext};
+use crate::parser::ast::{
+    DeleteStatement, InsertStatement, SelectStatement, SqlStatement, UpdateStatement,
+};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 /// План выполнения запроса
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -368,7 +370,7 @@ impl QueryPlanner {
         // Сначала выполняем семантический анализ
         let context = AnalysisContext::default();
         let analysis_result = self.semantic_analyzer.analyze(sql_statement, &context)?;
-        
+
         if !analysis_result.errors.is_empty() {
             return Err(Error::semantic_analysis(format!(
                 "Семантические ошибки: {:?}",
@@ -420,7 +422,11 @@ impl QueryPlanner {
                         crate::parser::ast::JoinType::Full => JoinType::Full,
                         crate::parser::ast::JoinType::Cross => JoinType::Cross,
                     },
-                    condition: join.condition.as_ref().map(|e| format!("{:?}", e)).unwrap_or_default(),
+                    condition: join
+                        .condition
+                        .as_ref()
+                        .map(|e| format!("{:?}", e))
+                        .unwrap_or_default(),
                     left: Box::new(current_plan),
                     right: Box::new(join_plan),
                     cost: 0.0, // TODO: Рассчитать стоимость
@@ -461,13 +467,17 @@ impl QueryPlanner {
         // Добавляем ORDER BY
         if !select.order_by.is_empty() {
             current_plan = PlanNode::Sort(SortNode {
-                sort_columns: select.order_by.iter().map(|item| SortColumn {
-                    column: format!("{:?}", item.expr),
-                    direction: match item.direction {
-                        crate::parser::ast::OrderDirection::Asc => SortDirection::Asc,
-                        crate::parser::ast::OrderDirection::Desc => SortDirection::Desc,
-                    },
-                }).collect(),
+                sort_columns: select
+                    .order_by
+                    .iter()
+                    .map(|item| SortColumn {
+                        column: format!("{:?}", item.expr),
+                        direction: match item.direction {
+                            crate::parser::ast::OrderDirection::Asc => SortDirection::Asc,
+                            crate::parser::ast::OrderDirection::Desc => SortDirection::Desc,
+                        },
+                    })
+                    .collect(),
                 input: Box::new(current_plan),
                 cost: 0.0,
             });
@@ -493,18 +503,24 @@ impl QueryPlanner {
 
         // Добавляем проекцию
         current_plan = PlanNode::Projection(ProjectionNode {
-            columns: select.select_list.iter().map(|item| match item {
-                crate::parser::ast::SelectItem::Wildcard => ProjectionColumn {
-                    name: "*".to_string(),
-                    expression: None,
-                    alias: None,
-                },
-                crate::parser::ast::SelectItem::Expression { expr, alias } => ProjectionColumn {
-                    name: format!("{:?}", expr),
-                    expression: Some(format!("{:?}", expr)),
-                    alias: alias.clone(),
-                },
-            }).collect(),
+            columns: select
+                .select_list
+                .iter()
+                .map(|item| match item {
+                    crate::parser::ast::SelectItem::Wildcard => ProjectionColumn {
+                        name: "*".to_string(),
+                        expression: None,
+                        alias: None,
+                    },
+                    crate::parser::ast::SelectItem::Expression { expr, alias } => {
+                        ProjectionColumn {
+                            name: format!("{:?}", expr),
+                            expression: Some(format!("{:?}", expr)),
+                            alias: alias.clone(),
+                        }
+                    }
+                })
+                .collect(),
             input: Box::new(current_plan),
             cost: 0.0,
         });
@@ -513,7 +529,10 @@ impl QueryPlanner {
     }
 
     /// Создать план сканирования таблицы
-    fn create_table_scan_plan(&self, table_ref: &crate::parser::ast::TableReference) -> Result<PlanNode> {
+    fn create_table_scan_plan(
+        &self,
+        table_ref: &crate::parser::ast::TableReference,
+    ) -> Result<PlanNode> {
         match table_ref {
             crate::parser::ast::TableReference::Table { name, alias } => {
                 Ok(PlanNode::TableScan(TableScanNode {
@@ -521,7 +540,7 @@ impl QueryPlanner {
                     alias: alias.clone(),
                     columns: vec!["*".to_string()], // TODO: Определить конкретные колонки
                     filter: None,
-                    cost: 1.0, // Базовая стоимость сканирования
+                    cost: 1.0,            // Базовая стоимость сканирования
                     estimated_rows: 1000, // TODO: Получить из статистики
                 }))
             }
@@ -547,11 +566,10 @@ impl QueryPlanner {
             table_name: insert.table.clone(),
             columns: insert.columns.clone().unwrap_or_default(),
             values: match &insert.values {
-                crate::parser::ast::InsertValues::Values(values) => {
-                    values.iter().map(|row| {
-                        row.iter().map(|val| format!("{:?}", val)).collect()
-                    }).collect()
-                }
+                crate::parser::ast::InsertValues::Values(values) => values
+                    .iter()
+                    .map(|row| row.iter().map(|val| format!("{:?}", val)).collect())
+                    .collect(),
                 crate::parser::ast::InsertValues::Select(_) => {
                     vec![] // TODO: Обработать INSERT ... SELECT
                 }
@@ -564,10 +582,14 @@ impl QueryPlanner {
     fn create_update_plan(&self, update: &UpdateStatement) -> Result<PlanNode> {
         Ok(PlanNode::Update(UpdateNode {
             table_name: update.table.clone(),
-            assignments: update.assignments.iter().map(|assignment| Assignment {
-                column: assignment.column.clone(),
-                value: format!("{:?}", assignment.value),
-            }).collect(),
+            assignments: update
+                .assignments
+                .iter()
+                .map(|assignment| Assignment {
+                    column: assignment.column.clone(),
+                    value: format!("{:?}", assignment.value),
+                })
+                .collect(),
             where_condition: update.where_clause.as_ref().map(|e| format!("{:?}", e)),
             cost: 1.0,
         }))
@@ -584,8 +606,9 @@ impl QueryPlanner {
 
     /// Создать метаданные плана
     fn create_plan_metadata(&self, root: &PlanNode) -> Result<PlanMetadata> {
-        let (operator_count, max_depth, table_count, join_count) = self.analyze_plan_structure(root, 0);
-        
+        let (operator_count, max_depth, table_count, join_count) =
+            self.analyze_plan_structure(root, 0);
+
         Ok(PlanMetadata {
             estimated_cost: self.estimate_plan_cost(root),
             estimated_rows: self.estimate_plan_rows(root),
@@ -600,7 +623,11 @@ impl QueryPlanner {
     }
 
     /// Анализировать структуру плана
-    fn analyze_plan_structure(&self, node: &PlanNode, depth: usize) -> (usize, usize, usize, usize) {
+    fn analyze_plan_structure(
+        &self,
+        node: &PlanNode,
+        depth: usize,
+    ) -> (usize, usize, usize, usize) {
         let mut operator_count = 1;
         let mut max_depth = depth;
         let mut table_count = 0;
@@ -616,7 +643,7 @@ impl QueryPlanner {
         // Рекурсивно анализируем дочерние узлы
         let child_nodes = self.get_child_nodes(node);
         for child in child_nodes {
-            let (child_ops, child_depth, child_tables, child_joins) = 
+            let (child_ops, child_depth, child_tables, child_joins) =
                 self.analyze_plan_structure(child, depth + 1);
             operator_count += child_ops;
             max_depth = max_depth.max(child_depth);
@@ -649,7 +676,11 @@ impl QueryPlanner {
             PlanNode::IndexScan(node) => node.cost,
             PlanNode::Filter(node) => node.cost + self.estimate_plan_cost(&node.input),
             PlanNode::Projection(node) => node.cost + self.estimate_plan_cost(&node.input),
-            PlanNode::Join(node) => node.cost + self.estimate_plan_cost(&node.left) + self.estimate_plan_cost(&node.right),
+            PlanNode::Join(node) => {
+                node.cost
+                    + self.estimate_plan_cost(&node.left)
+                    + self.estimate_plan_cost(&node.right)
+            }
             PlanNode::GroupBy(node) => node.cost + self.estimate_plan_cost(&node.input),
             PlanNode::Sort(node) => node.cost + self.estimate_plan_cost(&node.input),
             PlanNode::Limit(node) => node.cost + self.estimate_plan_cost(&node.input),
@@ -666,7 +697,9 @@ impl QueryPlanner {
         match node {
             PlanNode::TableScan(node) => node.estimated_rows,
             PlanNode::IndexScan(node) => node.estimated_rows,
-            PlanNode::Filter(node) => (self.estimate_plan_rows(&node.input) as f64 * node.selectivity) as usize,
+            PlanNode::Filter(node) => {
+                (self.estimate_plan_rows(&node.input) as f64 * node.selectivity) as usize
+            }
             PlanNode::Projection(node) => self.estimate_plan_rows(&node.input),
             PlanNode::Join(node) => {
                 let left_rows = self.estimate_plan_rows(&node.left);
@@ -678,7 +711,11 @@ impl QueryPlanner {
             PlanNode::Limit(node) => node.limit.min(self.estimate_plan_rows(&node.input)),
             PlanNode::Offset(node) => {
                 let input_rows = self.estimate_plan_rows(&node.input);
-                if node.offset >= input_rows { 0 } else { input_rows - node.offset }
+                if node.offset >= input_rows {
+                    0
+                } else {
+                    input_rows - node.offset
+                }
             }
             PlanNode::Aggregate(node) => self.estimate_plan_rows(&node.input) / 10,
             PlanNode::Insert(_) => 1,

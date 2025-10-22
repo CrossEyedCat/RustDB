@@ -4,8 +4,7 @@ use rustdb::executor::{
     Operator, TableScanOperator, IndexScanOperator, RangeScanOperator,
     ConditionalScanOperator, ScanOperatorFactory, IndexCondition, IndexOperator
 };
-use rustdb::Row;
-use rustdb::PageId;
+// removed unused imports
 use rustdb::storage::index::BPlusTree;
 use rustdb::storage::page_manager::{PageManager, PageManagerConfig};
 use rustdb::common::Result;

@@ -3,7 +3,8 @@
 //! Эти тесты проверяют полный цикл обработки SQL запросов:
 //! парсинг -> планирование -> оптимизация -> выполнение
 
-use rustdb::common::{Error, Result, types::*};
+use rustdb::common::Result;
+use rustdb::{ColumnValue, DataType};
 use super::common::*;
 
 /// Тест простого SELECT запроса

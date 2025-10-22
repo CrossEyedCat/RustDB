@@ -19,7 +19,7 @@ impl DemoOperator {
         // Создаем тестовые данные
         for i in 0..10 {
             let mut row = Row::new();
-            row.set_value("id", ColumnValue::new(DataType::Integer(i as i32)));
+            row.set_value("id", ColumnValue::new(DataType::Integer(i)));
             row.set_value("name", ColumnValue::new(DataType::Varchar(format!("User{}", i))));
             row.set_value("age", ColumnValue::new(DataType::Integer(20 + (i % 30))));
             row.set_value("department", ColumnValue::new(DataType::Varchar(

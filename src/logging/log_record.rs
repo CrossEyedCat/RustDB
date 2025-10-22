@@ -395,10 +395,6 @@ impl LogRecord {
         record
     }
 
-
-
-
-
     /// Возвращает размер записи в байтах
     pub fn size(&self) -> u32 {
         self.record_size
@@ -441,12 +437,14 @@ impl LogRecord {
 
     /// Сериализует запись в байты
     pub fn serialize(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self).map_err(|e| Error::internal(&format!("Ошибка сериализации лог-записи: {}", e)))
+        bincode::serialize(self)
+            .map_err(|e| Error::internal(&format!("Ошибка сериализации лог-записи: {}", e)))
     }
 
     /// Десериализует запись из байтов
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        bincode::deserialize(data).map_err(|e| Error::internal(&format!("Ошибка десериализации лог-записи: {}", e)))
+        bincode::deserialize(data)
+            .map_err(|e| Error::internal(&format!("Ошибка десериализации лог-записи: {}", e)))
     }
 
     /// Возвращает читаемое описание записи
@@ -463,28 +461,41 @@ impl LogRecord {
             }
             LogRecordType::DataInsert => {
                 if let LogOperationData::Record(op) = &self.operation_data {
-                    format!("INSERT INTO file:{} page:{} offset:{}", op.file_id, op.page_id, op.record_offset)
+                    format!(
+                        "INSERT INTO file:{} page:{} offset:{}",
+                        op.file_id, op.page_id, op.record_offset
+                    )
                 } else {
                     "INSERT".to_string()
                 }
             }
             LogRecordType::DataUpdate => {
                 if let LogOperationData::Record(op) = &self.operation_data {
-                    format!("UPDATE file:{} page:{} offset:{}", op.file_id, op.page_id, op.record_offset)
+                    format!(
+                        "UPDATE file:{} page:{} offset:{}",
+                        op.file_id, op.page_id, op.record_offset
+                    )
                 } else {
                     "UPDATE".to_string()
                 }
             }
             LogRecordType::DataDelete => {
                 if let LogOperationData::Record(op) = &self.operation_data {
-                    format!("DELETE FROM file:{} page:{} offset:{}", op.file_id, op.page_id, op.record_offset)
+                    format!(
+                        "DELETE FROM file:{} page:{} offset:{}",
+                        op.file_id, op.page_id, op.record_offset
+                    )
                 } else {
                     "DELETE".to_string()
                 }
             }
             LogRecordType::Checkpoint => {
                 if let LogOperationData::Checkpoint(op) = &self.operation_data {
-                    format!("CHECKPOINT {} (активных транзакций: {})", op.checkpoint_id, op.active_transactions.len())
+                    format!(
+                        "CHECKPOINT {} (активных транзакций: {})",
+                        op.checkpoint_id,
+                        op.active_transactions.len()
+                    )
                 } else {
                     "CHECKPOINT".to_string()
                 }
@@ -501,8 +512,8 @@ impl LogRecord {
     /// Вычисляет размер записи в байтах
     fn calculate_size(&self) -> u32 {
         use std::mem::size_of;
-        
-        let base_size = size_of::<LogSequenceNumber>() + 
+
+        let base_size = size_of::<LogSequenceNumber>() +
                        size_of::<Option<TransactionId>>() +
                        size_of::<LogRecordType>() +
                        size_of::<LogPriority>() +
@@ -510,33 +521,33 @@ impl LogRecord {
                        size_of::<u32>() + // record_size
                        size_of::<u32>() + // checksum
                        size_of::<Option<LogSequenceNumber>>(); // prev_lsn
-        
+
         let data_size = match &self.operation_data {
             LogOperationData::Transaction(op) => {
-                size_of::<TransactionOperation>() + 
-                op.dirty_pages.len() * size_of::<(u32, PageId)>() +
-                op.locked_resources.len() * 64 // примерный размер строки
-            },
+                size_of::<TransactionOperation>()
+                    + op.dirty_pages.len() * size_of::<(u32, PageId)>()
+                    + op.locked_resources.len() * 64 // примерный размер строки
+            }
             LogOperationData::Record(op) => {
-                size_of::<RecordOperation>() + 
-                op.old_data.as_ref().map(|d| d.len()).unwrap_or(0) +
-                op.new_data.as_ref().map(|d| d.len()).unwrap_or(0)
-            },
+                size_of::<RecordOperation>()
+                    + op.old_data.as_ref().map(|d| d.len()).unwrap_or(0)
+                    + op.new_data.as_ref().map(|d| d.len()).unwrap_or(0)
+            }
             LogOperationData::Checkpoint(op) => {
-                size_of::<CheckpointOperation>() + 
-                op.active_transactions.len() * size_of::<TransactionId>() +
-                op.dirty_pages.len() * size_of::<(u32, PageId)>()
-            },
+                size_of::<CheckpointOperation>()
+                    + op.active_transactions.len() * size_of::<TransactionId>()
+                    + op.dirty_pages.len() * size_of::<(u32, PageId)>()
+            }
             LogOperationData::File(op) => {
-                size_of::<FileOperation>() + op.filename.len() + 
-                op.parameters.len() * 64 // примерный размер
-            },
+                size_of::<FileOperation>() + op.filename.len() + op.parameters.len() * 64
+                // примерный размер
+            }
             LogOperationData::Empty => 0,
             LogOperationData::Raw(data) => data.len(),
         };
-        
+
         let metadata_size = self.metadata.len() * 64; // примерный размер
-        
+
         (base_size + data_size + metadata_size) as u32
     }
 
@@ -544,9 +555,9 @@ impl LogRecord {
     fn calculate_checksum(&self) -> u32 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
-        
+
         // Хешируем все поля кроме checksum
         self.lsn.hash(&mut hasher);
         self.transaction_id.hash(&mut hasher);
@@ -555,7 +566,7 @@ impl LogRecord {
         self.timestamp.hash(&mut hasher);
         self.record_size.hash(&mut hasher);
         self.prev_lsn.hash(&mut hasher);
-        
+
         // Хешируем данные операции (упрощенно)
         match &self.operation_data {
             LogOperationData::Transaction(op) => {
@@ -563,7 +574,7 @@ impl LogRecord {
                 op.locked_resources.hash(&mut hasher);
                 op.start_time.hash(&mut hasher);
                 op.isolation_level.hash(&mut hasher);
-            },
+            }
             LogOperationData::Record(op) => {
                 op.file_id.hash(&mut hasher);
                 op.page_id.hash(&mut hasher);
@@ -571,14 +582,14 @@ impl LogRecord {
                 op.record_size.hash(&mut hasher);
                 op.old_data.hash(&mut hasher);
                 op.new_data.hash(&mut hasher);
-            },
+            }
             LogOperationData::Checkpoint(op) => {
                 op.checkpoint_id.hash(&mut hasher);
                 op.active_transactions.hash(&mut hasher);
                 op.dirty_pages.hash(&mut hasher);
                 op.last_lsn.hash(&mut hasher);
                 op.timestamp.hash(&mut hasher);
-            },
+            }
             LogOperationData::File(op) => {
                 op.file_id.hash(&mut hasher);
                 op.filename.hash(&mut hasher);
@@ -588,11 +599,11 @@ impl LogRecord {
                     key.hash(&mut hasher);
                     value.hash(&mut hasher);
                 }
-            },
-            LogOperationData::Empty => {},
+            }
+            LogOperationData::Empty => {}
             LogOperationData::Raw(data) => data.hash(&mut hasher),
         }
-        
+
         hasher.finish() as u32
     }
 
@@ -644,19 +655,22 @@ impl LogRecordIterator {
 
     /// Фильтрует записи по типу
     pub fn filter_by_type(mut self, record_type: LogRecordType) -> Self {
-        self.records.retain(|record| record.record_type == record_type);
+        self.records
+            .retain(|record| record.record_type == record_type);
         self
     }
 
     /// Фильтрует записи по транзакции
     pub fn filter_by_transaction(mut self, transaction_id: TransactionId) -> Self {
-        self.records.retain(|record| record.transaction_id == Some(transaction_id));
+        self.records
+            .retain(|record| record.transaction_id == Some(transaction_id));
         self
     }
 
     /// Фильтрует записи по временному диапазону
     pub fn filter_by_time_range(mut self, start_time: u64, end_time: u64) -> Self {
-        self.records.retain(|record| record.timestamp >= start_time && record.timestamp <= end_time);
+        self.records
+            .retain(|record| record.timestamp >= start_time && record.timestamp <= end_time);
         self
     }
 
@@ -693,7 +707,7 @@ mod tests {
     #[test]
     fn test_log_record_creation() {
         let record = LogRecord::new_transaction_begin(1, 100, IsolationLevel::ReadCommitted);
-        
+
         assert_eq!(record.lsn, 1);
         assert_eq!(record.transaction_id, Some(100));
         assert_eq!(record.record_type, LogRecordType::TransactionBegin);
@@ -703,32 +717,25 @@ mod tests {
 
     #[test]
     fn test_data_operations() {
-        let insert_record = LogRecord::new_data_insert(
-            2, 100, 1, 10, 0, vec![1, 2, 3, 4], None
-        );
-        
+        let insert_record = LogRecord::new_data_insert(2, 100, 1, 10, 0, vec![1, 2, 3, 4], None);
+
         assert_eq!(insert_record.record_type, LogRecordType::DataInsert);
         assert!(insert_record.is_transactional());
-        
-        let update_record = LogRecord::new_data_update(
-            3, 100, 1, 10, 0, vec![1, 2], vec![5, 6, 7], Some(2)
-        );
-        
+
+        let update_record =
+            LogRecord::new_data_update(3, 100, 1, 10, 0, vec![1, 2], vec![5, 6, 7], Some(2));
+
         assert_eq!(update_record.prev_lsn, Some(2));
-        
-        let delete_record = LogRecord::new_data_delete(
-            4, 100, 1, 10, 0, vec![5, 6, 7], Some(3)
-        );
-        
+
+        let delete_record = LogRecord::new_data_delete(4, 100, 1, 10, 0, vec![5, 6, 7], Some(3));
+
         assert_eq!(delete_record.record_type, LogRecordType::DataDelete);
     }
 
     #[test]
     fn test_checkpoint_record() {
-        let checkpoint = LogRecord::new_checkpoint(
-            5, 1, vec![100, 101], vec![(1, 10), (1, 11)], 4
-        );
-        
+        let checkpoint = LogRecord::new_checkpoint(5, 1, vec![100, 101], vec![(1, 10), (1, 11)], 4);
+
         assert_eq!(checkpoint.record_type, LogRecordType::Checkpoint);
         assert_eq!(checkpoint.priority, LogPriority::Critical);
         assert!(checkpoint.requires_immediate_flush());
@@ -737,10 +744,10 @@ mod tests {
     #[test]
     fn test_serialization() {
         let record = LogRecord::new_transaction_commit(2, 100, vec![(1, 10)], Some(1));
-        
+
         let serialized = record.serialize().unwrap();
         let deserialized = LogRecord::deserialize(&serialized).unwrap();
-        
+
         assert_eq!(record.lsn, deserialized.lsn);
         assert_eq!(record.transaction_id, deserialized.transaction_id);
         assert_eq!(record.record_type, deserialized.record_type);
@@ -749,10 +756,10 @@ mod tests {
     #[test]
     fn test_checksum_verification() {
         let mut record = LogRecord::new_transaction_begin(1, 100, IsolationLevel::Serializable);
-        
+
         // Проверяем, что контрольная сумма корректна
         assert!(record.verify_checksum());
-        
+
         // Изменяем данные и проверяем, что контрольная сумма становится некорректной
         record.timestamp += 1;
         assert!(!record.verify_checksum());
@@ -761,12 +768,15 @@ mod tests {
     #[test]
     fn test_metadata() {
         let mut record = LogRecord::new_transaction_begin(1, 100, IsolationLevel::ReadCommitted);
-        
+
         record.add_metadata("user".to_string(), "admin".to_string());
         record.add_metadata("client_ip".to_string(), "127.0.0.1".to_string());
-        
+
         assert_eq!(record.get_metadata("user"), Some(&"admin".to_string()));
-        assert_eq!(record.get_metadata("client_ip"), Some(&"127.0.0.1".to_string()));
+        assert_eq!(
+            record.get_metadata("client_ip"),
+            Some(&"127.0.0.1".to_string())
+        );
         assert_eq!(record.get_metadata("nonexistent"), None);
     }
 
@@ -778,14 +788,12 @@ mod tests {
             LogRecord::new_transaction_commit(3, 100, vec![(1, 10)], Some(2)),
             LogRecord::new_transaction_begin(4, 101, IsolationLevel::Serializable),
         ];
-        
+
         let iterator = LogRecordIterator::new(records);
-        
+
         // Фильтруем по транзакции 100
-        let tx100_records: Vec<_> = iterator
-            .filter_by_transaction(100)
-            .collect();
-        
+        let tx100_records: Vec<_> = iterator.filter_by_transaction(100).collect();
+
         assert_eq!(tx100_records.len(), 3);
         assert_eq!(tx100_records[0].lsn, 1);
         assert_eq!(tx100_records[1].lsn, 2);
@@ -796,11 +804,17 @@ mod tests {
     fn test_record_descriptions() {
         let begin_record = LogRecord::new_transaction_begin(1, 100, IsolationLevel::ReadCommitted);
         assert_eq!(begin_record.description(), "BEGIN TRANSACTION 100");
-        
+
         let insert_record = LogRecord::new_data_insert(2, 100, 1, 10, 5, vec![1, 2, 3], Some(1));
-        assert_eq!(insert_record.description(), "INSERT INTO file:1 page:10 offset:5");
-        
+        assert_eq!(
+            insert_record.description(),
+            "INSERT INTO file:1 page:10 offset:5"
+        );
+
         let checkpoint = LogRecord::new_checkpoint(3, 1, vec![100], vec![], 2);
-        assert_eq!(checkpoint.description(), "CHECKPOINT 1 (активных транзакций: 1)");
+        assert_eq!(
+            checkpoint.description(),
+            "CHECKPOINT 1 (активных транзакций: 1)"
+        );
     }
 }

@@ -8,7 +8,7 @@ use rustdb::storage::{
     block::{Block, BlockType},
 };
 use rustdb::common::types::PAGE_SIZE;
-use rustdb::storage::block::BlockId;
+// use rustdb::storage::block::BlockId; // unused
 use tempfile::TempDir;
 
 fn bench_block_operations(c: &mut Criterion) {
@@ -23,11 +23,11 @@ fn bench_block_operations(c: &mut Criterion) {
     });
     
     // Бенчмарк сериализации блока
-    let mut block = Block::new(1, BlockType::Data, PAGE_SIZE as u32);
+    let block = Block::new(1, BlockType::Data, PAGE_SIZE as u32);
     group.bench_function("serialize_block", |b| {
         b.iter(|| {
             let serialized = block.to_bytes();
-            black_box(serialized);
+            let _ = black_box(serialized);
         });
     });
     
@@ -53,7 +53,7 @@ fn bench_file_manager_operations(c: &mut Criterion) {
     group.bench_function("create_file_manager", |b| {
         b.iter(|| {
             let file_manager = FileManager::new(temp_path.clone());
-            black_box(file_manager);
+            let _ = black_box(file_manager);
         });
     });
     
@@ -68,8 +68,8 @@ fn bench_file_manager_operations(c: &mut Criterion) {
     
     // Бенчмарк записи блока
     let file_id = file_manager.create_file("benchmark.dat").unwrap();
-    let mut test_block = Block::new(1, BlockType::Data, PAGE_SIZE as u32);
-    let test_data = vec![0xAB; PAGE_SIZE];
+    let test_block = Block::new(1, BlockType::Data, PAGE_SIZE as u32);
+    let _test_data = vec![0xAB; PAGE_SIZE];
     
     group.bench_function("write_block", |b| {
         b.iter(|| {
@@ -85,7 +85,7 @@ fn bench_file_manager_operations(c: &mut Criterion) {
     group.bench_function("read_block", |b| {
         b.iter(|| {
             let block = file_manager.read_block(black_box(file_id), black_box(1)).unwrap();
-            black_box(block);
+            let _ = black_box(block);
         });
     });
     
@@ -102,7 +102,7 @@ fn bench_advanced_file_manager_operations(c: &mut Criterion) {
     group.bench_function("create_advanced_file_manager", |b| {
         b.iter(|| {
             let manager = AdvancedFileManager::new(temp_path.clone());
-            black_box(manager);
+            let _ = black_box(manager);
         });
     });
     
@@ -131,7 +131,7 @@ fn bench_advanced_file_manager_operations(c: &mut Criterion) {
     group.bench_function("allocate_pages", |b| {
         b.iter(|| {
             let pages = manager.allocate_pages(black_box(file_id), black_box(10)).unwrap();
-            black_box(pages);
+            let _ = black_box(pages);
         });
     });
     
@@ -155,7 +155,7 @@ fn bench_advanced_file_manager_operations(c: &mut Criterion) {
     group.bench_function("read_page", |b| {
         b.iter(|| {
             let data = manager.read_page(black_box(file_id), black_box(pages)).unwrap();
-            black_box(data);
+            let _ = black_box(data);
         });
     });
     
@@ -183,9 +183,9 @@ fn bench_extension_strategies(c: &mut Criterion) {
                     "strategy_test.db",
                     DatabaseFileType::Data,
                     1,
-                    strategy.clone(),
+                    *strategy,
                 ).unwrap();
-                black_box(file_id);
+                let _ = black_box(file_id);
             });
         });
     }

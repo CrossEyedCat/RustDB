@@ -1,10 +1,12 @@
 //! Оптимизатор запросов для rustdb
 
+use crate::analyzer::{AnalysisContext, SemanticAnalyzer};
 use crate::common::{Error, Result};
-use crate::planner::planner::{ExecutionPlan, PlanNode, JoinNode, FilterNode, TableScanNode, IndexScanNode};
-use crate::analyzer::{SemanticAnalyzer, AnalysisContext};
+use crate::planner::planner::{
+    ExecutionPlan, FilterNode, IndexScanNode, JoinNode, PlanNode, TableScanNode,
+};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 /// Оптимизатор запросов
 pub struct QueryOptimizer {
@@ -151,9 +153,21 @@ impl QueryOptimizer {
             optimizations_applied,
             optimization_time_ms: optimization_time,
             cost_improvement_percent: cost_improvement,
-            join_reorders: if self.settings.enable_join_reordering { 1 } else { 0 },
-            indexes_applied: if self.settings.enable_index_selection { 1 } else { 0 },
-            expression_simplifications: if self.settings.enable_expression_simplification { 1 } else { 0 },
+            join_reorders: if self.settings.enable_join_reordering {
+                1
+            } else {
+                0
+            },
+            indexes_applied: if self.settings.enable_index_selection {
+                1
+            } else {
+                0
+            },
+            expression_simplifications: if self.settings.enable_expression_simplification {
+                1
+            } else {
+                0
+            },
         };
 
         Ok(OptimizationResult {
@@ -164,19 +178,25 @@ impl QueryOptimizer {
     }
 
     /// Применить выталкивание предикатов
-    fn apply_predicate_pushdown(&self, plan: &ExecutionPlan) -> Result<Option<(ExecutionPlan, String)>> {
+    fn apply_predicate_pushdown(
+        &self,
+        plan: &ExecutionPlan,
+    ) -> Result<Option<(ExecutionPlan, String)>> {
         let mut new_plan = plan.clone();
         let mut pushed_down = false;
 
         // Находим фильтры и пытаемся их вытолкнуть ближе к таблицам
         new_plan.root = self.pushdown_predicates_recursive(&plan.root)?;
-        
+
         if new_plan.root != plan.root {
             pushed_down = true;
         }
 
         if pushed_down {
-            Ok(Some((new_plan, "Применено выталкивание предикатов".to_string())))
+            Ok(Some((
+                new_plan,
+                "Применено выталкивание предикатов".to_string(),
+            )))
         } else {
             Ok(None)
         }
@@ -188,11 +208,12 @@ impl QueryOptimizer {
             PlanNode::Filter(filter) => {
                 // Пытаемся вытолкнуть условие фильтра вниз
                 let optimized_input = self.pushdown_predicates_recursive(&filter.input)?;
-                
+
                 // Если входной узел - это JOIN, пытаемся вытолкнуть условие в одну из веток
                 if let PlanNode::Join(join) = &optimized_input {
-                    let (left_condition, right_condition) = self.split_join_condition(&filter.condition, join)?;
-                    
+                    let (left_condition, right_condition) =
+                        self.split_join_condition(&filter.condition, join)?;
+
                     let mut left = self.pushdown_predicates_recursive(&join.left)?;
                     let mut right = self.pushdown_predicates_recursive(&join.right)?;
 
@@ -235,7 +256,7 @@ impl QueryOptimizer {
             PlanNode::Join(join) => {
                 let left = self.pushdown_predicates_recursive(&join.left)?;
                 let right = self.pushdown_predicates_recursive(&join.right)?;
-                
+
                 Ok(PlanNode::Join(JoinNode {
                     join_type: join.join_type.clone(),
                     condition: join.condition.clone(),
@@ -258,20 +279,27 @@ impl QueryOptimizer {
     }
 
     /// Разделить условие JOIN на условия для левой и правой ветки
-    fn split_join_condition(&self, condition: &str, join: &JoinNode) -> Result<(Option<String>, Option<String>)> {
+    fn split_join_condition(
+        &self,
+        condition: &str,
+        join: &JoinNode,
+    ) -> Result<(Option<String>, Option<String>)> {
         // Упрощенная реализация - просто возвращаем None для обеих веток
         // В реальной реализации здесь был бы анализ условия и его разделение
         Ok((None, None))
     }
 
     /// Применить перестановку JOIN
-    fn apply_join_reordering(&self, plan: &ExecutionPlan) -> Result<Option<(ExecutionPlan, String)>> {
+    fn apply_join_reordering(
+        &self,
+        plan: &ExecutionPlan,
+    ) -> Result<Option<(ExecutionPlan, String)>> {
         let mut new_plan = plan.clone();
         let mut reordered = false;
 
         // Находим JOIN узлы и пытаемся их переставить
         new_plan.root = self.reorder_joins_recursive(&plan.root)?;
-        
+
         if new_plan.root != plan.root {
             reordered = true;
         }
@@ -289,11 +317,11 @@ impl QueryOptimizer {
             PlanNode::Join(join) => {
                 let left = self.reorder_joins_recursive(&join.left)?;
                 let right = self.reorder_joins_recursive(&join.right)?;
-                
+
                 // Простая эвристика: если правая ветка меньше левой, меняем местами
                 let left_cost = self.estimate_node_cost(&left);
                 let right_cost = self.estimate_node_cost(&right);
-                
+
                 if right_cost < left_cost {
                     Ok(PlanNode::Join(JoinNode {
                         join_type: join.join_type.clone(),
@@ -325,13 +353,16 @@ impl QueryOptimizer {
     }
 
     /// Применить выбор индексов
-    fn apply_index_selection(&self, plan: &ExecutionPlan) -> Result<Option<(ExecutionPlan, String)>> {
+    fn apply_index_selection(
+        &self,
+        plan: &ExecutionPlan,
+    ) -> Result<Option<(ExecutionPlan, String)>> {
         let mut new_plan = plan.clone();
         let mut indexes_applied = false;
 
         // Заменяем TableScan на IndexScan где это возможно
         new_plan.root = self.select_indexes_recursive(&plan.root)?;
-        
+
         if new_plan.root != plan.root {
             indexes_applied = true;
         }
@@ -374,19 +405,25 @@ impl QueryOptimizer {
     }
 
     /// Применить упрощение выражений
-    fn apply_expression_simplification(&self, plan: &ExecutionPlan) -> Result<Option<(ExecutionPlan, String)>> {
+    fn apply_expression_simplification(
+        &self,
+        plan: &ExecutionPlan,
+    ) -> Result<Option<(ExecutionPlan, String)>> {
         let mut new_plan = plan.clone();
         let mut simplified = false;
 
         // Упрощаем выражения в плане
         new_plan.root = self.simplify_expressions_recursive(&plan.root)?;
-        
+
         if new_plan.root != plan.root {
             simplified = true;
         }
 
         if simplified {
-            Ok(Some((new_plan, "Применено упрощение выражений".to_string())))
+            Ok(Some((
+                new_plan,
+                "Применено упрощение выражений".to_string(),
+            )))
         } else {
             Ok(None)
         }

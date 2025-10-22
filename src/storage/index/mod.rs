@@ -1,5 +1,5 @@
 //! Модуль индексов для rustdb
-//! 
+//!
 //! Этот модуль предоставляет реализации различных типов индексов,
 //! включая B+ деревья и хеш-индексы.
 
@@ -11,29 +11,36 @@ pub use btree::BPlusTree;
 pub use simple_hash_index::SimpleHashIndex;
 // pub use hash_index::{HashIndex, CollisionResolution};
 
-use crate::common::{Result, types::{PageId, RecordId}};
+use crate::common::{
+    types::{PageId, RecordId},
+    Result,
+};
 use serde::{Deserialize, Serialize};
 
 /// Трейт для всех типов индексов
 pub trait Index {
     type Key: Ord + Clone;
     type Value: Clone;
-    
+
     /// Вставляет ключ-значение в индекс
     fn insert(&mut self, key: Self::Key, value: Self::Value) -> Result<()>;
-    
+
     /// Ищет значение по ключу
     fn search(&self, key: &Self::Key) -> Result<Option<Self::Value>>;
-    
+
     /// Удаляет ключ из индекса
     fn delete(&mut self, key: &Self::Key) -> Result<bool>;
-    
+
     /// Возвращает все ключи в диапазоне [start, end]
-    fn range_search(&self, start: &Self::Key, end: &Self::Key) -> Result<Vec<(Self::Key, Self::Value)>>;
-    
+    fn range_search(
+        &self,
+        start: &Self::Key,
+        end: &Self::Key,
+    ) -> Result<Vec<(Self::Key, Self::Value)>>;
+
     /// Возвращает количество элементов в индексе
     fn size(&self) -> usize;
-    
+
     /// Проверяет, пуст ли индекс
     fn is_empty(&self) -> bool {
         self.size() == 0

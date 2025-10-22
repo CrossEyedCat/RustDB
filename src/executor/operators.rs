@@ -1,29 +1,29 @@
 //! Операторы выполнения для rustdb
 
+use crate::common::types::{ColumnValue, DataType};
 use crate::common::{Error, Result};
 use crate::planner::{ExecutionPlan, PlanNode};
-use crate::Row;
-use crate::PageId;
 use crate::storage::index::BPlusTree;
 use crate::storage::page_manager::PageManager as StoragePageManager;
 use crate::storage::tuple::Tuple;
-use crate::common::types::{DataType, ColumnValue};
+use crate::PageId;
+use crate::Row;
 
-use std::sync::{Arc, Mutex};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
+use std::sync::{Arc, Mutex};
 
 /// Базовый трейт для всех операторов
 pub trait Operator {
     /// Получить следующую строку результата
     fn next(&mut self) -> Result<Option<Row>>;
-    
+
     /// Сбросить оператор для повторного выполнения
     fn reset(&mut self) -> Result<()>;
-    
+
     /// Получить схему результата
     fn get_schema(&self) -> Result<Vec<String>>;
-    
+
     /// Получить статистику выполнения
     fn get_statistics(&self) -> OperatorStatistics;
 }
@@ -97,7 +97,7 @@ impl TableScanOperator {
 
         // Упрощенная реализация - создаем тестовые данные
         let page_data = vec![0u8; 4096]; // Стандартный размер страницы
-        
+
         // Добавляем в буфер
         if self.page_buffer.len() >= self.max_buffer_size {
             // Удаляем самую старую страницу (простая стратегия FIFO)
@@ -106,10 +106,10 @@ impl TableScanOperator {
                 self.page_buffer.remove(&old_page_id);
             }
         }
-        
+
         self.page_buffer.insert(page_id, page_data.clone());
         self.statistics.io_operations += 1;
-        
+
         Ok(page_data)
     }
 
@@ -213,12 +213,15 @@ impl TableScanOperator {
     fn parse_page_rows(&self, _page_data: &[u8]) -> Result<Vec<Row>> {
         // Упрощенная реализация - создаем тестовые строки
         let mut rows = Vec::new();
-        
+
         // Создаем несколько тестовых строк
         for i in 0..10 {
             let mut row = Row::new();
             for col in &self.schema {
-                row.set_value(col, ColumnValue::new(DataType::Varchar(format!("{}_{}", col, i))));
+                row.set_value(
+                    col,
+                    ColumnValue::new(DataType::Varchar(format!("{}_{}", col, i))),
+                );
             }
             rows.push(row);
         }
@@ -307,7 +310,7 @@ impl IndexScanOperator {
     fn perform_index_search(&mut self) -> Result<()> {
         // Упрощенная реализация - создаем тестовые результаты
         self.index_result = vec![1, 2, 3, 4, 5]; // Тестовые page_id
-        
+
         self.statistics.io_operations += 1;
         Ok(())
     }
@@ -321,11 +324,11 @@ impl IndexScanOperator {
 
         // Упрощенная реализация - создаем тестовые данные
         let page_data = vec![0u8; 4096]; // Стандартный размер страницы
-        
+
         // Добавляем в буфер
         self.page_buffer.insert(page_id, page_data.clone());
         self.statistics.io_operations += 1;
-        
+
         Ok(page_data)
     }
 
@@ -346,7 +349,7 @@ impl Operator for IndexScanOperator {
 
             // Загружаем страницу
             let page_data = self.load_page(page_id)?;
-            
+
             // Парсим строки из страницы
             let rows = self.parse_page_rows(&page_data)?;
 
@@ -388,12 +391,15 @@ impl IndexScanOperator {
     fn parse_page_rows(&self, _page_data: &[u8]) -> Result<Vec<Row>> {
         // Упрощенная реализация - создаем тестовые строки
         let mut rows = Vec::new();
-        
+
         // Создаем несколько тестовых строк
         for i in 0..5 {
             let mut row = Row::new();
             for col in &self.schema {
-                row.set_value(col, ColumnValue::new(DataType::Varchar(format!("{}_{}", col, i))));
+                row.set_value(
+                    col,
+                    ColumnValue::new(DataType::Varchar(format!("{}_{}", col, i))),
+                );
             }
             rows.push(row);
         }
@@ -436,13 +442,13 @@ impl RangeScanOperator {
                 return false;
             }
         }
-        
+
         if let Some(end) = &self.end_value {
             if value > end.as_str() {
                 return false;
             }
         }
-        
+
         true
     }
 }
@@ -614,10 +620,10 @@ impl NestedLoopJoinOperator {
     ) -> Result<Self> {
         let mut left_schema = left_input.get_schema()?;
         let right_schema = right_input.get_schema()?;
-        
+
         // Объединяем схемы
         left_schema.extend(right_schema);
-        
+
         Ok(Self {
             left_input,
             right_input,
@@ -636,7 +642,7 @@ impl NestedLoopJoinOperator {
     fn load_right_block(&mut self) -> Result<()> {
         self.right_buffer.clear();
         self.current_right_position = 0;
-        
+
         // Загружаем блок строк
         for _ in 0..self.block_size {
             if let Some(row) = self.right_input.next()? {
@@ -645,7 +651,7 @@ impl NestedLoopJoinOperator {
                 break;
             }
         }
-        
+
         self.statistics.memory_operations += 1;
         Ok(())
     }
@@ -654,18 +660,24 @@ impl NestedLoopJoinOperator {
     fn check_join_condition(&self, left_row: &Row, right_row: &Row) -> bool {
         let left_value = left_row.get_value(&self.join_condition.left_column);
         let right_value = right_row.get_value(&self.join_condition.right_column);
-        
+
         match (left_value, right_value) {
-            (Some(left), Some(right)) => {
-                match self.join_condition.operator {
-                    JoinOperator::Equal => left == right,
-                    JoinOperator::NotEqual => left != right,
-                    JoinOperator::LessThan => self.compare_values(left, right) == std::cmp::Ordering::Less,
-                    JoinOperator::LessThanOrEqual => self.compare_values(left, right) != std::cmp::Ordering::Greater,
-                    JoinOperator::GreaterThan => self.compare_values(left, right) == std::cmp::Ordering::Greater,
-                    JoinOperator::GreaterThanOrEqual => self.compare_values(left, right) != std::cmp::Ordering::Less,
+            (Some(left), Some(right)) => match self.join_condition.operator {
+                JoinOperator::Equal => left == right,
+                JoinOperator::NotEqual => left != right,
+                JoinOperator::LessThan => {
+                    self.compare_values(left, right) == std::cmp::Ordering::Less
                 }
-            }
+                JoinOperator::LessThanOrEqual => {
+                    self.compare_values(left, right) != std::cmp::Ordering::Greater
+                }
+                JoinOperator::GreaterThan => {
+                    self.compare_values(left, right) == std::cmp::Ordering::Greater
+                }
+                JoinOperator::GreaterThanOrEqual => {
+                    self.compare_values(left, right) != std::cmp::Ordering::Less
+                }
+            },
             _ => false,
         }
     }
@@ -681,17 +693,17 @@ impl NestedLoopJoinOperator {
     /// Объединить строки
     fn combine_rows(&self, left_row: &Row, right_row: &Row) -> Row {
         let mut combined_row = Row::new();
-        
+
         // Копируем значения из левой строки
         for (column, value) in &left_row.values {
             combined_row.set_value(column, value.clone());
         }
-        
+
         // Копируем значения из правой строки
         for (column, value) in &right_row.values {
             combined_row.set_value(column, value.clone());
         }
-        
+
         combined_row
     }
 }
@@ -708,7 +720,7 @@ impl Operator for NestedLoopJoinOperator {
                     // Больше строк в левом входе нет
                     break;
                 }
-                
+
                 // Сбрасываем правый вход для новой строки из левого входа
                 self.right_input.reset()?;
                 self.load_right_block()?;
@@ -733,7 +745,7 @@ impl Operator for NestedLoopJoinOperator {
             // Если блок закончился, загружаем следующий
             if self.current_right_position >= self.right_buffer.len() {
                 self.load_right_block()?;
-                
+
                 // Если больше нет строк в правом входе, переходим к следующей строке из левого
                 if self.right_buffer.is_empty() {
                     self.current_left_row = None;
@@ -801,10 +813,10 @@ impl HashJoinOperator {
     ) -> Result<Self> {
         let mut left_schema = left_input.get_schema()?;
         let right_schema = right_input.get_schema()?;
-        
+
         // Объединяем схемы
         left_schema.extend(right_schema);
-        
+
         let mut operator = Self {
             left_input,
             right_input,
@@ -828,13 +840,16 @@ impl HashJoinOperator {
     /// Построить хеш-таблицу из правого входа
     fn build_hash_table(&mut self) -> Result<()> {
         self.hash_table.clear();
-        
+
         // Сканируем правый вход и строим хеш-таблицу
         while let Some(row) = self.right_input.next()? {
             let key = self.get_join_key(&row, &self.join_condition.right_column);
-            self.hash_table.entry(key).or_insert_with(Vec::new).push(row);
+            self.hash_table
+                .entry(key)
+                .or_insert_with(Vec::new)
+                .push(row);
         }
-        
+
         self.statistics.memory_operations += 1;
         Ok(())
     }
@@ -852,18 +867,24 @@ impl HashJoinOperator {
     fn check_join_condition(&self, left_row: &Row, right_row: &Row) -> bool {
         let left_value = left_row.get_value(&self.join_condition.left_column);
         let right_value = right_row.get_value(&self.join_condition.right_column);
-        
+
         match (left_value, right_value) {
-            (Some(left), Some(right)) => {
-                match self.join_condition.operator {
-                    JoinOperator::Equal => left == right,
-                    JoinOperator::NotEqual => left != right,
-                    JoinOperator::LessThan => self.compare_values(left, right) == std::cmp::Ordering::Less,
-                    JoinOperator::LessThanOrEqual => self.compare_values(left, right) != std::cmp::Ordering::Greater,
-                    JoinOperator::GreaterThan => self.compare_values(left, right) == std::cmp::Ordering::Greater,
-                    JoinOperator::GreaterThanOrEqual => self.compare_values(left, right) != std::cmp::Ordering::Less,
+            (Some(left), Some(right)) => match self.join_condition.operator {
+                JoinOperator::Equal => left == right,
+                JoinOperator::NotEqual => left != right,
+                JoinOperator::LessThan => {
+                    self.compare_values(left, right) == std::cmp::Ordering::Less
                 }
-            }
+                JoinOperator::LessThanOrEqual => {
+                    self.compare_values(left, right) != std::cmp::Ordering::Greater
+                }
+                JoinOperator::GreaterThan => {
+                    self.compare_values(left, right) == std::cmp::Ordering::Greater
+                }
+                JoinOperator::GreaterThanOrEqual => {
+                    self.compare_values(left, right) != std::cmp::Ordering::Less
+                }
+            },
             _ => false,
         }
     }
@@ -879,17 +900,17 @@ impl HashJoinOperator {
     /// Объединить строки
     fn combine_rows(&self, left_row: &Row, right_row: &Row) -> Row {
         let mut combined_row = Row::new();
-        
+
         // Копируем значения из левой строки
         for (column, value) in &left_row.values {
             combined_row.set_value(column, value.clone());
         }
-        
+
         // Копируем значения из правой строки
         for (column, value) in &right_row.values {
             combined_row.set_value(column, value.clone());
         }
-        
+
         combined_row
     }
 }
@@ -906,11 +927,11 @@ impl Operator for HashJoinOperator {
                     // Больше строк в левом входе нет
                     break;
                 }
-                
+
                 // Ищем совпадения в хеш-таблице
                 let left_row = self.current_left_row.as_ref().unwrap();
                 let key = self.get_join_key(left_row, &self.join_condition.left_column);
-                
+
                 self.current_matches = self.hash_table.get(&key).cloned().unwrap_or_default();
                 self.current_match_position = 0;
             }
@@ -995,10 +1016,10 @@ impl MergeJoinOperator {
     ) -> Result<Self> {
         let mut left_schema = left_input.get_schema()?;
         let right_schema = right_input.get_schema()?;
-        
+
         // Объединяем схемы
         left_schema.extend(right_schema);
-        
+
         Ok(Self {
             left_input,
             right_input,
@@ -1044,7 +1065,8 @@ impl MergeJoinOperator {
             self.current_right_row = self.right_input.next()?;
         }
 
-        if let (Some(left_row), Some(right_row)) = (&self.current_left_row, &self.current_right_row) {
+        if let (Some(left_row), Some(right_row)) = (&self.current_left_row, &self.current_right_row)
+        {
             let left_key = self.get_join_key(left_row, &self.join_condition.left_column);
             let right_key = self.get_join_key(right_row, &self.join_condition.right_column);
 
@@ -1052,7 +1074,7 @@ impl MergeJoinOperator {
                 std::cmp::Ordering::Equal => {
                     // Загружаем все строки с одинаковыми ключами
                     let target_key = left_key.clone();
-                    
+
                     // Загружаем строки из левого входа
                     while let Some(row) = &self.current_left_row {
                         let key = self.get_join_key(row, &self.join_condition.left_column);
@@ -1092,17 +1114,17 @@ impl MergeJoinOperator {
     /// Объединить строки
     fn combine_rows(&self, left_row: &Row, right_row: &Row) -> Row {
         let mut combined_row = Row::new();
-        
+
         // Копируем значения из левой строки
         for (column, value) in &left_row.values {
             combined_row.set_value(column, value.clone());
         }
-        
+
         // Копируем значения из правой строки
         for (column, value) in &right_row.values {
             combined_row.set_value(column, value.clone());
         }
-        
+
         combined_row
     }
 }
@@ -1113,9 +1135,11 @@ impl Operator for MergeJoinOperator {
 
         loop {
             // Если буферы пусты, загружаем новые совпадающие ключи
-            if self.left_buffer_pos >= self.left_buffer.len() || self.right_buffer_pos >= self.right_buffer.len() {
+            if self.left_buffer_pos >= self.left_buffer.len()
+                || self.right_buffer_pos >= self.right_buffer.len()
+            {
                 self.load_matching_keys()?;
-                
+
                 // Если больше нет данных, завершаем
                 if self.left_buffer.is_empty() || self.right_buffer.is_empty() {
                     if self.current_left_row.is_none() && self.current_right_row.is_none() {
@@ -1128,9 +1152,9 @@ impl Operator for MergeJoinOperator {
             // Возвращаем следующую комбинацию строк
             let left_row = &self.left_buffer[self.left_buffer_pos];
             let right_row = &self.right_buffer[self.right_buffer_pos];
-            
+
             self.statistics.rows_processed += 1;
-            
+
             let combined_row = self.combine_rows(left_row, right_row);
             self.statistics.rows_returned += 1;
             self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
@@ -1200,12 +1224,8 @@ impl ScanOperatorFactory {
         filter: Option<String>,
         schema: Vec<String>,
     ) -> Result<Box<dyn Operator>> {
-        let operator = TableScanOperator::new(
-            table_name,
-            self.page_manager.clone(),
-            filter,
-            schema,
-        )?;
+        let operator =
+            TableScanOperator::new(table_name, self.page_manager.clone(), filter, schema)?;
         Ok(Box::new(operator))
     }
 
@@ -1216,11 +1236,7 @@ impl ScanOperatorFactory {
         start_value: Option<String>,
         end_value: Option<String>,
     ) -> Result<Box<dyn Operator>> {
-        let operator = RangeScanOperator::new(
-            base_operator,
-            start_value,
-            end_value,
-        )?;
+        let operator = RangeScanOperator::new(base_operator, start_value, end_value)?;
         Ok(Box::new(operator))
     }
 
@@ -1230,10 +1246,7 @@ impl ScanOperatorFactory {
         base_operator: Box<dyn Operator>,
         condition: String,
     ) -> Result<Box<dyn Operator>> {
-        let operator = ConditionalScanOperator::new(
-            base_operator,
-            condition,
-        )?;
+        let operator = ConditionalScanOperator::new(base_operator, condition)?;
         Ok(Box::new(operator))
     }
 
@@ -1325,52 +1338,67 @@ impl HashGroupByOperator {
         // Читаем все строки из входного оператора
         while let Some(_row) = self.input.next()? {
             self.statistics.rows_processed += 1;
-            
+
             // Создаем упрощенный результат группировки
             let mut result_tuple = Tuple::new(self.results.len() as u64);
-            
+
             // Добавляем ключи группировки (используем первые несколько колонок)
             for (i, &key_index) in self.group_keys.iter().enumerate() {
-                if key_index < 4 { // Ограничиваем для демонстрации
-                    result_tuple.set_value(&format!("key_{}", i), 
-                        ColumnValue::new(DataType::Integer(i as i32)));
+                if key_index < 4 {
+                    // Ограничиваем для демонстрации
+                    result_tuple.set_value(
+                        &format!("key_{}", i),
+                        ColumnValue::new(DataType::Integer(i as i32)),
+                    );
                 }
             }
-            
+
             // Добавляем агрегатные функции (демонстрационные значения)
             for (i, (function, _)) in self.aggregate_functions.iter().enumerate() {
                 match function {
                     AggregateFunction::Count => {
-                        result_tuple.set_value(&format!("count_{}", i), 
-                            ColumnValue::new(DataType::BigInt(1)));
+                        result_tuple.set_value(
+                            &format!("count_{}", i),
+                            ColumnValue::new(DataType::BigInt(1)),
+                        );
                     }
                     AggregateFunction::Sum => {
-                        result_tuple.set_value(&format!("sum_{}", i), 
-                            ColumnValue::new(DataType::Double(100.0)));
+                        result_tuple.set_value(
+                            &format!("sum_{}", i),
+                            ColumnValue::new(DataType::Double(100.0)),
+                        );
                     }
                     AggregateFunction::Avg => {
-                        result_tuple.set_value(&format!("avg_{}", i), 
-                            ColumnValue::new(DataType::Double(50.0)));
+                        result_tuple.set_value(
+                            &format!("avg_{}", i),
+                            ColumnValue::new(DataType::Double(50.0)),
+                        );
                     }
                     AggregateFunction::Min => {
-                        result_tuple.set_value(&format!("min_{}", i), 
-                            ColumnValue::new(DataType::Integer(10)));
+                        result_tuple.set_value(
+                            &format!("min_{}", i),
+                            ColumnValue::new(DataType::Integer(10)),
+                        );
                     }
                     AggregateFunction::Max => {
-                        result_tuple.set_value(&format!("max_{}", i), 
-                            ColumnValue::new(DataType::Integer(100)));
+                        result_tuple.set_value(
+                            &format!("max_{}", i),
+                            ColumnValue::new(DataType::Integer(100)),
+                        );
                     }
                     AggregateFunction::CountDistinct => {
-                        result_tuple.set_value(&format!("count_distinct_{}", i), 
-                            ColumnValue::new(DataType::BigInt(5)));
+                        result_tuple.set_value(
+                            &format!("count_distinct_{}", i),
+                            ColumnValue::new(DataType::BigInt(5)),
+                        );
                     }
                 }
             }
-            
+
             let result_row = Row::new();
             self.results.push(result_row);
         }
-        
+
         Ok(())
     }
 }
@@ -1437,7 +1465,9 @@ impl SortOperator {
         result_schema: Vec<String>,
     ) -> Result<Self> {
         if sort_columns.len() != sort_directions.len() {
-            return Err(Error::QueryExecution { message: "Количество колонок и направлений сортировки не совпадает".to_string() });
+            return Err(Error::QueryExecution {
+                message: "Количество колонок и направлений сортировки не совпадает".to_string(),
+            });
         }
 
         Ok(Self {
@@ -1454,7 +1484,7 @@ impl SortOperator {
     /// Загрузить и отсортировать все строки (упрощенная версия)
     fn load_and_sort(&mut self) -> Result<()> {
         let mut rows = Vec::new();
-        
+
         // Читаем все строки из входного оператора
         while let Some(row) = self.input.next()? {
             rows.push(row);
@@ -1462,13 +1492,11 @@ impl SortOperator {
         }
 
         // Простая сортировка по версии (демонстрационная версия)
-        rows.sort_by(|a, b| {
-            a.version.cmp(&b.version)
-        });
+        rows.sort_by(|a, b| a.version.cmp(&b.version));
 
         self.sorted_rows = rows;
         self.current_index = 0;
-        
+
         Ok(())
     }
 }
@@ -1548,7 +1576,7 @@ impl SortGroupByOperator {
     /// Загрузить и обработать данные (упрощенная версия)
     fn load_and_process(&mut self) -> Result<()> {
         let mut rows = Vec::new();
-        
+
         // Читаем все строки из входного оператора
         while let Some(row) = self.input.next()? {
             rows.push(row);
@@ -1556,51 +1584,66 @@ impl SortGroupByOperator {
         }
 
         // Создаем демонстрационные результаты групп
-        for (i, _) in rows.iter().enumerate().take(3) { // Ограничиваем для демонстрации
+        for (i, _) in rows.iter().enumerate().take(3) {
+            // Ограничиваем для демонстрации
             let mut result_tuple = Tuple::new(i as u64);
-            
+
             // Добавляем ключи группировки
             for (j, &key_index) in self.group_keys.iter().enumerate() {
                 if key_index < 4 {
-                    result_tuple.set_value(&format!("group_key_{}", j), 
-                        ColumnValue::new(DataType::Integer(i as i32)));
+                    result_tuple.set_value(
+                        &format!("group_key_{}", j),
+                        ColumnValue::new(DataType::Integer(i as i32)),
+                    );
                 }
             }
-            
+
             // Добавляем агрегатные функции
             for (j, (function, _)) in self.aggregate_functions.iter().enumerate() {
                 match function {
                     AggregateFunction::Count => {
-                        result_tuple.set_value(&format!("count_{}", j), 
-                            ColumnValue::new(DataType::BigInt((i + 1) as i64)));
+                        result_tuple.set_value(
+                            &format!("count_{}", j),
+                            ColumnValue::new(DataType::BigInt((i + 1) as i64)),
+                        );
                     }
                     AggregateFunction::Sum => {
-                        result_tuple.set_value(&format!("sum_{}", j), 
-                            ColumnValue::new(DataType::Double((i + 1) as f64 * 100.0)));
+                        result_tuple.set_value(
+                            &format!("sum_{}", j),
+                            ColumnValue::new(DataType::Double((i + 1) as f64 * 100.0)),
+                        );
                     }
                     AggregateFunction::Avg => {
-                        result_tuple.set_value(&format!("avg_{}", j), 
-                            ColumnValue::new(DataType::Double((i + 1) as f64 * 50.0)));
+                        result_tuple.set_value(
+                            &format!("avg_{}", j),
+                            ColumnValue::new(DataType::Double((i + 1) as f64 * 50.0)),
+                        );
                     }
                     AggregateFunction::Min => {
-                        result_tuple.set_value(&format!("min_{}", j), 
-                            ColumnValue::new(DataType::Integer(((i + 1) * 10) as i32)));
+                        result_tuple.set_value(
+                            &format!("min_{}", j),
+                            ColumnValue::new(DataType::Integer(((i + 1) * 10) as i32)),
+                        );
                     }
                     AggregateFunction::Max => {
-                        result_tuple.set_value(&format!("max_{}", j), 
-                            ColumnValue::new(DataType::Integer(((i + 1) * 100) as i32)));
+                        result_tuple.set_value(
+                            &format!("max_{}", j),
+                            ColumnValue::new(DataType::Integer(((i + 1) * 100) as i32)),
+                        );
                     }
                     AggregateFunction::CountDistinct => {
-                        result_tuple.set_value(&format!("count_distinct_{}", j), 
-                            ColumnValue::new(DataType::BigInt((i + 1) as i64)));
+                        result_tuple.set_value(
+                            &format!("count_distinct_{}", j),
+                            ColumnValue::new(DataType::BigInt((i + 1) as i64)),
+                        );
                     }
                 }
             }
-            
+
             let result_row = Row::new();
             self.group_results.push(result_row);
         }
-        
+
         Ok(())
     }
 }

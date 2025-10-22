@@ -7,14 +7,14 @@
 //! - Мониторинг и статистика использования
 
 use crate::common::{Error, Result};
-use crate::storage::file_manager::{FileManager, DatabaseFile};
 use crate::storage::database_file::{
-    DatabaseFileHeader, DatabaseFileType, DatabaseFileState, FreePageMap, 
-    FileExtensionManager, ExtensionStrategy, ExtensionReason, PageId
+    DatabaseFileHeader, DatabaseFileState, DatabaseFileType, ExtensionReason, ExtensionStrategy,
+    FileExtensionManager, FreePageMap, PageId,
 };
+use crate::storage::file_manager::{DatabaseFile, FileManager};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 
 /// ID расширенного файла БД
 pub type AdvancedFileId = u32;
@@ -115,7 +115,9 @@ impl AdvancedDatabaseFile {
 
         // Если свободных страниц нет, расширяем файл
         let old_size = self.header.total_pages;
-        let extension_size = self.extension_manager.calculate_extension_size(old_size, page_count);
+        let extension_size = self
+            .extension_manager
+            .calculate_extension_size(old_size, page_count);
         let new_size = old_size + extension_size as u64;
 
         // Расширяем базовый файл
@@ -129,15 +131,13 @@ impl AdvancedDatabaseFile {
         // Добавляем новые страницы в карту свободных страниц
         if extension_size > page_count {
             let remaining_pages = extension_size - page_count;
-            self.free_page_map.add_free_block(old_size + page_count as u64, remaining_pages)?;
+            self.free_page_map
+                .add_free_block(old_size + page_count as u64, remaining_pages)?;
         }
 
         // Записываем расширение в историю
-        self.extension_manager.record_extension(
-            old_size,
-            new_size,
-            ExtensionReason::OutOfSpace,
-        );
+        self.extension_manager
+            .record_extension(old_size, new_size, ExtensionReason::OutOfSpace);
 
         self.statistics.allocated_pages += page_count as u64;
         self.statistics.file_extensions += 1;
@@ -202,7 +202,8 @@ impl AdvancedDatabaseFile {
             self.header_dirty = true;
 
             // Добавляем новые страницы в карту свободных страниц
-            self.free_page_map.add_free_block(old_size, extension_size)?;
+            self.free_page_map
+                .add_free_block(old_size, extension_size)?;
 
             // Записываем расширение в историю
             self.extension_manager.record_extension(
@@ -282,7 +283,9 @@ impl AdvancedDatabaseFile {
 
         // Проверяем соответствие размеров
         if self.header.total_pages != self.base_file.size_in_blocks() as u64 {
-            return Err(Error::validation("Несоответствие размера файла в заголовке и на диске"));
+            return Err(Error::validation(
+                "Несоответствие размера файла в заголовке и на диске",
+            ));
         }
 
         Ok(())
@@ -383,7 +386,7 @@ impl AdvancedFileManager {
     /// Создает новый продвинутый менеджер файлов
     pub fn new(root_dir: impl AsRef<std::path::Path>) -> Result<Self> {
         let base_manager = FileManager::new(root_dir)?;
-        
+
         Ok(Self {
             base_manager,
             advanced_files: HashMap::new(),
@@ -402,7 +405,9 @@ impl AdvancedFileManager {
     ) -> Result<AdvancedFileId> {
         // Создаем базовый файл
         let base_file_id = self.base_manager.create_file(filename)?;
-        let base_file_info = self.base_manager.get_file_info(base_file_id)
+        let base_file_info = self
+            .base_manager
+            .get_file_info(base_file_id)
             .ok_or_else(|| Error::database("Не удалось получить информацию о созданном файле"))?;
 
         // Создаем базовый файл из информации
@@ -419,12 +424,8 @@ impl AdvancedFileManager {
         base_file.extend_file(10)?;
 
         // Создаем расширенный файл
-        let advanced_file = AdvancedDatabaseFile::create(
-            base_file,
-            file_type,
-            database_id,
-            extension_strategy,
-        )?;
+        let advanced_file =
+            AdvancedDatabaseFile::create(base_file, file_type, database_id, extension_strategy)?;
 
         let advanced_file_id = self.next_file_id;
         self.next_file_id += 1;
@@ -439,14 +440,19 @@ impl AdvancedFileManager {
     pub fn open_database_file(&mut self, filename: &str) -> Result<AdvancedFileId> {
         // Открываем базовый файл
         let base_file_id = self.base_manager.open_file(filename, false)?;
-        let base_file_info = self.base_manager.get_file_info(base_file_id)
+        let base_file_info = self
+            .base_manager
+            .get_file_info(base_file_id)
             .ok_or_else(|| Error::database("Не удалось получить информацию об открытом файле"))?;
 
         // Создаем базовый файл из информации
         let mut base_file = DatabaseFile {
             file_id: base_file_info.file_id,
             path: base_file_info.path.clone(),
-            file: std::fs::OpenOptions::new().read(true).write(true).open(&base_file_info.path)?, // Временное решение
+            file: std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&base_file_info.path)?, // Временное решение
             header: crate::storage::file_manager::FileHeader::new(),
             header_dirty: false,
             read_only: false,
@@ -470,7 +476,9 @@ impl AdvancedFileManager {
 
     /// Выделяет страницы в файле
     pub fn allocate_pages(&mut self, file_id: AdvancedFileId, page_count: u32) -> Result<PageId> {
-        let file = self.advanced_files.get_mut(&file_id)
+        let file = self
+            .advanced_files
+            .get_mut(&file_id)
             .ok_or_else(|| Error::database(format!("Файл {} не найден", file_id)))?;
 
         let result = file.allocate_pages(page_count)?;
@@ -479,8 +487,15 @@ impl AdvancedFileManager {
     }
 
     /// Освобождает страницы в файле
-    pub fn free_pages(&mut self, file_id: AdvancedFileId, start_page: PageId, page_count: u32) -> Result<()> {
-        let file = self.advanced_files.get_mut(&file_id)
+    pub fn free_pages(
+        &mut self,
+        file_id: AdvancedFileId,
+        start_page: PageId,
+        page_count: u32,
+    ) -> Result<()> {
+        let file = self
+            .advanced_files
+            .get_mut(&file_id)
             .ok_or_else(|| Error::database(format!("Файл {} не найден", file_id)))?;
 
         file.free_pages(start_page, page_count)?;
@@ -490,7 +505,9 @@ impl AdvancedFileManager {
 
     /// Читает страницу из файла
     pub fn read_page(&mut self, file_id: AdvancedFileId, page_id: PageId) -> Result<Vec<u8>> {
-        let file = self.advanced_files.get_mut(&file_id)
+        let file = self
+            .advanced_files
+            .get_mut(&file_id)
             .ok_or_else(|| Error::database(format!("Файл {} не найден", file_id)))?;
 
         let result = file.read_page(page_id)?;
@@ -499,8 +516,15 @@ impl AdvancedFileManager {
     }
 
     /// Записывает страницу в файл
-    pub fn write_page(&mut self, file_id: AdvancedFileId, page_id: PageId, data: &[u8]) -> Result<()> {
-        let file = self.advanced_files.get_mut(&file_id)
+    pub fn write_page(
+        &mut self,
+        file_id: AdvancedFileId,
+        page_id: PageId,
+        data: &[u8],
+    ) -> Result<()> {
+        let file = self
+            .advanced_files
+            .get_mut(&file_id)
             .ok_or_else(|| Error::database(format!("Файл {} не найден", file_id)))?;
 
         file.write_page(page_id, data)?;
@@ -510,7 +534,9 @@ impl AdvancedFileManager {
 
     /// Синхронизирует файл
     pub fn sync_file(&mut self, file_id: AdvancedFileId) -> Result<()> {
-        let file = self.advanced_files.get_mut(&file_id)
+        let file = self
+            .advanced_files
+            .get_mut(&file_id)
             .ok_or_else(|| Error::database(format!("Файл {} не найден", file_id)))?;
 
         file.sync()
@@ -528,14 +554,17 @@ impl AdvancedFileManager {
     pub fn close_file(&mut self, file_id: AdvancedFileId) -> Result<()> {
         if let Some(mut file) = self.advanced_files.remove(&file_id) {
             file.sync()?;
-            self.global_statistics.total_files = self.global_statistics.total_files.saturating_sub(1);
+            self.global_statistics.total_files =
+                self.global_statistics.total_files.saturating_sub(1);
         }
         Ok(())
     }
 
     /// Возвращает информацию о файле
     pub fn get_file_info(&self, file_id: AdvancedFileId) -> Option<FileInfo> {
-        self.advanced_files.get(&file_id).map(|file| file.get_file_info())
+        self.advanced_files
+            .get(&file_id)
+            .map(|file| file.get_file_info())
     }
 
     /// Возвращает глобальную статистику
@@ -634,14 +663,16 @@ mod tests {
 
     #[test]
     fn test_advanced_file_manager_creation() -> Result<()> {
-        let temp_dir = TempDir::new().map_err(|e| Error::database(format!("Failed to create temp dir: {}", e)))?;
+        let temp_dir = TempDir::new()
+            .map_err(|e| Error::database(format!("Failed to create temp dir: {}", e)))?;
         let _manager = AdvancedFileManager::new(temp_dir.path())?;
         Ok(())
     }
 
     #[test]
     fn test_create_database_file() -> Result<()> {
-        let temp_dir = TempDir::new().map_err(|e| Error::database(format!("Failed to create temp dir: {}", e)))?;
+        let temp_dir = TempDir::new()
+            .map_err(|e| Error::database(format!("Failed to create temp dir: {}", e)))?;
         let mut manager = AdvancedFileManager::new(temp_dir.path())?;
 
         let file_id = manager.create_database_file(
@@ -659,7 +690,8 @@ mod tests {
 
     #[test]
     fn test_page_allocation() -> Result<()> {
-        let temp_dir = TempDir::new().map_err(|e| Error::database(format!("Failed to create temp dir: {}", e)))?;
+        let temp_dir = TempDir::new()
+            .map_err(|e| Error::database(format!("Failed to create temp dir: {}", e)))?;
         let mut manager = AdvancedFileManager::new(temp_dir.path())?;
 
         let file_id = manager.create_database_file(
@@ -684,30 +716,36 @@ mod tests {
     fn test_page_read_write() -> Result<()> {
         use std::thread;
         use std::time::Duration;
-        
-        let temp_dir = TempDir::new().map_err(|e| Error::database(format!("Failed to create temp dir: {}", e)))?;
+
+        let temp_dir = TempDir::new()
+            .map_err(|e| Error::database(format!("Failed to create temp dir: {}", e)))?;
         let mut manager = AdvancedFileManager::new(temp_dir.path())?;
 
-        let file_id = manager.create_database_file(
-            "test_page_read_write.db",
-            DatabaseFileType::Data,
-            123,
-            ExtensionStrategy::Fixed,
-        ).map_err(|e| Error::database(format!("Failed to create database file: {}", e)))?;
+        let file_id = manager
+            .create_database_file(
+                "test_page_read_write.db",
+                DatabaseFileType::Data,
+                123,
+                ExtensionStrategy::Fixed,
+            )
+            .map_err(|e| Error::database(format!("Failed to create database file: {}", e)))?;
 
         // Выделяем страницу
-        let page_id = manager.allocate_pages(file_id, 1)
+        let page_id = manager
+            .allocate_pages(file_id, 1)
             .map_err(|e| Error::database(format!("Failed to allocate pages: {}", e)))?;
 
         // Записываем данные
         let test_data = vec![42u8; crate::storage::database_file::BLOCK_SIZE];
-        manager.write_page(file_id, page_id, &test_data)
+        manager
+            .write_page(file_id, page_id, &test_data)
             .map_err(|e| Error::database(format!("Failed to write page: {}", e)))?;
 
         // Синхронизируем файл и добавляем задержку для Windows
-        manager.sync_file(file_id)
+        manager
+            .sync_file(file_id)
             .map_err(|e| Error::database(format!("Failed to sync file: {}", e)))?;
-            
+
         // Небольшая задержка для Windows, чтобы файловая система успела обработать изменения
         thread::sleep(Duration::from_millis(50));
 
@@ -722,7 +760,9 @@ mod tests {
                 // В Windows могут возникать проблемы с доступом к файлам в тестах
                 // Проверяем, что это именно проблема с доступом, а не логическая ошибка
                 let error_msg = format!("{}", e);
-                if error_msg.contains("Отказано в доступе") || error_msg.contains("Access is denied") {
+                if error_msg.contains("Отказано в доступе")
+                    || error_msg.contains("Access is denied")
+                {
                     println!("Предупреждение: Проблема с доступом к файлу в Windows, но базовая функциональность работает");
                     // Тест считается пройденным, так как проблема в файловой системе, а не в коде
                 } else {
@@ -740,7 +780,8 @@ mod tests {
 
     #[test]
     fn test_maintenance_check() -> Result<()> {
-        let temp_dir = TempDir::new().map_err(|e| Error::database(format!("Failed to create temp dir: {}", e)))?;
+        let temp_dir = TempDir::new()
+            .map_err(|e| Error::database(format!("Failed to create temp dir: {}", e)))?;
         let mut manager = AdvancedFileManager::new(temp_dir.path())?;
 
         let _file_id = manager.create_database_file(

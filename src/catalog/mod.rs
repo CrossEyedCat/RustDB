@@ -8,8 +8,8 @@ pub mod statistics;
 mod tests;
 
 pub use statistics::{
-    StatisticsManager, StatisticsSettings, TableStatistics, ColumnStatistics,
-    ValueDistribution, HistogramBucket, ColumnValue
+    ColumnStatistics, ColumnValue, HistogramBucket, StatisticsManager, StatisticsSettings,
+    TableStatistics, ValueDistribution,
 };
 
 // TODO: Реализовать каталог метаданных
