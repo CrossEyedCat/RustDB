@@ -136,8 +136,17 @@ impl RecordSlot {
     }
 }
 
+/// Компактная структура для сериализации страницы
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CompactPage {
+    header: PageHeader,
+    slots: Vec<RecordSlot>,
+    data: Vec<u8>,
+    // free_space_map не сериализуется, так как может быть пересчитана
+}
+
 /// Структура страницы
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Page {
     /// Заголовок страницы
     pub header: PageHeader,
@@ -170,20 +179,30 @@ impl Page {
 
     /// Создает страницу из байтов (десериализация)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() != PAGE_SIZE {
-            return Err(Error::validation("Неверный размер страницы"));
+        use bincode;
+        
+        // Десериализуем компактную структуру
+        let compact_page: CompactPage = bincode::deserialize(bytes).map_err(Error::BincodeSerialization)?;
+        
+        // Восстанавливаем data до полного размера PAGE_SIZE
+        let mut data = compact_page.data.clone();
+        data.resize(PAGE_SIZE, 0);
+        
+        // Пересчитываем free_space_map
+        let mut free_space_map = vec![true; PAGE_SIZE - PAGE_HEADER_SIZE];
+        for slot in &compact_page.slots {
+            if !slot.is_deleted {
+                let start = (slot.offset as usize).saturating_sub(PAGE_HEADER_SIZE);
+                let end = start + slot.size as usize;
+                for i in start..end.min(free_space_map.len()) {
+                    free_space_map[i] = false;
+                }
+            }
         }
-
-        // TODO: Реализовать полную десериализацию
-        // Пока используем простую реализацию
-        let page_id = 0; // Извлекается из заголовка
-        let header = PageHeader::new(page_id, PageType::Data);
-        let data = bytes.to_vec();
-        let free_space_map = vec![true; PAGE_SIZE - PAGE_HEADER_SIZE];
-
+        
         Ok(Self {
-            header,
-            slots: Vec::new(),
+            header: compact_page.header,
+            slots: compact_page.slots,
             data,
             free_space_map,
         })
@@ -210,8 +229,40 @@ impl Page {
 
     /// Сериализует страницу в байты
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        // TODO: Реализовать полную сериализацию
-        Ok(self.data.clone())
+        use bincode;
+        
+        // Определяем максимальный использованный offset
+        let max_offset = self.slots.iter()
+            .filter(|s| !s.is_deleted)
+            .map(|s| s.offset + s.size)
+            .max()
+            .unwrap_or(PAGE_HEADER_SIZE as u32) as usize;
+        
+        // Сериализуем только используемую часть data
+        let used_data = self.data[..max_offset.min(self.data.len())].to_vec();
+        
+        // Создаем компактную структуру для сериализации
+        let compact_page = CompactPage {
+            header: self.header.clone(),
+            slots: self.slots.clone(),
+            data: used_data,
+        };
+        
+        let mut serialized = bincode::serialize(&compact_page).map_err(Error::BincodeSerialization)?;
+        
+        // Проверяем размер
+        if serialized.len() > PAGE_SIZE {
+            return Err(Error::validation(&format!(
+                "Сериализованная страница слишком большая: {} байт (максимум {})",
+                serialized.len(),
+                PAGE_SIZE
+            )));
+        }
+        
+        // Дополняем нулями до PAGE_SIZE
+        serialized.resize(PAGE_SIZE, 0);
+        
+        Ok(serialized)
     }
 
     /// Добавляет запись на страницу
@@ -441,6 +492,44 @@ impl Page {
         self.slots.iter().any(|slot| slot.is_deleted)
     }
 
+    /// Сканирует все записи на странице
+    pub fn scan_records(&self) -> Result<Vec<(u32, Vec<u8>)>> {
+        let mut records = Vec::new();
+        
+        for slot in &self.slots {
+            if !slot.is_deleted {
+                let start = slot.offset as usize;
+                let end = start + slot.size as usize;
+                
+                if end <= self.data.len() {
+                    let record_data = self.data[start..end].to_vec();
+                    records.push((slot.offset, record_data));
+                }
+            }
+        }
+        
+        Ok(records)
+    }
+
+    /// Получает все записи на странице
+    pub fn get_all_records(&self) -> Result<Vec<Vec<u8>>> {
+        let mut records = Vec::new();
+        
+        for slot in &self.slots {
+            if !slot.is_deleted {
+                let start = slot.offset as usize;
+                let end = start + slot.size as usize;
+                
+                if end <= self.data.len() {
+                    let record_data = self.data[start..end].to_vec();
+                    records.push(record_data);
+                }
+            }
+        }
+        
+        Ok(records)
+    }
+
     /// Выполняет дефрагментацию страницы
     pub fn defragment(&mut self) -> Result<()> {
         // Собираем все активные записи
@@ -465,37 +554,6 @@ impl Page {
         Ok(())
     }
 
-    /// Сканирует все записи на странице
-    pub fn scan_records(&self) -> Result<Vec<(u32, Vec<u8>)>> {
-        let mut records = Vec::new();
-
-        for slot in &self.slots {
-            if !slot.is_deleted {
-                let start = slot.offset as usize;
-                let end = start + slot.size as usize;
-                let record_data = self.data[start..end].to_vec();
-                records.push((slot.offset, record_data));
-            }
-        }
-
-        Ok(records)
-    }
-
-    /// Получает все записи на странице
-    pub fn get_all_records(&self) -> Result<Vec<Vec<u8>>> {
-        let mut records = Vec::new();
-
-        for slot in &self.slots {
-            if !slot.is_deleted {
-                let start = slot.offset as usize;
-                let end = start + slot.size as usize;
-                let record_data = self.data[start..end].to_vec();
-                records.push(record_data);
-            }
-        }
-
-        Ok(records)
-    }
 
     /// Обновляет запись по offset
     pub fn update_record_by_offset(&mut self, offset: u32, new_data: &[u8]) -> Result<()> {
@@ -623,6 +681,7 @@ impl PageManager {
     pub fn contains_page(&self, page_id: PageId) -> bool {
         self.pages.contains_key(&page_id)
     }
+
 }
 
 #[cfg(test)]
@@ -693,3 +752,4 @@ mod tests {
         assert!(manager.contains_page(3));
     }
 }
+

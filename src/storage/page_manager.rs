@@ -184,12 +184,14 @@ impl PageManager {
         let page_data = self.file_manager.read_page(self.file_id, page_id)?;
         let mut page = Page::from_bytes(&page_data)?;
 
+        // Генерируем record_id заранее
+        let record_id = self.generate_record_id(page_id, 0); // Временный offset, будет обновлен
+        
         // Пытаемся вставить запись
-        match page.add_record(data, 0u64) {
-            // Используем временный record_id
+        match page.add_record(data, record_id) {
             Ok(offset) => {
                 // Запись успешно вставлена
-                let record_id = self.generate_record_id(page_id, offset);
+                let final_record_id = self.generate_record_id(page_id, offset);
 
                 // Сохраняем страницу
                 let serialized = page.to_bytes()?;
@@ -200,12 +202,12 @@ impl PageManager {
                 self.update_page_cache(page_id, &page);
 
                 Ok(InsertResult {
-                    record_id,
+                    record_id: final_record_id,
                     page_id,
                     page_split: false,
                 })
             }
-            Err(_) => {
+            Err(e) => {
                 // Страница переполнена, нужно разделение
                 self.split_page_and_insert(page_id, data)
             }
@@ -222,12 +224,16 @@ impl PageManager {
         let mut results = Vec::new();
 
         // Сканируем все страницы
-        for page_id in self.get_all_page_ids()? {
+        let page_ids = self.get_all_page_ids()?;
+        
+        for page_id in page_ids {
             let page_data = self.file_manager.read_page(self.file_id, page_id)?;
             let page = Page::from_bytes(&page_data)?;
 
             // Сканируем записи на странице
-            for (offset, record_data) in page.scan_records()? {
+            let records = page.scan_records()?;
+            
+            for (offset, record_data) in records {
                 let record_id = self.generate_record_id(page_id, offset);
 
                 // Применяем условие фильтрации
@@ -241,6 +247,7 @@ impl PageManager {
             }
         }
 
+        println!("Total records found: {}", results.len());
         Ok(results)
     }
 
@@ -558,6 +565,18 @@ impl PageManager {
             }
         }
 
+        // Также проверяем страницы в кеше, которые могли быть созданы недавно
+        for (cached_page_id, _) in &self.page_cache {
+            if !page_ids.contains(cached_page_id) {
+                // Проверяем, что страница действительно существует
+                if let Ok(page_data) = self.file_manager.read_page(self.file_id, *cached_page_id) {
+                    if !page_data.iter().all(|&b| b == 0) {
+                        page_ids.push(*cached_page_id);
+                    }
+                }
+            }
+        }
+
         Ok(page_ids)
     }
 
@@ -682,6 +701,7 @@ impl PageManager {
         self.file_manager
             .write_page(self.file_id, page_id, &compressed_data)
     }
+
 }
 
 impl Drop for PageManager {
