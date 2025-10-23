@@ -1,15 +1,14 @@
 //! Пример использования менеджера файлов rustdb
-//! 
+//!
 //! Этот пример демонстрирует:
 //! - Создание файлов базы данных
 //! - Запись и чтение блоков данных
 //! - Управление размерами файлов
 //! - Работу с заголовками файлов
 
-use rustdb::storage::file_manager::{FileManager, BLOCK_SIZE};
 use rustdb::common::Result;
+use rustdb::storage::file_manager::{FileManager, BLOCK_SIZE};
 use tempfile::TempDir;
-
 
 fn main() -> Result<()> {
     println!("=== Пример использования менеджера файлов rustdb ===\n");
@@ -17,8 +16,11 @@ fn main() -> Result<()> {
     // Создаем временную директорию для примера
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path();
-    
-    println!("📁 Создаем менеджер файлов в директории: {}", db_path.display());
+
+    println!(
+        "📁 Создаем менеджер файлов в директории: {}",
+        db_path.display()
+    );
     let mut file_manager = FileManager::new(db_path)?;
 
     // Создаем новый файл базы данных
@@ -37,7 +39,7 @@ fn main() -> Result<()> {
 
     // Создаем тестовые данные для записи
     println!("\n📝 Записываем тестовые данные в блоки:");
-    
+
     // Блок 0: Строковые данные
     let mut block0_data = vec![0u8; BLOCK_SIZE];
     let text = "Привет, мир! Это тест менеджера файлов rustdb.";
@@ -76,10 +78,13 @@ fn main() -> Result<()> {
 
     // Читаем данные обратно
     println!("\n📖 Читаем данные из блоков:");
-    
+
     // Читаем блок 0
     let read_block0 = file_manager.read_block(file_id, 0)?;
-    let text_end = read_block0.iter().position(|&x| x == 0).unwrap_or(text_bytes.len());
+    let text_end = read_block0
+        .iter()
+        .position(|&x| x == 0)
+        .unwrap_or(text_bytes.len());
     let read_text = String::from_utf8_lossy(&read_block0[..text_end]);
     println!("   📄 Блок 0: '{}'", read_text);
 
@@ -95,11 +100,15 @@ fn main() -> Result<()> {
 
     // Проверяем целостность данных
     println!("\n🔍 Проверяем целостность данных:");
-    let block1_valid = read_block1[..256].iter().enumerate()
+    let block1_valid = read_block1[..256]
+        .iter()
+        .enumerate()
         .all(|(i, &byte)| byte == (i % 256) as u8);
     println!("   ✅ Блок 1 корректен: {}", block1_valid);
 
-    let block2_valid = read_block2.iter().enumerate()
+    let block2_valid = read_block2
+        .iter()
+        .enumerate()
         .all(|(i, &byte)| byte == ((i * 7 + 13) % 256) as u8);
     println!("   ✅ Блок 2 корректен: {}", block2_valid);
 
@@ -115,21 +124,27 @@ fn main() -> Result<()> {
 
     // Проверяем, что данные сохранились
     let persistent_block0 = file_manager.read_block(reopened_file_id, 0)?;
-    let persistent_text_end = persistent_block0.iter().position(|&x| x == 0).unwrap_or(text_bytes.len());
+    let persistent_text_end = persistent_block0
+        .iter()
+        .position(|&x| x == 0)
+        .unwrap_or(text_bytes.len());
     let persistent_text = String::from_utf8_lossy(&persistent_block0[..persistent_text_end]);
     println!("   📄 Персистентные данные блока 0: '{}'", persistent_text);
 
     // Демонстрируем работу с несколькими файлами
     println!("\n📚 Создаем второй файл для демонстрации мультифайловой работы");
     let file2_id = file_manager.create_file("second.db")?;
-    
+
     let file2_data = "Это данные во втором файле базы данных!".as_bytes();
     let mut block_data = vec![0u8; BLOCK_SIZE];
     block_data[..file2_data.len()].copy_from_slice(file2_data);
     file_manager.write_block(file2_id, 0, &block_data)?;
-    
+
     let read_file2_data = file_manager.read_block(file2_id, 0)?;
-    let file2_text_end = read_file2_data.iter().position(|&x| x == 0).unwrap_or(file2_data.len());
+    let file2_text_end = read_file2_data
+        .iter()
+        .position(|&x| x == 0)
+        .unwrap_or(file2_data.len());
     let file2_text = String::from_utf8_lossy(&read_file2_data[..file2_text_end]);
     println!("   📄 Данные второго файла: '{}'", file2_text);
 
@@ -200,7 +215,7 @@ mod tests {
 
         // Записываем данные в блоки с большими индексами
         let block_indices = [0, 10, 100, 1000];
-        
+
         for &block_id in &block_indices {
             let data = vec![(block_id % 256) as u8; BLOCK_SIZE];
             file_manager.write_block(file_id, block_id, &data)?;

@@ -336,7 +336,6 @@ pub struct TableOptions {
     pub is_system: bool,
 }
 
-
 /// Таблица с данными
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Table {

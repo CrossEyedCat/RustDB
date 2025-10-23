@@ -1,12 +1,12 @@
 //! Бенчмарки для измерения производительности I/O операций rustdb
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use rustdb::common::types::PAGE_SIZE;
 use rustdb::storage::{
+    database_file::{DatabaseFileType, ExtensionStrategy},
     io_optimization::{BufferedIoManager, IoBufferConfig},
     optimized_file_manager::OptimizedFileManager,
-    database_file::{DatabaseFileType, ExtensionStrategy},
 };
-use rustdb::common::types::PAGE_SIZE;
 use tempfile::TempDir;
 
 /// Бенчмарк базовых операций I/O
@@ -16,8 +16,11 @@ fn bench_basic_io_operations(c: &mut Criterion) {
 
     // Тестируем различные размеры кэша
     for cache_size in [1000, 5000, 10000].iter() {
-        let config = IoBufferConfig { page_cache_size: *cache_size, ..Default::default() };
-        
+        let config = IoBufferConfig {
+            page_cache_size: *cache_size,
+            ..Default::default()
+        };
+
         let manager = BufferedIoManager::new(config);
         let data = vec![42u8; PAGE_SIZE];
 
@@ -52,42 +55,52 @@ fn bench_basic_io_operations(c: &mut Criterion) {
 fn bench_buffered_io_operations(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     let _temp_path = temp_dir.path().join("buffered_test.db");
-    
+
     let mut group = c.benchmark_group("buffered_io");
     group.throughput(Throughput::Bytes(PAGE_SIZE as u64));
 
     // Тестируем различные конфигурации буфера
     let configs = vec![
-        ("small", IoBufferConfig { page_cache_size: 1000, ..Default::default() }),
-        ("medium", IoBufferConfig { page_cache_size: 5000, ..Default::default() }),
-        ("large", IoBufferConfig { page_cache_size: 10000, ..Default::default() }),
+        (
+            "small",
+            IoBufferConfig {
+                page_cache_size: 1000,
+                ..Default::default()
+            },
+        ),
+        (
+            "medium",
+            IoBufferConfig {
+                page_cache_size: 5000,
+                ..Default::default()
+            },
+        ),
+        (
+            "large",
+            IoBufferConfig {
+                page_cache_size: 10000,
+                ..Default::default()
+            },
+        ),
     ];
 
     for (name, config) in configs {
         let manager = BufferedIoManager::new(config);
         let data = vec![0xAB; PAGE_SIZE];
 
-        group.bench_with_input(
-            BenchmarkId::new("write_operation", name),
-            &name,
-            |b, _| {
-                b.iter(|| {
-                    let result = manager.write_page_async(1, 1, data.clone());
-                    std::mem::drop(criterion::black_box(result));
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("write_operation", name), &name, |b, _| {
+            b.iter(|| {
+                let result = manager.write_page_async(1, 1, data.clone());
+                std::mem::drop(criterion::black_box(result));
+            });
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("read_operation", name),
-            &name,
-            |b, _| {
-                b.iter(|| {
-                    let result = manager.read_page_async(1, 1);
-                    std::mem::drop(criterion::black_box(result));
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("read_operation", name), &name, |b, _| {
+            b.iter(|| {
+                let result = manager.read_page_async(1, 1);
+                std::mem::drop(criterion::black_box(result));
+            });
+        });
     }
 
     group.finish();
@@ -97,7 +110,7 @@ fn bench_buffered_io_operations(c: &mut Criterion) {
 fn bench_optimized_file_manager_operations(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     let temp_path = temp_dir.path().join("optimized_test.db");
-    
+
     let mut group = c.benchmark_group("optimized_file_manager");
     group.throughput(Throughput::Bytes(PAGE_SIZE as u64));
 

@@ -269,8 +269,7 @@ impl SchemaManager {
         if !self.is_type_compatible(&old_column.data_type, &new_column.data_type) {
             return Err(Error::validation(format!(
                 "Тип данных {:?} несовместим с {:?}",
-                old_column.data_type,
-                new_column.data_type
+                old_column.data_type, new_column.data_type
             )));
         }
 

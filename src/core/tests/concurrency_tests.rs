@@ -33,7 +33,7 @@ async fn test_write_operation_with_timeout() {
         Err(_) => println!("⚠️ Операция завершилась по таймауту"),
     }
 
- // Тест прошел, если не завис
+    // Тест прошел, если не завис
 }
 
 #[tokio::test]
@@ -58,7 +58,7 @@ async fn test_read_operation_with_timeout() {
         Err(_) => println!("⚠️ Операция завершилась по таймауту"),
     }
 
- // Тест прошел, если не завис
+    // Тест прошел, если не завис
 }
 
 #[tokio::test]
@@ -79,7 +79,7 @@ async fn test_delete_operation_with_timeout() {
         Err(_) => println!("⚠️ Операция завершилась по таймауту"),
     }
 
- // Тест прошел, если не завис
+    // Тест прошел, если не завис
 }
 
 #[tokio::test]
@@ -132,7 +132,7 @@ async fn test_multiple_operations_with_timeout() {
         Err(_) => println!("⚠️ Операции завершились по таймауту"),
     }
 
- // Тест прошел, если не завис
+    // Тест прошел, если не завис
 }
 
 #[tokio::test]
@@ -169,7 +169,7 @@ async fn test_concurrent_transactions_with_timeout() {
         Err(_) => println!("⚠️ Операции завершились по таймауту"),
     }
 
- // Тест прошел, если не завис
+    // Тест прошел, если не завис
 }
 
 #[tokio::test]
@@ -203,5 +203,5 @@ async fn test_lock_conflict_with_timeout() {
         Err(_) => println!("⚠️ Тест завершился по таймауту"),
     }
 
- // Тест прошел, если не завис
+    // Тест прошел, если не завис
 }
