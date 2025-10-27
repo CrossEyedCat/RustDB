@@ -298,7 +298,13 @@ impl BufferedIoManager {
 
         // Запускаем фоновые задачи только если есть runtime
         if tokio::runtime::Handle::try_current().is_ok() {
-            manager.start_background_tasks(request_rx, write_buffer, page_cache, statistics, semaphore);
+            manager.start_background_tasks(
+                request_rx,
+                write_buffer,
+                page_cache,
+                statistics,
+                semaphore,
+            );
         }
 
         manager

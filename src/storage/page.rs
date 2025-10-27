@@ -180,14 +180,15 @@ impl Page {
     /// Создает страницу из байтов (десериализация)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         use bincode;
-        
+
         // Десериализуем компактную структуру
-        let compact_page: CompactPage = bincode::deserialize(bytes).map_err(Error::BincodeSerialization)?;
-        
+        let compact_page: CompactPage =
+            bincode::deserialize(bytes).map_err(Error::BincodeSerialization)?;
+
         // Восстанавливаем data до полного размера PAGE_SIZE
         let mut data = compact_page.data.clone();
         data.resize(PAGE_SIZE, 0);
-        
+
         // Пересчитываем free_space_map
         let mut free_space_map = vec![true; PAGE_SIZE - PAGE_HEADER_SIZE];
         for slot in &compact_page.slots {
@@ -199,7 +200,7 @@ impl Page {
                 }
             }
         }
-        
+
         Ok(Self {
             header: compact_page.header,
             slots: compact_page.slots,
@@ -230,26 +231,29 @@ impl Page {
     /// Сериализует страницу в байты
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         use bincode;
-        
+
         // Определяем максимальный использованный offset
-        let max_offset = self.slots.iter()
+        let max_offset = self
+            .slots
+            .iter()
             .filter(|s| !s.is_deleted)
             .map(|s| s.offset + s.size)
             .max()
             .unwrap_or(PAGE_HEADER_SIZE as u32) as usize;
-        
+
         // Сериализуем только используемую часть data
         let used_data = self.data[..max_offset.min(self.data.len())].to_vec();
-        
+
         // Создаем компактную структуру для сериализации
         let compact_page = CompactPage {
             header: self.header.clone(),
             slots: self.slots.clone(),
             data: used_data,
         };
-        
-        let mut serialized = bincode::serialize(&compact_page).map_err(Error::BincodeSerialization)?;
-        
+
+        let mut serialized =
+            bincode::serialize(&compact_page).map_err(Error::BincodeSerialization)?;
+
         // Проверяем размер
         if serialized.len() > PAGE_SIZE {
             return Err(Error::validation(&format!(
@@ -258,10 +262,10 @@ impl Page {
                 PAGE_SIZE
             )));
         }
-        
+
         // Дополняем нулями до PAGE_SIZE
         serialized.resize(PAGE_SIZE, 0);
-        
+
         Ok(serialized)
     }
 
@@ -495,38 +499,38 @@ impl Page {
     /// Сканирует все записи на странице
     pub fn scan_records(&self) -> Result<Vec<(u32, Vec<u8>)>> {
         let mut records = Vec::new();
-        
+
         for slot in &self.slots {
             if !slot.is_deleted {
                 let start = slot.offset as usize;
                 let end = start + slot.size as usize;
-                
+
                 if end <= self.data.len() {
                     let record_data = self.data[start..end].to_vec();
                     records.push((slot.offset, record_data));
                 }
             }
         }
-        
+
         Ok(records)
     }
 
     /// Получает все записи на странице
     pub fn get_all_records(&self) -> Result<Vec<Vec<u8>>> {
         let mut records = Vec::new();
-        
+
         for slot in &self.slots {
             if !slot.is_deleted {
                 let start = slot.offset as usize;
                 let end = start + slot.size as usize;
-                
+
                 if end <= self.data.len() {
                     let record_data = self.data[start..end].to_vec();
                     records.push(record_data);
                 }
             }
         }
-        
+
         Ok(records)
     }
 
@@ -553,7 +557,6 @@ impl Page {
 
         Ok(())
     }
-
 
     /// Обновляет запись по offset
     pub fn update_record_by_offset(&mut self, offset: u32, new_data: &[u8]) -> Result<()> {
@@ -681,7 +684,6 @@ impl PageManager {
     pub fn contains_page(&self, page_id: PageId) -> bool {
         self.pages.contains_key(&page_id)
     }
-
 }
 
 #[cfg(test)]
@@ -752,4 +754,3 @@ mod tests {
         assert!(manager.contains_page(3));
     }
 }
-
