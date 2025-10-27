@@ -29,8 +29,7 @@ fn bench_basic_io_operations(c: &mut Criterion) {
             cache_size,
             |b, _| {
                 b.iter(|| {
-                    // Простое тестирование без async
-                    let result = manager.write_page_async(1, 1, data.clone());
+                    let result = manager.write_page_sync(1, 1, data.clone());
                     std::mem::drop(criterion::black_box(result));
                 });
             },
@@ -41,7 +40,7 @@ fn bench_basic_io_operations(c: &mut Criterion) {
             cache_size,
             |b, _| {
                 b.iter(|| {
-                    let result = manager.read_page_async(1, 1);
+                    let result = manager.read_page_sync(1, 1);
                     std::mem::drop(criterion::black_box(result));
                 });
             },
@@ -90,14 +89,14 @@ fn bench_buffered_io_operations(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("write_operation", name), &name, |b, _| {
             b.iter(|| {
-                let result = manager.write_page_async(1, 1, data.clone());
+                let result = manager.write_page_sync(1, 1, data.clone());
                 std::mem::drop(criterion::black_box(result));
             });
         });
 
         group.bench_with_input(BenchmarkId::new("read_operation", name), &name, |b, _| {
             b.iter(|| {
-                let result = manager.read_page_async(1, 1);
+                let result = manager.read_page_sync(1, 1);
                 std::mem::drop(criterion::black_box(result));
             });
         });
@@ -159,7 +158,7 @@ fn bench_access_patterns(c: &mut Criterion) {
     group.bench_function("sequential_access", |b| {
         b.iter(|| {
             for i in 0..10 {
-                let result = manager.write_page_async(1, i, data.clone());
+                let result = manager.write_page_sync(1, i, data.clone());
                 std::mem::drop(criterion::black_box(result));
             }
         });
@@ -170,7 +169,7 @@ fn bench_access_patterns(c: &mut Criterion) {
         b.iter(|| {
             let pages = [1, 5, 3, 8, 2, 9, 4, 7, 6, 0];
             for &page_id in &pages {
-                let result = manager.write_page_async(1, page_id, data.clone());
+                let result = manager.write_page_sync(1, page_id, data.clone());
                 std::mem::drop(criterion::black_box(result));
             }
         });
@@ -192,10 +191,10 @@ fn bench_read_write_ratios(c: &mut Criterion) {
         b.iter(|| {
             for i in 0..10 {
                 if i < 9 {
-                    let result = manager.read_page_async(1, i);
+                    let result = manager.read_page_sync(1, i);
                     std::mem::drop(criterion::black_box(result));
                 } else {
-                    let result = manager.write_page_async(1, i, data.clone());
+                    let result = manager.write_page_sync(1, i, data.clone());
                     std::mem::drop(criterion::black_box(result));
                 }
             }
@@ -207,10 +206,10 @@ fn bench_read_write_ratios(c: &mut Criterion) {
         b.iter(|| {
             for i in 0..10 {
                 if i % 2 == 0 {
-                    let result = manager.read_page_async(1, i);
+                    let result = manager.read_page_sync(1, i);
                     std::mem::drop(criterion::black_box(result));
                 } else {
-                    let result = manager.write_page_async(1, i, data.clone());
+                    let result = manager.write_page_sync(1, i, data.clone());
                     std::mem::drop(criterion::black_box(result));
                 }
             }
@@ -222,10 +221,10 @@ fn bench_read_write_ratios(c: &mut Criterion) {
         b.iter(|| {
             for i in 0..10 {
                 if i == 0 {
-                    let result = manager.read_page_async(1, i);
+                    let result = manager.read_page_sync(1, i);
                     std::mem::drop(criterion::black_box(result));
                 } else {
-                    let result = manager.write_page_async(1, i, data.clone());
+                    let result = manager.write_page_sync(1, i, data.clone());
                     std::mem::drop(criterion::black_box(result));
                 }
             }

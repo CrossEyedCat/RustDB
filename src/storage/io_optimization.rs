@@ -296,8 +296,10 @@ impl BufferedIoManager {
             io_handle: None,
         };
 
-        // Запускаем фоновые задачи
-        manager.start_background_tasks(request_rx, write_buffer, page_cache, statistics, semaphore);
+        // Запускаем фоновые задачи только если есть runtime
+        if tokio::runtime::Handle::try_current().is_ok() {
+            manager.start_background_tasks(request_rx, write_buffer, page_cache, statistics, semaphore);
+        }
 
         manager
     }
@@ -445,6 +447,26 @@ impl BufferedIoManager {
         self.update_statistics(IoOperationType::Write, BLOCK_SIZE, false)
             .await;
         Ok(())
+    }
+
+    /// Синхронная обёртка для записи страницы (для использования в бенчмарках)
+    pub fn write_page_sync(&self, file_id: u32, page_id: PageId, data: Vec<u8>) -> Result<()> {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.block_on(self.write_page_async(file_id, page_id, data))
+        } else {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(self.write_page_async(file_id, page_id, data))
+        }
+    }
+
+    /// Синхронная обёртка для чтения страницы (для использования в бенчмарках)
+    pub fn read_page_sync(&self, file_id: u32, page_id: PageId) -> Result<Vec<u8>> {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.block_on(self.read_page_async(file_id, page_id))
+        } else {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(self.read_page_async(file_id, page_id))
+        }
     }
 
     /// Синхронизирует все буферизованные операции записи
