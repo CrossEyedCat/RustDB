@@ -163,7 +163,7 @@ jobs:
         with:
           name: Rust Benchmark
           tool: 'cargo'
-          output-file-path: target/criterion/*/base/estimates.json
+          output-file-path: target/criterion/**/base/estimates.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           comment-on-alert: true

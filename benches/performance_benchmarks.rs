@@ -143,13 +143,31 @@ fn bench_advanced_file_manager_operations(c: &mut Criterion) {
         )
         .unwrap();
 
+    // Предварительно выделяем большое количество страниц для тестирования
+    // чтобы последующие выделения использовали свободные страницы
+    manager.allocate_pages(file_id, 1000).unwrap();
+
     group.bench_function("allocate_pages", |b| {
+        let mut allocated = Vec::new();
         b.iter(|| {
+            // Циклически выделяем и освобождаем страницы
             let pages = manager
                 .allocate_pages(black_box(file_id), black_box(10))
                 .unwrap();
-            let _ = black_box(pages);
+            allocated.push(pages);
+            black_box(&pages);
+            
+            // Освобождаем каждые 50 выделений, чтобы избежать истощения
+            if allocated.len() >= 50 {
+                for page_start in allocated.drain(..) {
+                    let _ = manager.free_pages(file_id, page_start, 10);
+                }
+            }
         });
+        // Освобождаем оставшиеся страницы
+        for page_start in allocated {
+            let _ = manager.free_pages(file_id, page_start, 10);
+        }
     });
 
     // Бенчмарк записи страниц
@@ -252,7 +270,7 @@ criterion_group!(
     benches,
     bench_block_operations,
     bench_file_manager_operations,
-    // bench_advanced_file_manager_operations, // Disabled: causes disk space issues
+    bench_advanced_file_manager_operations,
     bench_extension_strategies,
     bench_memory_operations
 );
