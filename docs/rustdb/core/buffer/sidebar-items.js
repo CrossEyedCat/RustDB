@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["EvictionStrategy"],"fn":["create_shared_buffer_manager"],"struct":["BufferManager","BufferStats","LRUEntry"],"type":["SharedBufferManager"]};

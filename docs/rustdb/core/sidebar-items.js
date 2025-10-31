@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["acid_manager","advanced_lock_manager","buffer","concurrency","lock","mvcc","recovery","recovery_manager","transaction"]};

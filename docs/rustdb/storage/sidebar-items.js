@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["advanced_file_manager","block","database_file","file_manager","index","io_optimization","optimized_file_manager","page","page_manager","row","schema_manager","tuple"]};

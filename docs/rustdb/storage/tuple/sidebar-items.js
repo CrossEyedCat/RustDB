@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ConstraintType","TriggerEvent","TriggerTiming"],"struct":["Constraint","Schema","TableOptions","Trigger","Tuple"]};

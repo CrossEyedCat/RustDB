@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TypeCompatibility","TypeWarningType"],"struct":["TypeCheckError","TypeCheckResult","TypeCheckWarning","TypeChecker"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["LockMode","ResourceType"],"struct":["AdvancedLockConfig","AdvancedLockInfo","AdvancedLockManager","AdvancedLockRequest","AdvancedLockStatistics","AdvancedWaitForGraph"]};

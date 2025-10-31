@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["IsolationLevel","TransactionState"],"struct":["TransactionId","TransactionInfo","TransactionManager","TransactionManagerConfig","TransactionManagerStats"]};

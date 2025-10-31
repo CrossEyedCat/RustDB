@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Language","MessageKey"],"fn":["get_language","set_language","t","t_with_params"],"struct":["I18N","I18nManager"],"type":["LocalizedMessages"]};

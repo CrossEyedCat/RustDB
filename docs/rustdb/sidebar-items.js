@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["VERSION"],"mod":["analyzer","catalog","cli","common","core","debug","executor","logging","network","parser","planner","storage"],"struct":["Database"]};

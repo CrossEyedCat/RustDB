@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["IsolationLevel","LogOperationData","LogPriority","LogRecordType"],"struct":["CheckpointOperation","FileOperation","LogRecord","LogRecordIterator","RecordOperation","TransactionOperation"],"type":["LogSequenceNumber","TransactionId"]};

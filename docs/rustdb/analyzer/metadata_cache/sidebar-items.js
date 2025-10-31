@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CacheData","EvictionStrategy"],"fn":["current_timestamp_ms"],"struct":["CacheEntry","CacheSettings","CacheStatistics","ColumnInfo","MetadataCache"]};

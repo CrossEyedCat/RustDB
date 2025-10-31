@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["OptimizationResult","OptimizationStatistics","OptimizerSettings","QueryOptimizer"]};

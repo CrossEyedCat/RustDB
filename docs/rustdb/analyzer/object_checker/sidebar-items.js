@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ObjectType"],"struct":["ObjectCheckResult","ObjectChecker","ObjectMetadata"]};

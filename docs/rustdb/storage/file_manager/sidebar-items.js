@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BLOCK_SIZE"],"struct":["DatabaseFile","FileHeader","FileManager"],"type":["FileId"]};

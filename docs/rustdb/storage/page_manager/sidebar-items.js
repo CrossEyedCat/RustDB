@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["DeleteResult","InsertResult","PageInfo","PageManager","PageManagerConfig","PageManagerStatistics","UpdateResult"]};

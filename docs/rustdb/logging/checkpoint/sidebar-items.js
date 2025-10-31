@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CheckpointCommand","CheckpointTrigger"],"struct":["CheckpointConfig","CheckpointInfo","CheckpointManager","CheckpointStatistics"]};

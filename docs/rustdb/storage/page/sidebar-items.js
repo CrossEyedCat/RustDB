@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PageType"],"struct":["CompactPage","Page","PageHeader","PageManager","RecordSlot"]};
