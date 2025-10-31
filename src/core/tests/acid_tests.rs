@@ -30,14 +30,22 @@ async fn create_test_acid_manager() -> AcidManager {
     let wal = Arc::new(WriteAheadLog::new(wal_config).await.unwrap());
 
     // Создаем уникальную временную директорию для каждого теста
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
     let test_id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let temp_dir = std::env::temp_dir().join(format!("rustdb_test_{}", test_id));
+    let unique_id = format!("{}_{}", test_id, counter);
+    let temp_dir = std::env::temp_dir().join(format!("rustdb_test_{}", unique_id));
+    
+    // Создаем уникальное имя таблицы для каждого теста
+    let table_name = format!("test_table_{}", unique_id);
+    
     let page_manager_config = crate::storage::page_manager::PageManagerConfig::default();
     let page_manager =
-        Arc::new(PageManager::new(temp_dir, "test_table", page_manager_config).unwrap());
+        Arc::new(PageManager::new(temp_dir, &table_name, page_manager_config).unwrap());
 
     AcidManager::new(config, lock_manager, wal, page_manager).unwrap()
 }

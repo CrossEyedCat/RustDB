@@ -11,7 +11,7 @@ documentation = "https://crosseyedcat.github.io/RustDB/docs"
 readme = "README.md"
 keywords = ["database", "sql", "relational", "rust", "storage"]
 categories = ["database", "database-implementations"]
-rust-version = "1.70.0"
+rust-version = "1.81.0"
 exclude = [
     ".github/",
     "target/",

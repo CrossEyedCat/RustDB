@@ -205,17 +205,106 @@ impl Block {
 
     /// Создает блок из байтов (десериализация)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        // TODO: Реализовать полную десериализацию
-        if bytes.len() < 64 {
-            return Err(Error::validation("Неверный размер блока"));
+        use std::io::Cursor;
+        
+        // Минимальная проверка будет сделана после вычисления header_size
+
+        // Десериализуем заголовок
+        // Сначала пытаемся десериализовать напрямую из начала массива
+        // bincode с default config может попытаться прочитать больше, чем нужно
+        // Поэтому используем Cursor для контроля позиции чтения
+        // Определяем размер заголовка, сериализуя тестовый заголовок
+        let test_header = BlockHeader::new(0, BlockType::Data, 0);
+        let test_header_bytes = bincode::serialize(&test_header)
+            .map_err(|e| Error::BincodeSerialization(Box::new(*e)))?;
+        let header_size = test_header_bytes.len();
+        
+        if bytes.len() < header_size {
+            return Err(Error::validation(&format!(
+                "Неверный размер блока: требуется минимум {} байт, получено {}",
+                header_size,
+                bytes.len()
+            )));
         }
 
-        // Временная реализация
-        let block_id = 0;
-        let block_type = BlockType::Data;
-        let size = bytes.len() as u32;
+        // Десериализуем заголовок из начала массива
+        let mut cursor = Cursor::new(&bytes[..header_size]);
+        
+        let header: BlockHeader = bincode::deserialize_from(&mut cursor)
+            .map_err(Error::from)?;
 
-        Ok(Self::new(block_id, block_type, size))
+        // Получаем позицию после чтения заголовка
+        // Если использовали прямой десериализацию, нужно определить размер заголовка
+        let header_end = header_size;
+
+        // Проверяем, достаточно ли данных для чтения количества страниц
+        if bytes.len() < header_end + 4 {
+            return Err(Error::validation(&format!(
+                "Неверный размер блока: требуется минимум {} байт, получено {}",
+                header_end + 4,
+                bytes.len()
+            )));
+        }
+
+        // Читаем количество страниц
+        let page_count = u32::from_le_bytes([
+            bytes[header_end],
+            bytes[header_end + 1],
+            bytes[header_end + 2],
+            bytes[header_end + 3],
+        ]);
+
+        // Десериализуем страницы
+        let mut pages = HashMap::new();
+        let mut offset = header_end + 4;
+
+        for _ in 0..page_count {
+            if offset + 12 > bytes.len() {
+                return Err(Error::validation("Неверный размер блока: недостаточно данных для страницы"));
+            }
+
+            // Читаем page_id (u64, 8 байт)
+            let page_id = u64::from_le_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+                bytes[offset + 4],
+                bytes[offset + 5],
+                bytes[offset + 6],
+                bytes[offset + 7],
+            ]);
+
+            // Читаем размер данных страницы (u32, 4 байта)
+            let page_data_len = u32::from_le_bytes([
+                bytes[offset + 8],
+                bytes[offset + 9],
+                bytes[offset + 10],
+                bytes[offset + 11],
+            ]) as usize;
+
+            offset += 12;
+
+            // Проверяем, достаточно ли данных
+            if offset + page_data_len > bytes.len() {
+                return Err(Error::validation("Неверный размер блока: недостаточно данных для страницы"));
+            }
+
+            // Читаем данные страницы
+            let page_data = bytes[offset..offset + page_data_len].to_vec();
+            pages.insert(page_id, page_data);
+            offset += page_data_len;
+        }
+
+        // Создаем блок
+        let block = Self {
+            header,
+            pages,
+            links: BlockLinks::new(),
+            metadata: HashMap::new(),
+        };
+
+        Ok(block)
     }
 }
 
@@ -427,5 +516,25 @@ mod tests {
 
         assert!(manager.contains_block(2));
         assert!(manager.contains_block(3));
+    }
+
+    #[test]
+    fn test_block_serialization_deserialization() {
+        use crate::common::types::PAGE_SIZE;
+        let block = Block::new(1, BlockType::Data, PAGE_SIZE as u32);
+        let block_data = block.to_bytes().unwrap();
+        println!("Serialized block size: {}", block_data.len());
+        match Block::from_bytes(&block_data) {
+            Ok(deserialized) => {
+                assert_eq!(deserialized.header.block_id, block.header.block_id);
+                assert_eq!(deserialized.header.block_type, block.header.block_type);
+                assert_eq!(deserialized.header.size, block.header.size);
+                assert_eq!(deserialized.pages.len(), block.pages.len());
+            }
+            Err(e) => {
+                println!("Deserialization error: {:?}", e);
+                panic!("Failed to deserialize: {:?}", e);
+            }
+        }
     }
 }
