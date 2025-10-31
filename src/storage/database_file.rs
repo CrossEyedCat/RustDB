@@ -533,7 +533,7 @@ impl FreePageMap {
 
     /// Создает битовую карту для быстрого поиска
     pub fn create_bitmap(&mut self, total_pages: u64) {
-        let bitmap_size = ((total_pages + 7) / 8) as usize;
+        let bitmap_size = total_pages.div_ceil(8) as usize;
         let mut bitmap = vec![0u8; bitmap_size];
 
         // Отмечаем свободные страницы в битовой карте

@@ -178,8 +178,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Rust 1.70.0 (MSRV)
-        uses: dtolnay/rust-toolchain@1.70.0
+      - name: Setup Rust 1.81.0 (MSRV)
+        uses: dtolnay/rust-toolchain@1.81.0
 
       - name: Setup cache
         uses: Swatinem/rust-cache@v2

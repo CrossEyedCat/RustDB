@@ -6,7 +6,7 @@ use rustdb::storage::{
     advanced_file_manager::AdvancedFileManager,
     block::{Block, BlockType},
     database_file::{DatabaseFileType, ExtensionStrategy},
-    file_manager::FileManager,
+    file_manager::{FileManager, BLOCK_SIZE},
 };
 // use rustdb::storage::block::BlockId; // unused
 use tempfile::TempDir;
@@ -52,37 +52,39 @@ fn bench_file_manager_operations(c: &mut Criterion) {
     // Бенчмарк создания файлового менеджера
     group.bench_function("create_file_manager", |b| {
         b.iter(|| {
+            let temp_dir = TempDir::new().unwrap();
+            let temp_path = temp_dir.path().join("test.db");
             let file_manager = FileManager::new(temp_path.clone());
             let _ = black_box(file_manager);
         });
     });
 
     // Бенчмарк создания файла
-    let mut file_manager = FileManager::new(temp_path.clone()).unwrap();
     group.bench_function("create_file", |b| {
         b.iter(|| {
+            let temp_dir = TempDir::new().unwrap();
+            let temp_path = temp_dir.path().join("test.db");
+            let mut file_manager = FileManager::new(temp_path.clone()).unwrap();
             let file_id = file_manager.create_file("benchmark.dat").unwrap();
             black_box(file_id);
         });
     });
 
-    // Бенчмарк записи блока
-    let file_id = file_manager.create_file("benchmark.dat").unwrap();
-    let test_block = Block::new(1, BlockType::Data, PAGE_SIZE as u32);
-    let _test_data = vec![0xAB; PAGE_SIZE];
+    // Подготовка данных для бенчмарков записи и чтения
+    let mut file_manager = FileManager::new(temp_path.clone()).unwrap();
+    let file_id = file_manager.create_file("test_file.dat").unwrap();
+    let test_block_data = vec![0xAB; BLOCK_SIZE];
 
     group.bench_function("write_block", |b| {
         b.iter(|| {
-            let block_data = test_block.to_bytes().unwrap();
             file_manager
-                .write_block(black_box(file_id), black_box(1), black_box(&block_data))
+                .write_block(black_box(file_id), black_box(1), black_box(&test_block_data))
                 .unwrap();
         });
     });
 
     // Бенчмарк чтения блока
-    let block_data = test_block.to_bytes().unwrap();
-    file_manager.write_block(file_id, 1, &block_data).unwrap();
+    file_manager.write_block(file_id, 1, &test_block_data).unwrap();
 
     group.bench_function("read_block", |b| {
         b.iter(|| {
@@ -105,15 +107,19 @@ fn bench_advanced_file_manager_operations(c: &mut Criterion) {
     // Бенчмарк создания продвинутого файлового менеджера
     group.bench_function("create_advanced_file_manager", |b| {
         b.iter(|| {
+            let temp_dir = TempDir::new().unwrap();
+            let temp_path = temp_dir.path().join("advanced_test.db");
             let manager = AdvancedFileManager::new(temp_path.clone());
             let _ = black_box(manager);
         });
     });
 
     // Бенчмарк создания файла базы данных
-    let mut manager = AdvancedFileManager::new(temp_path.clone()).unwrap();
     group.bench_function("create_database_file", |b| {
         b.iter(|| {
+            let temp_dir = TempDir::new().unwrap();
+            let temp_path = temp_dir.path().join("advanced_test.db");
+            let mut manager = AdvancedFileManager::new(temp_path.clone()).unwrap();
             let file_id = manager
                 .create_database_file(
                     "benchmark.db",
@@ -126,10 +132,11 @@ fn bench_advanced_file_manager_operations(c: &mut Criterion) {
         });
     });
 
-    // Бенчмарк выделения страниц
+    // Подготовка данных для остальных бенчмарков
+    let mut manager = AdvancedFileManager::new(temp_path.clone()).unwrap();
     let file_id = manager
         .create_database_file(
-            "benchmark.db",
+            "test_file.db",
             DatabaseFileType::Data,
             1,
             ExtensionStrategy::Linear,
@@ -173,9 +180,6 @@ fn bench_advanced_file_manager_operations(c: &mut Criterion) {
 }
 
 fn bench_extension_strategies(c: &mut Criterion) {
-    let temp_dir = TempDir::new().unwrap();
-    let temp_path = temp_dir.path().join("strategy_test.db");
-
     let strategies = vec![
         ("fixed", ExtensionStrategy::Fixed),
         ("linear", ExtensionStrategy::Linear),
@@ -191,6 +195,8 @@ fn bench_extension_strategies(c: &mut Criterion) {
             &strategy,
             |b, strategy| {
                 b.iter(|| {
+                    let temp_dir = TempDir::new().unwrap();
+                    let temp_path = temp_dir.path().join("strategy_test.db");
                     let mut manager = AdvancedFileManager::new(temp_path.clone()).unwrap();
                     let file_id = manager
                         .create_database_file(
@@ -246,7 +252,7 @@ criterion_group!(
     benches,
     bench_block_operations,
     bench_file_manager_operations,
-    bench_advanced_file_manager_operations,
+    // bench_advanced_file_manager_operations, // Disabled: causes disk space issues
     bench_extension_strategies,
     bench_memory_operations
 );

@@ -269,16 +269,17 @@ impl StorageConfig {
 
 impl LoggingConfig {
     fn merge(mut self, other: Self) -> Self {
-        if other.level != "info" {
+        let default = Self::default();
+        if other.level != default.level {
             self.level = other.level;
         }
-        if other.file != PathBuf::from("./logs/rustdb.log") {
+        if other.file != default.file {
             self.file = other.file;
         }
-        if other.max_file_size != "100MB" {
+        if other.max_file_size != default.max_file_size {
             self.max_file_size = other.max_file_size;
         }
-        if other.max_files != 10 {
+        if other.max_files != default.max_files {
             self.max_files = other.max_files;
         }
         self

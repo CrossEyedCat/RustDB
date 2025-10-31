@@ -83,7 +83,7 @@ pub fn calculate_pages_needed(data_size: usize, page_size: usize) -> usize {
         return 0;
     }
 
-    (data_size + max_record_size - 1) / max_record_size
+    data_size.div_ceil(max_record_size)
 }
 
 /// Вычисляет оптимальный размер страницы для заданного размера данных
