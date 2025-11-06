@@ -155,7 +155,7 @@ fn main() -> Result<()> {
 
     // Пример 8: Различные типы условий индекса
     println!("8. Различные типы условий индекса:");
-    let conditions = vec![
+    let conditions = [
         IndexCondition {
             column: "id".to_string(),
             operator: IndexOperator::Equal,
