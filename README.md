@@ -38,38 +38,6 @@ Create a fully functional relational database with support for SQL-like query la
 - **Statistics** - information about data distribution
 - **Access Rights** - user and permission management
 
-## 🚀 Main Components for Implementation
-
-### Phase 1: Basic Infrastructure
-- [ ] Data structures for pages and blocks
-- [ ] Buffer manager with LRU caching
-- [ ] Basic file manager
-- [ ] Simple logging system
-
-### Phase 2: Data Storage
-- [ ] Table structures (Tuple, Schema)
-- [ ] Page manager with CRUD operations support
-- [ ] Basic indexes (B+ tree)
-- [ ] Transaction manager with simple 2PL
-
-### Phase 3: Parsing and Planning
-- [ ] SQL lexical and syntax analyzer
-- [ ] AST construction for queries
-- [ ] Simple query planner
-- [ ] Basic execution operators
-
-### Phase 4: Query Execution
-- [ ] Table scan operators
-- [ ] Join operators
-- [ ] Aggregation and sort operators
-- [ ] Simple query optimization
-
-### Phase 5: Advanced Features
-- [ ] ACID transaction support
-- [ ] Recovery system
-- [ ] Concurrent access management
-- [ ] Complex query optimization
-
 ## 🚀 Quick Start
 
 ### Requirements
