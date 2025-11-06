@@ -156,38 +156,34 @@ jobs:
           cache-on-failure: true
 
       - name: Run benchmarks
-        run: cargo bench
+        run: cargo bench --bench performance_benchmarks --bench benchmarks --bench io_benchmarks || cargo bench
 
       - name: Verify benchmark results
-        id: verify-benchmarks
         run: |
           # Verify that benchmark files were created
           if [ ! -d "target/criterion" ]; then
             echo "Error: target/criterion directory not found"
             exit 1
           fi
-          # Find the first estimates.json file to use as reference
-          first_estimate=$(find target/criterion -name "estimates.json" -path "*/base/*" 2>/dev/null | head -1)
-          if [ -z "$first_estimate" ]; then
-            echo "Error: No estimates.json files found in target/criterion"
-            echo "Listing target/criterion structure:"
-            find target/criterion -type f -name "*.json" | head -20 || true
-            exit 1
-          fi
           # Count estimate files
           estimate_count=$(find target/criterion -name "estimates.json" -path "*/base/*" 2>/dev/null | wc -l)
+          if [ "$estimate_count" -eq 0 ]; then
+            echo "Error: No estimates.json files found in target/criterion"
+            echo "Listing target/criterion structure:"
+            find target/criterion -type d | head -20 || true
+            exit 1
+          fi
           echo "Found $estimate_count benchmark result files"
-          echo "Using reference file: $first_estimate"
-          # Extract the directory path (parent of estimates.json)
-          estimate_dir=$(dirname "$first_estimate")
-          echo "estimate_dir=$estimate_dir" >> $GITHUB_OUTPUT
+          echo "Sample benchmark directory structure:"
+          ls -la target/criterion/ | head -10
+          echo "Sample estimates.json content (first 5 lines):"
+          find target/criterion -name "estimates.json" -path "*/base/*" | head -1 | xargs head -5 || true
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: Rust Benchmark
           tool: 'cargo'
-          output-file-path: ${{ steps.verify-benchmarks.outputs.estimate_dir }}/estimates.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           comment-on-alert: true
