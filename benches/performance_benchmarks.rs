@@ -78,13 +78,19 @@ fn bench_file_manager_operations(c: &mut Criterion) {
     group.bench_function("write_block", |b| {
         b.iter(|| {
             file_manager
-                .write_block(black_box(file_id), black_box(1), black_box(&test_block_data))
+                .write_block(
+                    black_box(file_id),
+                    black_box(1),
+                    black_box(&test_block_data),
+                )
                 .unwrap();
         });
     });
 
     // Бенчмарк чтения блока
-    file_manager.write_block(file_id, 1, &test_block_data).unwrap();
+    file_manager
+        .write_block(file_id, 1, &test_block_data)
+        .unwrap();
 
     group.bench_function("read_block", |b| {
         b.iter(|| {
@@ -156,7 +162,7 @@ fn bench_advanced_file_manager_operations(c: &mut Criterion) {
                 .unwrap();
             allocated.push(pages);
             black_box(&pages);
-            
+
             // Освобождаем каждые 50 выделений, чтобы избежать истощения
             if allocated.len() >= 50 {
                 for page_start in allocated.drain(..) {

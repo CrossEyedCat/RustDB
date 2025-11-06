@@ -206,7 +206,7 @@ impl Block {
     /// Создает блок из байтов (десериализация)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         use std::io::Cursor;
-        
+
         // Минимальная проверка будет сделана после вычисления header_size
 
         // Десериализуем заголовок
@@ -218,7 +218,7 @@ impl Block {
         let test_header_bytes = bincode::serialize(&test_header)
             .map_err(|e| Error::BincodeSerialization(Box::new(*e)))?;
         let header_size = test_header_bytes.len();
-        
+
         if bytes.len() < header_size {
             return Err(Error::validation(&format!(
                 "Неверный размер блока: требуется минимум {} байт, получено {}",
@@ -229,9 +229,8 @@ impl Block {
 
         // Десериализуем заголовок из начала массива
         let mut cursor = Cursor::new(&bytes[..header_size]);
-        
-        let header: BlockHeader = bincode::deserialize_from(&mut cursor)
-            .map_err(Error::from)?;
+
+        let header: BlockHeader = bincode::deserialize_from(&mut cursor).map_err(Error::from)?;
 
         // Получаем позицию после чтения заголовка
         // Если использовали прямой десериализацию, нужно определить размер заголовка
@@ -260,7 +259,9 @@ impl Block {
 
         for _ in 0..page_count {
             if offset + 12 > bytes.len() {
-                return Err(Error::validation("Неверный размер блока: недостаточно данных для страницы"));
+                return Err(Error::validation(
+                    "Неверный размер блока: недостаточно данных для страницы",
+                ));
             }
 
             // Читаем page_id (u64, 8 байт)
@@ -287,7 +288,9 @@ impl Block {
 
             // Проверяем, достаточно ли данных
             if offset + page_data_len > bytes.len() {
-                return Err(Error::validation("Неверный размер блока: недостаточно данных для страницы"));
+                return Err(Error::validation(
+                    "Неверный размер блока: недостаточно данных для страницы",
+                ));
             }
 
             // Читаем данные страницы

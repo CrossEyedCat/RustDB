@@ -39,10 +39,10 @@ async fn create_test_acid_manager() -> AcidManager {
         .as_nanos();
     let unique_id = format!("{}_{}", test_id, counter);
     let temp_dir = std::env::temp_dir().join(format!("rustdb_test_{}", unique_id));
-    
+
     // Создаем уникальное имя таблицы для каждого теста
     let table_name = format!("test_table_{}", unique_id);
-    
+
     let page_manager_config = crate::storage::page_manager::PageManagerConfig::default();
     let page_manager =
         Arc::new(PageManager::new(temp_dir, &table_name, page_manager_config).unwrap());
