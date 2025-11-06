@@ -1,189 +1,189 @@
-# RustDB - Реализация реляционной базы данных на Rust
+# RustDB - Relational Database Implementation in Rust
 
-Этот проект представляет собой реализацию собственной реляционной базы данных на языке Rust.
+This project is an implementation of a custom relational database in Rust.
 
-## 🎯 Цель проекта
+## 🎯 Project Goal
 
-Создать полнофункциональную реляционную базу данных с поддержкой SQL-подобного языка запросов, ACID транзакций и эффективным хранением данных.
+Create a fully functional relational database with support for SQL-like query language, ACID transactions, and efficient data storage.
 
-## 🏗️ Архитектура системы
+## 🏗️ System Architecture
 
-### 1. Ядро базы данных (Core)
-- **Менеджер памяти** - управление буферами и кэшированием
-- **Менеджер транзакций** - обеспечение ACID свойств
-- **Менеджер блокировок** - управление конкурентным доступом
-- **Менеджер восстановления** - логирование и восстановление после сбоев
+### 1. Database Core
+- **Memory Manager** - buffer and cache management
+- **Transaction Manager** - ensuring ACID properties
+- **Lock Manager** - managing concurrent access
+- **Recovery Manager** - logging and recovery after failures
 
-### 2. Хранилище данных (Storage)
-- **Менеджер страниц** - работа с блоками данных на диске
-- **Менеджер файлов** - организация файловой структуры БД
-- **Менеджер индексов** - B+ деревья, хеш-индексы
-- **Менеджер таблиц** - структуры данных для хранения таблиц
+### 2. Data Storage
+- **Page Manager** - working with data blocks on disk
+- **File Manager** - organizing database file structure
+- **Index Manager** - B+ trees, hash indexes
+- **Table Manager** - data structures for storing tables
 
-### 3. Парсер и планировщик (Parser & Planner)
-- **Лексический анализатор** - токенизация SQL запросов
-- **Синтаксический анализатор** - построение AST
-- **Семантический анализатор** - проверка корректности запросов
-- **Оптимизатор запросов** - выбор оптимального плана выполнения
-- **Планировщик** - создание плана выполнения запросов
+### 3. Parser and Planner
+- **Lexical Analyzer** - SQL query tokenization
+- **Syntax Analyzer** - building AST
+- **Semantic Analyzer** - query correctness validation
+- **Query Optimizer** - selecting optimal execution plan
+- **Planner** - creating query execution plans
 
-### 4. Исполнитель запросов (Executor)
-- **Операторы сканирования** - TableScan, IndexScan
-- **Операторы соединения** - NestedLoop, HashJoin, MergeJoin
-- **Операторы агрегации** - GroupBy, Aggregate
-- **Операторы сортировки** - OrderBy, TopK
+### 4. Query Executor
+- **Scan Operators** - TableScan, IndexScan
+- **Join Operators** - NestedLoop, HashJoin, MergeJoin
+- **Aggregation Operators** - GroupBy, Aggregate
+- **Sort Operators** - OrderBy, TopK
 
-### 5. Каталог метаданных (Catalog)
-- **Схема базы данных** - информация о таблицах, колонках, индексах
-- **Статистика** - информация о распределении данных
-- **Права доступа** - управление пользователями и разрешениями
+### 5. Metadata Catalog
+- **Database Schema** - information about tables, columns, indexes
+- **Statistics** - information about data distribution
+- **Access Rights** - user and permission management
 
-## 🚀 Основные компоненты для реализации
+## 🚀 Main Components for Implementation
 
-### Фаза 1: Базовая инфраструктура
-- [ ] Структуры данных для страниц и блоков
-- [ ] Менеджер буферов с LRU кэшированием
-- [ ] Базовый менеджер файлов
-- [ ] Простая система логирования
+### Phase 1: Basic Infrastructure
+- [ ] Data structures for pages and blocks
+- [ ] Buffer manager with LRU caching
+- [ ] Basic file manager
+- [ ] Simple logging system
 
-### Фаза 2: Хранение данных
-- [ ] Структуры таблиц (Tuple, Schema)
-- [ ] Менеджер страниц с поддержкой CRUD операций
-- [ ] Базовые индексы (B+ дерево)
-- [ ] Менеджер транзакций с простым 2PL
+### Phase 2: Data Storage
+- [ ] Table structures (Tuple, Schema)
+- [ ] Page manager with CRUD operations support
+- [ ] Basic indexes (B+ tree)
+- [ ] Transaction manager with simple 2PL
 
-### Фаза 3: Парсинг и планирование
-- [ ] Лексический и синтаксический анализатор SQL
-- [ ] Построение AST для запросов
-- [ ] Простой планировщик запросов
-- [ ] Базовые операторы выполнения
+### Phase 3: Parsing and Planning
+- [ ] SQL lexical and syntax analyzer
+- [ ] AST construction for queries
+- [ ] Simple query planner
+- [ ] Basic execution operators
 
-### Фаза 4: Выполнение запросов
-- [ ] Операторы сканирования таблиц
-- [ ] Операторы соединения
-- [ ] Операторы агрегации и сортировки
-- [ ] Оптимизация простых запросов
+### Phase 4: Query Execution
+- [ ] Table scan operators
+- [ ] Join operators
+- [ ] Aggregation and sort operators
+- [ ] Simple query optimization
 
-### Фаза 5: Продвинутые функции
-- [ ] Поддержка ACID транзакций
-- [ ] Система восстановления
-- [ ] Управление конкурентным доступом
-- [ ] Оптимизация сложных запросов
+### Phase 5: Advanced Features
+- [ ] ACID transaction support
+- [ ] Recovery system
+- [ ] Concurrent access management
+- [ ] Complex query optimization
 
-## 🚀 Быстрый старт
+## 🚀 Quick Start
 
-### Требования
-- **Rust 1.70+** - для основного кода
-- **Cargo** - для управления зависимостями
+### Requirements
+- **Rust 1.70+** - for main code
+- **Cargo** - for dependency management
 
-### Установка и запуск
+### Installation and Running
 ```bash
-# Клонирование репозитория
+# Clone repository
 git clone <your-repo-url>
 cd RustDB
 
-# Сборка проекта
+# Build project
 cargo build
 
-# Запуск CLI
+# Run CLI
 cargo run -- --help
 
-# Показать информацию о БД
+# Show database information
 cargo run -- info
 
-# Запуск тестов
+# Run tests
 cargo test
 ```
 
-## 🛠️ Технические требования
+## 🛠️ Technical Requirements
 
-### Язык программирования
-- **Rust** - для основного кода
-- **Cargo** - для управления зависимостями
+### Programming Language
+- **Rust** - for main code
+- **Cargo** - for dependency management
 
-### Основные зависимости
-- `serde` - сериализация/десериализация
-- `tokio` - асинхронное выполнение
-- `clap` - CLI интерфейс
-- `log` - логирование
-- `anyhow` - обработка ошибок
+### Main Dependencies
+- `serde` - serialization/deserialization
+- `tokio` - asynchronous execution
+- `clap` - CLI interface
+- `log` - logging
+- `anyhow` - error handling
 
-### Структура проекта
+### Project Structure
 ```
 src/
-├── core/           # Ядро БД
-├── storage/        # Хранилище данных
-├── parser/         # Парсер SQL
-├── planner/        # Планировщик запросов
-├── executor/       # Исполнитель запросов
-├── catalog/        # Метаданные
-├── network/        # Сетевой слой (опционально)
-└── main.rs         # Точка входа
+├── core/           # Database core
+├── storage/        # Data storage
+├── parser/         # SQL parser
+├── planner/        # Query planner
+├── executor/       # Query executor
+├── catalog/        # Metadata
+├── network/        # Network layer (optional)
+└── main.rs         # Entry point
 ```
 
-## 📚 Документация
+## 📚 Documentation
 
-- [Архитектура системы](ARCHITECTURE.md)
-- [Руководство по архитектуре](ARCHITECTURE_GUIDE.md)
-- [Руководство по разработке](DEVELOPMENT.md)
-- [Стандарты кодирования](CODING_STANDARDS.md)
-- [API справочник](API_REFERENCE.md)
-- [Примеры использования](EXAMPLES.md)
-- [Руководство по rustdoc](RUSTDOC_GUIDE.md)
-- [Руководство по тестированию](TESTING_GUIDE.md)
-- [Руководство по CI/CD](CI_CD_GUIDE.md)
-- [Руководство по развертыванию](DEPLOYMENT.md)
-- [Руководство по вкладу](CONTRIBUTING.md)
+- [System Architecture](ARCHITECTURE.md)
+- [Architecture Guide](ARCHITECTURE_GUIDE.md)
+- [Development Guide](DEVELOPMENT.md)
+- [Coding Standards](CODING_STANDARDS.md)
+- [API Reference](API_REFERENCE.md)
+- [Usage Examples](EXAMPLES.md)
+- [Rustdoc Guide](RUSTDOC_GUIDE.md)
+- [Testing Guide](TESTING_GUIDE.md)
+- [CI/CD Guide](CI_CD_GUIDE.md)
+- [Deployment Guide](DEPLOYMENT.md)
+- [Contributing Guide](CONTRIBUTING.md)
 
-## 📚 Образовательные ресурсы
+## 📚 Educational Resources
 
-### Книги
+### Books
 - "Database System Concepts" - Silberschatz, Korth, Sudarshan
 - "Database Management Systems" - Raghu Ramakrishnan, Johannes Gehrke
 - "Transaction Processing: Concepts and Techniques" - Jim Gray, Andreas Reuter
 
-### Статьи и документы
-- Архитектура PostgreSQL
-- Архитектура MySQL InnoDB
-- Документация по B+ деревьям
-- Алгоритмы соединения таблиц
+### Articles and Documents
+- PostgreSQL Architecture
+- MySQL InnoDB Architecture
+- B+ Tree Documentation
+- Table Join Algorithms
 
-## 🎯 Критерии успеха
+## 🎯 Success Criteria
 
-- [ ] Поддержка базовых SQL операций (SELECT, INSERT, UPDATE, DELETE)
-- [ ] ACID транзакции
-- [ ] Эффективные индексы
-- [ ] Оптимизация запросов
-- [ ] Обработка конкурентных запросов
-- [ ] Восстановление после сбоев
+- [ ] Support for basic SQL operations (SELECT, INSERT, UPDATE, DELETE)
+- [ ] ACID transactions
+- [ ] Efficient indexes
+- [ ] Query optimization
+- [ ] Concurrent query processing
+- [ ] Recovery after failures
 
-## 🚧 Текущий статус
+## 🚧 Current Status
 
-Проект находится на начальной стадии разработки.
+The project is in the early stages of development.
 
-### ✅ Что уже реализовано:
-- **Базовая структура проекта** с модульной архитектурой
-- **Система обработки ошибок** с использованием thiserror
-- **Базовые типы данных** (DataType, Column, Schema, Row)
-- **Утилиты** для валидации и вычислений
-- **CLI интерфейс** с базовыми командами
-- **Тестовая инфраструктура** с 10 проходящими тестами
-- **Заглушки для всех основных модулей** согласно архитектуре
+### ✅ What's Already Implemented:
+- **Basic project structure** with modular architecture
+- **Error handling system** using thiserror
+- **Basic data types** (DataType, Column, Schema, Row)
+- **Utilities** for validation and calculations
+- **CLI interface** with basic commands
+- **Test infrastructure** with 10 passing tests
+- **Stubs for all main modules** according to architecture
 
-### 🔄 Следующие шаги:
-1. **Реализация менеджера буферов** с LRU кэшированием
-2. **Создание структур страниц** и блоков данных
-3. **Реализация менеджера файлов** для работы с диском
-4. **Добавление системы логирования** и мониторинга
+### 🔄 Next Steps:
+1. **Buffer manager implementation** with LRU caching
+2. **Creating page structures** and data blocks
+3. **File manager implementation** for disk operations
+4. **Adding logging system** and monitoring
 
-## 🤝 Вклад в проект
+## 🤝 Contributing
 
-Приветствуются любые вклады! Пожалуйста, создавайте issues для обсуждения новых функций и отправляйте pull requests с улучшениями.
+Contributions are welcome! Please create issues to discuss new features and submit pull requests with improvements.
 
-## 📄 Лицензия
+## 📄 License
 
 MIT License
 
 ---
 
-**Примечание**: Это образовательный проект для изучения внутреннего устройства реляционных баз данных. Не рекомендуется использовать в продакшене.
+**Note**: This is an educational project for learning the internals of relational databases. Not recommended for production use.

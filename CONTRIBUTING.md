@@ -1,77 +1,77 @@
-# Руководство по участию в проекте RustDB
+# RustDB Contributing Guide
 
-Спасибо за ваш интерес к участию в проекте RustDB! Мы приветствуем любые вклады в развитие проекта.
+Thank you for your interest in contributing to RustDB! We welcome any contributions to the project's development.
 
-## 📋 Кодекс поведения
+## 📋 Code of Conduct
 
-Участвуя в этом проекте, вы соглашаетесь соблюдать наш кодекс поведения. Пожалуйста, будьте уважительными и конструктивными в общении.
+By participating in this project, you agree to abide by our code of conduct. Please be respectful and constructive in communication.
 
-## 🚀 Как внести вклад
+## 🚀 How to Contribute
 
-### 1. Сообщения об ошибках
+### 1. Bug Reports
 
-Если вы нашли ошибку:
-1. Проверьте, нет ли уже открытого issue с этой проблемой
-2. Создайте новый issue, используя шаблон "Bug Report"
-3. Предоставьте максимально подробную информацию для воспроизведения
+If you found a bug:
+1. Check if there's already an open issue with this problem
+2. Create a new issue using the "Bug Report" template
+3. Provide as much detail as possible for reproduction
 
-### 2. Предложения функций
+### 2. Feature Proposals
 
-Для предложения новых функций:
-1. Создайте issue с шаблоном "Feature Request"
-2. Опишите проблему, которую решает функция
-3. Предложите возможные решения
+To propose new features:
+1. Create an issue with the "Feature Request" template
+2. Describe the problem the feature solves
+3. Suggest possible solutions
 
-### 3. Код
+### 3. Code
 
-#### Настройка окружения разработки
+#### Development Environment Setup
 
 ```bash
-# Клонирование репозитория
+# Clone repository
 git clone https://github.com/CrossEyedCat/RustDB.git
 cd RustDB
 
-# Установка зависимостей
+# Install dependencies
 cargo build
 
-# Запуск тестов
+# Run tests
 cargo test
 
-# Проверка качества кода
+# Code quality check
 cargo clippy
 
-# Форматирование кода
+# Format code
 cargo fmt
 ```
 
-#### Процесс разработки
+#### Development Process
 
-1. **Fork** репозитория
-2. Создайте **ветку для функции** (`git checkout -b feature/amazing-feature`)
-3. **Внесите изменения** следуя стандартам кодирования
-4. **Добавьте тесты** для новой функциональности
-5. **Убедитесь**, что все тесты проходят (`cargo test`)
-6. **Проверьте код** с помощью clippy (`cargo clippy`)
-7. **Отформатируйте код** (`cargo fmt`)
-8. **Зафиксируйте изменения** (`git commit -am 'Add some amazing feature'`)
-9. **Отправьте ветку** (`git push origin feature/amazing-feature`)
-10. Создайте **Pull Request**
+1. **Fork** the repository
+2. Create a **feature branch** (`git checkout -b feature/amazing-feature`)
+3. **Make changes** following coding standards
+4. **Add tests** for new functionality
+5. **Ensure** all tests pass (`cargo test`)
+6. **Check code** with clippy (`cargo clippy`)
+7. **Format code** (`cargo fmt`)
+8. **Commit changes** (`git commit -am 'Add some amazing feature'`)
+9. **Push branch** (`git push origin feature/amazing-feature`)
+10. Create a **Pull Request**
 
-## 📝 Стандарты кодирования
+## 📝 Coding Standards
 
 ### Rust
 
-- Следуйте официальным стандартам Rust
-- Используйте `rustfmt` для форматирования (конфигурация в `rustfmt.toml`)
-- Исправьте все предупреждения `clippy` (конфигурация в `.clippy.toml`)
-- Покрывайте код тестами
-- Документируйте публичные API
+- Follow official Rust standards
+- Use `rustfmt` for formatting (configuration in `rustfmt.toml`)
+- Fix all `clippy` warnings (configuration in `.clippy.toml`)
+- Cover code with tests
+- Document public APIs
 
 ### Git
 
-#### Сообщения коммитов
+#### Commit Messages
 
-Используйте формат Conventional Commits:
+Use Conventional Commits format:
 
 ```
 <type>[optional scope]: <description>
@@ -81,116 +81,116 @@ cargo fmt
 [optional footer(s)]
 ```
 
-**Типы:**
-- `feat`: новая функция
-- `fix`: исправление ошибки
-- `docs`: изменения в документации
-- `style`: форматирование, отсутствующие точки с запятой и т.д.
-- `refactor`: рефакторинг кода
-- `test`: добавление тестов
-- `chore`: обновление задач сборки, конфигураций и т.д.
+**Types:**
+- `feat`: new feature
+- `fix`: bug fix
+- `docs`: documentation changes
+- `style`: formatting, missing semicolons, etc.
+- `refactor`: code refactoring
+- `test`: adding tests
+- `chore`: updating build tasks, configurations, etc.
 
-**Примеры:**
+**Examples:**
 ```
 feat(storage): add B+ tree implementation
 fix(parser): handle empty SQL statements
 docs: update README with installation instructions
 ```
 
-## 🧪 Тестирование
+## 🧪 Testing
 
-### Типы тестов
+### Test Types
 
-1. **Unit тесты** - тестирование отдельных функций и методов
-2. **Integration тесты** - тестирование взаимодействия компонентов
-3. **Benchmarks** - измерение производительности
+1. **Unit tests** - testing individual functions and methods
+2. **Integration tests** - testing component interactions
+3. **Benchmarks** - performance measurement
 
-### Запуск тестов
+### Running Tests
 
 ```bash
-# Все тесты
+# All tests
 cargo test
 
-# Конкретный тест
+# Specific test
 cargo test test_name
 
-# Тесты с выводом
+# Tests with output
 cargo test -- --nocapture
 
-# Бенчмарки
+# Benchmarks
 cargo bench
 ```
 
-### Покрытие кода
+### Code Coverage
 
 ```bash
-# Установка cargo-llvm-cov
+# Install cargo-llvm-cov
 cargo install cargo-llvm-cov
 
-# Генерация отчета о покрытии
+# Generate coverage report
 cargo llvm-cov --html
 ```
 
-## 📚 Документация
+## 📚 Documentation
 
-- Документируйте все публичные API
-- Включайте примеры использования
-- Обновляйте README.md при добавлении новых функций
-- Используйте русский язык для пользовательской документации
-- Используйте английский язык для технических комментариев в коде
+- Document all public APIs
+- Include usage examples
+- Update README.md when adding new features
+- Use English for user documentation
+- Use English for technical comments in code
 
-## 🏗️ Архитектура
+## 🏗️ Architecture
 
-Ознакомьтесь с документами:
-- `ARCHITECTURE.md` - описание архитектуры системы
-- `IMPLEMENTATION_CHECKLIST.md` - план реализации
-- `DEVELOPMENT.md` - инструкции по разработке
+Familiarize yourself with the documents:
+- `ARCHITECTURE.md` - system architecture description
+- `IMPLEMENTATION_CHECKLIST.md` - implementation plan
+- `DEVELOPMENT.md` - development instructions
 
 ## 🔍 Code Review
 
-Все Pull Request'ы проходят code review:
+All Pull Requests go through code review:
 
-1. **Автоматические проверки** должны пройти успешно
-2. **Минимум один approve** от мейнтейнера
-3. **Все комментарии** должны быть разрешены
+1. **Automated checks** must pass successfully
+2. **At least one approve** from a maintainer
+3. **All comments** must be resolved
 
-### Что мы проверяем:
+### What We Check:
 
-- Соответствие стандартам кодирования
-- Наличие и качество тестов
-- Производительность и безопасность
-- Совместимость с существующим кодом
-- Качество документации
+- Compliance with coding standards
+- Presence and quality of tests
+- Performance and security
+- Compatibility with existing code
+- Documentation quality
 
-## 🚀 Релизы
+## 🚀 Releases
 
-Релизы создаются автоматически при создании тегов:
+Releases are created automatically when tags are created:
 
 ```bash
 git tag -a v0.2.0 -m "Release version 0.2.0"
 git push origin v0.2.0
 ```
 
-## 📞 Связь
+## 📞 Communication
 
-- **Issues** - для багов и предложений функций
-- **Discussions** - для общих вопросов и обсуждений
-- **Pull Requests** - для предложения изменений кода
+- **Issues** - for bugs and feature proposals
+- **Discussions** - for general questions and discussions
+- **Pull Requests** - for proposing code changes
 
-## 🏷️ Приоритеты
+## 🏷️ Priorities
 
-Текущие приоритеты развития (см. `IMPLEMENTATION_CHECKLIST.md`):
+Current development priorities (see `IMPLEMENTATION_CHECKLIST.md`):
 
-1. **Фаза 1**: Базовая инфраструктура
-2. **Фаза 2**: Хранение данных
-3. **Фаза 3**: SQL парсинг
-4. **Фаза 4**: Выполнение запросов
-5. **Фаза 5**: Оптимизация
+1. **Phase 1**: Basic infrastructure
+2. **Phase 2**: Data storage
+3. **Phase 3**: SQL parsing
+4. **Phase 4**: Query execution
+5. **Phase 5**: Optimization
 
-## 🙏 Признательность
+## 🙏 Acknowledgments
 
-Мы ценим каждый вклад в проект, независимо от его размера. Все участники будут упомянуты в файле CONTRIBUTORS.md.
+We appreciate every contribution to the project, regardless of size. All contributors will be mentioned in the CONTRIBUTORS.md file.
 
 ---
 
-**Спасибо за ваш вклад в развитие RustDB! 🚀**
+**Thank you for contributing to RustDB! 🚀**

@@ -1,28 +1,28 @@
-# Руководство по архитектуре RustDB
+# RustDB Architecture Guide
 
-## 🏗️ Обзор архитектуры
+## 🏗️ Architecture Overview
 
-RustDB - это высокопроизводительная система управления базами данных, построенная на принципах модульности, масштабируемости и надежности. Архитектура системы следует принципам микросервисов и event-driven архитектуры.
+RustDB is a high-performance database management system built on principles of modularity, scalability, and reliability. The system architecture follows microservices and event-driven architecture principles.
 
-## 🎯 Принципы проектирования
+## 🎯 Design Principles
 
-### Основные принципы
+### Core Principles
 
-1. **Модульность**: Система разделена на независимые модули с четкими интерфейсами
-2. **Масштабируемость**: Архитектура поддерживает горизонтальное и вертикальное масштабирование
-3. **Надежность**: Использование ACID транзакций и механизмов восстановления
-4. **Производительность**: Оптимизация для высоконагруженных сценариев
-5. **Безопасность**: Многоуровневая система безопасности и аутентификации
+1. **Modularity**: The system is divided into independent modules with clear interfaces
+2. **Scalability**: The architecture supports horizontal and vertical scaling
+3. **Reliability**: Use of ACID transactions and recovery mechanisms
+4. **Performance**: Optimization for high-load scenarios
+5. **Security**: Multi-level security and authentication system
 
-### Архитектурные паттерны
+### Architectural Patterns
 
-- **Layered Architecture**: Разделение на слои с четкими границами
-- **Event Sourcing**: Хранение всех изменений как последовательности событий
-- **CQRS**: Разделение команд и запросов для оптимизации
-- **Repository Pattern**: Абстракция доступа к данным
-- **Factory Pattern**: Создание сложных объектов
+- **Layered Architecture**: Separation into layers with clear boundaries
+- **Event Sourcing**: Storing all changes as a sequence of events
+- **CQRS**: Separation of commands and queries for optimization
+- **Repository Pattern**: Data access abstraction
+- **Factory Pattern**: Creation of complex objects
 
-## 🏛️ Высокоуровневая архитектура
+## 🏛️ High-Level Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -85,7 +85,7 @@ RustDB - это высокопроизводительная система уп
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 🔧 Детальная архитектура модулей
+## 🔧 Detailed Module Architecture
 
 ### 1. Network Layer
 
@@ -95,21 +95,21 @@ pub mod network {
     use tokio::sync::mpsc;
     use std::sync::Arc;
 
-    /// Основной сервер базы данных
+    /// Main database server
     pub struct DatabaseServer {
         listener: TcpListener,
         connection_pool: Arc<ConnectionPool>,
         query_processor: Arc<QueryProcessor>,
     }
 
-    /// Пул соединений для управления клиентскими подключениями
+    /// Connection pool for managing client connections
     pub struct ConnectionPool {
         connections: Arc<Mutex<HashMap<ConnectionId, Connection>>>,
         max_connections: usize,
         connection_timeout: Duration,
     }
 
-    /// Обработчик клиентских соединений
+    /// Client connection handler
     pub struct ConnectionHandler {
         stream: TcpStream,
         buffer: Vec<u8>,
@@ -118,7 +118,7 @@ pub mod network {
     }
 
     impl DatabaseServer {
-        /// Запуск сервера
+        /// Start server
         pub async fn run(&self) -> Result<(), ServerError> {
             loop {
                 let (socket, addr) = self.listener.accept().await?;
@@ -149,7 +149,7 @@ pub mod auth {
     use jsonwebtoken::{decode, encode, Header, Validation};
     use serde::{Deserialize, Serialize};
 
-    /// Пользователь системы
+    /// System user
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct User {
         pub id: UserId,
@@ -161,7 +161,7 @@ pub mod auth {
         pub last_login: Option<DateTime<Utc>>,
     }
 
-    /// Роли пользователей
+    /// User roles
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub enum UserRole {
         Administrator,
@@ -170,7 +170,7 @@ pub mod auth {
         Developer,
     }
 
-    /// Права доступа
+    /// Access permissions
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub enum Permission {
         Select { table: String },
@@ -183,7 +183,7 @@ pub mod auth {
         Revoke { permission: Box<Permission> },
     }
 
-    /// Менеджер аутентификации
+    /// Authentication manager
     pub struct AuthManager {
         user_repository: Arc<dyn UserRepository>,
         jwt_secret: String,
@@ -191,7 +191,7 @@ pub mod auth {
     }
 
     impl AuthManager {
-        /// Аутентификация пользователя
+        /// User authentication
         pub async fn authenticate(
             &self,
             username: &str,
@@ -209,7 +209,7 @@ pub mod auth {
             Ok(token)
         }
 
-        /// Проверка прав доступа
+        /// Permission check
         pub async fn check_permission(
             &self,
             token: &AuthToken,
@@ -228,7 +228,7 @@ pub mod auth {
 pub mod parser {
     use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::tuple};
 
-    /// Абстрактное синтаксическое дерево SQL запроса
+    /// SQL query abstract syntax tree
     #[derive(Debug, Clone)]
     pub enum SqlStatement {
         Select(SelectStatement),
@@ -243,7 +243,7 @@ pub mod parser {
         Rollback,
     }
 
-    /// SELECT запрос
+    /// SELECT query
     #[derive(Debug, Clone)]
     pub struct SelectStatement {
         pub columns: Vec<SelectColumn>,
@@ -256,21 +256,21 @@ pub mod parser {
         pub offset: Option<u64>,
     }
 
-    /// Парсер SQL
+    /// SQL parser
     pub struct SqlParser {
         lexer: Lexer,
         ast_builder: AstBuilder,
     }
 
     impl SqlParser {
-        /// Парсинг SQL запроса
+        /// Parse SQL query
         pub fn parse(&self, sql: &str) -> Result<SqlStatement, ParseError> {
             let tokens = self.lexer.tokenize(sql)?;
             let ast = self.ast_builder.build_ast(&tokens)?;
             Ok(ast)
         }
 
-        /// Валидация SQL запроса
+        /// SQL query validation
         pub fn validate(&self, statement: &SqlStatement) -> Result<(), ValidationError> {
             match statement {
                 SqlStatement::Select(select) => self.validate_select(select),
@@ -290,7 +290,7 @@ pub mod parser {
 pub mod optimizer {
     use std::collections::HashMap;
 
-    /// План выполнения запроса
+    /// Query execution plan
     #[derive(Debug, Clone)]
     pub struct ExecutionPlan {
         pub root: PlanNode,
@@ -299,7 +299,7 @@ pub mod optimizer {
         pub statistics: PlanStatistics,
     }
 
-    /// Узел плана выполнения
+    /// Execution plan node
     #[derive(Debug, Clone)]
     pub enum PlanNode {
         TableScan {
@@ -336,7 +336,7 @@ pub mod optimizer {
         },
     }
 
-    /// Оптимизатор запросов
+    /// Query optimizer
     pub struct QueryOptimizer {
         statistics_collector: Arc<StatisticsCollector>,
         cost_model: Arc<CostModel>,
@@ -344,29 +344,29 @@ pub mod optimizer {
     }
 
     impl QueryOptimizer {
-        /// Оптимизация плана выполнения
+        /// Execution plan optimization
         pub fn optimize(&self, plan: ExecutionPlan) -> Result<ExecutionPlan, OptimizerError> {
             let mut optimized_plan = plan;
             
-            // Применение правил оптимизации
+            // Apply optimization rules
             optimized_plan = self.rule_engine.apply_rules(optimized_plan)?;
             
-            // Перестановка JOIN операций
+            // Reorder JOIN operations
             optimized_plan = self.optimize_join_order(optimized_plan)?;
             
-            // Выбор индексов
+            // Index selection
             optimized_plan = self.select_indexes(optimized_plan)?;
             
-            // Оценка стоимости
+            // Cost estimation
             optimized_plan.estimated_cost = self.cost_model.estimate_cost(&optimized_plan.root);
             
             Ok(optimized_plan)
         }
 
-        /// Оптимизация порядка JOIN операций
+        /// JOIN order optimization
         fn optimize_join_order(&self, plan: ExecutionPlan) -> Result<ExecutionPlan, OptimizerError> {
-            // Реализация алгоритма динамического программирования
-            // для оптимизации порядка JOIN операций
+            // Implementation of dynamic programming algorithm
+            // for optimizing JOIN operation order
             Ok(plan)
         }
     }
@@ -380,27 +380,27 @@ pub mod executor {
     use tokio::sync::mpsc;
     use std::sync::Arc;
 
-    /// Исполнитель запросов
+    /// Query executor
     pub struct QueryExecutor {
         plan_executor: Arc<PlanExecutor>,
         result_formatter: Arc<ResultFormatter>,
         error_handler: Arc<ErrorHandler>,
     }
 
-    /// Исполнитель плана выполнения
+    /// Execution plan executor
     pub struct PlanExecutor {
         operators: HashMap<OperatorType, Box<dyn Operator>>,
         memory_manager: Arc<MemoryManager>,
     }
 
-    /// Базовый трейт для операторов
+    /// Base trait for operators
     pub trait Operator: Send + Sync {
         fn execute(&self, input: OperatorInput) -> Result<OperatorOutput, ExecutionError>;
         fn get_schema(&self) -> Schema;
         fn estimate_cost(&self) -> f64;
     }
 
-    /// Оператор сканирования таблицы
+    /// Table scan operator
     pub struct TableScanOperator {
         table_name: String,
         filter: Option<Expression>,
@@ -428,7 +428,7 @@ pub mod executor {
         }
     }
 
-    /// Оператор JOIN
+    /// JOIN operator
     pub struct HashJoinOperator {
         left_child: Box<dyn Operator>,
         right_child: Box<dyn Operator>,
@@ -439,7 +439,7 @@ pub mod executor {
 
     impl Operator for HashJoinOperator {
         fn execute(&self, input: OperatorInput) -> Result<OperatorOutput, ExecutionError> {
-            // Построение хеш-таблицы для левого поддерева
+            // Build hash table for left subtree
             let left_output = self.left_child.execute(input)?;
             let left_rows = left_output.into_rows()?;
             
@@ -448,7 +448,7 @@ pub mod executor {
                 self.hash_table.entry(key).or_insert_with(Vec::new).push(row);
             }
             
-            // Соединение с правым поддеревом
+            // Join with right subtree
             let right_output = self.right_child.execute(input)?;
             let right_rows = right_output.into_rows()?;
             
@@ -478,7 +478,7 @@ pub mod transaction {
     use tokio::sync::RwLock;
     use uuid::Uuid;
 
-    /// Менеджер транзакций
+    /// Transaction manager
     pub struct TransactionManager {
         active_transactions: Arc<RwLock<HashMap<TransactionId, ActiveTransaction>>>,
         lock_manager: Arc<LockManager>,
@@ -486,7 +486,7 @@ pub mod transaction {
         recovery_manager: Arc<RecoveryManager>,
     }
 
-    /// Активная транзакция
+    /// Active transaction
     pub struct ActiveTransaction {
         pub id: TransactionId,
         pub state: TransactionState,
@@ -496,7 +496,7 @@ pub mod transaction {
         pub isolation_level: IsolationLevel,
     }
 
-    /// Состояние транзакции
+    /// Transaction state
     #[derive(Debug, Clone)]
     pub enum TransactionState {
         Active,
@@ -505,7 +505,7 @@ pub mod transaction {
         Preparing,
     }
 
-    /// Уровни изоляции
+    /// Isolation levels
     #[derive(Debug, Clone)]
     pub enum IsolationLevel {
         ReadUncommitted,
@@ -515,7 +515,7 @@ pub mod transaction {
     }
 
     impl TransactionManager {
-        /// Начало новой транзакции
+        /// Start new transaction
         pub async fn begin_transaction(
             &self,
             isolation_level: IsolationLevel,
@@ -536,7 +536,7 @@ pub mod transaction {
             Ok(transaction_id)
         }
 
-        /// Подтверждение транзакции
+        /// Commit transaction
         pub async fn commit_transaction(
             &self,
             transaction_id: TransactionId,
@@ -544,15 +544,15 @@ pub mod transaction {
             let mut transactions = self.active_transactions.write().await;
             
             if let Some(transaction) = transactions.get_mut(&transaction_id) {
-                // Проверка на deadlock
+                // Deadlock check
                 if self.lock_manager.has_deadlock(transaction_id).await? {
                     return Err(TransactionError::DeadlockDetected);
                 }
                 
-                // Запись в WAL
+                // Write to WAL
                 self.log_manager.log_transaction_commit(transaction_id).await?;
                 
-                // Освобождение блокировок
+                // Release locks
                 for lock in &transaction.locks {
                     self.lock_manager.release_lock(lock).await?;
                 }
@@ -566,7 +566,7 @@ pub mod transaction {
             }
         }
 
-        /// Откат транзакции
+        /// Rollback transaction
         pub async fn rollback_transaction(
             &self,
             transaction_id: TransactionId,
@@ -574,15 +574,15 @@ pub mod transaction {
             let mut transactions = self.active_transactions.write().await;
             
             if let Some(transaction) = transactions.get_mut(&transaction_id) {
-                // Запись в WAL
+                // Write to WAL
                 self.log_manager.log_transaction_abort(transaction_id).await?;
                 
-                // Откат изменений
+                // Rollback changes
                 for log_record in transaction.log_records.iter().rev() {
                     self.recovery_manager.undo_operation(log_record).await?;
                 }
                 
-                // Освобождение блокировок
+                // Release locks
                 for lock in &transaction.locks {
                     self.lock_manager.release_lock(lock).await?;
                 }
@@ -606,7 +606,7 @@ pub mod storage {
     use std::collections::BTreeMap;
     use serde::{Deserialize, Serialize};
 
-    /// Менеджер страниц
+    /// Page manager
     pub struct PageManager {
         page_size: usize,
         free_pages: Vec<PageId>,
@@ -614,7 +614,7 @@ pub mod storage {
         file_manager: Arc<FileManager>,
     }
 
-    /// Страница данных
+    /// Data page
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct Page {
         pub id: PageId,
@@ -626,7 +626,7 @@ pub mod storage {
         pub prev_page: Option<PageId>,
     }
 
-    /// Заголовок страницы
+    /// Page header
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct PageHeader {
         pub page_type: PageType,
@@ -635,7 +635,7 @@ pub mod storage {
         pub flags: PageFlags,
     }
 
-    /// Типы страниц
+    /// Page types
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub enum PageType {
         Data,
@@ -645,7 +645,7 @@ pub mod storage {
     }
 
     impl PageManager {
-        /// Создание новой страницы
+        /// Create new page
         pub async fn create_page(&mut self, page_type: PageType) -> Result<PageId, StorageError> {
             let page_id = if let Some(id) = self.free_pages.pop() {
                 id
@@ -674,7 +674,7 @@ pub mod storage {
             Ok(page_id)
         }
 
-        /// Чтение страницы
+        /// Read page
         pub async fn read_page(&self, page_id: PageId) -> Result<Page, StorageError> {
             if let Some(page) = self.page_map.get(&page_id) {
                 Ok(page.clone())
@@ -684,9 +684,9 @@ pub mod storage {
             }
         }
 
-        /// Запись страницы
+        /// Write page
         pub async fn write_page(&mut self, page: &Page) -> Result<(), StorageError> {
-            // Обновление контрольной суммы
+            // Update checksum
             let mut page = page.clone();
             page.header.checksum = self.calculate_checksum(&page.data);
             
@@ -706,7 +706,7 @@ pub mod buffer {
     use std::collections::HashMap;
     use lru::LruCache;
 
-    /// Менеджер буферов
+    /// Buffer manager
     pub struct BufferManager {
         page_cache: Arc<Mutex<LruCache<PageId, Page>>>,
         dirty_pages: Arc<Mutex<HashSet<PageId>>>,
@@ -714,7 +714,7 @@ pub mod buffer {
         config: BufferConfig,
     }
 
-    /// Конфигурация буфера
+    /// Buffer configuration
     #[derive(Debug, Clone)]
     pub struct BufferConfig {
         pub max_pages: usize,
@@ -723,7 +723,7 @@ pub mod buffer {
         pub write_strategy: WriteStrategy,
     }
 
-    /// Политика вытеснения
+    /// Eviction policy
     #[derive(Debug, Clone)]
     pub enum EvictionPolicy {
         LRU,
@@ -731,7 +731,7 @@ pub mod buffer {
         Random,
     }
 
-    /// Стратегия записи
+    /// Write strategy
     #[derive(Debug, Clone)]
     pub enum WriteStrategy {
         WriteThrough,
@@ -740,30 +740,30 @@ pub mod buffer {
     }
 
     impl BufferManager {
-        /// Получение страницы из буфера
+        /// Get page from buffer
         pub async fn get_page(&self, page_id: PageId) -> Result<Page, BufferError> {
-            // Проверка кэша
+            // Check cache
             if let Some(page) = self.page_cache.lock().await.get(&page_id) {
                 return Ok(page.clone());
             }
             
-            // Загрузка с диска
+            // Load from disk
             let page = self.load_page_from_disk(page_id).await?;
             
-            // Помещение в кэш
+            // Insert into cache
             self.page_cache.lock().await.put(page_id, page.clone());
             
             Ok(page)
         }
 
-        /// Помещение страницы в буфер
+        /// Put page into buffer
         pub async fn put_page(&self, page: Page) -> Result<(), BufferError> {
             let page_id = page.id;
             
-            // Помещение в кэш
+            // Insert into cache
             self.page_cache.lock().await.put(page_id, page.clone());
             
-            // Помечение как "грязной" если страница изменена
+            // Mark as dirty if page is modified
             if page.is_dirty() {
                 self.dirty_pages.lock().await.insert(page_id);
             }
@@ -771,7 +771,7 @@ pub mod buffer {
             Ok(())
         }
 
-        /// Запись "грязных" страниц на диск
+        /// Flush dirty pages to disk
         pub async fn flush_dirty_pages(&self) -> Result<(), BufferError> {
             let dirty_pages: Vec<PageId> = {
                 self.dirty_pages.lock().await.iter().cloned().collect()
@@ -787,18 +787,18 @@ pub mod buffer {
             Ok(())
         }
 
-        /// Вытеснение страниц при нехватке памяти
+        /// Evict pages when memory is low
         pub async fn evict_pages(&self, count: usize) -> Result<(), BufferError> {
             let mut cache = self.page_cache.lock().await;
             
             for _ in 0..count {
                 if let Some((page_id, page)) = cache.pop_lru() {
-                    // Запись "грязной" страницы на диск
+                    // Write dirty page to disk
                     if page.is_dirty() {
                         self.write_page_to_disk(&page).await?;
                     }
                     
-                    // Удаление из кэша
+                    // Remove from cache
                     self.dirty_pages.lock().await.remove(&page_id);
                 } else {
                     break;
@@ -811,9 +811,9 @@ pub mod buffer {
 }
 ```
 
-## 🔄 Потоки данных
+## 🔄 Data Flows
 
-### Обработка SELECT запроса
+### SELECT Query Processing
 
 ```mermaid
 sequenceDiagram
@@ -837,7 +837,7 @@ sequenceDiagram
     Network->>Client: Results
 ```
 
-### Обработка INSERT запроса
+### INSERT Query Processing
 
 ```mermaid
 sequenceDiagram
@@ -867,23 +867,23 @@ sequenceDiagram
     Network->>Client: Success
 ```
 
-## 📊 Масштабирование
+## 📊 Scaling
 
-### Горизонтальное масштабирование
+### Horizontal Scaling
 
 ```rust
 pub mod clustering {
     use tokio::sync::mpsc;
     use std::collections::HashMap;
 
-    /// Кластерный менеджер
+    /// Cluster manager
     pub struct ClusterManager {
         nodes: Arc<RwLock<HashMap<NodeId, ClusterNode>>>,
         coordinator: Arc<Coordinator>,
         load_balancer: Arc<LoadBalancer>,
     }
 
-    /// Узел кластера
+    /// Cluster node
     pub struct ClusterNode {
         pub id: NodeId,
         pub address: SocketAddr,
@@ -892,7 +892,7 @@ pub mod clustering {
         pub load: NodeLoad,
     }
 
-    /// Координатор кластера
+    /// Cluster coordinator
     pub struct Coordinator {
         node_manager: Arc<NodeManager>,
         partition_manager: Arc<PartitionManager>,
@@ -900,23 +900,23 @@ pub mod clustering {
     }
 
     impl ClusterManager {
-        /// Добавление нового узла
+        /// Add new node
         pub async fn add_node(&self, node: ClusterNode) -> Result<(), ClusterError> {
             let node_id = node.id;
             
-            // Регистрация узла
+            // Register node
             self.nodes.write().await.insert(node_id, node);
             
-            // Перераспределение данных
+            // Redistribute data
             self.coordinator.redistribute_data().await?;
             
-            // Настройка репликации
+            // Setup replication
             self.coordinator.setup_replication(node_id).await?;
             
             Ok(())
         }
 
-        /// Распределение запросов по узлам
+        /// Route queries to nodes
         pub async fn route_query(&self, query: Query) -> Result<QueryResult, ClusterError> {
             let target_node = self.load_balancer.select_node(&query).await?;
             let result = target_node.execute_query(query).await?;
@@ -926,13 +926,13 @@ pub mod clustering {
 }
 ```
 
-### Вертикальное масштабирование
+### Vertical Scaling
 
 ```rust
 pub mod scaling {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Менеджер ресурсов
+    /// Resource manager
     pub struct ResourceManager {
         max_connections: AtomicUsize,
         max_memory: AtomicUsize,
@@ -940,7 +940,7 @@ pub mod scaling {
         current_usage: Arc<RwLock<ResourceUsage>>,
     }
 
-    /// Использование ресурсов
+    /// Resource usage
     #[derive(Debug, Clone)]
     pub struct ResourceUsage {
         pub active_connections: usize,
@@ -951,7 +951,7 @@ pub mod scaling {
     }
 
     impl ResourceManager {
-        /// Проверка доступности ресурсов
+        /// Check resource availability
         pub fn can_allocate(&self, resources: &ResourceRequest) -> bool {
             let usage = self.current_usage.read().unwrap();
             
@@ -960,18 +960,18 @@ pub mod scaling {
                 && usage.thread_count + resources.threads <= self.max_threads.load(Ordering::Relaxed)
         }
 
-        /// Динамическое масштабирование
+        /// Dynamic scaling
         pub async fn scale_up(&self) -> Result<(), ScalingError> {
             let current_usage = self.current_usage.read().unwrap();
             
             if current_usage.cpu_usage > 0.8 {
-                // Увеличение количества потоков
+                // Increase thread count
                 let new_threads = self.max_threads.load(Ordering::Relaxed) * 2;
                 self.max_threads.store(new_threads, Ordering::Relaxed);
             }
             
             if current_usage.memory_usage > self.max_memory.load(Ordering::Relaxed) * 8 / 10 {
-                // Увеличение лимита памяти
+                // Increase memory limit
                 let new_memory = self.max_memory.load(Ordering::Relaxed) * 2;
                 self.max_memory.store(new_memory, Ordering::Relaxed);
             }
@@ -982,9 +982,9 @@ pub mod scaling {
 }
 ```
 
-## 🔒 Безопасность
+## 🔒 Security
 
-### Многоуровневая безопасность
+### Multi-Level Security
 
 ```rust
 pub mod security {
@@ -992,7 +992,7 @@ pub mod security {
     use jsonwebtoken::{decode, encode, Header, Validation};
     use openssl::rsa::{Rsa, Padding};
 
-    /// Менеджер безопасности
+    /// Security manager
     pub struct SecurityManager {
         auth_manager: Arc<AuthManager>,
         encryption_manager: Arc<EncryptionManager>,
@@ -1000,7 +1000,7 @@ pub mod security {
         firewall: Arc<Firewall>,
     }
 
-    /// Шифрование данных
+    /// Data encryption
     pub struct EncryptionManager {
         master_key: Vec<u8>,
         key_rotation: KeyRotation,
@@ -1008,7 +1008,7 @@ pub mod security {
     }
 
     impl EncryptionManager {
-        /// Шифрование чувствительных данных
+        /// Encrypt sensitive data
         pub fn encrypt_data(&self, data: &[u8], key_id: &str) -> Result<Vec<u8>, SecurityError> {
             let key = self.get_encryption_key(key_id)?;
             let algorithm = self.select_algorithm(data.len())?;
@@ -1020,14 +1020,14 @@ pub mod security {
             }
         }
 
-        /// Ротация ключей
+        /// Key rotation
         pub async fn rotate_keys(&self) -> Result<(), SecurityError> {
             let new_master_key = self.generate_master_key()?;
             
-            // Перешифрование всех данных новым ключом
+            // Re-encrypt all data with new key
             self.reencrypt_all_data(&new_master_key).await?;
             
-            // Обновление мастер-ключа
+            // Update master key
             self.update_master_key(new_master_key).await?;
             
             Ok(())
@@ -1036,16 +1036,16 @@ pub mod security {
 }
 ```
 
-## 📈 Мониторинг и метрики
+## 📈 Monitoring and Metrics
 
-### Система метрик
+### Metrics System
 
 ```rust
 pub mod metrics {
     use prometheus::{Counter, Gauge, Histogram, Registry};
     use std::sync::Arc;
 
-    /// Сборщик метрик
+    /// Metrics collector
     pub struct MetricsCollector {
         registry: Registry,
         query_counter: Counter,
@@ -1056,7 +1056,7 @@ pub mod metrics {
     }
 
     impl MetricsCollector {
-        /// Регистрация метрик
+        /// Register metrics
         pub fn new() -> Self {
             let registry = Registry::new();
             
@@ -1101,25 +1101,25 @@ pub mod metrics {
             }
         }
 
-        /// Обновление метрик производительности
+        /// Update performance metrics
         pub fn record_query_execution(&self, duration: Duration, success: bool) {
             self.query_counter.inc();
             self.query_duration.observe(duration.as_secs_f64());
             
             if !success {
-                // Метрики ошибок
+                // Error metrics
             }
         }
     }
 }
 ```
 
-## 🔗 Дополнительные ресурсы
+## 🔗 Additional Resources
 
-- [Архитектура системы](ARCHITECTURE.md)
-- [Руководство по разработке](DEVELOPMENT.md)
-- [Стандарты кодирования](CODING_STANDARDS.md)
-- [API справочник](API_REFERENCE.md)
-- [Примеры использования](EXAMPLES.md)
+- [System Architecture](ARCHITECTURE.md)
+- [Development Guide](DEVELOPMENT.md)
+- [Coding Standards](CODING_STANDARDS.md)
+- [API Reference](API_REFERENCE.md)
+- [Usage Examples](EXAMPLES.md)
 
-Следуя этим архитектурным принципам, вы создадите надежную, масштабируемую и производительную систему управления базами данных.
+Following these architectural principles, you will create a reliable, scalable, and high-performance database management system.

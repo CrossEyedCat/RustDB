@@ -1,177 +1,177 @@
-# Архитектура взаимодействия компонентов RustDB
+# RustDB Component Interaction Architecture
 
-## Обзор архитектуры
+## Architecture Overview
 
-RustDB построена по многослойной архитектуре, где каждый слой отвечает за определенную функциональность и взаимодействует с другими слоями через четко определенные интерфейсы.
+RustDB is built on a multi-layered architecture where each layer is responsible for specific functionality and interacts with other layers through well-defined interfaces.
 
-## Слои архитектуры
+## Architecture Layers
 
-### 1. Клиентский слой
-**Назначение**: Предоставляет интерфейсы для взаимодействия с базой данных
+### 1. Client Layer
+**Purpose**: Provides interfaces for interacting with the database
 
-**Компоненты**:
-- **CLI Client** - командная строка для выполнения SQL запросов
-- **Network Client** - сетевые клиенты (драйверы для различных языков)
+**Components**:
+- **CLI Client** - command line for executing SQL queries
+- **Network Client** - network clients (drivers for various languages)
 
-**Взаимодействие**: Отправляет SQL запросы на сервер и получает результаты
+**Interaction**: Sends SQL queries to the server and receives results
 
-### 2. Сетевой слой
-**Назначение**: Обрабатывает сетевые соединения и протоколы
+### 2. Network Layer
+**Purpose**: Handles network connections and protocols
 
-**Компоненты**:
-- **Network Server** - принимает входящие соединения
-- **Connection Pool** - управляет пулом соединений для эффективности
+**Components**:
+- **Network Server** - accepts incoming connections
+- **Connection Pool** - manages connection pool for efficiency
 
-**Взаимодействие**: 
-- Принимает запросы от клиентов
-- Передает запросы в основной сервер
-- Отправляет результаты обратно клиентам
+**Interaction**: 
+- Accepts requests from clients
+- Forwards requests to main server
+- Sends results back to clients
 
-### 3. Основной сервер
-**Назначение**: Координирует выполнение запросов и управляет сессиями
+### 3. Main Server
+**Purpose**: Coordinates query execution and manages sessions
 
-**Компоненты**:
-- **Main Server** - центральный координатор
-- **Session Manager** - управляет пользовательскими сессиями
+**Components**:
+- **Main Server** - central coordinator
+- **Session Manager** - manages user sessions
 
-**Взаимодействие**:
-- Получает запросы от сетевого слоя
-- Создает и управляет сессиями пользователей
-- Координирует выполнение запросов
+**Interaction**:
+- Receives requests from network layer
+- Creates and manages user sessions
+- Coordinates query execution
 
-### 4. Парсер и планировщик
-**Назначение**: Анализирует SQL запросы и создает планы выполнения
+### 4. Parser and Planner
+**Purpose**: Analyzes SQL queries and creates execution plans
 
-**Компоненты**:
-- **SQL Parser** - разбирает SQL на токены
-- **AST Builder** - строит абстрактное синтаксическое дерево
-- **Query Planner** - создает план выполнения запроса
-- **Query Optimizer** - оптимизирует план для лучшей производительности
+**Components**:
+- **SQL Parser** - parses SQL into tokens
+- **AST Builder** - builds abstract syntax tree
+- **Query Planner** - creates query execution plan
+- **Query Optimizer** - optimizes plan for better performance
 
-**Взаимодействие**:
-- Получает SQL запросы от Session Manager
-- Обращается к Schema Manager для получения метаданных
-- Создает оптимизированный план выполнения
-- Передает план в Query Executor
+**Interaction**:
+- Receives SQL queries from Session Manager
+- Accesses Schema Manager for metadata
+- Creates optimized execution plan
+- Passes plan to Query Executor
 
-### 5. Исполнитель запросов
-**Назначение**: Выполняет запросы согласно плану
+### 5. Query Executor
+**Purpose**: Executes queries according to plan
 
-**Компоненты**:
-- **Query Executor** - координирует выполнение операторов
-- **Operator Tree** - дерево операторов для выполнения
-- **Result Set** - формирует результаты запроса
+**Components**:
+- **Query Executor** - coordinates operator execution
+- **Operator Tree** - tree of operators for execution
+- **Result Set** - formats query results
 
-**Взаимодействие**:
-- Получает план от Query Optimizer
-- Создает дерево операторов
-- Взаимодействует с Transaction Manager для управления транзакциями
-- Обращается к Buffer Manager для получения данных
-- Формирует и возвращает результаты
+**Interaction**:
+- Receives plan from Query Optimizer
+- Creates operator tree
+- Interacts with Transaction Manager for transaction management
+- Accesses Buffer Manager for data retrieval
+- Formats and returns results
 
-### 6. Ядро базы данных
-**Назначение**: Обеспечивает основные функции СУБД
+### 6. Database Core
+**Purpose**: Provides core DBMS functionality
 
-**Компоненты**:
-- **Transaction Manager** - управляет ACID транзакциями
-- **Lock Manager** - обеспечивает изоляцию транзакций
-- **Recovery Manager** - логирует операции и восстанавливает систему
-- **Buffer Manager** - управляет кэшированием страниц в памяти
+**Components**:
+- **Transaction Manager** - manages ACID transactions
+- **Lock Manager** - ensures transaction isolation
+- **Recovery Manager** - logs operations and recovers system
+- **Buffer Manager** - manages page caching in memory
 
-**Взаимодействие**:
-- Transaction Manager координирует все операции
-- Lock Manager блокирует ресурсы для изоляции
-- Recovery Manager записывает все изменения в лог
-- Buffer Manager кэширует часто используемые страницы
+**Interaction**:
+- Transaction Manager coordinates all operations
+- Lock Manager locks resources for isolation
+- Recovery Manager logs all changes
+- Buffer Manager caches frequently used pages
 
-### 7. Хранилище данных
-**Назначение**: Управляет физическим хранением данных
+### 7. Data Storage
+**Purpose**: Manages physical data storage
 
-**Компоненты**:
-- **Page Manager** - работает со страницами данных
-- **File Manager** - управляет файлами базы данных
-- **Index Manager** - поддерживает индексы (B+ деревья, хеши)
-- **Table Manager** - управляет структурой таблиц
+**Components**:
+- **Page Manager** - works with data pages
+- **File Manager** - manages database files
+- **Index Manager** - supports indexes (B+ trees, hashes)
+- **Table Manager** - manages table structure
 
-**Взаимодействие**:
-- Page Manager взаимодействует с Buffer Manager
-- File Manager читает и записывает данные на диск
-- Index Manager обеспечивает быстрый поиск
-- Table Manager управляет схемой данных
+**Interaction**:
+- Page Manager interacts with Buffer Manager
+- File Manager reads and writes data to disk
+- Index Manager provides fast search
+- Table Manager manages data schema
 
-### 8. Каталог метаданных
-**Назначение**: Хранит информацию о структуре базы данных
+### 8. Metadata Catalog
+**Purpose**: Stores information about database structure
 
-**Компоненты**:
-- **Schema Manager** - управляет схемой таблиц и колонок
-- **Statistics Manager** - собирает статистику о данных
-- **Access Control** - управляет правами доступа
+**Components**:
+- **Schema Manager** - manages table and column schema
+- **Statistics Manager** - collects data statistics
+- **Access Control** - manages access rights
 
-**Взаимодействие**:
-- Предоставляет метаданные для парсера и планировщика
-- Обновляется при изменении структуры БД
-- Контролирует доступ пользователей к объектам
+**Interaction**:
+- Provides metadata for parser and planner
+- Updates when database structure changes
+- Controls user access to objects
 
-### 9. Физическое хранение
-**Назначение**: Файлы на диске
+### 9. Physical Storage
+**Purpose**: Files on disk
 
-**Компоненты**:
-- **Data Files** - файлы с данными таблиц
-- **Index Files** - файлы индексов
-- **Log Files** - файлы журнала транзакций
-- **System Catalog** - файлы метаданных
+**Components**:
+- **Data Files** - files with table data
+- **Index Files** - index files
+- **Log Files** - transaction log files
+- **System Catalog** - metadata files
 
-## Поток выполнения запроса
+## Query Execution Flow
 
-### 1. Получение запроса
+### 1. Request Reception
 ```
 CLI Client → Network Server → Connection Pool → Main Server → Session Manager
 ```
 
-### 2. Парсинг и планирование
+### 2. Parsing and Planning
 ```
 Session Manager → SQL Parser → AST Builder → Query Planner → Query Optimizer
 ```
 
-### 3. Выполнение запроса
+### 3. Query Execution
 ```
 Query Optimizer → Query Executor → Operator Tree → Buffer Manager → Page Manager
 ```
 
-### 4. Возврат результата
+### 4. Result Return
 ```
 Page Manager → Buffer Manager → Query Executor → Result Set → Main Server → Network Server → CLI Client
 ```
 
-## Ключевые принципы взаимодействия
+## Key Interaction Principles
 
-### 1. Разделение ответственности
-Каждый компонент отвечает за свою область и не вмешивается в работу других
+### 1. Separation of Concerns
+Each component is responsible for its own area and does not interfere with others
 
-### 2. Слабая связанность
-Компоненты взаимодействуют через четко определенные интерфейсы
+### 2. Loose Coupling
+Components interact through well-defined interfaces
 
-### 3. Высокая когезия
-Связанная функциональность группируется в одном компоненте
+### 3. High Cohesion
+Related functionality is grouped in a single component
 
-### 4. Масштабируемость
-Архитектура позволяет добавлять новые компоненты без изменения существующих
+### 4. Scalability
+The architecture allows adding new components without changing existing ones
 
-### 5. Отказоустойчивость
-Система может продолжать работу при отказе отдельных компонентов
+### 5. Fault Tolerance
+The system can continue operating when individual components fail
 
-## Точки расширения
+## Extension Points
 
-### 1. Новые типы индексов
-Можно добавить новые менеджеры индексов, реализующие общий интерфейс
+### 1. New Index Types
+New index managers can be added implementing a common interface
 
-### 2. Дополнительные операторы
-Query Executor поддерживает добавление новых типов операторов
+### 2. Additional Operators
+Query Executor supports adding new operator types
 
-### 3. Альтернативные планировщики
-Можно заменить Query Optimizer на более продвинутые алгоритмы
+### 3. Alternative Planners
+Query Optimizer can be replaced with more advanced algorithms
 
-### 4. Различные протоколы
-Network Server поддерживает подключение различных протоколов
+### 4. Different Protocols
+Network Server supports connecting different protocols
 
-Эта архитектура обеспечивает модульность, расширяемость и надежность системы, что критически важно для реляционной базы данных.
+This architecture ensures modularity, extensibility, and reliability of the system, which is critically important for a relational database.
