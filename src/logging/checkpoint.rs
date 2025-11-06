@@ -367,6 +367,10 @@ impl CheckpointManager {
             .unwrap_or_default()
             .as_secs();
 
+        // Вычисляем время создания в миллисекундах, гарантируя минимум 1 мс
+        // для случаев, когда операция выполняется очень быстро (< 1 мс)
+        let creation_time_ms = (creation_time.as_millis() as u64).max(1);
+
         // Создаем информацию о контрольной точке
         let checkpoint_info = CheckpointInfo {
             id: checkpoint_id,
@@ -375,7 +379,7 @@ impl CheckpointManager {
             active_transactions: active_txs,
             dirty_pages: dirty_page_list,
             size_bytes: 0, // Будет вычислено позже
-            creation_time_ms: creation_time.as_millis() as u64,
+            creation_time_ms,
             flushed_pages,
         };
 
@@ -393,7 +397,7 @@ impl CheckpointManager {
             stats.total_flushed_pages += flushed_pages;
             stats.last_checkpoint_lsn = checkpoint_lsn;
             stats.last_checkpoint_time = timestamp;
-            stats.total_checkpoint_time_ms += creation_time.as_millis() as u64;
+            stats.total_checkpoint_time_ms += creation_time_ms;
 
             if stats.total_checkpoints > 0 {
                 stats.average_checkpoint_time_ms =
@@ -404,7 +408,7 @@ impl CheckpointManager {
         println!(
             "   ✅ Контрольная точка {} создана за {} мс",
             checkpoint_id,
-            creation_time.as_millis()
+            creation_time_ms
         );
 
         Ok(checkpoint_info)
