@@ -38,7 +38,7 @@ clap = { version = "4.0", features = ["derive"] }
 
 # Логирование
 log = "0.4"
-env_logger = "0.10"
+env_logger = "0.11"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
