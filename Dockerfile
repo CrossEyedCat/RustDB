@@ -1,5 +1,5 @@
 # Многоэтапная сборка для RustDB
-FROM rust:1.75-slim as builder
+FROM rust:1.91-slim as builder
 
 # Установка системных зависимостей
 RUN apt-get update && apt-get install -y \
