@@ -61,7 +61,7 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 lazy_static = "1.4"
 
 # Конфигурация
-toml = "0.8"
+toml = "0.9"
 
 # Тестирование
 criterion = { version = "0.5", optional = true }
