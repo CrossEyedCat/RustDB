@@ -28,11 +28,11 @@ fn serialize_insert_values(values: &[String]) -> Vec<u8> {
     values.join("\t").into_bytes()
 }
 
-/// Выполняет INSERT-план через PageManager и WAL
+/// Выполняет INSERT-план через PageManager и опционально WAL
 async fn execute_insert_e2e(
     sql: &str,
     page_manager: &Mutex<PageManager>,
-    wal: &WriteAheadLog,
+    wal: Option<&WriteAheadLog>,
 ) -> rustdb::Result<()> {
     let mut parser = SqlParser::new(sql)?;
     let stmt = parser.parse()?;
@@ -47,30 +47,44 @@ async fn execute_insert_e2e(
         return Err(rustdb::Error::internal("Expected Insert plan"));
     };
 
-    let tx_id = wal.begin_transaction(IsolationLevel::ReadCommitted).await?;
+    if let Some(wal) = wal {
+        let tx_id = wal.begin_transaction(IsolationLevel::ReadCommitted).await?;
 
-    for row_values in &insert_node.values {
-        let data = serialize_insert_values(row_values);
-        let (result, file_id) = {
+        for row_values in &insert_node.values {
+            let data = serialize_insert_values(row_values);
+            let (result, file_id) = {
+                let mut pm = page_manager.lock().unwrap();
+                let result = pm.insert(&data)?;
+                let file_id = pm.file_id();
+                (result, file_id)
+            };
+            let (page_id, record_offset) = parse_record_id(result.record_id);
+            wal.log_insert(tx_id, file_id, page_id, record_offset, data)
+                .await?;
+        }
+
+        wal.commit_transaction(tx_id).await?;
+        // Flush dirty pages after commit (write-ahead + batch flush)
+        let mut pm = page_manager.lock().unwrap();
+        pm.flush_dirty_pages()?;
+    } else {
+        for row_values in &insert_node.values {
+            let data = serialize_insert_values(row_values);
             let mut pm = page_manager.lock().unwrap();
-            let result = pm.insert(&data)?;
-            let file_id = pm.file_id();
-            (result, file_id)
-        };
-        let (page_id, record_offset) = parse_record_id(result.record_id);
-        wal.log_insert(tx_id, file_id, page_id, record_offset, data)
-            .await?;
+            pm.insert(&data)?;
+        }
+        let mut pm = page_manager.lock().unwrap();
+        pm.flush_dirty_pages()?;
     }
-
-    wal.commit_transaction(tx_id).await?;
     Ok(())
 }
 
-fn setup_e2e_env() -> (
+/// Setup for e2e benchmarks. When enable_wal is false, WAL is None for pure I/O measurement.
+fn setup_e2e_env(enable_wal: bool) -> (
     TempDir,
     Arc<Mutex<PageManager>>,
     Runtime,
-    Arc<WriteAheadLog>,
+    Option<Arc<WriteAheadLog>>,
 ) {
     let temp_dir = TempDir::new().unwrap();
     let data_path = temp_dir.path().join("data");
@@ -78,12 +92,15 @@ fn setup_e2e_env() -> (
     std::fs::create_dir_all(&data_path).unwrap();
     std::fs::create_dir_all(&log_path).unwrap();
 
-    let mut wal_config = WalConfig::default();
-    wal_config.log_writer_config.log_directory = log_path;
-
     let rt = Runtime::new().unwrap();
-    let wal = rt.block_on(WriteAheadLog::new(wal_config)).unwrap();
-    let wal = Arc::new(wal);
+    let wal = if enable_wal {
+        let mut wal_config = WalConfig::default();
+        wal_config.log_writer_config.log_directory = log_path;
+        let w = rt.block_on(WriteAheadLog::new(wal_config)).unwrap();
+        Some(Arc::new(w))
+    } else {
+        None
+    };
 
     let page_manager = PageManager::new(
         PathBuf::from(&data_path),
@@ -99,17 +116,27 @@ fn setup_e2e_env() -> (
 fn bench_e2e_insert_single(c: &mut Criterion) {
     let mut group = c.benchmark_group("e2e_insert_single");
 
-    let (temp_dir, page_manager, rt, wal) = setup_e2e_env();
+    let (temp_dir, page_manager, rt, wal) = setup_e2e_env(true);
 
     group.bench_function("insert_with_tx_wal", |b| {
         b.iter(|| {
             let sql = "INSERT INTO bench_table (id, name, age) VALUES (1, 'Alice', 30)";
-            rt.block_on(execute_insert_e2e(black_box(sql), &page_manager, &wal))
+            rt.block_on(execute_insert_e2e(black_box(sql), &page_manager, wal.as_deref()))
+                .unwrap();
+        });
+    });
+
+    let (temp_dir_io, page_manager_io, rt_io, _) = setup_e2e_env(false);
+    group.bench_function("insert_without_wal", |b| {
+        b.iter(|| {
+            let sql = "INSERT INTO bench_table (id, name, age) VALUES (1, 'Alice', 30)";
+            rt_io.block_on(execute_insert_e2e(black_box(sql), &page_manager_io, None))
                 .unwrap();
         });
     });
 
     drop(temp_dir);
+    drop(temp_dir_io);
     group.finish();
 }
 
@@ -122,9 +149,11 @@ fn bench_e2e_insert_batch(c: &mut Criterion) {
             &count,
             |b, &count| {
                 b.iter(|| {
-                    let (temp_dir, page_manager, rt, wal) = setup_e2e_env();
+                    let (temp_dir, page_manager, rt, wal) = setup_e2e_env(true);
                     rt.block_on(async {
                         let tx_id = wal
+                            .as_ref()
+                            .unwrap()
                             .begin_transaction(IsolationLevel::ReadCommitted)
                             .await
                             .unwrap();
@@ -153,14 +182,16 @@ fn bench_e2e_insert_batch(c: &mut Criterion) {
                                     };
                                     let (page_id, record_offset) =
                                         parse_record_id(result.record_id);
-                                    wal.log_insert(tx_id, file_id, page_id, record_offset, data)
+                                    wal.as_ref().unwrap().log_insert(tx_id, file_id, page_id, record_offset, data)
                                         .await
                                         .unwrap();
                                 }
                             }
                         }
 
-                        wal.commit_transaction(tx_id).await.unwrap();
+                        wal.as_ref().unwrap().commit_transaction(tx_id).await.unwrap();
+                        let mut pm = page_manager.lock().unwrap();
+                        pm.flush_dirty_pages().unwrap();
                     });
                     drop(temp_dir);
                 });
@@ -174,12 +205,12 @@ fn bench_e2e_insert_batch(c: &mut Criterion) {
 fn bench_e2e_transaction_cycle(c: &mut Criterion) {
     let mut group = c.benchmark_group("e2e_transaction_cycle");
 
-    let (temp_dir, page_manager, rt, wal) = setup_e2e_env();
+    let (temp_dir, page_manager, rt, wal) = setup_e2e_env(true);
 
     group.bench_function("begin_insert_commit", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let tx_id = wal
+                let tx_id = wal.as_ref().unwrap()
                     .begin_transaction(IsolationLevel::ReadCommitted)
                     .await
                     .unwrap();
@@ -191,10 +222,10 @@ fn bench_e2e_transaction_cycle(c: &mut Criterion) {
                     (result, file_id)
                 };
                 let (page_id, record_offset) = parse_record_id(result.record_id);
-                wal.log_insert(tx_id, file_id, page_id, record_offset, data)
+                wal.as_ref().unwrap().log_insert(tx_id, file_id, page_id, record_offset, data)
                     .await
                     .unwrap();
-                wal.commit_transaction(tx_id).await.unwrap();
+                wal.as_ref().unwrap().commit_transaction(tx_id).await.unwrap();
             })
         });
     });
@@ -206,11 +237,11 @@ fn bench_e2e_transaction_cycle(c: &mut Criterion) {
 fn bench_e2e_select_scan(c: &mut Criterion) {
     let mut group = c.benchmark_group("e2e_select_scan");
 
-    let (temp_dir, page_manager, rt, wal) = setup_e2e_env();
+    let (temp_dir, page_manager, rt, wal) = setup_e2e_env(true);
 
     // Предзаполняем данными
     rt.block_on(async {
-        let tx_id = wal
+        let tx_id = wal.as_ref().unwrap()
             .begin_transaction(IsolationLevel::ReadCommitted)
             .await
             .unwrap();
@@ -227,11 +258,13 @@ fn bench_e2e_select_scan(c: &mut Criterion) {
                 (result, file_id)
             };
             let (page_id, record_offset) = parse_record_id(result.record_id);
-            wal.log_insert(tx_id, file_id, page_id, record_offset, data)
+            wal.as_ref().unwrap().log_insert(tx_id, file_id, page_id, record_offset, data)
                 .await
                 .unwrap();
         }
-        wal.commit_transaction(tx_id).await.unwrap();
+        wal.as_ref().unwrap().commit_transaction(tx_id).await.unwrap();
+        let mut pm = page_manager.lock().unwrap();
+        pm.flush_dirty_pages().unwrap();
     });
 
     group.bench_function("select_full_scan_100_rows", |b| {

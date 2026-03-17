@@ -7,6 +7,13 @@ use crate::common::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Magic bytes for slotted page format (avoids collision with bincode)
+const SLOTTED_PAGE_MAGIC: [u8; 2] = [0x52, 0x50]; // "RP" for RustDB Page
+const SLOTTED_HEADER_OFFSET: usize = 2;
+const SLOTTED_HEADER_SIZE: usize = PAGE_HEADER_SIZE - 2; // 62 bytes after magic
+const SLOTTED_DATA_OFFSET: usize = PAGE_HEADER_SIZE; // 64 - same as Page layout
+const SLOT_SIZE: usize = 9; // offset u16, size u16, record_id u32, flags u8
+
 /// Page header
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageHeader {
@@ -178,18 +185,26 @@ impl Page {
     }
 
     /// Creates a page from bytes (deserialization)
+    /// Detects format: slotted (magic RP) or legacy bincode
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() >= 2 && bytes[0] == SLOTTED_PAGE_MAGIC[0] && bytes[1] == SLOTTED_PAGE_MAGIC[1]
+        {
+            Self::from_bytes_slotted(bytes)
+        } else {
+            Self::from_bytes_bincode(bytes)
+        }
+    }
+
+    /// Deserializes from legacy bincode format
+    fn from_bytes_bincode(bytes: &[u8]) -> Result<Self> {
         use bincode;
 
-        // Deserialize compact structure
         let compact_page: CompactPage =
             bincode::deserialize(bytes).map_err(Error::BincodeSerialization)?;
 
-        // Restore data to full PAGE_SIZE
         let mut data = compact_page.data.clone();
         data.resize(PAGE_SIZE, 0);
 
-        // Recalculate free_space_map
         let mut free_space_map = vec![true; PAGE_SIZE - PAGE_HEADER_SIZE];
         for slot in &compact_page.slots {
             if !slot.is_deleted {
@@ -204,6 +219,76 @@ impl Page {
         Ok(Self {
             header: compact_page.header,
             slots: compact_page.slots,
+            data,
+            free_space_map,
+        })
+    }
+
+    /// Deserializes from slotted binary format
+    fn from_bytes_slotted(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < PAGE_SIZE {
+            return Err(Error::validation("Page data too short"));
+        }
+
+        let h = SLOTTED_HEADER_OFFSET;
+        let mut header = PageHeader::new(0, PageType::Data);
+        header.page_id = u64::from_le_bytes(bytes[h..][..8].try_into().unwrap());
+        header.page_type = match bytes.get(h + 8).copied().unwrap_or(0) {
+            0 => PageType::Data,
+            1 => PageType::Index,
+            2 => PageType::FreeSpace,
+            3 => PageType::Metadata,
+            4 => PageType::Log,
+            _ => PageType::Data,
+        };
+        header.last_modified = u64::from_le_bytes(bytes[h + 9..][..8].try_into().unwrap());
+        header.record_count = u32::from_le_bytes(bytes[h + 17..][..4].try_into().unwrap());
+        header.free_space = u32::from_le_bytes(bytes[h + 21..][..4].try_into().unwrap());
+
+        let slot_count = u16::from_le_bytes(bytes[PAGE_SIZE - 2..].try_into().unwrap()) as usize;
+        let slot_start = PAGE_SIZE - 2 - slot_count * SLOT_SIZE;
+
+        let mut slots = Vec::with_capacity(slot_count);
+        let mut data = vec![0u8; PAGE_SIZE];
+
+        for i in 0..slot_count {
+            let base = slot_start + i * SLOT_SIZE;
+            let offset = u16::from_le_bytes(bytes[base..][..2].try_into().unwrap()) as u32;
+            let size = u16::from_le_bytes(bytes[base + 2..][..2].try_into().unwrap()) as u32;
+            let record_id = u32::from_le_bytes(bytes[base + 4..][..4].try_into().unwrap()) as u64;
+            let flags = bytes[base + 8];
+            let is_deleted = (flags & 1) != 0;
+
+            let slot = RecordSlot {
+                offset,
+                size,
+                is_deleted,
+                record_id,
+            };
+            slots.push(slot);
+
+            if !is_deleted && (offset as usize) < PAGE_SIZE && (offset as usize) + (size as usize) <= PAGE_SIZE
+            {
+                let start = offset as usize;
+                let end = start + size as usize;
+                data[start..end].copy_from_slice(&bytes[start..end]);
+            }
+        }
+
+        let mut free_space_map = vec![true; PAGE_SIZE - PAGE_HEADER_SIZE];
+        for slot in &slots {
+            if !slot.is_deleted {
+                let start = (slot.offset as usize).saturating_sub(PAGE_HEADER_SIZE);
+                let end = start + slot.size as usize;
+                for i in start..end.min(free_space_map.len()) {
+                    free_space_map[i] = false;
+                }
+            }
+        }
+
+        Ok(Self {
+            header,
+            slots,
             data,
             free_space_map,
         })
@@ -228,45 +313,75 @@ impl Page {
         })
     }
 
-    /// Serializes the page to bytes
+    /// Serializes the page to bytes (uses slotted format for compactness)
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        use bincode;
+        self.to_bytes_slotted()
+    }
 
-        // Determine maximum used offset
+    /// Serializes to slotted binary format (compact, fixed layout)
+    fn to_bytes_slotted(&self) -> Result<Vec<u8>> {
+        let active_slots: Vec<_> = self.slots.iter().filter(|s| !s.is_deleted).collect();
+        let slot_count = active_slots.len();
+
+        if slot_count * SLOT_SIZE + 2 > PAGE_SIZE - SLOTTED_DATA_OFFSET {
+            return Err(Error::validation("Too many slots for page"));
+        }
+
+        let slot_start = PAGE_SIZE - 2 - slot_count * SLOT_SIZE;
+        let mut buf = vec![0u8; PAGE_SIZE];
+
+        buf[0..2].copy_from_slice(&SLOTTED_PAGE_MAGIC);
+
+        let h = SLOTTED_HEADER_OFFSET;
+        buf[h..h + 8].copy_from_slice(&self.header.page_id.to_le_bytes());
+        buf[h + 8] = match self.header.page_type {
+            PageType::Data => 0,
+            PageType::Index => 1,
+            PageType::FreeSpace => 2,
+            PageType::Metadata => 3,
+            PageType::Log => 4,
+        };
+        buf[h + 9..h + 17].copy_from_slice(&self.header.last_modified.to_le_bytes());
+        buf[h + 17..h + 21].copy_from_slice(&self.header.record_count.to_le_bytes());
+        buf[h + 21..h + 25].copy_from_slice(&self.header.free_space.to_le_bytes());
+
         let max_offset = self
             .slots
             .iter()
             .filter(|s| !s.is_deleted)
-            .map(|s| s.offset + s.size)
+            .map(|s| (s.offset + s.size) as usize)
             .max()
-            .unwrap_or(PAGE_HEADER_SIZE as u32) as usize;
+            .unwrap_or(PAGE_HEADER_SIZE);
 
-        // Serialize only the used part of data
-        let used_data = self.data[..max_offset.min(self.data.len())].to_vec();
-
-        // Create compact structure for serialization
-        let compact_page = CompactPage {
-            header: self.header.clone(),
-            slots: self.slots.clone(),
-            data: used_data,
-        };
-
-        let mut serialized =
-            bincode::serialize(&compact_page).map_err(Error::BincodeSerialization)?;
-
-        // Check size
-        if serialized.len() > PAGE_SIZE {
-            return Err(Error::validation(&format!(
-                "Serialized page is too large: {} bytes (maximum {})",
-                serialized.len(),
-                PAGE_SIZE
-            )));
+        if max_offset > slot_start {
+            return Err(Error::validation("Data overlaps slot area"));
         }
 
-        // Pad with zeros to PAGE_SIZE
-        serialized.resize(PAGE_SIZE, 0);
+        for (i, slot) in active_slots.iter().enumerate() {
+            let base = slot_start + i * SLOT_SIZE;
+            buf[base..base + 2].copy_from_slice(&(slot.offset as u16).to_le_bytes());
+            buf[base + 2..base + 4].copy_from_slice(&(slot.size as u16).to_le_bytes());
+            buf[base + 4..base + 8]
+                .copy_from_slice(&(slot.record_id as u32).to_le_bytes());
+            buf[base + 8] = if slot.is_deleted { 1 } else { 0 };
+        }
 
-        Ok(serialized)
+        buf[PAGE_SIZE - 2..].copy_from_slice(&(slot_count as u16).to_le_bytes());
+
+        let data_end = self
+            .slots
+            .iter()
+            .filter(|s| !s.is_deleted)
+            .map(|s| (s.offset + s.size) as usize)
+            .max()
+            .unwrap_or(PAGE_HEADER_SIZE);
+        let copy_len = data_end.saturating_sub(PAGE_HEADER_SIZE).min(slot_start.saturating_sub(PAGE_HEADER_SIZE));
+        if copy_len > 0 {
+            buf[PAGE_HEADER_SIZE..PAGE_HEADER_SIZE + copy_len]
+                .copy_from_slice(&self.data[PAGE_HEADER_SIZE..PAGE_HEADER_SIZE + copy_len]);
+        }
+
+        Ok(buf)
     }
 
     /// Adds a record to the page

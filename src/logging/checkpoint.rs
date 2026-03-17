@@ -132,6 +132,9 @@ enum CheckpointCommand {
     Shutdown,
 }
 
+/// Callback to flush dirty pages from PageManager (WAL-first: data at checkpoint)
+pub type DirtyPageFlusher = Arc<dyn Fn() -> Result<usize> + Send + Sync>;
+
 /// Checkpoint manager
 pub struct CheckpointManager {
     /// Configuration
@@ -152,6 +155,8 @@ pub struct CheckpointManager {
     active_transactions: Arc<RwLock<HashSet<TransactionId>>>,
     /// Dirty pages (external source)
     dirty_pages: Arc<RwLock<HashSet<(u32, PageId)>>>,
+    /// Optional callback to flush PageManager dirty pages (WAL-first architecture)
+    dirty_page_flusher: Arc<RwLock<Option<DirtyPageFlusher>>>,
 }
 
 impl CheckpointManager {
@@ -169,6 +174,7 @@ impl CheckpointManager {
             background_handle: None,
             active_transactions: Arc::new(RwLock::new(HashSet::new())),
             dirty_pages: Arc::new(RwLock::new(HashSet::new())),
+            dirty_page_flusher: Arc::new(RwLock::new(None)),
         };
 
         // Start background task
@@ -187,6 +193,11 @@ impl CheckpointManager {
         self.dirty_pages = dirty_pages;
     }
 
+    /// Sets the callback to flush PageManager dirty pages (WAL-first: data written at checkpoint)
+    pub fn set_dirty_page_flusher(&self, flusher: DirtyPageFlusher) {
+        *self.dirty_page_flusher.write().unwrap() = Some(flusher);
+    }
+
     /// Starts the background checkpoint management task
     fn start_background_task(
         &mut self,
@@ -199,6 +210,7 @@ impl CheckpointManager {
         let checkpoint_notify = self.checkpoint_notify.clone();
         let active_transactions = self.active_transactions.clone();
         let dirty_pages = self.dirty_pages.clone();
+        let dirty_page_flusher = self.dirty_page_flusher.clone();
         let command_sender = self.command_tx.clone();
 
         self.background_handle = Some(tokio::spawn(async move {
@@ -223,6 +235,7 @@ impl CheckpointManager {
                                     &checkpoint_id_gen,
                                     &active_transactions,
                                     &dirty_pages,
+                                    &dirty_page_flusher,
                                     trigger,
                                 ).await;
 
@@ -311,6 +324,7 @@ impl CheckpointManager {
         checkpoint_id_gen: &Arc<Mutex<u64>>,
         active_transactions: &Arc<RwLock<HashSet<TransactionId>>>,
         dirty_pages: &Arc<RwLock<HashSet<(u32, PageId)>>>,
+        dirty_page_flusher: &Arc<RwLock<Option<DirtyPageFlusher>>>,
         trigger: CheckpointTrigger,
     ) -> Result<CheckpointInfo> {
         let start_time = Instant::now();
@@ -342,8 +356,15 @@ impl CheckpointManager {
         println!("   📊 Active transactions: {}", active_txs.len());
         println!("   📊 Dirty pages: {}", dirty_page_list.len());
 
-        // Flush dirty pages to disk
-        let flushed_pages = Self::flush_dirty_pages(config, &dirty_page_list).await?;
+        // Flush dirty pages: use PageManager callback if set (WAL-first), else legacy simulation
+        let flusher_opt = dirty_page_flusher.read().unwrap().clone();
+        let flushed_pages: u64 = if let Some(flusher) = flusher_opt {
+            let count = tokio::task::spawn_blocking(move || flusher()).await
+                .map_err(|e| Error::internal(&format!("Flush task join error: {}", e)))??;
+            count as u64
+        } else {
+            Self::flush_dirty_pages(config, &dirty_page_list).await?
+        };
         println!("   💾 Pages flushed to disk: {}", flushed_pages);
 
         // Create checkpoint log record

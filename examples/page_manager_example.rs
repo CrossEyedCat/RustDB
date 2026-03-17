@@ -79,6 +79,8 @@ fn demo_create_page_manager(data_dir: &Path) -> Result<(), Box<dyn std::error::E
         enable_compression: true,
         batch_size: 200,
         buffer_pool_size: 1000,
+        flush_on_commit: true,
+        batch_flush_size: 10,
     };
 
     println!("\n📊 Кастомная конфигурация:");

@@ -45,6 +45,7 @@ tracing-subscriber = "0.3"
 # File operations and I/O
 memmap2 = "0.9"
 crossbeam = "0.8"
+dashmap = "6.1"
 parking_lot = "0.12"
 
 # Data compression

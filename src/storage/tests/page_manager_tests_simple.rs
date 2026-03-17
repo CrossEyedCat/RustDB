@@ -44,6 +44,8 @@ fn test_page_manager_config() {
         enable_compression: true,
         batch_size: 50,
         buffer_pool_size: 1000,
+        flush_on_commit: true,
+        batch_flush_size: 10,
     };
 
     let manager_result =
