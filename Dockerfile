@@ -1,22 +1,19 @@
 # Многоэтапная сборка для RustDB
-FROM rust:1.85.1-slim-bookworm AS chef
-WORKDIR /app
-RUN apt-get update && apt-get install -y pkg-config libssl-dev ca-certificates \
+FROM rust:1.81-slim AS builder
+
+# Установка системных зависимостей
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN cargo install cargo-chef --locked
 
-# Снижение потребления памяти при сборке в CI
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
-ENV CARGO_TERM_COLOR=always
 
-FROM chef AS planner
-COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
+WORKDIR /app
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
 
-FROM chef AS builder
-COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-COPY . .
 RUN cargo build --release --bin rustdb
 
 # Финальный образ
