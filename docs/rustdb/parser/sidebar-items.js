@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["ast","lexer","parser","token"]};
+window.SIDEBAR_ITEMS = {"mod":["ast","lexer","parser","prepared","token"]};

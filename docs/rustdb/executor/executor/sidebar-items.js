@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["QueryExecutor"]};
+window.SIDEBAR_ITEMS = {"struct":["QueryExecutor","QueryExecutorConfig"]};
