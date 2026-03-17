@@ -82,11 +82,7 @@ impl IndexRegistry {
     }
 
     /// Gets index entry (columns + index)
-    pub fn get_index_entry(
-        &self,
-        table_name: &str,
-        index_name: &str,
-    ) -> Option<&IndexEntry> {
+    pub fn get_index_entry(&self, table_name: &str, index_name: &str) -> Option<&IndexEntry> {
         let key = (table_name.to_string(), index_name.to_string());
         self.indexes.get(&key)
     }
@@ -110,7 +106,10 @@ impl IndexRegistry {
     ) -> Result<()> {
         for ((t, _), entry) in self.indexes.iter().filter(|((t, _), _)| t == table_name) {
             let key = Self::build_index_key(&entry.columns, column_values)?;
-            let mut index = entry.index.lock().map_err(|_| Error::internal("Lock poisoned"))?;
+            let mut index = entry
+                .index
+                .lock()
+                .map_err(|_| Error::internal("Lock poisoned"))?;
             if let Some(mut ids) = index.search(&key)? {
                 ids.push(record_id);
                 index.insert(key, ids)?;
@@ -130,7 +129,10 @@ impl IndexRegistry {
     ) -> Result<()> {
         for ((t, _), entry) in self.indexes.iter().filter(|((t, _), _)| t == table_name) {
             let key = Self::build_index_key(&entry.columns, column_values)?;
-            let mut index = entry.index.lock().map_err(|_| Error::internal("Lock poisoned"))?;
+            let mut index = entry
+                .index
+                .lock()
+                .map_err(|_| Error::internal("Lock poisoned"))?;
             if let Some(mut ids) = index.search(&key)? {
                 ids.retain(|&id| id != record_id);
                 if ids.is_empty() {
@@ -159,9 +161,7 @@ impl IndexRegistry {
     fn build_index_key(columns: &[String], values: &HashMap<String, String>) -> Result<String> {
         let parts: Vec<String> = columns
             .iter()
-            .map(|col| {
-                values.get(col).cloned().unwrap_or_else(|| "".to_string())
-            })
+            .map(|col| values.get(col).cloned().unwrap_or_else(|| "".to_string()))
             .collect();
         Ok(parts.join("\0"))
     }

@@ -36,18 +36,20 @@ impl PreparedStatementCache {
             statement: *stmt.statement,
             param_count,
         };
-        let mut map = self.statements.write().map_err(|e| {
-            Error::internal(format!("PreparedStatementCache lock poisoned: {}", e))
-        })?;
+        let mut map = self
+            .statements
+            .write()
+            .map_err(|e| Error::internal(format!("PreparedStatementCache lock poisoned: {}", e)))?;
         map.insert(stmt.name, cached);
         Ok(())
     }
 
     /// Resolves EXECUTE to the bound statement (params substituted)
     pub fn execute(&self, stmt: ExecuteStatement) -> Result<SqlStatement> {
-        let map = self.statements.read().map_err(|e| {
-            Error::internal(format!("PreparedStatementCache lock poisoned: {}", e))
-        })?;
+        let map = self
+            .statements
+            .read()
+            .map_err(|e| Error::internal(format!("PreparedStatementCache lock poisoned: {}", e)))?;
         let cached = map.get(&stmt.name).ok_or_else(|| {
             Error::internal(format!("Prepared statement '{}' not found", stmt.name))
         })?;
@@ -65,9 +67,10 @@ impl PreparedStatementCache {
 
     /// Removes a prepared statement (for DEALLOCATE)
     pub fn deallocate(&self, name: &str) -> Result<()> {
-        let mut map = self.statements.write().map_err(|e| {
-            Error::internal(format!("PreparedStatementCache lock poisoned: {}", e))
-        })?;
+        let mut map = self
+            .statements
+            .write()
+            .map_err(|e| Error::internal(format!("PreparedStatementCache lock poisoned: {}", e)))?;
         map.remove(name);
         Ok(())
     }
@@ -75,6 +78,11 @@ impl PreparedStatementCache {
     /// Returns the number of statements in the cache
     pub fn len(&self) -> usize {
         self.statements.read().map(|m| m.len()).unwrap_or(0)
+    }
+
+    /// Returns true if the cache has no prepared statements
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     fn count_params(stmt: &SqlStatement) -> usize {

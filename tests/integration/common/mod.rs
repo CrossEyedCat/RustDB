@@ -152,9 +152,7 @@ impl IntegrationTestContext {
                 self.prepared_cache.prepare(prepare_stmt)?;
                 return Ok(vec![]);
             }
-            SqlStatement::Execute(execute_stmt) => {
-                self.prepared_cache.execute(execute_stmt)?
-            }
+            SqlStatement::Execute(execute_stmt) => self.prepared_cache.execute(execute_stmt)?,
             other => other,
         };
 

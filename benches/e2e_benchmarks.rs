@@ -5,8 +5,8 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rustdb::{
     common::types::RecordId,
-    logging::wal::{WalConfig, WriteAheadLog},
     logging::log_record::IsolationLevel,
+    logging::wal::{WalConfig, WriteAheadLog},
     parser::SqlParser,
     planner::{PlanNode, QueryOptimizer, QueryPlanner},
     storage::page_manager::{PageManager, PageManagerConfig},
@@ -51,12 +51,13 @@ async fn execute_insert_e2e(
 
     for row_values in &insert_node.values {
         let data = serialize_insert_values(row_values);
-        let mut pm = page_manager.lock().unwrap();
-        let result = pm.insert(&data)?;
-        drop(pm);
-
+        let (result, file_id) = {
+            let mut pm = page_manager.lock().unwrap();
+            let result = pm.insert(&data)?;
+            let file_id = pm.file_id();
+            (result, file_id)
+        };
         let (page_id, record_offset) = parse_record_id(result.record_id);
-        let file_id = page_manager.lock().unwrap().file_id();
         wal.log_insert(tx_id, file_id, page_id, record_offset, data)
             .await?;
     }
@@ -103,7 +104,8 @@ fn bench_e2e_insert_single(c: &mut Criterion) {
     group.bench_function("insert_with_tx_wal", |b| {
         b.iter(|| {
             let sql = "INSERT INTO bench_table (id, name, age) VALUES (1, 'Alice', 30)";
-            rt.block_on(execute_insert_e2e(black_box(sql), &page_manager, &wal)).unwrap();
+            rt.block_on(execute_insert_e2e(black_box(sql), &page_manager, &wal))
+                .unwrap();
         });
     });
 
@@ -122,12 +124,16 @@ fn bench_e2e_insert_batch(c: &mut Criterion) {
                 b.iter(|| {
                     let (temp_dir, page_manager, rt, wal) = setup_e2e_env();
                     rt.block_on(async {
-                        let tx_id = wal.begin_transaction(IsolationLevel::ReadCommitted).await.unwrap();
+                        let tx_id = wal
+                            .begin_transaction(IsolationLevel::ReadCommitted)
+                            .await
+                            .unwrap();
                         let mut planner = QueryPlanner::new().unwrap();
                         let mut optimizer = QueryOptimizer::new().unwrap();
 
                         for i in 1..=count {
-                            let sql = format!(
+                            let sql =
+                                format!(
                                 "INSERT INTO bench_table (id, name, age) VALUES ({}, 'User{}', {})",
                                 i, i, 20 + (i % 50)
                             );
@@ -139,12 +145,14 @@ fn bench_e2e_insert_batch(c: &mut Criterion) {
                             if let PlanNode::Insert(insert_node) = &optimized.optimized_plan.root {
                                 for row_values in &insert_node.values {
                                     let data = serialize_insert_values(row_values);
-                                    let mut pm_guard = page_manager.lock().unwrap();
-                                    let result = pm_guard.insert(&data).unwrap();
-                                    let file_id = pm_guard.file_id();
-                                    drop(pm_guard);
-
-                                    let (page_id, record_offset) = parse_record_id(result.record_id);
+                                    let (result, file_id) = {
+                                        let mut pm_guard = page_manager.lock().unwrap();
+                                        let result = pm_guard.insert(&data).unwrap();
+                                        let file_id = pm_guard.file_id();
+                                        (result, file_id)
+                                    };
+                                    let (page_id, record_offset) =
+                                        parse_record_id(result.record_id);
                                     wal.log_insert(tx_id, file_id, page_id, record_offset, data)
                                         .await
                                         .unwrap();
@@ -171,13 +179,17 @@ fn bench_e2e_transaction_cycle(c: &mut Criterion) {
     group.bench_function("begin_insert_commit", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let tx_id = wal.begin_transaction(IsolationLevel::ReadCommitted).await.unwrap();
+                let tx_id = wal
+                    .begin_transaction(IsolationLevel::ReadCommitted)
+                    .await
+                    .unwrap();
                 let data = serialize_insert_values(&["1".into(), "Test".into(), "25".into()]);
-                let mut pm_guard = page_manager.lock().unwrap();
-                let result = pm_guard.insert(&data).unwrap();
-                let file_id = pm_guard.file_id();
-                drop(pm_guard);
-
+                let (result, file_id) = {
+                    let mut pm_guard = page_manager.lock().unwrap();
+                    let result = pm_guard.insert(&data).unwrap();
+                    let file_id = pm_guard.file_id();
+                    (result, file_id)
+                };
                 let (page_id, record_offset) = parse_record_id(result.record_id);
                 wal.log_insert(tx_id, file_id, page_id, record_offset, data)
                     .await
@@ -198,18 +210,22 @@ fn bench_e2e_select_scan(c: &mut Criterion) {
 
     // Предзаполняем данными
     rt.block_on(async {
-        let tx_id = wal.begin_transaction(IsolationLevel::ReadCommitted).await.unwrap();
+        let tx_id = wal
+            .begin_transaction(IsolationLevel::ReadCommitted)
+            .await
+            .unwrap();
         for i in 1..=100 {
             let data = serialize_insert_values(&[
                 i.to_string(),
                 format!("User{}", i),
                 (20 + (i % 50)).to_string(),
             ]);
-            let mut pm = page_manager.lock().unwrap();
-            let result = pm.insert(&data).unwrap();
-            let file_id = pm.file_id();
-            drop(pm);
-
+            let (result, file_id) = {
+                let mut pm = page_manager.lock().unwrap();
+                let result = pm.insert(&data).unwrap();
+                let file_id = pm.file_id();
+                (result, file_id)
+            };
             let (page_id, record_offset) = parse_record_id(result.record_id);
             wal.log_insert(tx_id, file_id, page_id, record_offset, data)
                 .await

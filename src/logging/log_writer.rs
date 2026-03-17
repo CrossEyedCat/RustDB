@@ -343,8 +343,7 @@ impl LogWriter {
             let gc_buffer = self.write_buffer.clone();
             let gc_waiters = self.sync_waiters.clone();
             let gc_stats = self.statistics.clone();
-            let gc_interval =
-                Duration::from_millis(self.config.group_commit_interval_ms.max(1));
+            let gc_interval = Duration::from_millis(self.config.group_commit_interval_ms.max(1));
 
             self.group_commit_handle = Some(tokio::spawn(async move {
                 let mut interval = tokio::time::interval(gc_interval);

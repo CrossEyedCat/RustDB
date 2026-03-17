@@ -64,7 +64,10 @@ impl CachedFileManager {
             return Ok(data);
         }
         let data = self.inner.read_page(file_id, page_id)?;
-        self.cache.lock().unwrap().put(file_id, page_id, data.clone());
+        self.cache
+            .lock()
+            .unwrap()
+            .put(file_id, page_id, data.clone());
         Ok(data)
     }
 

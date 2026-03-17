@@ -3,7 +3,10 @@
 //! Измеряет производительность парсера, планировщика и оптимизатора запросов.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use rustdb::{parser::SqlParser, planner::{QueryOptimizer, QueryPlanner}};
+use rustdb::{
+    parser::SqlParser,
+    planner::{QueryOptimizer, QueryPlanner},
+};
 
 fn bench_sql_parse_only(c: &mut Criterion) {
     let mut group = c.benchmark_group("sql_parse_only");
@@ -11,11 +14,20 @@ fn bench_sql_parse_only(c: &mut Criterion) {
     let queries = [
         ("select_simple", "SELECT * FROM users"),
         ("select_where", "SELECT id, name FROM users WHERE age > 25"),
-        ("select_join", "SELECT u.name, o.amount FROM users u JOIN orders o ON u.id = o.user_id"),
-        ("insert", "INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)"),
+        (
+            "select_join",
+            "SELECT u.name, o.amount FROM users u JOIN orders o ON u.id = o.user_id",
+        ),
+        (
+            "insert",
+            "INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)",
+        ),
         ("update", "UPDATE users SET age = 31 WHERE id = 1"),
         ("delete", "DELETE FROM users WHERE id = 1"),
-        ("create_table", "CREATE TABLE test (id INTEGER, name VARCHAR(100))"),
+        (
+            "create_table",
+            "CREATE TABLE test (id INTEGER, name VARCHAR(100))",
+        ),
     ];
 
     for (name, sql) in queries {
@@ -37,7 +49,10 @@ fn bench_sql_parse_and_plan(c: &mut Criterion) {
     let queries = [
         ("select_simple", "SELECT * FROM users"),
         ("select_where", "SELECT id, name FROM users WHERE age > 25"),
-        ("insert", "INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)"),
+        (
+            "insert",
+            "INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)",
+        ),
         ("update", "UPDATE users SET age = 31"),
         ("delete", "DELETE FROM users"),
     ];
@@ -64,7 +79,10 @@ fn bench_sql_full_pipeline(c: &mut Criterion) {
     let queries = [
         ("select_simple", "SELECT * FROM users"),
         ("select_where", "SELECT id, name FROM users WHERE age > 25"),
-        ("insert", "INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)"),
+        (
+            "insert",
+            "INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)",
+        ),
         ("update", "UPDATE users SET age = 31"),
         ("delete", "DELETE FROM users"),
     ];
@@ -174,9 +192,7 @@ fn bench_sql_mixed_oltp(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("mixed", count), &count, |b, &count| {
             let mut planner = QueryPlanner::new().unwrap();
             let mut optimizer = QueryOptimizer::new().unwrap();
-            let queries: Vec<_> = (0..count)
-                .map(|i| operations[i % 4])
-                .collect();
+            let queries: Vec<_> = (0..count).map(|i| operations[i % 4]).collect();
 
             b.iter(|| {
                 for sql in &queries {

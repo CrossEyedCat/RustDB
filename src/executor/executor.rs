@@ -97,11 +97,8 @@ impl QueryExecutor {
         } else {
             ts.columns.clone()
         };
-        self.scan_factory.create_table_scan(
-            ts.table_name.clone(),
-            ts.filter.clone(),
-            schema,
-        )
+        self.scan_factory
+            .create_table_scan(ts.table_name.clone(), ts.filter.clone(), schema)
     }
 
     fn build_index_scan(&self, idx: &IndexScanNode) -> Result<Box<dyn Operator>> {
@@ -153,13 +150,7 @@ impl QueryExecutor {
             crate::planner::planner::JoinType::Full => JoinType::FullOuter,
             crate::planner::planner::JoinType::Cross => JoinType::Inner,
         };
-        let operator = NestedLoopJoinOperator::new(
-            left,
-            right,
-            join_condition,
-            join_type,
-            100,
-        )?;
+        let operator = NestedLoopJoinOperator::new(left, right, join_condition, join_type, 100)?;
         Ok(Box::new(operator))
     }
 
@@ -192,12 +183,7 @@ impl QueryExecutor {
             .cloned()
             .chain(g.aggregates.iter().map(|a| a.name.clone()))
             .collect();
-        let operator = HashGroupByOperator::new(
-            input,
-            group_keys,
-            vec![],
-            result_schema,
-        )?;
+        let operator = HashGroupByOperator::new(input, group_keys, vec![], result_schema)?;
         Ok(Box::new(operator))
     }
 

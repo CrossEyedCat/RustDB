@@ -2,8 +2,8 @@
 
 use crate::common::Result;
 use crate::parser::{
-    ColumnDefinition, CreateIndexStatement, CreateTableStatement, DataType, Expression,
-    SelectItem, SelectStatement, SqlParser, SqlStatement,
+    ColumnDefinition, CreateIndexStatement, CreateTableStatement, DataType, Expression, SelectItem,
+    SelectStatement, SqlParser, SqlStatement,
 };
 
 #[test]

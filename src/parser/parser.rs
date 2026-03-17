@@ -600,7 +600,9 @@ impl SqlParser {
             self.advance();
             self.parse_create_index()
         } else {
-            Err(Error::parser("Only CREATE TABLE and CREATE INDEX are supported".to_string()))
+            Err(Error::parser(
+                "Only CREATE TABLE and CREATE INDEX are supported".to_string(),
+            ))
         }
     }
 

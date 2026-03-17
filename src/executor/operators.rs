@@ -4,10 +4,10 @@ use crate::common::types::{ColumnValue, DataType};
 use crate::common::{Error, Result};
 use crate::planner::{ExecutionPlan, PlanNode};
 use crate::storage::index::BPlusTree;
+use crate::storage::index::Index;
 use crate::storage::page_manager::PageManager as StoragePageManager;
 use crate::storage::tuple::Tuple;
 use crate::{PageId, RecordId, Row};
-use crate::storage::index::Index;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -305,15 +305,15 @@ impl IndexScanOperator {
 
     /// Perform index search using real B+ tree
     fn perform_index_search(&mut self) -> Result<()> {
-        let index = self.index.lock().map_err(|_| Error::internal("Lock poisoned"))?;
+        let index = self
+            .index
+            .lock()
+            .map_err(|_| Error::internal("Lock poisoned"))?;
 
         if self.search_conditions.is_empty() {
             // No conditions: range search over all keys (use min/max string bounds)
             let results = index.range_search(&String::new(), &"\u{10FFFF}".to_string())?;
-            self.index_result = results
-                .into_iter()
-                .flat_map(|(_, ids)| ids)
-                .collect();
+            self.index_result = results.into_iter().flat_map(|(_, ids)| ids).collect();
         } else {
             // Use first condition for index lookup
             let cond = &self.search_conditions[0];
@@ -365,7 +365,10 @@ impl IndexScanOperator {
 
     /// Load record by ID from PageManager
     fn load_record(&mut self, record_id: RecordId) -> Result<Option<Row>> {
-        let mut pm = self.page_manager.lock().map_err(|_| Error::internal("Lock poisoned"))?;
+        let mut pm = self
+            .page_manager
+            .lock()
+            .map_err(|_| Error::internal("Lock poisoned"))?;
         let data = pm.get_record(record_id)?;
         self.statistics.io_operations += 1;
 
