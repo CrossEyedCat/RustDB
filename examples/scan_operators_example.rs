@@ -114,8 +114,8 @@ fn main() -> Result<()> {
     let mut factory = ScanOperatorFactory::new(page_manager.clone());
 
     // Добавляем индекс
-    let index_for_factory = Arc::new(Mutex::new(BPlusTree::new(4)));
-    factory.add_index("users".to_string(), index_for_factory);
+    let index_for_factory = Arc::new(Mutex::new(BPlusTree::new_default()));
+    factory.add_index("users", "idx_users_id", index_for_factory);
 
     // Создаем операторы через фабрику
     let table_scan_from_factory =

@@ -150,6 +150,10 @@ pub enum TokenType {
     Rollback,
     Transaction,
 
+    // Prepared statements
+    Prepare,
+    Execute,
+
     // Conditional operators
     Case,
     When,
@@ -489,6 +493,8 @@ impl fmt::Display for TokenType {
             TokenType::Commit => "COMMIT",
             TokenType::Rollback => "ROLLBACK",
             TokenType::Transaction => "TRANSACTION",
+            TokenType::Prepare => "PREPARE",
+            TokenType::Execute => "EXECUTE",
             TokenType::Case => "CASE",
             TokenType::When => "WHEN",
             TokenType::Then => "THEN",
@@ -623,6 +629,10 @@ pub fn keyword_map() -> std::collections::HashMap<&'static str, TokenType> {
     map.insert("COMMIT", TokenType::Commit);
     map.insert("ROLLBACK", TokenType::Rollback);
     map.insert("TRANSACTION", TokenType::Transaction);
+
+    // Prepared statements
+    map.insert("PREPARE", TokenType::Prepare);
+    map.insert("EXECUTE", TokenType::Execute);
 
     // Conditional operators
     map.insert("CASE", TokenType::Case);

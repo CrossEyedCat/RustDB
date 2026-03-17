@@ -5,8 +5,10 @@ use crate::common::{Error, Result};
 use crate::planner::planner::{
     ExecutionPlan, FilterNode, IndexScanNode, JoinNode, PlanNode, TableScanNode,
 };
+use crate::storage::index_registry::IndexRegistry;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Query optimizer
 pub struct QueryOptimizer {
@@ -16,6 +18,8 @@ pub struct QueryOptimizer {
     settings: OptimizerSettings,
     /// Optimization statistics
     statistics: OptimizationStatistics,
+    /// Optional index registry for index selection
+    index_registry: Option<Arc<IndexRegistry>>,
 }
 
 /// Optimizer settings
@@ -87,6 +91,7 @@ impl QueryOptimizer {
             semantic_analyzer,
             settings: OptimizerSettings::default(),
             statistics: OptimizationStatistics::default(),
+            index_registry: None,
         })
     }
 
@@ -97,7 +102,14 @@ impl QueryOptimizer {
             semantic_analyzer,
             settings,
             statistics: OptimizationStatistics::default(),
+            index_registry: None,
         })
+    }
+
+    /// Set index registry for index selection
+    pub fn with_index_registry(mut self, registry: Arc<IndexRegistry>) -> Self {
+        self.index_registry = Some(registry);
+        self
     }
 
     /// Optimize execution plan
@@ -396,9 +408,36 @@ impl QueryOptimizer {
 
     /// Find the best index for a table
     fn find_best_index(&self, table_scan: &TableScanNode) -> Result<Option<IndexScanNode>> {
-        // Simplified implementation - just return None
-        // In a real implementation, available indexes would be searched here
-        Ok(None)
+        let registry = match &self.index_registry {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        let indexes = registry.list_indexes_for_table(&table_scan.table_name);
+        if indexes.is_empty() {
+            return Ok(None);
+        }
+
+        // Use first available index for this table
+        let (index_name, columns) = &indexes[0];
+        let conditions: Vec<crate::planner::planner::IndexCondition> = table_scan
+            .filter
+            .as_ref()
+            .map(|cond| crate::planner::planner::IndexCondition {
+                column: columns.first().cloned().unwrap_or_default(),
+                operator: "=".to_string(),
+                value: cond.clone(),
+            })
+            .map(|c| vec![c])
+            .unwrap_or_default();
+
+        Ok(Some(IndexScanNode {
+            table_name: table_scan.table_name.clone(),
+            index_name: index_name.clone(),
+            conditions,
+            cost: table_scan.cost * 0.5,
+            estimated_rows: table_scan.estimated_rows,
+        }))
     }
 
     /// Apply expression simplification

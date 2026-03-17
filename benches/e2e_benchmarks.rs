@@ -1,0 +1,240 @@
+//! E2E-бенчмарки RustDB с реальным выполнением
+//!
+//! Измеряет полный цикл: парсинг → планирование → выполнение → WAL → диск.
+
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use rustdb::{
+    common::types::RecordId,
+    logging::wal::{WalConfig, WriteAheadLog},
+    logging::log_record::IsolationLevel,
+    parser::SqlParser,
+    planner::{PlanNode, QueryOptimizer, QueryPlanner},
+    storage::page_manager::{PageManager, PageManagerConfig},
+};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use tempfile::TempDir;
+use tokio::runtime::Runtime;
+
+/// Парсит RecordId на page_id и offset (совместимо с PageManager)
+fn parse_record_id(record_id: RecordId) -> (u64, u16) {
+    let page_id = record_id >> 32;
+    let offset = (record_id & 0xFFFFFFFF) as u16;
+    (page_id, offset)
+}
+
+/// Сериализует значения INSERT в байты для PageManager (компактный формат)
+fn serialize_insert_values(values: &[String]) -> Vec<u8> {
+    values.join("\t").into_bytes()
+}
+
+/// Выполняет INSERT-план через PageManager и WAL
+async fn execute_insert_e2e(
+    sql: &str,
+    page_manager: &Mutex<PageManager>,
+    wal: &WriteAheadLog,
+) -> rustdb::Result<()> {
+    let mut parser = SqlParser::new(sql)?;
+    let stmt = parser.parse()?;
+
+    let mut planner = QueryPlanner::new()?;
+    let plan = planner.create_plan(&stmt)?;
+
+    let mut optimizer = QueryOptimizer::new()?;
+    let optimized = optimizer.optimize(plan)?;
+
+    let PlanNode::Insert(insert_node) = &optimized.optimized_plan.root else {
+        return Err(rustdb::Error::internal("Expected Insert plan"));
+    };
+
+    let tx_id = wal.begin_transaction(IsolationLevel::ReadCommitted).await?;
+
+    for row_values in &insert_node.values {
+        let data = serialize_insert_values(row_values);
+        let mut pm = page_manager.lock().unwrap();
+        let result = pm.insert(&data)?;
+        drop(pm);
+
+        let (page_id, record_offset) = parse_record_id(result.record_id);
+        let file_id = page_manager.lock().unwrap().file_id();
+        wal.log_insert(tx_id, file_id, page_id, record_offset, data)
+            .await?;
+    }
+
+    wal.commit_transaction(tx_id).await?;
+    Ok(())
+}
+
+fn setup_e2e_env() -> (
+    TempDir,
+    Arc<Mutex<PageManager>>,
+    Runtime,
+    Arc<WriteAheadLog>,
+) {
+    let temp_dir = TempDir::new().unwrap();
+    let data_path = temp_dir.path().join("data");
+    let log_path = temp_dir.path().join("wal");
+    std::fs::create_dir_all(&data_path).unwrap();
+    std::fs::create_dir_all(&log_path).unwrap();
+
+    let mut wal_config = WalConfig::default();
+    wal_config.log_writer_config.log_directory = log_path;
+
+    let rt = Runtime::new().unwrap();
+    let wal = rt.block_on(WriteAheadLog::new(wal_config)).unwrap();
+    let wal = Arc::new(wal);
+
+    let page_manager = PageManager::new(
+        PathBuf::from(&data_path),
+        "bench_table",
+        PageManagerConfig::default(),
+    )
+    .unwrap();
+    let page_manager = Arc::new(Mutex::new(page_manager));
+
+    (temp_dir, page_manager, rt, wal)
+}
+
+fn bench_e2e_insert_single(c: &mut Criterion) {
+    let mut group = c.benchmark_group("e2e_insert_single");
+
+    let (temp_dir, page_manager, rt, wal) = setup_e2e_env();
+
+    group.bench_function("insert_with_tx_wal", |b| {
+        b.iter(|| {
+            let sql = "INSERT INTO bench_table (id, name, age) VALUES (1, 'Alice', 30)";
+            rt.block_on(execute_insert_e2e(black_box(sql), &page_manager, &wal)).unwrap();
+        });
+    });
+
+    drop(temp_dir);
+    group.finish();
+}
+
+fn bench_e2e_insert_batch(c: &mut Criterion) {
+    let mut group = c.benchmark_group("e2e_insert_batch");
+
+    for count in [5, 10, 25] {
+        group.bench_with_input(
+            BenchmarkId::new("inserts_with_tx_wal", count),
+            &count,
+            |b, &count| {
+                b.iter(|| {
+                    let (temp_dir, page_manager, rt, wal) = setup_e2e_env();
+                    rt.block_on(async {
+                        let tx_id = wal.begin_transaction(IsolationLevel::ReadCommitted).await.unwrap();
+                        let mut planner = QueryPlanner::new().unwrap();
+                        let mut optimizer = QueryOptimizer::new().unwrap();
+
+                        for i in 1..=count {
+                            let sql = format!(
+                                "INSERT INTO bench_table (id, name, age) VALUES ({}, 'User{}', {})",
+                                i, i, 20 + (i % 50)
+                            );
+                            let mut parser = SqlParser::new(&sql).unwrap();
+                            let stmt = parser.parse().unwrap();
+                            let plan = planner.create_plan(&stmt).unwrap();
+                            let optimized = optimizer.optimize(plan).unwrap();
+
+                            if let PlanNode::Insert(insert_node) = &optimized.optimized_plan.root {
+                                for row_values in &insert_node.values {
+                                    let data = serialize_insert_values(row_values);
+                                    let mut pm_guard = page_manager.lock().unwrap();
+                                    let result = pm_guard.insert(&data).unwrap();
+                                    let file_id = pm_guard.file_id();
+                                    drop(pm_guard);
+
+                                    let (page_id, record_offset) = parse_record_id(result.record_id);
+                                    wal.log_insert(tx_id, file_id, page_id, record_offset, data)
+                                        .await
+                                        .unwrap();
+                                }
+                            }
+                        }
+
+                        wal.commit_transaction(tx_id).await.unwrap();
+                    });
+                    drop(temp_dir);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn bench_e2e_transaction_cycle(c: &mut Criterion) {
+    let mut group = c.benchmark_group("e2e_transaction_cycle");
+
+    let (temp_dir, page_manager, rt, wal) = setup_e2e_env();
+
+    group.bench_function("begin_insert_commit", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let tx_id = wal.begin_transaction(IsolationLevel::ReadCommitted).await.unwrap();
+                let data = serialize_insert_values(&["1".into(), "Test".into(), "25".into()]);
+                let mut pm_guard = page_manager.lock().unwrap();
+                let result = pm_guard.insert(&data).unwrap();
+                let file_id = pm_guard.file_id();
+                drop(pm_guard);
+
+                let (page_id, record_offset) = parse_record_id(result.record_id);
+                wal.log_insert(tx_id, file_id, page_id, record_offset, data)
+                    .await
+                    .unwrap();
+                wal.commit_transaction(tx_id).await.unwrap();
+            })
+        });
+    });
+
+    drop(temp_dir);
+    group.finish();
+}
+
+fn bench_e2e_select_scan(c: &mut Criterion) {
+    let mut group = c.benchmark_group("e2e_select_scan");
+
+    let (temp_dir, page_manager, rt, wal) = setup_e2e_env();
+
+    // Предзаполняем данными
+    rt.block_on(async {
+        let tx_id = wal.begin_transaction(IsolationLevel::ReadCommitted).await.unwrap();
+        for i in 1..=100 {
+            let data = serialize_insert_values(&[
+                i.to_string(),
+                format!("User{}", i),
+                (20 + (i % 50)).to_string(),
+            ]);
+            let mut pm = page_manager.lock().unwrap();
+            let result = pm.insert(&data).unwrap();
+            let file_id = pm.file_id();
+            drop(pm);
+
+            let (page_id, record_offset) = parse_record_id(result.record_id);
+            wal.log_insert(tx_id, file_id, page_id, record_offset, data)
+                .await
+                .unwrap();
+        }
+        wal.commit_transaction(tx_id).await.unwrap();
+    });
+
+    group.bench_function("select_full_scan_100_rows", |b| {
+        b.iter(|| {
+            let mut pm = page_manager.lock().unwrap();
+            let results = pm.select(None).unwrap();
+            black_box(results);
+        });
+    });
+
+    drop(temp_dir);
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_e2e_insert_single,
+    bench_e2e_insert_batch,
+    bench_e2e_transaction_cycle,
+    bench_e2e_select_scan
+);
+criterion_main!(benches);

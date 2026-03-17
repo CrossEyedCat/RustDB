@@ -215,6 +215,7 @@ fn test_page_manager_config() {
             preallocation_buffer_size: 5,
             enable_compression: true,
             batch_size: 50,
+            buffer_pool_size: 1000,
         };
 
         let manager = PageManager::new(temp_dir.path().to_path_buf(), "config_test", custom_config);
@@ -333,6 +334,7 @@ fn test_page_merge() {
             preallocation_buffer_size: 2,
             enable_compression: false,
             batch_size: 10,
+            buffer_pool_size: 1000,
         };
 
         if let Ok(mut manager) =
@@ -383,6 +385,7 @@ fn test_compression_functionality() {
             preallocation_buffer_size: 5,
             enable_compression: true, // Enable compression
             batch_size: 100,
+            buffer_pool_size: 1000,
         };
 
         if let Ok(mut manager) =
@@ -422,6 +425,7 @@ fn test_page_split_with_compression() {
             preallocation_buffer_size: 1,
             enable_compression: true,
             batch_size: 50,
+            buffer_pool_size: 1000,
         };
 
         if let Ok(mut manager) = PageManager::new(

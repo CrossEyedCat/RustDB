@@ -43,6 +43,7 @@ fn test_page_manager_config() {
         preallocation_buffer_size: 5,
         enable_compression: true,
         batch_size: 50,
+        buffer_pool_size: 1000,
     };
 
     let manager_result =

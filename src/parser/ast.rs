@@ -18,6 +18,8 @@ pub enum SqlStatement {
     Delete(DeleteStatement),
     /// CREATE TABLE operation
     CreateTable(CreateTableStatement),
+    /// CREATE INDEX operation
+    CreateIndex(CreateIndexStatement),
     /// ALTER TABLE operation
     AlterTable(AlterTableStatement),
     /// DROP TABLE operation
@@ -28,6 +30,24 @@ pub enum SqlStatement {
     CommitTransaction,
     /// ROLLBACK TRANSACTION
     RollbackTransaction,
+    /// PREPARE statement
+    Prepare(PrepareStatement),
+    /// EXECUTE prepared statement
+    Execute(ExecuteStatement),
+}
+
+/// PREPARE statement: PREPARE name AS SELECT ...
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PrepareStatement {
+    pub name: String,
+    pub statement: Box<SqlStatement>,
+}
+
+/// EXECUTE statement: EXECUTE name (param1, param2, ...)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExecuteStatement {
+    pub name: String,
+    pub params: Vec<Expression>,
 }
 
 /// SELECT query
@@ -152,6 +172,14 @@ pub struct CreateTableStatement {
     pub columns: Vec<ColumnDefinition>,
     pub constraints: Vec<TableConstraint>,
     pub if_not_exists: bool,
+}
+
+/// CREATE INDEX operation: CREATE INDEX index_name ON table_name (col1, col2, ...)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreateIndexStatement {
+    pub index_name: String,
+    pub table_name: String,
+    pub columns: Vec<String>,
 }
 
 /// Column definition

@@ -810,6 +810,7 @@ dependencies = [
  "memmap2",
  "parking_lot",
  "rand",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",

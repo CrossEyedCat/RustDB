@@ -38,6 +38,12 @@ pub struct LogWriterConfig {
     pub writer_thread_pool_size: usize,
     /// Enable integrity checks
     pub enable_integrity_check: bool,
+    /// Group commit: flush interval in milliseconds
+    pub group_commit_interval_ms: u64,
+    /// Group commit: max batch size before flush
+    pub group_commit_max_batch: usize,
+    /// Group commit: enable batching of COMMIT syncs
+    pub group_commit_enabled: bool,
 }
 
 /// Log synchronization level
@@ -65,6 +71,9 @@ impl Default for LogWriterConfig {
             sync_level: SyncLevel::OnCommit,
             writer_thread_pool_size: 2,
             enable_integrity_check: true,
+            group_commit_interval_ms: 5,
+            group_commit_max_batch: 10,
+            group_commit_enabled: true,
         }
     }
 }
@@ -97,9 +106,9 @@ pub struct LogFileInfo {
 pub struct LogWriteRequest {
     /// Log record to be written
     pub record: LogRecord,
-    /// Response channel
+    /// Response channel (for force_sync, response is sent after group flush)
     pub response_tx: Option<oneshot::Sender<Result<()>>>,
-    /// Indicates whether immediate sync is required
+    /// Indicates whether sync is required (uses group commit when enabled)
     pub force_sync: bool,
 }
 
@@ -136,6 +145,8 @@ pub struct LogWriter {
     log_files: Arc<RwLock<Vec<LogFileInfo>>>,
     /// Record buffer
     write_buffer: Arc<Mutex<VecDeque<LogRecord>>>,
+    /// Sync waiters (response channels for force_sync requests, batched by group commit)
+    sync_waiters: Arc<Mutex<Vec<oneshot::Sender<Result<()>>>>>,
     /// Channel for write requests
     write_tx: mpsc::UnboundedSender<LogWriteRequest>,
     /// LSN generator
@@ -148,6 +159,8 @@ pub struct LogWriter {
     background_handle: Option<JoinHandle<()>>,
     /// Write task handle
     writer_handle: Option<JoinHandle<()>>,
+    /// Group commit task handle
+    group_commit_handle: Option<JoinHandle<()>>,
     /// Optimized I/O manager
     io_manager: Option<Arc<BufferedIoManager>>,
 }
@@ -174,17 +187,21 @@ impl LogWriter {
             None
         };
 
+        let sync_waiters = Arc::new(Mutex::new(Vec::new()));
+
         let mut writer = Self {
             config: config.clone(),
             current_file: Arc::new(RwLock::new(None)),
             log_files: Arc::new(RwLock::new(Vec::new())),
             write_buffer: Arc::new(Mutex::new(VecDeque::new())),
+            sync_waiters: sync_waiters.clone(),
             write_tx,
             lsn_generator: Arc::new(Mutex::new(1)),
             statistics: Arc::new(RwLock::new(LogWriterStatistics::default())),
             semaphore,
             background_handle: None,
             writer_handle: None,
+            group_commit_handle: None,
             io_manager,
         };
 
@@ -280,6 +297,7 @@ impl LogWriter {
     fn start_background_tasks(&mut self, mut write_rx: mpsc::UnboundedReceiver<LogWriteRequest>) {
         let config = self.config.clone();
         let write_buffer = self.write_buffer.clone();
+        let sync_waiters = self.sync_waiters.clone();
         let statistics = self.statistics.clone();
         let current_file = self.current_file.clone();
         let log_files = self.log_files.clone();
@@ -290,19 +308,23 @@ impl LogWriter {
         self.writer_handle = Some(tokio::spawn(async move {
             while let Some(request) = write_rx.recv().await {
                 let buffer = write_buffer.clone();
+                let waiters = sync_waiters.clone();
                 let stats = statistics.clone();
                 let file = current_file.clone();
                 let files = log_files.clone();
                 let cfg = config.clone();
                 let io_mgr = io_manager.clone();
 
-                // Handle request directly without semaphore for simplicity
-                Self::handle_write_request(request, buffer, stats, file, files, cfg, io_mgr).await;
+                Self::handle_write_request(
+                    request, buffer, waiters, stats, file, files, cfg, io_mgr,
+                )
+                .await;
             }
         }));
 
         // Task that periodically flushes the buffer
         let flush_buffer = self.write_buffer.clone();
+        let flush_waiters = self.sync_waiters.clone();
         let flush_stats = self.statistics.clone();
         let flush_config = self.config.clone();
 
@@ -312,22 +334,56 @@ impl LogWriter {
             loop {
                 interval.tick().await;
                 Self::flush_write_buffer(&flush_buffer, &flush_stats).await;
+                Self::notify_sync_waiters(&flush_waiters);
             }
         }));
+
+        // Group commit task: flush and notify sync waiters on interval
+        if self.config.group_commit_enabled {
+            let gc_buffer = self.write_buffer.clone();
+            let gc_waiters = self.sync_waiters.clone();
+            let gc_stats = self.statistics.clone();
+            let gc_interval =
+                Duration::from_millis(self.config.group_commit_interval_ms.max(1));
+
+            self.group_commit_handle = Some(tokio::spawn(async move {
+                let mut interval = tokio::time::interval(gc_interval);
+
+                loop {
+                    interval.tick().await;
+                    let should_flush = {
+                        let waiters = gc_waiters.lock().unwrap();
+                        !waiters.is_empty()
+                    };
+                    if should_flush {
+                        Self::flush_write_buffer(&gc_buffer, &gc_stats).await;
+                        Self::notify_sync_waiters(&gc_waiters);
+                    }
+                }
+            }));
+        }
+    }
+
+    /// Notifies all pending sync waiters after a flush
+    fn notify_sync_waiters(sync_waiters: &Arc<Mutex<Vec<oneshot::Sender<Result<()>>>>>) {
+        let mut waiters = sync_waiters.lock().unwrap();
+        for tx in waiters.drain(..) {
+            let _ = tx.send(Ok(()));
+        }
     }
 
     /// Handles a write request
     async fn handle_write_request(
         request: LogWriteRequest,
         write_buffer: Arc<Mutex<VecDeque<LogRecord>>>,
+        sync_waiters: Arc<Mutex<Vec<oneshot::Sender<Result<()>>>>>,
         statistics: Arc<RwLock<LogWriterStatistics>>,
-        current_file: Arc<RwLock<Option<LogFileInfo>>>,
+        _current_file: Arc<RwLock<Option<LogFileInfo>>>,
         _log_files: Arc<RwLock<Vec<LogFileInfo>>>,
-        _config: LogWriterConfig,
+        config: LogWriterConfig,
         _io_manager: Option<Arc<BufferedIoManager>>,
     ) {
         let start_time = Instant::now();
-        let result = Ok(());
 
         // Push record into buffer
         {
@@ -335,9 +391,32 @@ impl LogWriter {
             buffer.push_back(request.record.clone());
         }
 
-        // Flush buffer immediately when required
+        let mut should_flush = false;
+
         if request.force_sync || request.record.requires_immediate_flush() {
+            if config.group_commit_enabled {
+                if let Some(tx) = request.response_tx {
+                    let mut waiters = sync_waiters.lock().unwrap();
+                    waiters.push(tx);
+                    if waiters.len() >= config.group_commit_max_batch {
+                        should_flush = true;
+                    }
+                }
+            } else {
+                // Legacy: immediate flush when group commit disabled
+                Self::flush_write_buffer(&write_buffer, &statistics).await;
+                Self::notify_sync_waiters(&sync_waiters);
+                if let Some(tx) = request.response_tx {
+                    let _ = tx.send(Ok(()));
+                }
+            }
+        } else if let Some(tx) = request.response_tx {
+            let _ = tx.send(Ok(()));
+        }
+
+        if should_flush {
             Self::flush_write_buffer(&write_buffer, &statistics).await;
+            Self::notify_sync_waiters(&sync_waiters);
         }
 
         // Update statistics
@@ -362,11 +441,6 @@ impl LogWriter {
             if buffer_size > stats.max_buffer_size_reached {
                 stats.max_buffer_size_reached = buffer_size;
             }
-        }
-
-        // Return result
-        if let Some(response_tx) = request.response_tx {
-            let _ = response_tx.send(result);
         }
     }
 
@@ -556,6 +630,9 @@ impl Drop for LogWriter {
         if let Some(handle) = self.writer_handle.take() {
             handle.abort();
         }
+        if let Some(handle) = self.group_commit_handle.take() {
+            handle.abort();
+        }
     }
 }
 
@@ -600,6 +677,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let mut config = LogWriterConfig::default();
         config.log_directory = temp_dir.path().to_path_buf();
+        config.group_commit_enabled = false;
 
         let writer = LogWriter::new(config)?;
 
@@ -666,6 +744,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let mut config = LogWriterConfig::default();
         config.log_directory = temp_dir.path().to_path_buf();
+        config.group_commit_enabled = false;
 
         let writer = LogWriter::new(config)?;
 

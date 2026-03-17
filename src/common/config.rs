@@ -120,8 +120,10 @@ pub struct PerformanceConfig {
     pub max_query_plan_cache_size: usize,
     /// Enable query optimization
     pub enable_query_optimization: bool,
-    /// Enable parallel execution
+    /// Enable parallel execution (parallel table scan, parallel join branches)
     pub enable_parallel_execution: bool,
+    /// Number of worker threads for parallel execution
+    pub num_worker_threads: usize,
 }
 
 impl Default for PerformanceConfig {
@@ -132,6 +134,7 @@ impl Default for PerformanceConfig {
             max_query_plan_cache_size: 1000,
             enable_query_optimization: true,
             enable_parallel_execution: true,
+            num_worker_threads: 4,
         }
     }
 }

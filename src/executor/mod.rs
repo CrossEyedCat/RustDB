@@ -4,6 +4,7 @@ pub mod executor;
 pub mod operators;
 pub mod result;
 
+pub use executor::{QueryExecutor, QueryExecutorConfig};
 pub use operators::{
     // New aggregation and sorting operators
     AggregateFunction,

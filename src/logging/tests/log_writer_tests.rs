@@ -24,6 +24,7 @@ fn test_log_writer_config() {
         sync_level: SyncLevel::OnCommit,
         writer_thread_pool_size: 2,
         enable_integrity_check: true,
+        ..Default::default()
     };
 
     assert_eq!(config.log_directory, PathBuf::from("test_logs"));
@@ -65,6 +66,7 @@ async fn test_log_writer_file_rotation() {
         sync_level: SyncLevel::OnCommit,
         writer_thread_pool_size: 1,
         enable_integrity_check: false,
+        ..Default::default()
     };
 
     let writer = LogWriter::new(config).unwrap();
@@ -127,6 +129,7 @@ async fn test_log_writer_sync_levels() {
             sync_level,
             writer_thread_pool_size: 2,
             enable_integrity_check: true,
+            ..Default::default()
         };
 
         let writer = LogWriter::new(config);
@@ -146,6 +149,7 @@ async fn test_log_writer_buffer_management() {
         sync_level: SyncLevel::OnCommit,
         writer_thread_pool_size: 2,
         enable_integrity_check: false,
+        ..Default::default()
     };
 
     let writer = LogWriter::new(config).unwrap();
@@ -185,6 +189,7 @@ async fn test_log_writer_compression() {
         sync_level: SyncLevel::OnCommit,
         writer_thread_pool_size: 2,
         enable_integrity_check: true,
+        ..Default::default()
     };
 
     let writer = LogWriter::new(config_with_compression);

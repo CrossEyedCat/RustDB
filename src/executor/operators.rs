@@ -6,8 +6,8 @@ use crate::planner::{ExecutionPlan, PlanNode};
 use crate::storage::index::BPlusTree;
 use crate::storage::page_manager::PageManager as StoragePageManager;
 use crate::storage::tuple::Tuple;
-use crate::PageId;
-use crate::Row;
+use crate::{PageId, RecordId, Row};
+use crate::storage::index::Index;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -236,22 +236,20 @@ pub struct IndexScanOperator {
     table_name: String,
     /// Index name
     index_name: String,
-    /// Index for scanning
-    index: Arc<Mutex<BPlusTree<String, PageId>>>,
+    /// Index for scanning: key = column value, value = list of record IDs
+    index: Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>,
     /// Page manager
     page_manager: Arc<Mutex<StoragePageManager>>,
     /// Search conditions
     search_conditions: Vec<IndexCondition>,
     /// Current position in index result
     current_position: usize,
-    /// Index search result
-    index_result: Vec<PageId>,
+    /// Index search result (record IDs)
+    index_result: Vec<RecordId>,
     /// Table schema
     schema: Vec<String>,
     /// Statistics
     statistics: OperatorStatistics,
-    /// Page buffer
-    page_buffer: HashMap<PageId, Vec<u8>>,
 }
 
 /// Index search condition
@@ -282,7 +280,7 @@ impl IndexScanOperator {
     pub fn new(
         table_name: String,
         index_name: String,
-        index: Arc<Mutex<BPlusTree<String, PageId>>>,
+        index: Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>,
         page_manager: Arc<Mutex<StoragePageManager>>,
         search_conditions: Vec<IndexCondition>,
         schema: Vec<String>,
@@ -297,7 +295,6 @@ impl IndexScanOperator {
             index_result: Vec::new(),
             schema,
             statistics: OperatorStatistics::default(),
-            page_buffer: HashMap::new(),
         };
 
         // Perform index search
@@ -306,35 +303,97 @@ impl IndexScanOperator {
         Ok(operator)
     }
 
-    /// Perform index search (simplified version)
+    /// Perform index search using real B+ tree
     fn perform_index_search(&mut self) -> Result<()> {
-        // Simplified implementation - create test results
-        self.index_result = vec![1, 2, 3, 4, 5]; // Test page_ids
+        let index = self.index.lock().map_err(|_| Error::internal("Lock poisoned"))?;
+
+        if self.search_conditions.is_empty() {
+            // No conditions: range search over all keys (use min/max string bounds)
+            let results = index.range_search(&String::new(), &"\u{10FFFF}".to_string())?;
+            self.index_result = results
+                .into_iter()
+                .flat_map(|(_, ids)| ids)
+                .collect();
+        } else {
+            // Use first condition for index lookup
+            let cond = &self.search_conditions[0];
+            let key = cond.value.clone();
+
+            match cond.operator {
+                IndexOperator::Equal => {
+                    if let Some(ids) = index.search(&key)? {
+                        self.index_result = ids;
+                    }
+                }
+                IndexOperator::LessThan
+                | IndexOperator::LessThanOrEqual
+                | IndexOperator::GreaterThan
+                | IndexOperator::GreaterThanOrEqual
+                | IndexOperator::Between => {
+                    let (start, end) = self.range_bounds_from_conditions();
+                    let results = index.range_search(&start, &end)?;
+                    self.index_result = results.into_iter().flat_map(|(_, ids)| ids).collect();
+                }
+                IndexOperator::In => {
+                    // IN: multiple equality lookups - for simplicity use range
+                    let results = index.range_search(&key.clone(), &key)?;
+                    self.index_result = results.into_iter().flat_map(|(_, ids)| ids).collect();
+                }
+            }
+        }
 
         self.statistics.io_operations += 1;
         Ok(())
     }
 
-    /// Load page into buffer (simplified version)
-    fn load_page(&mut self, page_id: PageId) -> Result<Vec<u8>> {
-        // Check if page is in buffer
-        if let Some(page_data) = self.page_buffer.get(&page_id) {
-            return Ok(page_data.clone());
+    fn range_bounds_from_conditions(&self) -> (String, String) {
+        let mut start = String::new();
+        let mut end = "\u{10FFFF}".to_string();
+        for cond in &self.search_conditions {
+            match cond.operator {
+                IndexOperator::GreaterThan | IndexOperator::GreaterThanOrEqual => {
+                    start = cond.value.clone();
+                }
+                IndexOperator::LessThan | IndexOperator::LessThanOrEqual => {
+                    end = cond.value.clone();
+                }
+                _ => {}
+            }
         }
+        (start, end)
+    }
 
-        // Simplified implementation - create test data
-        let page_data = vec![0u8; 4096]; // Standard page size
-
-        // Add to buffer
-        self.page_buffer.insert(page_id, page_data.clone());
+    /// Load record by ID from PageManager
+    fn load_record(&mut self, record_id: RecordId) -> Result<Option<Row>> {
+        let mut pm = self.page_manager.lock().map_err(|_| Error::internal("Lock poisoned"))?;
+        let data = pm.get_record(record_id)?;
         self.statistics.io_operations += 1;
 
-        Ok(page_data)
+        let row = match data {
+            Some(bytes) => Self::bytes_to_row(&bytes, &self.schema),
+            None => None,
+        };
+        Ok(row)
+    }
+
+    /// Convert record bytes to Row (tries bincode, falls back to simple row)
+    fn bytes_to_row(bytes: &[u8], schema: &[String]) -> Option<Row> {
+        if let Ok(row) = bincode::deserialize::<Row>(bytes) {
+            return Some(row);
+        }
+        // Fallback: create row with raw data as single column
+        let mut row = Row::new();
+        row.set_value(
+            "data",
+            ColumnValue::new(DataType::Varchar(
+                String::from_utf8_lossy(bytes).to_string(),
+            )),
+        );
+        Some(row)
     }
 
     /// Apply search conditions to row
     fn apply_search_conditions(&self, _row: &Row) -> bool {
-        // Simplified implementation - always return true
         true
     }
 }
@@ -344,19 +403,11 @@ impl Operator for IndexScanOperator {
         let start_time = std::time::Instant::now();
 
         while self.current_position < self.index_result.len() {
-            let page_id = self.index_result[self.current_position];
+            let record_id = self.index_result[self.current_position];
             self.current_position += 1;
 
-            // Load page
-            let page_data = self.load_page(page_id)?;
-
-            // Parse rows from page
-            let rows = self.parse_page_rows(&page_data)?;
-
-            // Find matching row
-            for row in rows {
+            if let Some(row) = self.load_record(record_id)? {
                 self.statistics.rows_processed += 1;
-
                 if self.apply_search_conditions(&row) {
                     self.statistics.rows_returned += 1;
                     self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
@@ -372,7 +423,6 @@ impl Operator for IndexScanOperator {
     fn reset(&mut self) -> Result<()> {
         self.current_position = 0;
         self.statistics = OperatorStatistics::default();
-        self.page_buffer.clear();
         self.perform_index_search()?;
         Ok(())
     }
@@ -383,28 +433,6 @@ impl Operator for IndexScanOperator {
 
     fn get_statistics(&self) -> OperatorStatistics {
         self.statistics.clone()
-    }
-}
-
-impl IndexScanOperator {
-    /// Parse rows from page data
-    fn parse_page_rows(&self, _page_data: &[u8]) -> Result<Vec<Row>> {
-        // Simplified implementation - create test rows
-        let mut rows = Vec::new();
-
-        // Create several test rows
-        for i in 0..5 {
-            let mut row = Row::new();
-            for col in &self.schema {
-                row.set_value(
-                    col,
-                    ColumnValue::new(DataType::Varchar(format!("{}_{}", col, i))),
-                );
-            }
-            rows.push(row);
-        }
-
-        Ok(rows)
     }
 }
 
@@ -1195,12 +1223,113 @@ impl Operator for MergeJoinOperator {
     }
 }
 
+/// Limit operator - returns at most N rows
+pub struct LimitOperator {
+    input: Box<dyn Operator>,
+    limit: usize,
+    returned: usize,
+    statistics: OperatorStatistics,
+}
+
+impl LimitOperator {
+    pub fn new(input: Box<dyn Operator>, limit: usize) -> Result<Self> {
+        Ok(Self {
+            input,
+            limit,
+            returned: 0,
+            statistics: OperatorStatistics::default(),
+        })
+    }
+}
+
+impl Operator for LimitOperator {
+    fn next(&mut self) -> Result<Option<Row>> {
+        if self.returned >= self.limit {
+            return Ok(None);
+        }
+        let row = self.input.next()?;
+        if row.is_some() {
+            self.returned += 1;
+            self.statistics.rows_returned += 1;
+        }
+        self.statistics.rows_processed += 1;
+        Ok(row)
+    }
+
+    fn reset(&mut self) -> Result<()> {
+        self.input.reset()?;
+        self.returned = 0;
+        self.statistics = OperatorStatistics::default();
+        Ok(())
+    }
+
+    fn get_schema(&self) -> Result<Vec<String>> {
+        self.input.get_schema()
+    }
+
+    fn get_statistics(&self) -> OperatorStatistics {
+        self.statistics.clone()
+    }
+}
+
+/// Offset operator - skips first N rows
+pub struct OffsetOperator {
+    input: Box<dyn Operator>,
+    offset: usize,
+    skipped: usize,
+    statistics: OperatorStatistics,
+}
+
+impl OffsetOperator {
+    pub fn new(input: Box<dyn Operator>, offset: usize) -> Result<Self> {
+        Ok(Self {
+            input,
+            offset,
+            skipped: 0,
+            statistics: OperatorStatistics::default(),
+        })
+    }
+}
+
+impl Operator for OffsetOperator {
+    fn next(&mut self) -> Result<Option<Row>> {
+        while self.skipped < self.offset {
+            if self.input.next()?.is_none() {
+                return Ok(None);
+            }
+            self.skipped += 1;
+            self.statistics.rows_processed += 1;
+        }
+        let row = self.input.next()?;
+        if row.is_some() {
+            self.statistics.rows_returned += 1;
+        }
+        self.statistics.rows_processed += 1;
+        Ok(row)
+    }
+
+    fn reset(&mut self) -> Result<()> {
+        self.input.reset()?;
+        self.skipped = 0;
+        self.statistics = OperatorStatistics::default();
+        Ok(())
+    }
+
+    fn get_schema(&self) -> Result<Vec<String>> {
+        self.input.get_schema()
+    }
+
+    fn get_statistics(&self) -> OperatorStatistics {
+        self.statistics.clone()
+    }
+}
+
 /// Factory for creating scan operators
 pub struct ScanOperatorFactory {
     /// Page manager
     page_manager: Arc<Mutex<StoragePageManager>>,
-    /// Indexes for tables
-    indexes: HashMap<String, Arc<Mutex<BPlusTree<String, PageId>>>>,
+    /// Indexes: (table_name, index_name) -> B+ tree
+    indexes: HashMap<(String, String), Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>>,
 }
 
 impl ScanOperatorFactory {
@@ -1213,8 +1342,14 @@ impl ScanOperatorFactory {
     }
 
     /// Add index for table
-    pub fn add_index(&mut self, table_name: String, index: Arc<Mutex<BPlusTree<String, PageId>>>) {
-        self.indexes.insert(table_name, index);
+    pub fn add_index(
+        &mut self,
+        table_name: &str,
+        index_name: &str,
+        index: Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>,
+    ) {
+        self.indexes
+            .insert((table_name.to_string(), index_name.to_string()), index);
     }
 
     /// Create table scan operator
@@ -1258,7 +1393,8 @@ impl ScanOperatorFactory {
         search_conditions: Vec<IndexCondition>,
         schema: Vec<String>,
     ) -> Result<Box<dyn Operator>> {
-        if let Some(index) = self.indexes.get(&table_name) {
+        let key = (table_name.clone(), index_name.clone());
+        if let Some(index) = self.indexes.get(&key) {
             let operator = IndexScanOperator::new(
                 table_name,
                 index_name,

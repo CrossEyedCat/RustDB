@@ -118,6 +118,8 @@ impl SqlParser {
                     }
                     Ok(SqlStatement::RollbackTransaction)
                 }
+                TokenType::Prepare => self.parse_prepare(),
+                TokenType::Execute => self.parse_execute(),
                 _ => Err(Error::parser(format!(
                     "Unexpected token: {:?}",
                     token.token_type
@@ -182,6 +184,11 @@ impl SqlParser {
                         "COMMIT" => token.token_type == TokenType::Commit,
                         "ROLLBACK" => token.token_type == TokenType::Rollback,
                         "TRANSACTION" => token.token_type == TokenType::Transaction,
+                        "PREPARE" => token.token_type == TokenType::Prepare,
+                        "EXECUTE" => token.token_type == TokenType::Execute,
+                        "AS" => token.token_type == TokenType::As,
+                        "INDEX" => token.token_type == TokenType::Index,
+                        "ON" => token.token_type == TokenType::On,
                         "TABLE" => token.token_type == TokenType::Table,
                         "INTO" => token.token_type == TokenType::Into,
                         "VALUES" => token.token_type == TokenType::Values,
@@ -541,15 +548,83 @@ impl SqlParser {
         }))
     }
 
+    fn parse_prepare(&mut self) -> Result<SqlStatement> {
+        self.expect_keyword("PREPARE")?;
+        let name = self.parse_identifier()?;
+        self.expect_keyword("AS")?;
+
+        let statement = match &self.current_token {
+            Some(token) => match &token.token_type {
+                TokenType::Select => self.parse_select()?,
+                TokenType::Insert => self.parse_insert()?,
+                TokenType::Update => self.parse_update()?,
+                TokenType::Delete => self.parse_delete()?,
+                _ => {
+                    return Err(Error::parser(
+                        "PREPARE only supports SELECT, INSERT, UPDATE, DELETE".to_string(),
+                    ));
+                }
+            },
+            None => return Err(Error::parser("Unexpected end after AS".to_string())),
+        };
+
+        Ok(SqlStatement::Prepare(PrepareStatement {
+            name,
+            statement: Box::new(statement),
+        }))
+    }
+
+    fn parse_execute(&mut self) -> Result<SqlStatement> {
+        self.expect_keyword("EXECUTE")?;
+        let name = self.parse_identifier()?;
+
+        let params = if self.match_token(&TokenType::LeftParen) {
+            self.advance();
+            let list = self.parse_expression_list()?;
+            self.expect_token(&TokenType::RightParen)?;
+            list
+        } else {
+            Vec::new()
+        };
+
+        Ok(SqlStatement::Execute(ExecuteStatement { name, params }))
+    }
+
     fn parse_create(&mut self) -> Result<SqlStatement> {
         self.expect_keyword("CREATE")?;
 
         if self.match_keyword("TABLE") {
             self.advance();
             self.parse_create_table()
+        } else if self.match_keyword("INDEX") {
+            self.advance();
+            self.parse_create_index()
         } else {
-            Err(Error::parser("Only CREATE TABLE is supported".to_string()))
+            Err(Error::parser("Only CREATE TABLE and CREATE INDEX are supported".to_string()))
         }
+    }
+
+    fn parse_create_index(&mut self) -> Result<SqlStatement> {
+        let index_name = self.parse_identifier()?;
+        self.expect_keyword("ON")?;
+        let table_name = self.parse_identifier()?;
+        self.expect_token(&TokenType::LeftParen)?;
+
+        let mut columns = Vec::new();
+        loop {
+            columns.push(self.parse_identifier()?);
+            if !self.match_token(&TokenType::Comma) {
+                break;
+            }
+            self.advance();
+        }
+        self.expect_token(&TokenType::RightParen)?;
+
+        Ok(SqlStatement::CreateIndex(CreateIndexStatement {
+            index_name,
+            table_name,
+            columns,
+        }))
     }
 
     fn parse_create_table(&mut self) -> Result<SqlStatement> {

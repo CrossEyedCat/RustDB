@@ -2,8 +2,8 @@
 
 use crate::common::Result;
 use crate::parser::{
-    ColumnDefinition, CreateTableStatement, DataType, Expression, SelectItem, SelectStatement,
-    SqlParser, SqlStatement,
+    ColumnDefinition, CreateIndexStatement, CreateTableStatement, DataType, Expression,
+    SelectItem, SelectStatement, SqlParser, SqlStatement,
 };
 
 #[test]
@@ -98,6 +98,41 @@ fn test_parse_create_table() -> Result<()> {
             }
         }
         _ => panic!("Expected CREATE TABLE statement"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_parse_create_index() -> Result<()> {
+    let mut parser = SqlParser::new("CREATE INDEX idx_users_email ON users (email)")?;
+    let statement = parser.parse()?;
+
+    match statement {
+        SqlStatement::CreateIndex(create_idx) => {
+            assert_eq!(create_idx.index_name, "idx_users_email");
+            assert_eq!(create_idx.table_name, "users");
+            assert_eq!(create_idx.columns, vec!["email"]);
+        }
+        _ => panic!("Expected CREATE INDEX statement"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_parse_create_index_multiple_columns() -> Result<()> {
+    let mut parser =
+        SqlParser::new("CREATE INDEX idx_orders_user_status ON orders (user_id, status)")?;
+    let statement = parser.parse()?;
+
+    match statement {
+        SqlStatement::CreateIndex(create_idx) => {
+            assert_eq!(create_idx.index_name, "idx_orders_user_status");
+            assert_eq!(create_idx.table_name, "orders");
+            assert_eq!(create_idx.columns, vec!["user_id", "status"]);
+        }
+        _ => panic!("Expected CREATE INDEX statement"),
     }
 
     Ok(())
@@ -392,4 +427,52 @@ fn test_parse_dml_error_handling() {
     let mut parser = SqlParser::new("DELETE FROM").unwrap();
     let result = parser.parse();
     assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_prepare() -> Result<()> {
+    let mut parser = SqlParser::new("PREPARE sel AS SELECT * FROM users")?;
+    let statement = parser.parse()?;
+
+    match statement {
+        SqlStatement::Prepare(prep) => {
+            assert_eq!(prep.name, "sel");
+            assert!(matches!(*prep.statement, SqlStatement::Select(_)));
+        }
+        _ => panic!("Expected PREPARE statement"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_parse_execute() -> Result<()> {
+    let mut parser = SqlParser::new("EXECUTE sel")?;
+    let statement = parser.parse()?;
+
+    match statement {
+        SqlStatement::Execute(exec) => {
+            assert_eq!(exec.name, "sel");
+            assert!(exec.params.is_empty());
+        }
+        _ => panic!("Expected EXECUTE statement"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_parse_execute_with_params() -> Result<()> {
+    let mut parser = SqlParser::new("EXECUTE ins (1, 'test')")?;
+    let statement = parser.parse()?;
+
+    match statement {
+        SqlStatement::Execute(exec) => {
+            assert_eq!(exec.name, "ins");
+            assert_eq!(exec.params.len(), 2);
+        }
+        _ => panic!("Expected EXECUTE statement"),
+    }
+
+    Ok(())
 }

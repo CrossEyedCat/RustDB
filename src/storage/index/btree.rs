@@ -426,10 +426,42 @@ where
         }
     }
 
-    fn delete(&mut self, _key: &Self::Key) -> Result<bool> {
+    fn delete(&mut self, key: &Self::Key) -> Result<bool> {
         self.statistics.delete_operations += 1;
-        // TODO: Implement deletion
-        // For now return false (not found)
+
+        if self.root.is_none() {
+            return Ok(false);
+        }
+
+        let root = self.root.as_mut().unwrap();
+        if root.is_leaf {
+            if let Some(pos) = root.search_key(key) {
+                root.keys.remove(pos);
+                root.values.remove(pos);
+                self.statistics.total_elements = self.statistics.total_elements.saturating_sub(1);
+                if root.keys.is_empty() {
+                    self.root = None;
+                }
+                self.update_statistics();
+                return Ok(true);
+            }
+        } else {
+            // Find child and recurse - simplified: only handle single-level for now
+            let pos = root.find_key_position(key);
+            if pos < root.children.len() {
+                let child = &mut root.children[pos];
+                if child.is_leaf {
+                    if let Some(idx) = child.search_key(key) {
+                        child.keys.remove(idx);
+                        child.values.remove(idx);
+                        self.statistics.total_elements =
+                            self.statistics.total_elements.saturating_sub(1);
+                        self.update_statistics();
+                        return Ok(true);
+                    }
+                }
+            }
+        }
         Ok(false)
     }
 

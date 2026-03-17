@@ -4,7 +4,7 @@ use rustdb::{
     common::{types::*, Error, Result},
     core::{AcidManager, ConcurrencyManager, TransactionManager},
     logging::{CheckpointManager, LogWriter},
-    parser::{SqlParser, SqlStatement},
+    parser::{prepared::PreparedStatementCache, SqlParser, SqlStatement},
     planner::{QueryOptimizer, QueryPlanner},
     storage::{
         file_manager::FileManager, page_manager::PageManager, schema_manager::SchemaManager,
@@ -69,6 +69,7 @@ pub struct IntegrationTestContext {
     pub parser: SqlParser,
     pub planner: QueryPlanner,
     pub optimizer: QueryOptimizer,
+    pub prepared_cache: PreparedStatementCache,
     // Счетчик для имитации данных
     pub inserted_records: std::collections::HashMap<String, usize>,
     // Флаг обновления данных для симуляции
@@ -118,6 +119,7 @@ impl IntegrationTestContext {
         let parser = SqlParser::new("SELECT * FROM test")?;
         let planner = QueryPlanner::new()?;
         let optimizer = QueryOptimizer::new()?;
+        let prepared_cache = PreparedStatementCache::new();
 
         Ok(Self {
             config,
@@ -132,6 +134,7 @@ impl IntegrationTestContext {
             parser,
             planner,
             optimizer,
+            prepared_cache,
             inserted_records: std::collections::HashMap::new(),
             updated_tables: std::collections::HashSet::new(),
         })
@@ -142,6 +145,18 @@ impl IntegrationTestContext {
         // Парсим SQL
         let mut parser = SqlParser::new(sql)?;
         let statement = parser.parse()?;
+
+        // Обработка PREPARE и EXECUTE
+        let statement = match statement {
+            SqlStatement::Prepare(prepare_stmt) => {
+                self.prepared_cache.prepare(prepare_stmt)?;
+                return Ok(vec![]);
+            }
+            SqlStatement::Execute(execute_stmt) => {
+                self.prepared_cache.execute(execute_stmt)?
+            }
+            other => other,
+        };
 
         let mut results = Vec::new();
 
@@ -226,6 +241,13 @@ impl IntegrationTestContext {
                 // Создаем схему таблицы
                 // Имитация создания таблицы
                 println!("Creating table: {:?}", create_stmt);
+            }
+            SqlStatement::CreateIndex(ref create_idx) => {
+                // Имитация создания индекса
+                println!("Creating index: {:?}", create_idx);
+            }
+            SqlStatement::Prepare(_) | SqlStatement::Execute(_) => {
+                unreachable!("handled above")
             }
             _ => {
                 return Err(Error::internal("Неподдерживаемый тип запроса"));

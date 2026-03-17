@@ -3,6 +3,7 @@
 pub mod ast;
 pub mod lexer;
 pub mod parser;
+pub mod prepared;
 pub mod token;
 
 #[cfg(test)]

@@ -2,9 +2,11 @@
 
 pub mod advanced_file_manager;
 pub mod block;
+pub mod cached_file_manager;
 pub mod database_file;
 pub mod file_manager;
 pub mod index;
+pub mod index_registry;
 pub mod io_optimization;
 pub mod optimized_file_manager;
 pub mod page;

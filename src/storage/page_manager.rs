@@ -8,7 +8,7 @@ use crate::common::{
     Result,
 };
 use crate::storage::{
-    advanced_file_manager::{AdvancedFileId, AdvancedFileManager},
+    cached_file_manager::CachedFileManager,
     database_file::{DatabaseFileType, ExtensionStrategy},
     page::Page,
 };
@@ -28,6 +28,8 @@ pub struct PageManagerConfig {
     pub enable_compression: bool,
     /// Batch size for operations
     pub batch_size: u32,
+    /// Buffer pool size (number of pages to cache in memory). 0 = no cache.
+    pub buffer_pool_size: usize,
 }
 
 impl Default for PageManagerConfig {
@@ -38,6 +40,7 @@ impl Default for PageManagerConfig {
             preallocation_buffer_size: 10,
             enable_compression: false,
             batch_size: 100,
+            buffer_pool_size: 1000,
         }
     }
 }
@@ -109,10 +112,10 @@ pub struct PageInfo {
 
 /// Page manager
 pub struct PageManager {
-    /// File manager
-    file_manager: AdvancedFileManager,
+    /// File manager (with buffer pool)
+    file_manager: CachedFileManager,
     /// Data file ID
-    file_id: AdvancedFileId,
+    file_id: u32,
     /// Configuration
     config: PageManagerConfig,
     /// Page information cache
@@ -126,7 +129,8 @@ pub struct PageManager {
 impl PageManager {
     /// Creates a new page manager
     pub fn new(data_dir: PathBuf, table_name: &str, config: PageManagerConfig) -> Result<Self> {
-        let mut file_manager = AdvancedFileManager::new(data_dir)?;
+        let buffer_size = config.buffer_pool_size.max(1);
+        let mut file_manager = CachedFileManager::new(data_dir, buffer_size)?;
 
         let filename = format!("{}.tbl", table_name);
         let file_id = file_manager.create_database_file(
@@ -153,7 +157,8 @@ impl PageManager {
 
     /// Opens an existing page manager
     pub fn open(data_dir: PathBuf, table_name: &str, config: PageManagerConfig) -> Result<Self> {
-        let mut file_manager = AdvancedFileManager::new(data_dir)?;
+        let buffer_size = config.buffer_pool_size.max(1);
+        let mut file_manager = CachedFileManager::new(data_dir, buffer_size)?;
 
         let filename = format!("{}.tbl", table_name);
         let file_id = file_manager.open_database_file(&filename)?;
@@ -247,7 +252,6 @@ impl PageManager {
             }
         }
 
-        println!("Total records found: {}", results.len());
         Ok(results)
     }
 
@@ -299,9 +303,22 @@ impl PageManager {
         self.delete_record_internal(page_id, offset)
     }
 
+    /// Gets a record by ID
+    pub fn get_record(&mut self, record_id: RecordId) -> Result<Option<Vec<u8>>> {
+        let (page_id, _) = self.parse_record_id(record_id);
+        let page_data = self.file_manager.read_page(self.file_id, page_id)?;
+        let page = Page::from_bytes(&page_data)?;
+        Ok(page.get_record(record_id).map(|s| s.to_vec()))
+    }
+
     /// Gets operation statistics
     pub fn get_statistics(&self) -> &PageManagerStatistics {
         &self.statistics
+    }
+
+    /// Gets the file ID for WAL logging
+    pub fn file_id(&self) -> u32 {
+        self.file_id
     }
 
     /// Performs page defragmentation
