@@ -1,17 +1,26 @@
 # cargo-deny configuration for RustDB
 # https://embarkstudios.github.io/cargo-deny/
+#
+# ВАЖНО: Проверка лицензий (licenses) НЕ влияет на поиск уязвимостей!
+# Уязвимости проверяются отдельно: advisories (cargo-deny) + cargo-audit
 
 [advisories]
+# Проверка уязвимостей из RustSec Advisory Database
 ignore = []
 
 [licenses]
+# Разрешённые лицензии (SPDX 3.11). Только пермиссивные, без copyleft.
 allow = [
-    "MIT",
-    "Apache-2.0",
+    "MIT",                          # ~40% crates.io
+    "Apache-2.0",                   # ~25% crates.io
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
+    "Unicode-DFS-2016",             # unicode/icu crates
+    "BSL-1.0",                      # Boost Software License
+    "CC0-1.0",                      # Public domain
+    "Unlicense",                    # Public domain
 ]
 confidence-threshold = 0.8
 
