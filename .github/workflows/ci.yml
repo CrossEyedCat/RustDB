@@ -77,11 +77,19 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
       - name: Run tests
         run: cargo test --verbose --all-features
+        timeout-minutes: 10
 
       - name: Run doc tests
         run: cargo test --doc --verbose
+        timeout-minutes: 5
 
   # Проверка сборки в release режиме
   build:
