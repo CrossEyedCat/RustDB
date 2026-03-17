@@ -95,8 +95,36 @@ jobs:
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: rustdb-binary
+        name: rustdb-linux
         path: target/release/rustdb
+
+  # Сборка для Windows
+  build-windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+    needs: test
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo build
+      uses: actions/cache@v3
+      with:
+        path: target
+        key: windows-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Build release
+      run: cargo build --release
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rustdb-windows
+        path: target/release/rustdb.exe
 
   # Docker сборка
   docker:
@@ -166,32 +194,63 @@ jobs:
       with:
         command: check
 
-  # Развертывание
+  # Развертывание в GitHub Releases
   deploy:
-    name: Deploy
+    name: Deploy to GitHub Releases
     runs-on: ubuntu-latest
-    needs: [build, docker, security]
+    needs: [build, build-windows, docker, security]
     if: github.ref == 'refs/heads/main'
-    
+    permissions:
+      contents: write
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Deploy to staging
-      run: |
-        echo "Deploying to staging environment..."
-        # Здесь будет логика развертывания на staging
+    - name: Download Linux build
+      uses: actions/download-artifact@v4
+      with:
+        name: rustdb-linux
+        path: linux
 
-    - name: Run smoke tests
-      run: |
-        echo "Running smoke tests..."
-        # Здесь будут smoke тесты
+    - name: Download Windows build
+      uses: actions/download-artifact@v4
+      with:
+        name: rustdb-windows
+        path: windows
 
-    - name: Deploy to production
-      if: success()
+    - name: Create release archives
       run: |
-        echo "Deploying to production environment..."
-        # Здесь будет логика развертывания на production
+        mkdir -p release
+        cp linux/rustdb release/ 2>/dev/null || cp linux/target/release/rustdb release/
+        tar -czf rustdb-main-${{ github.sha }}-linux-x86_64.tar.gz -C release rustdb
+        WIN_EXE="windows/rustdb.exe"
+        [ -f "windows/target/release/rustdb.exe" ] && WIN_EXE="windows/target/release/rustdb.exe"
+        zip -j rustdb-main-${{ github.sha }}-windows-x86_64.zip $WIN_EXE
+        tar -czf rustdb-main-${{ github.sha }}-source.tar.gz --exclude=target --exclude=.git .
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: main-${{ github.sha }}
+        name: Build from main (${{ github.sha }})
+        body: |
+          ## Artifacts
+          - **Linux x86_64**: rustdb-main-${{ github.sha }}-linux-x86_64.tar.gz
+          - **Windows x86_64**: rustdb-main-${{ github.sha }}-windows-x86_64.zip
+          - **Source**: rustdb-main-${{ github.sha }}-source.tar.gz
+          ## Docker
+          ```bash
+          docker pull ghcr.io/crosseyedcat/rustdb:latest
+          ```
+        files: |
+          rustdb-main-${{ github.sha }}-linux-x86_64.tar.gz
+          rustdb-main-${{ github.sha }}-windows-x86_64.zip
+          rustdb-main-${{ github.sha }}-source.tar.gz
+        draft: false
+        prerelease: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Уведомления
   notify:
