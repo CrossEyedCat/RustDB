@@ -1,22 +1,22 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/analyzer/type_checker.rs`."><title>type_checker.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-e56847b5.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustdb" data-themes="" data-resource-suffix="" data-rustdoc-version="1.91.0 (f8297e351 2025-10-28)" data-channel="1.91.0" data-search-js="search-e256b49e.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-6dc2a7f3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustdb/analyzer/</div>type_checker.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Модуль для проверки совместимости типов данных
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/analyzer/type_checker.rs`."><title>type_checker.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustdb" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0 (4a4ef493e 2026-03-02)" data-channel="1.94.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustdb/analyzer/</div>type_checker.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Module for checking data type compatibility
 <a href=#2 id=2 data-nosnippet>2</a>
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use </span><span class="kw">crate</span>::analyzer::semantic_analyzer::{TypeConversion, TypeInformation};
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span><span class="kw">crate</span>::common::Result;
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span><span class="kw">crate</span>::parser::ast::<span class="kw-2">*</span>;
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>std::collections::HashMap;
 <a href=#7 id=7 data-nosnippet>7</a>
-<a href=#8 id=8 data-nosnippet>8</a><span class="doccomment">/// Результат проверки типов
+<a href=#8 id=8 data-nosnippet>8</a><span class="doccomment">/// Type check result
 <a href=#9 id=9 data-nosnippet>9</a></span><span class="attr">#[derive(Debug, Clone)]
 <a href=#10 id=10 data-nosnippet>10</a></span><span class="kw">pub struct </span>TypeCheckResult {
-<a href=#11 id=11 data-nosnippet>11</a>    <span class="doccomment">/// Успешность проверки
+<a href=#11 id=11 data-nosnippet>11</a>    <span class="doccomment">/// Check success
 <a href=#12 id=12 data-nosnippet>12</a>    </span><span class="kw">pub </span>is_valid: bool,
-<a href=#13 id=13 data-nosnippet>13</a>    <span class="doccomment">/// Ошибки типов
+<a href=#13 id=13 data-nosnippet>13</a>    <span class="doccomment">/// Type errors
 <a href=#14 id=14 data-nosnippet>14</a>    </span><span class="kw">pub </span>errors: Vec&lt;TypeCheckError&gt;,
-<a href=#15 id=15 data-nosnippet>15</a>    <span class="doccomment">/// Предупреждения
+<a href=#15 id=15 data-nosnippet>15</a>    <span class="doccomment">/// Warnings
 <a href=#16 id=16 data-nosnippet>16</a>    </span><span class="kw">pub </span>warnings: Vec&lt;TypeCheckWarning&gt;,
-<a href=#17 id=17 data-nosnippet>17</a>    <span class="doccomment">/// Информация о типах
+<a href=#17 id=17 data-nosnippet>17</a>    <span class="doccomment">/// Type information
 <a href=#18 id=18 data-nosnippet>18</a>    </span><span class="kw">pub </span>type_info: TypeInformation,
-<a href=#19 id=19 data-nosnippet>19</a>    <span class="doccomment">/// Количество выполненных проверок
+<a href=#19 id=19 data-nosnippet>19</a>    <span class="doccomment">/// Number of checks performed
 <a href=#20 id=20 data-nosnippet>20</a>    </span><span class="kw">pub </span>checks_performed: usize,
 <a href=#21 id=21 data-nosnippet>21</a>}
 <a href=#22 id=22 data-nosnippet>22</a>
@@ -41,7 +41,7 @@
 <a href=#41 id=41 data-nosnippet>41</a>    }
 <a href=#42 id=42 data-nosnippet>42</a>}
 <a href=#43 id=43 data-nosnippet>43</a>
-<a href=#44 id=44 data-nosnippet>44</a><span class="doccomment">/// Ошибка проверки типов
+<a href=#44 id=44 data-nosnippet>44</a><span class="doccomment">/// Type check error
 <a href=#45 id=45 data-nosnippet>45</a></span><span class="attr">#[derive(Debug, Clone)]
 <a href=#46 id=46 data-nosnippet>46</a></span><span class="kw">pub struct </span>TypeCheckError {
 <a href=#47 id=47 data-nosnippet>47</a>    <span class="kw">pub </span>message: String,
@@ -51,7 +51,7 @@
 <a href=#51 id=51 data-nosnippet>51</a>    <span class="kw">pub </span>suggested_fix: <span class="prelude-ty">Option</span>&lt;String&gt;,
 <a href=#52 id=52 data-nosnippet>52</a>}
 <a href=#53 id=53 data-nosnippet>53</a>
-<a href=#54 id=54 data-nosnippet>54</a><span class="doccomment">/// Предупреждение проверки типов
+<a href=#54 id=54 data-nosnippet>54</a><span class="doccomment">/// Type check warning
 <a href=#55 id=55 data-nosnippet>55</a></span><span class="attr">#[derive(Debug, Clone)]
 <a href=#56 id=56 data-nosnippet>56</a></span><span class="kw">pub struct </span>TypeCheckWarning {
 <a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">pub </span>message: String,
@@ -59,7 +59,7 @@
 <a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">pub </span>warning_type: TypeWarningType,
 <a href=#60 id=60 data-nosnippet>60</a>}
 <a href=#61 id=61 data-nosnippet>61</a>
-<a href=#62 id=62 data-nosnippet>62</a><span class="doccomment">/// Тип предупреждения
+<a href=#62 id=62 data-nosnippet>62</a><span class="doccomment">/// Warning type
 <a href=#63 id=63 data-nosnippet>63</a></span><span class="attr">#[derive(Debug, Clone)]
 <a href=#64 id=64 data-nosnippet>64</a></span><span class="kw">pub enum </span>TypeWarningType {
 <a href=#65 id=65 data-nosnippet>65</a>    ImplicitConversion,
@@ -67,31 +67,31 @@
 <a href=#67 id=67 data-nosnippet>67</a>    PerformanceImpact,
 <a href=#68 id=68 data-nosnippet>68</a>}
 <a href=#69 id=69 data-nosnippet>69</a>
-<a href=#70 id=70 data-nosnippet>70</a><span class="doccomment">/// Совместимость типов
+<a href=#70 id=70 data-nosnippet>70</a><span class="doccomment">/// Type compatibility
 <a href=#71 id=71 data-nosnippet>71</a></span><span class="attr">#[derive(Debug, Clone, PartialEq)]
 <a href=#72 id=72 data-nosnippet>72</a></span><span class="kw">pub enum </span>TypeCompatibility {
-<a href=#73 id=73 data-nosnippet>73</a>    <span class="doccomment">/// Типы полностью совместимы
+<a href=#73 id=73 data-nosnippet>73</a>    <span class="doccomment">/// Types are fully compatible
 <a href=#74 id=74 data-nosnippet>74</a>    </span>Compatible,
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="doccomment">/// Типы совместимы с неявным преобразованием
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="doccomment">/// Types are compatible with implicit conversion
 <a href=#76 id=76 data-nosnippet>76</a>    </span>CompatibleWithConversion,
-<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// Типы совместимы с потерей точности
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// Types are compatible with precision loss
 <a href=#78 id=78 data-nosnippet>78</a>    </span>CompatibleWithLoss,
-<a href=#79 id=79 data-nosnippet>79</a>    <span class="doccomment">/// Типы несовместимы
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="doccomment">/// Types are incompatible
 <a href=#80 id=80 data-nosnippet>80</a>    </span>Incompatible,
 <a href=#81 id=81 data-nosnippet>81</a>}
 <a href=#82 id=82 data-nosnippet>82</a>
-<a href=#83 id=83 data-nosnippet>83</a><span class="doccomment">/// Проверщик типов
+<a href=#83 id=83 data-nosnippet>83</a><span class="doccomment">/// Type checker
 <a href=#84 id=84 data-nosnippet>84</a></span><span class="kw">pub struct </span>TypeChecker {
-<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// Правила совместимости типов
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// Type compatibility rules
 <a href=#86 id=86 data-nosnippet>86</a>    </span>compatibility_rules: HashMap&lt;(DataType, DataType), TypeCompatibility&gt;,
-<a href=#87 id=87 data-nosnippet>87</a>    <span class="doccomment">/// Правила неявных преобразований
+<a href=#87 id=87 data-nosnippet>87</a>    <span class="doccomment">/// Implicit conversion rules
 <a href=#88 id=88 data-nosnippet>88</a>    </span>conversion_rules: HashMap&lt;DataType, Vec&lt;DataType&gt;&gt;,
-<a href=#89 id=89 data-nosnippet>89</a>    <span class="doccomment">/// Включена ли строгая проверка типов
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="doccomment">/// Whether strict type checking is enabled
 <a href=#90 id=90 data-nosnippet>90</a>    </span>strict_mode: bool,
 <a href=#91 id=91 data-nosnippet>91</a>}
 <a href=#92 id=92 data-nosnippet>92</a>
 <a href=#93 id=93 data-nosnippet>93</a><span class="kw">impl </span>TypeChecker {
-<a href=#94 id=94 data-nosnippet>94</a>    <span class="doccomment">/// Создает новый проверщик типов
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="doccomment">/// Create new type checker
 <a href=#95 id=95 data-nosnippet>95</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
 <a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">let </span><span class="kw-2">mut </span>checker = <span class="self">Self </span>{
 <a href=#97 id=97 data-nosnippet>97</a>            compatibility_rules: HashMap::new(),
@@ -103,14 +103,14 @@
 <a href=#103 id=103 data-nosnippet>103</a>        checker
 <a href=#104 id=104 data-nosnippet>104</a>    }
 <a href=#105 id=105 data-nosnippet>105</a>
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="doccomment">/// Создает проверщик типов в строгом режиме
+<a href=#106 id=106 data-nosnippet>106</a>    <span class="doccomment">/// Create type checker in strict mode
 <a href=#107 id=107 data-nosnippet>107</a>    </span><span class="kw">pub fn </span>strict() -&gt; <span class="self">Self </span>{
 <a href=#108 id=108 data-nosnippet>108</a>        <span class="kw">let </span><span class="kw-2">mut </span>checker = <span class="self">Self</span>::new();
 <a href=#109 id=109 data-nosnippet>109</a>        checker.strict_mode = <span class="bool-val">true</span>;
 <a href=#110 id=110 data-nosnippet>110</a>        checker
 <a href=#111 id=111 data-nosnippet>111</a>    }
 <a href=#112 id=112 data-nosnippet>112</a>
-<a href=#113 id=113 data-nosnippet>113</a>    <span class="doccomment">/// Проверяет типы в SQL запросе
+<a href=#113 id=113 data-nosnippet>113</a>    <span class="doccomment">/// Check types in SQL query
 <a href=#114 id=114 data-nosnippet>114</a>    </span><span class="kw">pub fn </span>check_statement(
 <a href=#115 id=115 data-nosnippet>115</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#116 id=116 data-nosnippet>116</a>        statement: <span class="kw-2">&amp;</span>SqlStatement,
@@ -135,25 +135,25 @@
 <a href=#135 id=135 data-nosnippet>135</a>                <span class="self">self</span>.check_create_table_types(create, <span class="kw-2">&amp;mut </span>result)<span class="question-mark">?</span>;
 <a href=#136 id=136 data-nosnippet>136</a>            }
 <a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">_ </span>=&gt; {
-<a href=#138 id=138 data-nosnippet>138</a>                <span class="comment">// Другие типы запросов пока не требуют проверки типов
+<a href=#138 id=138 data-nosnippet>138</a>                <span class="comment">// Other query types do not require type checking yet
 <a href=#139 id=139 data-nosnippet>139</a>            </span>}
 <a href=#140 id=140 data-nosnippet>140</a>        }
 <a href=#141 id=141 data-nosnippet>141</a>
 <a href=#142 id=142 data-nosnippet>142</a>        <span class="prelude-val">Ok</span>(result)
 <a href=#143 id=143 data-nosnippet>143</a>    }
 <a href=#144 id=144 data-nosnippet>144</a>
-<a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// Проверяет совместимость двух типов
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// Check compatibility of two types
 <a href=#146 id=146 data-nosnippet>146</a>    </span><span class="kw">pub fn </span>check_compatibility(
 <a href=#147 id=147 data-nosnippet>147</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#148 id=148 data-nosnippet>148</a>        from_type: <span class="kw-2">&amp;</span>DataType,
 <a href=#149 id=149 data-nosnippet>149</a>        to_type: <span class="kw-2">&amp;</span>DataType,
 <a href=#150 id=150 data-nosnippet>150</a>    ) -&gt; TypeCompatibility {
-<a href=#151 id=151 data-nosnippet>151</a>        <span class="comment">// Если типы одинаковые, они совместимы
+<a href=#151 id=151 data-nosnippet>151</a>        <span class="comment">// If types are the same, they are compatible
 <a href=#152 id=152 data-nosnippet>152</a>        </span><span class="kw">if </span>from_type == to_type {
 <a href=#153 id=153 data-nosnippet>153</a>            <span class="kw">return </span>TypeCompatibility::Compatible;
 <a href=#154 id=154 data-nosnippet>154</a>        }
 <a href=#155 id=155 data-nosnippet>155</a>
-<a href=#156 id=156 data-nosnippet>156</a>        <span class="comment">// Проверяем правила совместимости
+<a href=#156 id=156 data-nosnippet>156</a>        <span class="comment">// Check compatibility rules
 <a href=#157 id=157 data-nosnippet>157</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(compatibility) = <span class="self">self
 <a href=#158 id=158 data-nosnippet>158</a>            </span>.compatibility_rules
 <a href=#159 id=159 data-nosnippet>159</a>            .get(<span class="kw-2">&amp;</span>(from_type.clone(), to_type.clone()))
@@ -161,18 +161,18 @@
 <a href=#161 id=161 data-nosnippet>161</a>            <span class="kw">return </span>compatibility.clone();
 <a href=#162 id=162 data-nosnippet>162</a>        }
 <a href=#163 id=163 data-nosnippet>163</a>
-<a href=#164 id=164 data-nosnippet>164</a>        <span class="comment">// Проверяем возможность неявного преобразования
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="comment">// Check possibility of implicit conversion
 <a href=#165 id=165 data-nosnippet>165</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(conversions) = <span class="self">self</span>.conversion_rules.get(from_type) {
 <a href=#166 id=166 data-nosnippet>166</a>            <span class="kw">if </span>conversions.contains(to_type) {
 <a href=#167 id=167 data-nosnippet>167</a>                <span class="kw">return </span>TypeCompatibility::CompatibleWithConversion;
 <a href=#168 id=168 data-nosnippet>168</a>            }
 <a href=#169 id=169 data-nosnippet>169</a>        }
 <a href=#170 id=170 data-nosnippet>170</a>
-<a href=#171 id=171 data-nosnippet>171</a>        <span class="comment">// По умолчанию типы несовместимы
+<a href=#171 id=171 data-nosnippet>171</a>        <span class="comment">// By default types are incompatible
 <a href=#172 id=172 data-nosnippet>172</a>        </span>TypeCompatibility::Incompatible
 <a href=#173 id=173 data-nosnippet>173</a>    }
 <a href=#174 id=174 data-nosnippet>174</a>
-<a href=#175 id=175 data-nosnippet>175</a>    <span class="doccomment">/// Проверяет возможность неявного преобразования
+<a href=#175 id=175 data-nosnippet>175</a>    <span class="doccomment">/// Check possibility of implicit conversion
 <a href=#176 id=176 data-nosnippet>176</a>    </span><span class="kw">pub fn </span>can_convert_implicitly(<span class="kw-2">&amp;</span><span class="self">self</span>, from_type: <span class="kw-2">&amp;</span>DataType, to_type: <span class="kw-2">&amp;</span>DataType) -&gt; bool {
 <a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">let </span>compatibility = <span class="self">self</span>.check_compatibility(from_type, to_type);
 <a href=#178 id=178 data-nosnippet>178</a>        <span class="macro">matches!</span>(
@@ -181,7 +181,7 @@
 <a href=#181 id=181 data-nosnippet>181</a>        )
 <a href=#182 id=182 data-nosnippet>182</a>    }
 <a href=#183 id=183 data-nosnippet>183</a>
-<a href=#184 id=184 data-nosnippet>184</a>    <span class="doccomment">/// Получает результирующий тип для бинарной операции
+<a href=#184 id=184 data-nosnippet>184</a>    <span class="doccomment">/// Get result type for binary operation
 <a href=#185 id=185 data-nosnippet>185</a>    </span><span class="kw">pub fn </span>get_binary_operation_result_type(
 <a href=#186 id=186 data-nosnippet>186</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#187 id=187 data-nosnippet>187</a>        left_type: <span class="kw-2">&amp;</span>DataType,
@@ -200,7 +200,7 @@
 <a href=#200 id=200 data-nosnippet>200</a>            | BinaryOperator::GreaterThan
 <a href=#201 id=201 data-nosnippet>201</a>            | BinaryOperator::GreaterThanOrEqual =&gt; <span class="prelude-val">Ok</span>(DataType::Boolean),
 <a href=#202 id=202 data-nosnippet>202</a>            BinaryOperator::And | BinaryOperator::Or =&gt; {
-<a href=#203 id=203 data-nosnippet>203</a>                <span class="comment">// Логические операторы требуют булевых операндов
+<a href=#203 id=203 data-nosnippet>203</a>                <span class="comment">// Logical operators require boolean operands
 <a href=#204 id=204 data-nosnippet>204</a>                </span><span class="kw">if </span><span class="macro">matches!</span>(left_type, DataType::Boolean) &amp;&amp; <span class="macro">matches!</span>(right_type, DataType::Boolean)
 <a href=#205 id=205 data-nosnippet>205</a>                {
 <a href=#206 id=206 data-nosnippet>206</a>                    <span class="prelude-val">Ok</span>(DataType::Boolean)
@@ -211,13 +211,13 @@
 <a href=#211 id=211 data-nosnippet>211</a>                }
 <a href=#212 id=212 data-nosnippet>212</a>            }
 <a href=#213 id=213 data-nosnippet>213</a>            <span class="kw">_ </span>=&gt; {
-<a href=#214 id=214 data-nosnippet>214</a>                <span class="comment">// Для других операторов возвращаем булевый тип по умолчанию
+<a href=#214 id=214 data-nosnippet>214</a>                <span class="comment">// For other operators return boolean type by default
 <a href=#215 id=215 data-nosnippet>215</a>                </span><span class="prelude-val">Ok</span>(DataType::Boolean)
 <a href=#216 id=216 data-nosnippet>216</a>            }
 <a href=#217 id=217 data-nosnippet>217</a>        }
 <a href=#218 id=218 data-nosnippet>218</a>    }
 <a href=#219 id=219 data-nosnippet>219</a>
-<a href=#220 id=220 data-nosnippet>220</a>    <span class="doccomment">/// Получает результирующий тип для унарной операции
+<a href=#220 id=220 data-nosnippet>220</a>    <span class="doccomment">/// Get result type for unary operation
 <a href=#221 id=221 data-nosnippet>221</a>    </span><span class="kw">pub fn </span>get_unary_operation_result_type(
 <a href=#222 id=222 data-nosnippet>222</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#223 id=223 data-nosnippet>223</a>        operand_type: <span class="kw-2">&amp;</span>DataType,
@@ -239,7 +239,7 @@
 <a href=#239 id=239 data-nosnippet>239</a>        }
 <a href=#240 id=240 data-nosnippet>240</a>    }
 <a href=#241 id=241 data-nosnippet>241</a>
-<a href=#242 id=242 data-nosnippet>242</a>    <span class="comment">// Методы проверки для различных типов запросов
+<a href=#242 id=242 data-nosnippet>242</a>    <span class="comment">// Type checking methods for different query types
 <a href=#243 id=243 data-nosnippet>243</a>
 <a href=#244 id=244 data-nosnippet>244</a>    </span><span class="kw">fn </span>check_select_types(
 <a href=#245 id=245 data-nosnippet>245</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
@@ -248,12 +248,12 @@
 <a href=#248 id=248 data-nosnippet>248</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
 <a href=#249 id=249 data-nosnippet>249</a>        result.checks_performed += <span class="number">1</span>;
 <a href=#250 id=250 data-nosnippet>250</a>
-<a href=#251 id=251 data-nosnippet>251</a>        <span class="comment">// Проверяем типы в SELECT списке
+<a href=#251 id=251 data-nosnippet>251</a>        <span class="comment">// Check types in SELECT list
 <a href=#252 id=252 data-nosnippet>252</a>        </span><span class="kw">for </span>item <span class="kw">in </span><span class="kw-2">&amp;</span>select.select_list {
 <a href=#253 id=253 data-nosnippet>253</a>            <span class="self">self</span>.check_select_item_types(item, result)<span class="question-mark">?</span>;
 <a href=#254 id=254 data-nosnippet>254</a>        }
 <a href=#255 id=255 data-nosnippet>255</a>
-<a href=#256 id=256 data-nosnippet>256</a>        <span class="comment">// Проверяем типы в WHERE условии
+<a href=#256 id=256 data-nosnippet>256</a>        <span class="comment">// Check types in WHERE clause
 <a href=#257 id=257 data-nosnippet>257</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(where_clause) = <span class="kw-2">&amp;</span>select.where_clause {
 <a href=#258 id=258 data-nosnippet>258</a>            <span class="kw">let </span>where_type = <span class="self">self</span>.check_expression_types(where_clause, result)<span class="question-mark">?</span>;
 <a href=#259 id=259 data-nosnippet>259</a>            <span class="kw">if </span>!<span class="macro">matches!</span>(where_type, DataType::Boolean) {
@@ -269,12 +269,12 @@
 <a href=#269 id=269 data-nosnippet>269</a>            }
 <a href=#270 id=270 data-nosnippet>270</a>        }
 <a href=#271 id=271 data-nosnippet>271</a>
-<a href=#272 id=272 data-nosnippet>272</a>        <span class="comment">// Проверяем типы в GROUP BY
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="comment">// Check types in GROUP BY
 <a href=#273 id=273 data-nosnippet>273</a>        </span><span class="kw">for </span>expr <span class="kw">in </span><span class="kw-2">&amp;</span>select.group_by {
 <a href=#274 id=274 data-nosnippet>274</a>            <span class="self">self</span>.check_expression_types(expr, result)<span class="question-mark">?</span>;
 <a href=#275 id=275 data-nosnippet>275</a>        }
 <a href=#276 id=276 data-nosnippet>276</a>
-<a href=#277 id=277 data-nosnippet>277</a>        <span class="comment">// Проверяем типы в HAVING
+<a href=#277 id=277 data-nosnippet>277</a>        <span class="comment">// Check types in HAVING
 <a href=#278 id=278 data-nosnippet>278</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(having) = <span class="kw-2">&amp;</span>select.having {
 <a href=#279 id=279 data-nosnippet>279</a>            <span class="kw">let </span>having_type = <span class="self">self</span>.check_expression_types(having, result)<span class="question-mark">?</span>;
 <a href=#280 id=280 data-nosnippet>280</a>            <span class="kw">if </span>!<span class="macro">matches!</span>(having_type, DataType::Boolean) {
@@ -290,7 +290,7 @@
 <a href=#290 id=290 data-nosnippet>290</a>            }
 <a href=#291 id=291 data-nosnippet>291</a>        }
 <a href=#292 id=292 data-nosnippet>292</a>
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="comment">// Проверяем типы в ORDER BY
+<a href=#293 id=293 data-nosnippet>293</a>        <span class="comment">// Check types in ORDER BY
 <a href=#294 id=294 data-nosnippet>294</a>        </span><span class="kw">for </span>order_item <span class="kw">in </span><span class="kw-2">&amp;</span>select.order_by {
 <a href=#295 id=295 data-nosnippet>295</a>            <span class="self">self</span>.check_expression_types(<span class="kw-2">&amp;</span>order_item.expr, result)<span class="question-mark">?</span>;
 <a href=#296 id=296 data-nosnippet>296</a>        }
@@ -305,21 +305,21 @@
 <a href=#305 id=305 data-nosnippet>305</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
 <a href=#306 id=306 data-nosnippet>306</a>        result.checks_performed += <span class="number">1</span>;
 <a href=#307 id=307 data-nosnippet>307</a>
-<a href=#308 id=308 data-nosnippet>308</a>        <span class="comment">// Проверяем совместимость типов вставляемых значений с колонками таблицы
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="comment">// Check compatibility of inserted value types with table columns
 <a href=#309 id=309 data-nosnippet>309</a>        </span><span class="kw">match </span><span class="kw-2">&amp;</span>insert.values {
 <a href=#310 id=310 data-nosnippet>310</a>            InsertValues::Values(rows) =&gt; {
 <a href=#311 id=311 data-nosnippet>311</a>                <span class="kw">for </span>row <span class="kw">in </span>rows {
 <a href=#312 id=312 data-nosnippet>312</a>                    <span class="kw">for </span>expr <span class="kw">in </span>row {
 <a href=#313 id=313 data-nosnippet>313</a>                        <span class="kw">let </span>expr_type = <span class="self">self</span>.check_expression_types(expr, result)<span class="question-mark">?</span>;
 <a href=#314 id=314 data-nosnippet>314</a>
-<a href=#315 id=315 data-nosnippet>315</a>                        <span class="comment">// В реальной реализации здесь будет проверка против схемы таблицы
-<a href=#316 id=316 data-nosnippet>316</a>                        // Пока добавляем информацию о типе в результат
+<a href=#315 id=315 data-nosnippet>315</a>                        <span class="comment">// In a real implementation, there would be a check against the table schema here
+<a href=#316 id=316 data-nosnippet>316</a>                        // For now, add type information to the result
 <a href=#317 id=317 data-nosnippet>317</a>                        </span>result.type_info.result_types.push(expr_type);
 <a href=#318 id=318 data-nosnippet>318</a>                    }
 <a href=#319 id=319 data-nosnippet>319</a>                }
 <a href=#320 id=320 data-nosnippet>320</a>            }
 <a href=#321 id=321 data-nosnippet>321</a>            InsertValues::Select(select) =&gt; {
-<a href=#322 id=322 data-nosnippet>322</a>                <span class="comment">// Проверяем типы в подзапросе
+<a href=#322 id=322 data-nosnippet>322</a>                <span class="comment">// Check types in subquery
 <a href=#323 id=323 data-nosnippet>323</a>                </span><span class="self">self</span>.check_select_types(select, result)<span class="question-mark">?</span>;
 <a href=#324 id=324 data-nosnippet>324</a>            }
 <a href=#325 id=325 data-nosnippet>325</a>        }
@@ -334,15 +334,15 @@
 <a href=#334 id=334 data-nosnippet>334</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
 <a href=#335 id=335 data-nosnippet>335</a>        result.checks_performed += <span class="number">1</span>;
 <a href=#336 id=336 data-nosnippet>336</a>
-<a href=#337 id=337 data-nosnippet>337</a>        <span class="comment">// Проверяем типы в присваиваниях
+<a href=#337 id=337 data-nosnippet>337</a>        <span class="comment">// Check types in assignments
 <a href=#338 id=338 data-nosnippet>338</a>        </span><span class="kw">for </span>assignment <span class="kw">in </span><span class="kw-2">&amp;</span>update.assignments {
 <a href=#339 id=339 data-nosnippet>339</a>            <span class="kw">let </span>value_type = <span class="self">self</span>.check_expression_types(<span class="kw-2">&amp;</span>assignment.value, result)<span class="question-mark">?</span>;
 <a href=#340 id=340 data-nosnippet>340</a>
-<a href=#341 id=341 data-nosnippet>341</a>            <span class="comment">// В реальной реализации здесь будет проверка совместимости с типом колонки
+<a href=#341 id=341 data-nosnippet>341</a>            <span class="comment">// In a real implementation, there would be a compatibility check with the column type here
 <a href=#342 id=342 data-nosnippet>342</a>            </span>result.type_info.result_types.push(value_type);
 <a href=#343 id=343 data-nosnippet>343</a>        }
 <a href=#344 id=344 data-nosnippet>344</a>
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="comment">// Проверяем типы в WHERE условии
+<a href=#345 id=345 data-nosnippet>345</a>        <span class="comment">// Check types in WHERE clause
 <a href=#346 id=346 data-nosnippet>346</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(where_clause) = <span class="kw-2">&amp;</span>update.where_clause {
 <a href=#347 id=347 data-nosnippet>347</a>            <span class="kw">let </span>where_type = <span class="self">self</span>.check_expression_types(where_clause, result)<span class="question-mark">?</span>;
 <a href=#348 id=348 data-nosnippet>348</a>            <span class="kw">if </span>!<span class="macro">matches!</span>(where_type, DataType::Boolean) {
@@ -366,7 +366,7 @@
 <a href=#366 id=366 data-nosnippet>366</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
 <a href=#367 id=367 data-nosnippet>367</a>        result.checks_performed += <span class="number">1</span>;
 <a href=#368 id=368 data-nosnippet>368</a>
-<a href=#369 id=369 data-nosnippet>369</a>        <span class="comment">// Проверяем типы в WHERE условии
+<a href=#369 id=369 data-nosnippet>369</a>        <span class="comment">// Check types in WHERE clause
 <a href=#370 id=370 data-nosnippet>370</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(where_clause) = <span class="kw-2">&amp;</span>delete.where_clause {
 <a href=#371 id=371 data-nosnippet>371</a>            <span class="kw">let </span>where_type = <span class="self">self</span>.check_expression_types(where_clause, result)<span class="question-mark">?</span>;
 <a href=#372 id=372 data-nosnippet>372</a>            <span class="kw">if </span>!<span class="macro">matches!</span>(where_type, DataType::Boolean) {
@@ -390,9 +390,9 @@
 <a href=#390 id=390 data-nosnippet>390</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
 <a href=#391 id=391 data-nosnippet>391</a>        result.checks_performed += <span class="number">1</span>;
 <a href=#392 id=392 data-nosnippet>392</a>
-<a href=#393 id=393 data-nosnippet>393</a>        <span class="comment">// Проверяем корректность типов колонок
+<a href=#393 id=393 data-nosnippet>393</a>        <span class="comment">// Check column type correctness
 <a href=#394 id=394 data-nosnippet>394</a>        </span><span class="kw">for </span>column <span class="kw">in </span><span class="kw-2">&amp;</span>create.columns {
-<a href=#395 id=395 data-nosnippet>395</a>            <span class="comment">// Проверяем валидность типа данных
+<a href=#395 id=395 data-nosnippet>395</a>            <span class="comment">// Check data type validity
 <a href=#396 id=396 data-nosnippet>396</a>            </span><span class="self">self</span>.validate_data_type(<span class="kw-2">&amp;</span>column.data_type, result)<span class="question-mark">?</span>;
 <a href=#397 id=397 data-nosnippet>397</a>        }
 <a href=#398 id=398 data-nosnippet>398</a>
@@ -410,8 +410,8 @@
 <a href=#410 id=410 data-nosnippet>410</a>                result.type_info.result_types.push(expr_type);
 <a href=#411 id=411 data-nosnippet>411</a>            }
 <a href=#412 id=412 data-nosnippet>412</a>            SelectItem::Wildcard =&gt; {
-<a href=#413 id=413 data-nosnippet>413</a>                <span class="comment">// Для * нужно получить все колонки из FROM таблиц
-<a href=#414 id=414 data-nosnippet>414</a>                // Пока добавляем заглушку
+<a href=#413 id=413 data-nosnippet>413</a>                <span class="comment">// For * need to get all columns from FROM tables
+<a href=#414 id=414 data-nosnippet>414</a>                // For now, add a placeholder
 <a href=#415 id=415 data-nosnippet>415</a>            </span>}
 <a href=#416 id=416 data-nosnippet>416</a>        }
 <a href=#417 id=417 data-nosnippet>417</a>        <span class="prelude-val">Ok</span>(())
@@ -427,14 +427,14 @@
 <a href=#427 id=427 data-nosnippet>427</a>        <span class="kw">match </span>expr {
 <a href=#428 id=428 data-nosnippet>428</a>            Expression::Literal(literal) =&gt; <span class="prelude-val">Ok</span>(<span class="self">self</span>.get_literal_type(literal)),
 <a href=#429 id=429 data-nosnippet>429</a>            Expression::Identifier(<span class="kw">_</span>) | Expression::QualifiedIdentifier { .. } =&gt; {
-<a href=#430 id=430 data-nosnippet>430</a>                <span class="comment">// В реальной реализации здесь будет получение типа колонки из схемы
-<a href=#431 id=431 data-nosnippet>431</a>                </span><span class="prelude-val">Ok</span>(DataType::Text) <span class="comment">// Заглушка
+<a href=#430 id=430 data-nosnippet>430</a>                <span class="comment">// In a real implementation, column type would be retrieved from schema here
+<a href=#431 id=431 data-nosnippet>431</a>                </span><span class="prelude-val">Ok</span>(DataType::Text) <span class="comment">// Placeholder
 <a href=#432 id=432 data-nosnippet>432</a>            </span>}
 <a href=#433 id=433 data-nosnippet>433</a>            Expression::BinaryOp { left, op, right } =&gt; {
 <a href=#434 id=434 data-nosnippet>434</a>                <span class="kw">let </span>left_type = <span class="self">self</span>.check_expression_types(left, result)<span class="question-mark">?</span>;
 <a href=#435 id=435 data-nosnippet>435</a>                <span class="kw">let </span>right_type = <span class="self">self</span>.check_expression_types(right, result)<span class="question-mark">?</span>;
 <a href=#436 id=436 data-nosnippet>436</a>
-<a href=#437 id=437 data-nosnippet>437</a>                <span class="comment">// Проверяем совместимость операндов
+<a href=#437 id=437 data-nosnippet>437</a>                <span class="comment">// Check operand compatibility
 <a href=#438 id=438 data-nosnippet>438</a>                </span><span class="kw">let </span>compatibility = <span class="self">self</span>.check_compatibility(<span class="kw-2">&amp;</span>left_type, <span class="kw-2">&amp;</span>right_type);
 <a href=#439 id=439 data-nosnippet>439</a>                <span class="kw">if </span><span class="macro">matches!</span>(compatibility, TypeCompatibility::Incompatible) {
 <a href=#440 id=440 data-nosnippet>440</a>                    result.add_error(TypeCheckError {
@@ -447,10 +447,10 @@
 <a href=#447 id=447 data-nosnippet>447</a>                        actual_type: <span class="prelude-val">Some</span>(right_type.clone()),
 <a href=#448 id=448 data-nosnippet>448</a>                        suggested_fix: <span class="prelude-val">Some</span>(<span class="string">"Cast one operand to match the other type"</span>.to_string()),
 <a href=#449 id=449 data-nosnippet>449</a>                    });
-<a href=#450 id=450 data-nosnippet>450</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(DataType::Text); <span class="comment">// Возвращаем заглушку для продолжения анализа
+<a href=#450 id=450 data-nosnippet>450</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(DataType::Text); <span class="comment">// Return placeholder to continue analysis
 <a href=#451 id=451 data-nosnippet>451</a>                </span>}
 <a href=#452 id=452 data-nosnippet>452</a>
-<a href=#453 id=453 data-nosnippet>453</a>                <span class="comment">// Добавляем предупреждение о неявном преобразовании
+<a href=#453 id=453 data-nosnippet>453</a>                <span class="comment">// Add warning about implicit conversion
 <a href=#454 id=454 data-nosnippet>454</a>                </span><span class="kw">if </span><span class="macro">matches!</span>(compatibility, TypeCompatibility::CompatibleWithConversion) {
 <a href=#455 id=455 data-nosnippet>455</a>                    result.add_warning(TypeCheckWarning {
 <a href=#456 id=456 data-nosnippet>456</a>                        message: <span class="macro">format!</span>(
@@ -469,24 +469,24 @@
 <a href=#469 id=469 data-nosnippet>469</a>                <span class="self">self</span>.get_unary_operation_result_type(<span class="kw-2">&amp;</span>operand_type, op)
 <a href=#470 id=470 data-nosnippet>470</a>            }
 <a href=#471 id=471 data-nosnippet>471</a>            Expression::Function { name, args } =&gt; {
-<a href=#472 id=472 data-nosnippet>472</a>                <span class="comment">// Проверяем типы аргументов функции
+<a href=#472 id=472 data-nosnippet>472</a>                <span class="comment">// Check function argument types
 <a href=#473 id=473 data-nosnippet>473</a>                </span><span class="kw">let </span><span class="kw-2">mut </span>arg_types = Vec::new();
 <a href=#474 id=474 data-nosnippet>474</a>                <span class="kw">for </span>arg <span class="kw">in </span>args {
 <a href=#475 id=475 data-nosnippet>475</a>                    <span class="kw">let </span>arg_type = <span class="self">self</span>.check_expression_types(arg, result)<span class="question-mark">?</span>;
 <a href=#476 id=476 data-nosnippet>476</a>                    arg_types.push(arg_type);
 <a href=#477 id=477 data-nosnippet>477</a>                }
 <a href=#478 id=478 data-nosnippet>478</a>
-<a href=#479 id=479 data-nosnippet>479</a>                <span class="comment">// Определяем тип результата функции
+<a href=#479 id=479 data-nosnippet>479</a>                <span class="comment">// Determine function result type
 <a href=#480 id=480 data-nosnippet>480</a>                </span><span class="self">self</span>.get_function_result_type(name, <span class="kw-2">&amp;</span>arg_types, result)
 <a href=#481 id=481 data-nosnippet>481</a>            }
 <a href=#482 id=482 data-nosnippet>482</a>            <span class="kw">_ </span>=&gt; {
-<a href=#483 id=483 data-nosnippet>483</a>                <span class="comment">// Упрощенная обработка других выражений
+<a href=#483 id=483 data-nosnippet>483</a>                <span class="comment">// Simplified handling of other expressions
 <a href=#484 id=484 data-nosnippet>484</a>                </span><span class="prelude-val">Ok</span>(DataType::Text)
 <a href=#485 id=485 data-nosnippet>485</a>            }
 <a href=#486 id=486 data-nosnippet>486</a>        }
 <a href=#487 id=487 data-nosnippet>487</a>    }
 <a href=#488 id=488 data-nosnippet>488</a>
-<a href=#489 id=489 data-nosnippet>489</a>    <span class="comment">// Вспомогательные методы
+<a href=#489 id=489 data-nosnippet>489</a>    <span class="comment">// Helper methods
 <a href=#490 id=490 data-nosnippet>490</a>
 <a href=#491 id=491 data-nosnippet>491</a>    </span><span class="kw">pub fn </span>get_literal_type(<span class="kw-2">&amp;</span><span class="self">self</span>, literal: <span class="kw-2">&amp;</span>Literal) -&gt; DataType {
 <a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">match </span>literal {
@@ -494,7 +494,7 @@
 <a href=#494 id=494 data-nosnippet>494</a>            Literal::Float(<span class="kw">_</span>) =&gt; DataType::Real,
 <a href=#495 id=495 data-nosnippet>495</a>            Literal::String(<span class="kw">_</span>) =&gt; DataType::Text,
 <a href=#496 id=496 data-nosnippet>496</a>            Literal::Boolean(<span class="kw">_</span>) =&gt; DataType::Boolean,
-<a href=#497 id=497 data-nosnippet>497</a>            Literal::Null =&gt; DataType::Text, <span class="comment">// NULL может быть любого типа
+<a href=#497 id=497 data-nosnippet>497</a>            Literal::Null =&gt; DataType::Text, <span class="comment">// NULL can be any type
 <a href=#498 id=498 data-nosnippet>498</a>        </span>}
 <a href=#499 id=499 data-nosnippet>499</a>    }
 <a href=#500 id=500 data-nosnippet>500</a>
@@ -549,7 +549,7 @@
 <a href=#549 id=549 data-nosnippet>549</a>                    location: <span class="prelude-val">Some</span>(<span class="string">"function call"</span>.to_string()),
 <a href=#550 id=550 data-nosnippet>550</a>                    warning_type: TypeWarningType::PerformanceImpact,
 <a href=#551 id=551 data-nosnippet>551</a>                });
-<a href=#552 id=552 data-nosnippet>552</a>                <span class="prelude-val">Ok</span>(DataType::Text) <span class="comment">// По умолчанию возвращаем текстовый тип
+<a href=#552 id=552 data-nosnippet>552</a>                <span class="prelude-val">Ok</span>(DataType::Text) <span class="comment">// Return text type by default
 <a href=#553 id=553 data-nosnippet>553</a>            </span>}
 <a href=#554 id=554 data-nosnippet>554</a>        }
 <a href=#555 id=555 data-nosnippet>555</a>    }
@@ -570,16 +570,16 @@
 <a href=#570 id=570 data-nosnippet>570</a>                }
 <a href=#571 id=571 data-nosnippet>571</a>            }
 <a href=#572 id=572 data-nosnippet>572</a>            <span class="kw">_ </span>=&gt; {
-<a href=#573 id=573 data-nosnippet>573</a>                <span class="comment">// Другие типы пока не требуют специальной валидации
+<a href=#573 id=573 data-nosnippet>573</a>                <span class="comment">// Other types do not require special validation yet
 <a href=#574 id=574 data-nosnippet>574</a>            </span>}
 <a href=#575 id=575 data-nosnippet>575</a>        }
 <a href=#576 id=576 data-nosnippet>576</a>        <span class="prelude-val">Ok</span>(())
 <a href=#577 id=577 data-nosnippet>577</a>    }
 <a href=#578 id=578 data-nosnippet>578</a>
 <a href=#579 id=579 data-nosnippet>579</a>    <span class="kw">fn </span>initialize_rules(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-<a href=#580 id=580 data-nosnippet>580</a>        <span class="comment">// Инициализируем правила совместимости типов
+<a href=#580 id=580 data-nosnippet>580</a>        <span class="comment">// Initialize type compatibility rules
 <a href=#581 id=581 data-nosnippet>581</a>
-<a href=#582 id=582 data-nosnippet>582</a>        // Числовые типы
+<a href=#582 id=582 data-nosnippet>582</a>        // Numeric types
 <a href=#583 id=583 data-nosnippet>583</a>        </span><span class="self">self</span>.compatibility_rules.insert(
 <a href=#584 id=584 data-nosnippet>584</a>            (DataType::Integer, DataType::Real),
 <a href=#585 id=585 data-nosnippet>585</a>            TypeCompatibility::CompatibleWithConversion,
@@ -589,7 +589,7 @@
 <a href=#589 id=589 data-nosnippet>589</a>            TypeCompatibility::CompatibleWithLoss,
 <a href=#590 id=590 data-nosnippet>590</a>        );
 <a href=#591 id=591 data-nosnippet>591</a>
-<a href=#592 id=592 data-nosnippet>592</a>        <span class="comment">// Строковые типы
+<a href=#592 id=592 data-nosnippet>592</a>        <span class="comment">// String types
 <a href=#593 id=593 data-nosnippet>593</a>        </span><span class="self">self</span>.compatibility_rules.insert(
 <a href=#594 id=594 data-nosnippet>594</a>            (DataType::Text, DataType::Varchar { length: <span class="prelude-val">Some</span>(<span class="number">255</span>) }),
 <a href=#595 id=595 data-nosnippet>595</a>            TypeCompatibility::CompatibleWithConversion,
@@ -599,7 +599,7 @@
 <a href=#599 id=599 data-nosnippet>599</a>            TypeCompatibility::Compatible,
 <a href=#600 id=600 data-nosnippet>600</a>        );
 <a href=#601 id=601 data-nosnippet>601</a>
-<a href=#602 id=602 data-nosnippet>602</a>        <span class="comment">// Правила неявных преобразований
+<a href=#602 id=602 data-nosnippet>602</a>        <span class="comment">// Implicit conversion rules
 <a href=#603 id=603 data-nosnippet>603</a>        </span><span class="self">self</span>.conversion_rules
 <a href=#604 id=604 data-nosnippet>604</a>            .insert(DataType::Integer, <span class="macro">vec!</span>[DataType::Real, DataType::Text]);
 <a href=#605 id=605 data-nosnippet>605</a>        <span class="self">self</span>.conversion_rules
@@ -608,12 +608,12 @@
 <a href=#608 id=608 data-nosnippet>608</a>            .insert(DataType::Boolean, <span class="macro">vec!</span>[DataType::Text]);
 <a href=#609 id=609 data-nosnippet>609</a>    }
 <a href=#610 id=610 data-nosnippet>610</a>
-<a href=#611 id=611 data-nosnippet>611</a>    <span class="doccomment">/// Включает или отключает строгий режим
+<a href=#611 id=611 data-nosnippet>611</a>    <span class="doccomment">/// Enable or disable strict mode
 <a href=#612 id=612 data-nosnippet>612</a>    </span><span class="kw">pub fn </span>set_strict_mode(<span class="kw-2">&amp;mut </span><span class="self">self</span>, strict: bool) {
 <a href=#613 id=613 data-nosnippet>613</a>        <span class="self">self</span>.strict_mode = strict;
 <a href=#614 id=614 data-nosnippet>614</a>    }
 <a href=#615 id=615 data-nosnippet>615</a>
-<a href=#616 id=616 data-nosnippet>616</a>    <span class="doccomment">/// Проверяет, включен ли строгий режим
+<a href=#616 id=616 data-nosnippet>616</a>    <span class="doccomment">/// Check if strict mode is enabled
 <a href=#617 id=617 data-nosnippet>617</a>    </span><span class="kw">pub fn </span>is_strict_mode(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
 <a href=#618 id=618 data-nosnippet>618</a>        <span class="self">self</span>.strict_mode
 <a href=#619 id=619 data-nosnippet>619</a>    }
@@ -623,4 +623,5 @@
 <a href=#623 id=623 data-nosnippet>623</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
 <a href=#624 id=624 data-nosnippet>624</a>        <span class="self">Self</span>::new()
 <a href=#625 id=625 data-nosnippet>625</a>    }
-<a href=#626 id=626 data-nosnippet>626</a>}</code></pre></div></section></main></body></html>
+<a href=#626 id=626 data-nosnippet>626</a>}
+</code></pre></div></section></main></body></html>

@@ -1,11 +1,11 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/debug/mod.rs`."><title>mod.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-e56847b5.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustdb" data-themes="" data-resource-suffix="" data-rustdoc-version="1.91.0 (f8297e351 2025-10-28)" data-channel="1.91.0" data-search-js="search-e256b49e.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-6dc2a7f3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustdb/debug/</div>mod.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Модуль отладки и профилирования для rustdb
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/debug/mod.rs`."><title>mod.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustdb" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.0 (4a4ef493e 2026-03-02)" data-channel="1.94.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustdb/debug/</div>mod.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Debugging and profiling module for rustdb
 <a href=#2 id=2 data-nosnippet>2</a>//!
-<a href=#3 id=3 data-nosnippet>3</a>//! Этот модуль предоставляет инструменты для:
-<a href=#4 id=4 data-nosnippet>4</a>//! - Детального логирования операций
-<a href=#5 id=5 data-nosnippet>5</a>//! - Трассировки запросов
-<a href=#6 id=6 data-nosnippet>6</a>//! - CPU и Memory профилирования
-<a href=#7 id=7 data-nosnippet>7</a>//! - Анализа производительности
-<a href=#8 id=8 data-nosnippet>8</a>//! - Отладки проблем
+<a href=#3 id=3 data-nosnippet>3</a>//! This module provides tools for:
+<a href=#4 id=4 data-nosnippet>4</a>//! - Detailed operation logging
+<a href=#5 id=5 data-nosnippet>5</a>//! - Query tracing
+<a href=#6 id=6 data-nosnippet>6</a>//! - CPU and Memory profiling
+<a href=#7 id=7 data-nosnippet>7</a>//! - Performance analysis
+<a href=#8 id=8 data-nosnippet>8</a>//! - Problem debugging
 <a href=#9 id=9 data-nosnippet>9</a>
 <a href=#10 id=10 data-nosnippet>10</a></span><span class="kw">pub mod </span>debug_logger;
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">pub mod </span>performance_analyzer;
@@ -17,28 +17,28 @@
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">pub use </span>profiler::Profiler;
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">pub use </span>query_tracer::QueryTracer;
 <a href=#19 id=19 data-nosnippet>19</a>
-<a href=#20 id=20 data-nosnippet>20</a><span class="doccomment">/// Конфигурация отладки
+<a href=#20 id=20 data-nosnippet>20</a><span class="doccomment">/// Debug configuration
 <a href=#21 id=21 data-nosnippet>21</a></span><span class="attr">#[derive(Debug, Clone)]
 <a href=#22 id=22 data-nosnippet>22</a></span><span class="kw">pub struct </span>DebugConfig {
-<a href=#23 id=23 data-nosnippet>23</a>    <span class="doccomment">/// Включить детальное логирование
+<a href=#23 id=23 data-nosnippet>23</a>    <span class="doccomment">/// Enable detailed logging
 <a href=#24 id=24 data-nosnippet>24</a>    </span><span class="kw">pub </span>enable_debug_logging: bool,
-<a href=#25 id=25 data-nosnippet>25</a>    <span class="doccomment">/// Включить трассировку запросов
+<a href=#25 id=25 data-nosnippet>25</a>    <span class="doccomment">/// Enable query tracing
 <a href=#26 id=26 data-nosnippet>26</a>    </span><span class="kw">pub </span>enable_query_tracing: bool,
-<a href=#27 id=27 data-nosnippet>27</a>    <span class="doccomment">/// Включить CPU профилирование
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="doccomment">/// Enable CPU profiling
 <a href=#28 id=28 data-nosnippet>28</a>    </span><span class="kw">pub </span>enable_cpu_profiling: bool,
-<a href=#29 id=29 data-nosnippet>29</a>    <span class="doccomment">/// Включить Memory профилирование
+<a href=#29 id=29 data-nosnippet>29</a>    <span class="doccomment">/// Enable Memory profiling
 <a href=#30 id=30 data-nosnippet>30</a>    </span><span class="kw">pub </span>enable_memory_profiling: bool,
-<a href=#31 id=31 data-nosnippet>31</a>    <span class="doccomment">/// Уровень детализации (0-5)
+<a href=#31 id=31 data-nosnippet>31</a>    <span class="doccomment">/// Detail level (0-5)
 <a href=#32 id=32 data-nosnippet>32</a>    </span><span class="kw">pub </span>detail_level: u8,
-<a href=#33 id=33 data-nosnippet>33</a>    <span class="doccomment">/// Максимальный размер лог-файла (МБ)
+<a href=#33 id=33 data-nosnippet>33</a>    <span class="doccomment">/// Maximum log file size (MB)
 <a href=#34 id=34 data-nosnippet>34</a>    </span><span class="kw">pub </span>max_log_file_size_mb: u64,
-<a href=#35 id=35 data-nosnippet>35</a>    <span class="doccomment">/// Количество ротируемых лог-файлов
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="doccomment">/// Number of rotated log files
 <a href=#36 id=36 data-nosnippet>36</a>    </span><span class="kw">pub </span>max_log_files: u32,
-<a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// Интервал сбора метрик (секунды)
+<a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// Metrics collection interval (seconds)
 <a href=#38 id=38 data-nosnippet>38</a>    </span><span class="kw">pub </span>metrics_collection_interval: u64,
-<a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// Включить экспорт в Prometheus
+<a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// Enable Prometheus export
 <a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub </span>enable_prometheus_export: bool,
-<a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// Порт для Prometheus метрик
+<a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// Port for Prometheus metrics
 <a href=#42 id=42 data-nosnippet>42</a>    </span><span class="kw">pub </span>prometheus_port: u16,
 <a href=#43 id=43 data-nosnippet>43</a>}
 <a href=#44 id=44 data-nosnippet>44</a>
@@ -59,7 +59,7 @@
 <a href=#59 id=59 data-nosnippet>59</a>    }
 <a href=#60 id=60 data-nosnippet>60</a>}
 <a href=#61 id=61 data-nosnippet>61</a>
-<a href=#62 id=62 data-nosnippet>62</a><span class="doccomment">/// Менеджер отладки
+<a href=#62 id=62 data-nosnippet>62</a><span class="doccomment">/// Debug manager
 <a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">pub struct </span>DebugManager {
 <a href=#64 id=64 data-nosnippet>64</a>    config: DebugConfig,
 <a href=#65 id=65 data-nosnippet>65</a>    debug_logger: <span class="prelude-ty">Option</span>&lt;DebugLogger&gt;,
@@ -69,7 +69,7 @@
 <a href=#69 id=69 data-nosnippet>69</a>}
 <a href=#70 id=70 data-nosnippet>70</a>
 <a href=#71 id=71 data-nosnippet>71</a><span class="kw">impl </span>DebugManager {
-<a href=#72 id=72 data-nosnippet>72</a>    <span class="doccomment">/// Создает новый менеджер отладки
+<a href=#72 id=72 data-nosnippet>72</a>    <span class="doccomment">/// Creates a new debug manager
 <a href=#73 id=73 data-nosnippet>73</a>    </span><span class="kw">pub fn </span>new(config: DebugConfig) -&gt; <span class="self">Self </span>{
 <a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">let </span><span class="kw-2">mut </span>manager = <span class="self">Self </span>{
 <a href=#75 id=75 data-nosnippet>75</a>            config: config.clone(),
@@ -79,7 +79,7 @@
 <a href=#79 id=79 data-nosnippet>79</a>            performance_analyzer: <span class="prelude-val">None</span>,
 <a href=#80 id=80 data-nosnippet>80</a>        };
 <a href=#81 id=81 data-nosnippet>81</a>
-<a href=#82 id=82 data-nosnippet>82</a>        <span class="comment">// Инициализируем компоненты в зависимости от конфигурации
+<a href=#82 id=82 data-nosnippet>82</a>        <span class="comment">// Initialize components based on configuration
 <a href=#83 id=83 data-nosnippet>83</a>        </span><span class="kw">if </span>config.enable_debug_logging {
 <a href=#84 id=84 data-nosnippet>84</a>            manager.debug_logger = <span class="prelude-val">Some</span>(DebugLogger::new(<span class="kw-2">&amp;</span>config));
 <a href=#85 id=85 data-nosnippet>85</a>        }
@@ -97,36 +97,36 @@
 <a href=#97 id=97 data-nosnippet>97</a>        manager
 <a href=#98 id=98 data-nosnippet>98</a>    }
 <a href=#99 id=99 data-nosnippet>99</a>
-<a href=#100 id=100 data-nosnippet>100</a>    <span class="doccomment">/// Получает конфигурацию
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="doccomment">/// Gets configuration
 <a href=#101 id=101 data-nosnippet>101</a>    </span><span class="kw">pub fn </span>config(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>DebugConfig {
 <a href=#102 id=102 data-nosnippet>102</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.config
 <a href=#103 id=103 data-nosnippet>103</a>    }
 <a href=#104 id=104 data-nosnippet>104</a>
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="doccomment">/// Получает логгер отладки
+<a href=#105 id=105 data-nosnippet>105</a>    <span class="doccomment">/// Gets debug logger
 <a href=#106 id=106 data-nosnippet>106</a>    </span><span class="kw">pub fn </span>debug_logger(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>DebugLogger&gt; {
 <a href=#107 id=107 data-nosnippet>107</a>        <span class="self">self</span>.debug_logger.as_ref()
 <a href=#108 id=108 data-nosnippet>108</a>    }
 <a href=#109 id=109 data-nosnippet>109</a>
-<a href=#110 id=110 data-nosnippet>110</a>    <span class="doccomment">/// Получает трассировщик запросов
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="doccomment">/// Gets query tracer
 <a href=#111 id=111 data-nosnippet>111</a>    </span><span class="kw">pub fn </span>query_tracer(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>QueryTracer&gt; {
 <a href=#112 id=112 data-nosnippet>112</a>        <span class="self">self</span>.query_tracer.as_ref()
 <a href=#113 id=113 data-nosnippet>113</a>    }
 <a href=#114 id=114 data-nosnippet>114</a>
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// Получает профилировщик
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// Gets profiler
 <a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">pub fn </span>profiler(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Profiler&gt; {
 <a href=#117 id=117 data-nosnippet>117</a>        <span class="self">self</span>.profiler.as_ref()
 <a href=#118 id=118 data-nosnippet>118</a>    }
 <a href=#119 id=119 data-nosnippet>119</a>
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// Получает анализатор производительности
+<a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// Gets performance analyzer
 <a href=#121 id=121 data-nosnippet>121</a>    </span><span class="kw">pub fn </span>performance_analyzer(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>PerformanceAnalyzer&gt; {
 <a href=#122 id=122 data-nosnippet>122</a>        <span class="self">self</span>.performance_analyzer.as_ref()
 <a href=#123 id=123 data-nosnippet>123</a>    }
 <a href=#124 id=124 data-nosnippet>124</a>
-<a href=#125 id=125 data-nosnippet>125</a>    <span class="doccomment">/// Обновляет конфигурацию
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="doccomment">/// Updates configuration
 <a href=#126 id=126 data-nosnippet>126</a>    </span><span class="kw">pub fn </span>update_config(<span class="kw-2">&amp;mut </span><span class="self">self</span>, new_config: DebugConfig) {
 <a href=#127 id=127 data-nosnippet>127</a>        <span class="self">self</span>.config = new_config.clone();
 <a href=#128 id=128 data-nosnippet>128</a>
-<a href=#129 id=129 data-nosnippet>129</a>        <span class="comment">// Пересоздаем компоненты при необходимости
+<a href=#129 id=129 data-nosnippet>129</a>        <span class="comment">// Recreate components if necessary
 <a href=#130 id=130 data-nosnippet>130</a>        </span><span class="kw">if </span><span class="self">self</span>.config.enable_debug_logging &amp;&amp; <span class="self">self</span>.debug_logger.is_none() {
 <a href=#131 id=131 data-nosnippet>131</a>            <span class="self">self</span>.debug_logger = <span class="prelude-val">Some</span>(DebugLogger::new(<span class="kw-2">&amp;</span><span class="self">self</span>.config));
 <a href=#132 id=132 data-nosnippet>132</a>        }
@@ -142,40 +142,40 @@
 <a href=#142 id=142 data-nosnippet>142</a>        }
 <a href=#143 id=143 data-nosnippet>143</a>    }
 <a href=#144 id=144 data-nosnippet>144</a>
-<a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// Создает отчет о состоянии отладки
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// Generates debug status report
 <a href=#146 id=146 data-nosnippet>146</a>    </span><span class="kw">pub fn </span>generate_debug_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String {
 <a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">let </span><span class="kw-2">mut </span>report = String::new();
 <a href=#148 id=148 data-nosnippet>148</a>
-<a href=#149 id=149 data-nosnippet>149</a>        report.push_str(<span class="string">"=== Отчет о состоянии отладки rustdb ===\n\n"</span>);
+<a href=#149 id=149 data-nosnippet>149</a>        report.push_str(<span class="string">"=== rustdb Debug Status Report ===\n\n"</span>);
 <a href=#150 id=150 data-nosnippet>150</a>
-<a href=#151 id=151 data-nosnippet>151</a>        report.push_str(<span class="string">"Конфигурация:\n"</span>);
+<a href=#151 id=151 data-nosnippet>151</a>        report.push_str(<span class="string">"Configuration:\n"</span>);
 <a href=#152 id=152 data-nosnippet>152</a>        report.push_str(<span class="kw-2">&amp;</span><span class="macro">format!</span>(
-<a href=#153 id=153 data-nosnippet>153</a>            <span class="string">"  - Детальное логирование: {}\n"</span>,
+<a href=#153 id=153 data-nosnippet>153</a>            <span class="string">"  - Detailed logging: {}\n"</span>,
 <a href=#154 id=154 data-nosnippet>154</a>            <span class="self">self</span>.config.enable_debug_logging
 <a href=#155 id=155 data-nosnippet>155</a>        ));
 <a href=#156 id=156 data-nosnippet>156</a>        report.push_str(<span class="kw-2">&amp;</span><span class="macro">format!</span>(
-<a href=#157 id=157 data-nosnippet>157</a>            <span class="string">"  - Трассировка запросов: {}\n"</span>,
+<a href=#157 id=157 data-nosnippet>157</a>            <span class="string">"  - Query tracing: {}\n"</span>,
 <a href=#158 id=158 data-nosnippet>158</a>            <span class="self">self</span>.config.enable_query_tracing
 <a href=#159 id=159 data-nosnippet>159</a>        ));
 <a href=#160 id=160 data-nosnippet>160</a>        report.push_str(<span class="kw-2">&amp;</span><span class="macro">format!</span>(
-<a href=#161 id=161 data-nosnippet>161</a>            <span class="string">"  - CPU профилирование: {}\n"</span>,
+<a href=#161 id=161 data-nosnippet>161</a>            <span class="string">"  - CPU profiling: {}\n"</span>,
 <a href=#162 id=162 data-nosnippet>162</a>            <span class="self">self</span>.config.enable_cpu_profiling
 <a href=#163 id=163 data-nosnippet>163</a>        ));
 <a href=#164 id=164 data-nosnippet>164</a>        report.push_str(<span class="kw-2">&amp;</span><span class="macro">format!</span>(
-<a href=#165 id=165 data-nosnippet>165</a>            <span class="string">"  - Memory профилирование: {}\n"</span>,
+<a href=#165 id=165 data-nosnippet>165</a>            <span class="string">"  - Memory profiling: {}\n"</span>,
 <a href=#166 id=166 data-nosnippet>166</a>            <span class="self">self</span>.config.enable_memory_profiling
 <a href=#167 id=167 data-nosnippet>167</a>        ));
 <a href=#168 id=168 data-nosnippet>168</a>        report.push_str(<span class="kw-2">&amp;</span><span class="macro">format!</span>(
-<a href=#169 id=169 data-nosnippet>169</a>            <span class="string">"  - Уровень детализации: {}\n"</span>,
+<a href=#169 id=169 data-nosnippet>169</a>            <span class="string">"  - Detail level: {}\n"</span>,
 <a href=#170 id=170 data-nosnippet>170</a>            <span class="self">self</span>.config.detail_level
 <a href=#171 id=171 data-nosnippet>171</a>        ));
 <a href=#172 id=172 data-nosnippet>172</a>        report.push_str(<span class="kw-2">&amp;</span><span class="macro">format!</span>(
-<a href=#173 id=173 data-nosnippet>173</a>            <span class="string">"  - Экспорт Prometheus: {}\n"</span>,
+<a href=#173 id=173 data-nosnippet>173</a>            <span class="string">"  - Prometheus export: {}\n"</span>,
 <a href=#174 id=174 data-nosnippet>174</a>            <span class="self">self</span>.config.enable_prometheus_export
 <a href=#175 id=175 data-nosnippet>175</a>        ));
 <a href=#176 id=176 data-nosnippet>176</a>        report.push_str(<span class="string">"\n"</span>);
 <a href=#177 id=177 data-nosnippet>177</a>
-<a href=#178 id=178 data-nosnippet>178</a>        report.push_str(<span class="string">"Активные компоненты:\n"</span>);
+<a href=#178 id=178 data-nosnippet>178</a>        report.push_str(<span class="string">"Active components:\n"</span>);
 <a href=#179 id=179 data-nosnippet>179</a>        report.push_str(<span class="kw-2">&amp;</span><span class="macro">format!</span>(
 <a href=#180 id=180 data-nosnippet>180</a>            <span class="string">"  - Debug Logger: {}\n"</span>,
 <a href=#181 id=181 data-nosnippet>181</a>            <span class="self">self</span>.debug_logger.is_some()
@@ -191,7 +191,7 @@
 <a href=#191 id=191 data-nosnippet>191</a>        ));
 <a href=#192 id=192 data-nosnippet>192</a>        report.push_str(<span class="string">"\n"</span>);
 <a href=#193 id=193 data-nosnippet>193</a>
-<a href=#194 id=194 data-nosnippet>194</a>        <span class="comment">// Добавляем отчеты от активных компонентов
+<a href=#194 id=194 data-nosnippet>194</a>        <span class="comment">// Add reports from active components
 <a href=#195 id=195 data-nosnippet>195</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(logger) = <span class="kw-2">&amp;</span><span class="self">self</span>.debug_logger {
 <a href=#196 id=196 data-nosnippet>196</a>            report.push_str(<span class="string">"=== Debug Logger ===\n"</span>);
 <a href=#197 id=197 data-nosnippet>197</a>            report.push_str(<span class="kw-2">&amp;</span>logger.generate_status_report());
@@ -219,7 +219,7 @@
 <a href=#219 id=219 data-nosnippet>219</a>        report
 <a href=#220 id=220 data-nosnippet>220</a>    }
 <a href=#221 id=221 data-nosnippet>221</a>
-<a href=#222 id=222 data-nosnippet>222</a>    <span class="doccomment">/// Останавливает все компоненты отладки
+<a href=#222 id=222 data-nosnippet>222</a>    <span class="doccomment">/// Stops all debug components
 <a href=#223 id=223 data-nosnippet>223</a>    </span><span class="kw">pub fn </span>shutdown(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
 <a href=#224 id=224 data-nosnippet>224</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(logger) = <span class="kw-2">&amp;mut </span><span class="self">self</span>.debug_logger {
 <a href=#225 id=225 data-nosnippet>225</a>            logger.shutdown();
@@ -243,4 +243,5 @@
 <a href=#243 id=243 data-nosnippet>243</a>    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
 <a href=#244 id=244 data-nosnippet>244</a>        <span class="self">self</span>.shutdown();
 <a href=#245 id=245 data-nosnippet>245</a>    }
-<a href=#246 id=246 data-nosnippet>246</a>}</code></pre></div></section></main></body></html>
+<a href=#246 id=246 data-nosnippet>246</a>}
+</code></pre></div></section></main></body></html>
