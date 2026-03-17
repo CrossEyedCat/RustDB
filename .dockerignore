@@ -30,10 +30,9 @@ data/
 tmp/
 temp/
 
-# Test files
+# Test files (test_utils.rs kept - used by common/mod.rs)
 tests/
 **/*_test.rs
-**/test_*.rs
 
 # Examples
 examples/
