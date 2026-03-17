@@ -257,10 +257,7 @@ impl PageManager {
             // Fine-grained lock: read latch per page
             let latch = self.get_page_latch(page_id);
             let _guard = latch.read();
-            let page = self.get_or_load_page(page_id)?;
-
-            // Scan records on the page
-            let records = page.scan_records()?;
+            let records = self.get_records_from_page(page_id)?;
 
             for (offset, record_data) in records {
                 let record_id = self.generate_record_id(page_id, offset);
@@ -285,11 +282,10 @@ impl PageManager {
 
         let (page_id, offset) = self.parse_record_id(record_id);
 
-        // Fine-grained lock: acquire latch for this page
-        let latch = self.get_page_latch(page_id);
-        let _guard = latch.write();
-
         let (update_result, page_info) = {
+            // Fine-grained lock: released before delete_record_internal to avoid deadlock
+            let latch = self.get_page_latch(page_id);
+            let _guard = latch.write();
             let page = self.get_or_load_page(page_id)?;
             let r = page.update_record_by_offset(offset, new_data);
             (r, Self::page_info_from(page_id, page))
@@ -305,6 +301,7 @@ impl PageManager {
                 })
             }
             Err(_) => {
+                // Guard released - delete_record_internal acquires its own latch
                 self.delete_record_internal(page_id, offset)?;
                 let insert_result = self.insert(new_data)?;
                 Ok(UpdateResult {
@@ -330,8 +327,7 @@ impl PageManager {
         // Fine-grained lock: read latch for this page
         let latch = self.get_page_latch(page_id);
         let _guard = latch.read();
-        let page = self.get_or_load_page(page_id)?;
-        Ok(page.get_record(record_id).map(|s| s.to_vec()))
+        self.get_record_from_page(page_id, record_id)
     }
 
     /// Gets operation statistics
@@ -423,7 +419,7 @@ impl PageManager {
             .clone()
     }
 
-    /// Gets a page from dirty_pages or loads from disk into dirty_pages
+    /// Gets a page from dirty_pages or loads from disk into dirty_pages (for write operations)
     fn get_or_load_page(&mut self, page_id: PageId) -> Result<&mut Page> {
         use std::collections::hash_map::Entry;
         match self.dirty_pages.entry(page_id) {
@@ -434,6 +430,27 @@ impl PageManager {
                 Ok(e.insert(page))
             }
         }
+    }
+
+    /// Gets records from page for read-only access. Uses dirty_pages if present, else reads
+    /// from disk without adding to dirty_pages (avoids polluting dirty_pages and infinite loop).
+    fn get_records_from_page(&mut self, page_id: PageId) -> Result<Vec<(u32, Vec<u8>)>> {
+        if let Some(page) = self.dirty_pages.get(&page_id) {
+            return page.scan_records();
+        }
+        let page_data = self.file_manager.read_page(self.file_id, page_id)?;
+        let page = Page::from_bytes(&page_data)?;
+        page.scan_records()
+    }
+
+    /// Gets a single record for read-only access without adding page to dirty_pages.
+    fn get_record_from_page(&mut self, page_id: PageId, record_id: RecordId) -> Result<Option<Vec<u8>>> {
+        if let Some(page) = self.dirty_pages.get(&page_id) {
+            return Ok(page.get_record(record_id).map(|s| s.to_vec()));
+        }
+        let page_data = self.file_manager.read_page(self.file_id, page_id)?;
+        let page = Page::from_bytes(&page_data)?;
+        Ok(page.get_record(record_id).map(|s| s.to_vec()))
     }
 
     /// Preallocates pages
