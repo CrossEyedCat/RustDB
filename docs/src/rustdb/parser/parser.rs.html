@@ -600,147 +600,149 @@
 <a href=#600 id=600 data-nosnippet>600</a>            <span class="self">self</span>.advance();
 <a href=#601 id=601 data-nosnippet>601</a>            <span class="self">self</span>.parse_create_index()
 <a href=#602 id=602 data-nosnippet>602</a>        } <span class="kw">else </span>{
-<a href=#603 id=603 data-nosnippet>603</a>            <span class="prelude-val">Err</span>(Error::parser(<span class="string">"Only CREATE TABLE and CREATE INDEX are supported"</span>.to_string()))
-<a href=#604 id=604 data-nosnippet>604</a>        }
-<a href=#605 id=605 data-nosnippet>605</a>    }
-<a href=#606 id=606 data-nosnippet>606</a>
-<a href=#607 id=607 data-nosnippet>607</a>    <span class="kw">fn </span>parse_create_index(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SqlStatement&gt; {
-<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">let </span>index_name = <span class="self">self</span>.parse_identifier()<span class="question-mark">?</span>;
-<a href=#609 id=609 data-nosnippet>609</a>        <span class="self">self</span>.expect_keyword(<span class="string">"ON"</span>)<span class="question-mark">?</span>;
-<a href=#610 id=610 data-nosnippet>610</a>        <span class="kw">let </span>table_name = <span class="self">self</span>.parse_identifier()<span class="question-mark">?</span>;
-<a href=#611 id=611 data-nosnippet>611</a>        <span class="self">self</span>.expect_token(<span class="kw-2">&amp;</span>TokenType::LeftParen)<span class="question-mark">?</span>;
-<a href=#612 id=612 data-nosnippet>612</a>
-<a href=#613 id=613 data-nosnippet>613</a>        <span class="kw">let </span><span class="kw-2">mut </span>columns = Vec::new();
-<a href=#614 id=614 data-nosnippet>614</a>        <span class="kw">loop </span>{
-<a href=#615 id=615 data-nosnippet>615</a>            columns.push(<span class="self">self</span>.parse_identifier()<span class="question-mark">?</span>);
-<a href=#616 id=616 data-nosnippet>616</a>            <span class="kw">if </span>!<span class="self">self</span>.match_token(<span class="kw-2">&amp;</span>TokenType::Comma) {
-<a href=#617 id=617 data-nosnippet>617</a>                <span class="kw">break</span>;
-<a href=#618 id=618 data-nosnippet>618</a>            }
-<a href=#619 id=619 data-nosnippet>619</a>            <span class="self">self</span>.advance();
-<a href=#620 id=620 data-nosnippet>620</a>        }
-<a href=#621 id=621 data-nosnippet>621</a>        <span class="self">self</span>.expect_token(<span class="kw-2">&amp;</span>TokenType::RightParen)<span class="question-mark">?</span>;
-<a href=#622 id=622 data-nosnippet>622</a>
-<a href=#623 id=623 data-nosnippet>623</a>        <span class="prelude-val">Ok</span>(SqlStatement::CreateIndex(CreateIndexStatement {
-<a href=#624 id=624 data-nosnippet>624</a>            index_name,
-<a href=#625 id=625 data-nosnippet>625</a>            table_name,
-<a href=#626 id=626 data-nosnippet>626</a>            columns,
-<a href=#627 id=627 data-nosnippet>627</a>        }))
-<a href=#628 id=628 data-nosnippet>628</a>    }
-<a href=#629 id=629 data-nosnippet>629</a>
-<a href=#630 id=630 data-nosnippet>630</a>    <span class="kw">fn </span>parse_create_table(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SqlStatement&gt; {
-<a href=#631 id=631 data-nosnippet>631</a>        <span class="kw">let </span>table_name = <span class="self">self</span>.parse_identifier()<span class="question-mark">?</span>;
-<a href=#632 id=632 data-nosnippet>632</a>
-<a href=#633 id=633 data-nosnippet>633</a>        <span class="self">self</span>.expect_token(<span class="kw-2">&amp;</span>TokenType::LeftParen)<span class="question-mark">?</span>;
+<a href=#603 id=603 data-nosnippet>603</a>            <span class="prelude-val">Err</span>(Error::parser(
+<a href=#604 id=604 data-nosnippet>604</a>                <span class="string">"Only CREATE TABLE and CREATE INDEX are supported"</span>.to_string(),
+<a href=#605 id=605 data-nosnippet>605</a>            ))
+<a href=#606 id=606 data-nosnippet>606</a>        }
+<a href=#607 id=607 data-nosnippet>607</a>    }
+<a href=#608 id=608 data-nosnippet>608</a>
+<a href=#609 id=609 data-nosnippet>609</a>    <span class="kw">fn </span>parse_create_index(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SqlStatement&gt; {
+<a href=#610 id=610 data-nosnippet>610</a>        <span class="kw">let </span>index_name = <span class="self">self</span>.parse_identifier()<span class="question-mark">?</span>;
+<a href=#611 id=611 data-nosnippet>611</a>        <span class="self">self</span>.expect_keyword(<span class="string">"ON"</span>)<span class="question-mark">?</span>;
+<a href=#612 id=612 data-nosnippet>612</a>        <span class="kw">let </span>table_name = <span class="self">self</span>.parse_identifier()<span class="question-mark">?</span>;
+<a href=#613 id=613 data-nosnippet>613</a>        <span class="self">self</span>.expect_token(<span class="kw-2">&amp;</span>TokenType::LeftParen)<span class="question-mark">?</span>;
+<a href=#614 id=614 data-nosnippet>614</a>
+<a href=#615 id=615 data-nosnippet>615</a>        <span class="kw">let </span><span class="kw-2">mut </span>columns = Vec::new();
+<a href=#616 id=616 data-nosnippet>616</a>        <span class="kw">loop </span>{
+<a href=#617 id=617 data-nosnippet>617</a>            columns.push(<span class="self">self</span>.parse_identifier()<span class="question-mark">?</span>);
+<a href=#618 id=618 data-nosnippet>618</a>            <span class="kw">if </span>!<span class="self">self</span>.match_token(<span class="kw-2">&amp;</span>TokenType::Comma) {
+<a href=#619 id=619 data-nosnippet>619</a>                <span class="kw">break</span>;
+<a href=#620 id=620 data-nosnippet>620</a>            }
+<a href=#621 id=621 data-nosnippet>621</a>            <span class="self">self</span>.advance();
+<a href=#622 id=622 data-nosnippet>622</a>        }
+<a href=#623 id=623 data-nosnippet>623</a>        <span class="self">self</span>.expect_token(<span class="kw-2">&amp;</span>TokenType::RightParen)<span class="question-mark">?</span>;
+<a href=#624 id=624 data-nosnippet>624</a>
+<a href=#625 id=625 data-nosnippet>625</a>        <span class="prelude-val">Ok</span>(SqlStatement::CreateIndex(CreateIndexStatement {
+<a href=#626 id=626 data-nosnippet>626</a>            index_name,
+<a href=#627 id=627 data-nosnippet>627</a>            table_name,
+<a href=#628 id=628 data-nosnippet>628</a>            columns,
+<a href=#629 id=629 data-nosnippet>629</a>        }))
+<a href=#630 id=630 data-nosnippet>630</a>    }
+<a href=#631 id=631 data-nosnippet>631</a>
+<a href=#632 id=632 data-nosnippet>632</a>    <span class="kw">fn </span>parse_create_table(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SqlStatement&gt; {
+<a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">let </span>table_name = <span class="self">self</span>.parse_identifier()<span class="question-mark">?</span>;
 <a href=#634 id=634 data-nosnippet>634</a>
-<a href=#635 id=635 data-nosnippet>635</a>        <span class="kw">let </span><span class="kw-2">mut </span>columns = Vec::new();
+<a href=#635 id=635 data-nosnippet>635</a>        <span class="self">self</span>.expect_token(<span class="kw-2">&amp;</span>TokenType::LeftParen)<span class="question-mark">?</span>;
 <a href=#636 id=636 data-nosnippet>636</a>
-<a href=#637 id=637 data-nosnippet>637</a>        <span class="kw">loop </span>{
-<a href=#638 id=638 data-nosnippet>638</a>            <span class="kw">let </span>column_name = <span class="self">self</span>.parse_identifier()<span class="question-mark">?</span>;
-<a href=#639 id=639 data-nosnippet>639</a>            <span class="kw">let </span>data_type = <span class="self">self</span>.parse_data_type()<span class="question-mark">?</span>;
-<a href=#640 id=640 data-nosnippet>640</a>
-<a href=#641 id=641 data-nosnippet>641</a>            columns.push(ColumnDefinition {
-<a href=#642 id=642 data-nosnippet>642</a>                name: column_name,
-<a href=#643 id=643 data-nosnippet>643</a>                data_type,
-<a href=#644 id=644 data-nosnippet>644</a>                constraints: Vec::new(),
-<a href=#645 id=645 data-nosnippet>645</a>            });
-<a href=#646 id=646 data-nosnippet>646</a>
-<a href=#647 id=647 data-nosnippet>647</a>            <span class="kw">if </span>!<span class="self">self</span>.match_token(<span class="kw-2">&amp;</span>TokenType::Comma) {
-<a href=#648 id=648 data-nosnippet>648</a>                <span class="kw">break</span>;
-<a href=#649 id=649 data-nosnippet>649</a>            }
-<a href=#650 id=650 data-nosnippet>650</a>            <span class="self">self</span>.advance();
-<a href=#651 id=651 data-nosnippet>651</a>        }
-<a href=#652 id=652 data-nosnippet>652</a>
-<a href=#653 id=653 data-nosnippet>653</a>        <span class="self">self</span>.expect_token(<span class="kw-2">&amp;</span>TokenType::RightParen)<span class="question-mark">?</span>;
+<a href=#637 id=637 data-nosnippet>637</a>        <span class="kw">let </span><span class="kw-2">mut </span>columns = Vec::new();
+<a href=#638 id=638 data-nosnippet>638</a>
+<a href=#639 id=639 data-nosnippet>639</a>        <span class="kw">loop </span>{
+<a href=#640 id=640 data-nosnippet>640</a>            <span class="kw">let </span>column_name = <span class="self">self</span>.parse_identifier()<span class="question-mark">?</span>;
+<a href=#641 id=641 data-nosnippet>641</a>            <span class="kw">let </span>data_type = <span class="self">self</span>.parse_data_type()<span class="question-mark">?</span>;
+<a href=#642 id=642 data-nosnippet>642</a>
+<a href=#643 id=643 data-nosnippet>643</a>            columns.push(ColumnDefinition {
+<a href=#644 id=644 data-nosnippet>644</a>                name: column_name,
+<a href=#645 id=645 data-nosnippet>645</a>                data_type,
+<a href=#646 id=646 data-nosnippet>646</a>                constraints: Vec::new(),
+<a href=#647 id=647 data-nosnippet>647</a>            });
+<a href=#648 id=648 data-nosnippet>648</a>
+<a href=#649 id=649 data-nosnippet>649</a>            <span class="kw">if </span>!<span class="self">self</span>.match_token(<span class="kw-2">&amp;</span>TokenType::Comma) {
+<a href=#650 id=650 data-nosnippet>650</a>                <span class="kw">break</span>;
+<a href=#651 id=651 data-nosnippet>651</a>            }
+<a href=#652 id=652 data-nosnippet>652</a>            <span class="self">self</span>.advance();
+<a href=#653 id=653 data-nosnippet>653</a>        }
 <a href=#654 id=654 data-nosnippet>654</a>
-<a href=#655 id=655 data-nosnippet>655</a>        <span class="prelude-val">Ok</span>(SqlStatement::CreateTable(CreateTableStatement {
-<a href=#656 id=656 data-nosnippet>656</a>            table_name,
-<a href=#657 id=657 data-nosnippet>657</a>            columns,
-<a href=#658 id=658 data-nosnippet>658</a>            constraints: Vec::new(),
-<a href=#659 id=659 data-nosnippet>659</a>            if_not_exists: <span class="bool-val">false</span>,
-<a href=#660 id=660 data-nosnippet>660</a>        }))
-<a href=#661 id=661 data-nosnippet>661</a>    }
-<a href=#662 id=662 data-nosnippet>662</a>
-<a href=#663 id=663 data-nosnippet>663</a>    <span class="kw">fn </span>parse_data_type(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;DataType&gt; {
-<a href=#664 id=664 data-nosnippet>664</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.current_token {
-<a href=#665 id=665 data-nosnippet>665</a>            <span class="prelude-val">Some</span>(token) =&gt; <span class="kw">match </span><span class="kw-2">&amp;</span>token.token_type {
-<a href=#666 id=666 data-nosnippet>666</a>                TokenType::Integer =&gt; {
-<a href=#667 id=667 data-nosnippet>667</a>                    <span class="self">self</span>.advance();
-<a href=#668 id=668 data-nosnippet>668</a>                    <span class="prelude-val">Ok</span>(DataType::Integer)
-<a href=#669 id=669 data-nosnippet>669</a>                }
-<a href=#670 id=670 data-nosnippet>670</a>                TokenType::Text =&gt; {
-<a href=#671 id=671 data-nosnippet>671</a>                    <span class="self">self</span>.advance();
-<a href=#672 id=672 data-nosnippet>672</a>                    <span class="prelude-val">Ok</span>(DataType::Text)
-<a href=#673 id=673 data-nosnippet>673</a>                }
-<a href=#674 id=674 data-nosnippet>674</a>                TokenType::Varchar =&gt; {
-<a href=#675 id=675 data-nosnippet>675</a>                    <span class="self">self</span>.advance();
-<a href=#676 id=676 data-nosnippet>676</a>                    <span class="comment">// Check if length is in parentheses
-<a href=#677 id=677 data-nosnippet>677</a>                    </span><span class="kw">let </span>length = <span class="kw">if </span><span class="self">self</span>.match_token(<span class="kw-2">&amp;</span>TokenType::LeftParen) {
-<a href=#678 id=678 data-nosnippet>678</a>                        <span class="self">self</span>.advance();
-<a href=#679 id=679 data-nosnippet>679</a>                        <span class="kw">let </span>len = <span class="self">self</span>.parse_integer()<span class="question-mark">?</span>;
-<a href=#680 id=680 data-nosnippet>680</a>                        <span class="self">self</span>.expect_token(<span class="kw-2">&amp;</span>TokenType::RightParen)<span class="question-mark">?</span>;
-<a href=#681 id=681 data-nosnippet>681</a>                        <span class="prelude-val">Some</span>(len <span class="kw">as </span>u16)
-<a href=#682 id=682 data-nosnippet>682</a>                    } <span class="kw">else </span>{
-<a href=#683 id=683 data-nosnippet>683</a>                        <span class="prelude-val">None
-<a href=#684 id=684 data-nosnippet>684</a>                    </span>};
-<a href=#685 id=685 data-nosnippet>685</a>                    <span class="prelude-val">Ok</span>(DataType::Varchar { length })
-<a href=#686 id=686 data-nosnippet>686</a>                }
-<a href=#687 id=687 data-nosnippet>687</a>                TokenType::Boolean =&gt; {
-<a href=#688 id=688 data-nosnippet>688</a>                    <span class="self">self</span>.advance();
-<a href=#689 id=689 data-nosnippet>689</a>                    <span class="prelude-val">Ok</span>(DataType::Boolean)
-<a href=#690 id=690 data-nosnippet>690</a>                }
-<a href=#691 id=691 data-nosnippet>691</a>                TokenType::Date =&gt; {
-<a href=#692 id=692 data-nosnippet>692</a>                    <span class="self">self</span>.advance();
-<a href=#693 id=693 data-nosnippet>693</a>                    <span class="prelude-val">Ok</span>(DataType::Date)
-<a href=#694 id=694 data-nosnippet>694</a>                }
-<a href=#695 id=695 data-nosnippet>695</a>                TokenType::Time =&gt; {
-<a href=#696 id=696 data-nosnippet>696</a>                    <span class="self">self</span>.advance();
-<a href=#697 id=697 data-nosnippet>697</a>                    <span class="prelude-val">Ok</span>(DataType::Time)
-<a href=#698 id=698 data-nosnippet>698</a>                }
-<a href=#699 id=699 data-nosnippet>699</a>                TokenType::Timestamp =&gt; {
-<a href=#700 id=700 data-nosnippet>700</a>                    <span class="self">self</span>.advance();
-<a href=#701 id=701 data-nosnippet>701</a>                    <span class="prelude-val">Ok</span>(DataType::Timestamp)
-<a href=#702 id=702 data-nosnippet>702</a>                }
-<a href=#703 id=703 data-nosnippet>703</a>                TokenType::Identifier =&gt; {
-<a href=#704 id=704 data-nosnippet>704</a>                    <span class="kw">let </span>type_name = token.value.to_uppercase();
-<a href=#705 id=705 data-nosnippet>705</a>                    <span class="self">self</span>.advance();
-<a href=#706 id=706 data-nosnippet>706</a>
-<a href=#707 id=707 data-nosnippet>707</a>                    <span class="kw">match </span>type_name.as_str() {
-<a href=#708 id=708 data-nosnippet>708</a>                        <span class="string">"INTEGER" </span>| <span class="string">"INT" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Integer),
-<a href=#709 id=709 data-nosnippet>709</a>                        <span class="string">"TEXT" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Text),
-<a href=#710 id=710 data-nosnippet>710</a>                        <span class="string">"REAL" </span>| <span class="string">"FLOAT" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Real),
-<a href=#711 id=711 data-nosnippet>711</a>                        <span class="string">"VARCHAR" </span>=&gt; {
-<a href=#712 id=712 data-nosnippet>712</a>                            <span class="comment">// Check if length is in parentheses
-<a href=#713 id=713 data-nosnippet>713</a>                            </span><span class="kw">let </span>length = <span class="kw">if </span><span class="self">self</span>.match_token(<span class="kw-2">&amp;</span>TokenType::LeftParen) {
-<a href=#714 id=714 data-nosnippet>714</a>                                <span class="self">self</span>.advance();
-<a href=#715 id=715 data-nosnippet>715</a>                                <span class="kw">let </span>len = <span class="self">self</span>.parse_integer()<span class="question-mark">?</span>;
-<a href=#716 id=716 data-nosnippet>716</a>                                <span class="self">self</span>.expect_token(<span class="kw-2">&amp;</span>TokenType::RightParen)<span class="question-mark">?</span>;
-<a href=#717 id=717 data-nosnippet>717</a>                                <span class="prelude-val">Some</span>(len <span class="kw">as </span>u16)
-<a href=#718 id=718 data-nosnippet>718</a>                            } <span class="kw">else </span>{
-<a href=#719 id=719 data-nosnippet>719</a>                                <span class="prelude-val">None
-<a href=#720 id=720 data-nosnippet>720</a>                            </span>};
-<a href=#721 id=721 data-nosnippet>721</a>                            <span class="prelude-val">Ok</span>(DataType::Varchar { length })
-<a href=#722 id=722 data-nosnippet>722</a>                        }
-<a href=#723 id=723 data-nosnippet>723</a>                        <span class="string">"BOOLEAN" </span>| <span class="string">"BOOL" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Boolean),
-<a href=#724 id=724 data-nosnippet>724</a>                        <span class="string">"DATE" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Date),
-<a href=#725 id=725 data-nosnippet>725</a>                        <span class="string">"TIME" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Time),
-<a href=#726 id=726 data-nosnippet>726</a>                        <span class="string">"TIMESTAMP" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Timestamp),
-<a href=#727 id=727 data-nosnippet>727</a>                        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(Error::parser(<span class="macro">format!</span>(<span class="string">"Unknown data type: {}"</span>, type_name))),
-<a href=#728 id=728 data-nosnippet>728</a>                    }
-<a href=#729 id=729 data-nosnippet>729</a>                }
-<a href=#730 id=730 data-nosnippet>730</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(Error::parser(<span class="string">"Expected data type"</span>.to_string())),
-<a href=#731 id=731 data-nosnippet>731</a>            },
-<a href=#732 id=732 data-nosnippet>732</a>            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(Error::parser(<span class="string">"Unexpected end of input"</span>.to_string())),
-<a href=#733 id=733 data-nosnippet>733</a>        }
-<a href=#734 id=734 data-nosnippet>734</a>    }
-<a href=#735 id=735 data-nosnippet>735</a>
-<a href=#736 id=736 data-nosnippet>736</a>    <span class="kw">fn </span>parse_alter(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SqlStatement&gt; {
-<a href=#737 id=737 data-nosnippet>737</a>        <span class="comment">// TODO: Implement full ALTER parsing
-<a href=#738 id=738 data-nosnippet>738</a>        </span><span class="prelude-val">Err</span>(Error::parser(<span class="string">"ALTER not implemented"</span>.to_string()))
-<a href=#739 id=739 data-nosnippet>739</a>    }
-<a href=#740 id=740 data-nosnippet>740</a>
-<a href=#741 id=741 data-nosnippet>741</a>    <span class="kw">fn </span>parse_drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SqlStatement&gt; {
-<a href=#742 id=742 data-nosnippet>742</a>        <span class="comment">// TODO: Implement full DROP parsing
-<a href=#743 id=743 data-nosnippet>743</a>        </span><span class="prelude-val">Err</span>(Error::parser(<span class="string">"DROP not implemented"</span>.to_string()))
-<a href=#744 id=744 data-nosnippet>744</a>    }
-<a href=#745 id=745 data-nosnippet>745</a>}
+<a href=#655 id=655 data-nosnippet>655</a>        <span class="self">self</span>.expect_token(<span class="kw-2">&amp;</span>TokenType::RightParen)<span class="question-mark">?</span>;
+<a href=#656 id=656 data-nosnippet>656</a>
+<a href=#657 id=657 data-nosnippet>657</a>        <span class="prelude-val">Ok</span>(SqlStatement::CreateTable(CreateTableStatement {
+<a href=#658 id=658 data-nosnippet>658</a>            table_name,
+<a href=#659 id=659 data-nosnippet>659</a>            columns,
+<a href=#660 id=660 data-nosnippet>660</a>            constraints: Vec::new(),
+<a href=#661 id=661 data-nosnippet>661</a>            if_not_exists: <span class="bool-val">false</span>,
+<a href=#662 id=662 data-nosnippet>662</a>        }))
+<a href=#663 id=663 data-nosnippet>663</a>    }
+<a href=#664 id=664 data-nosnippet>664</a>
+<a href=#665 id=665 data-nosnippet>665</a>    <span class="kw">fn </span>parse_data_type(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;DataType&gt; {
+<a href=#666 id=666 data-nosnippet>666</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.current_token {
+<a href=#667 id=667 data-nosnippet>667</a>            <span class="prelude-val">Some</span>(token) =&gt; <span class="kw">match </span><span class="kw-2">&amp;</span>token.token_type {
+<a href=#668 id=668 data-nosnippet>668</a>                TokenType::Integer =&gt; {
+<a href=#669 id=669 data-nosnippet>669</a>                    <span class="self">self</span>.advance();
+<a href=#670 id=670 data-nosnippet>670</a>                    <span class="prelude-val">Ok</span>(DataType::Integer)
+<a href=#671 id=671 data-nosnippet>671</a>                }
+<a href=#672 id=672 data-nosnippet>672</a>                TokenType::Text =&gt; {
+<a href=#673 id=673 data-nosnippet>673</a>                    <span class="self">self</span>.advance();
+<a href=#674 id=674 data-nosnippet>674</a>                    <span class="prelude-val">Ok</span>(DataType::Text)
+<a href=#675 id=675 data-nosnippet>675</a>                }
+<a href=#676 id=676 data-nosnippet>676</a>                TokenType::Varchar =&gt; {
+<a href=#677 id=677 data-nosnippet>677</a>                    <span class="self">self</span>.advance();
+<a href=#678 id=678 data-nosnippet>678</a>                    <span class="comment">// Check if length is in parentheses
+<a href=#679 id=679 data-nosnippet>679</a>                    </span><span class="kw">let </span>length = <span class="kw">if </span><span class="self">self</span>.match_token(<span class="kw-2">&amp;</span>TokenType::LeftParen) {
+<a href=#680 id=680 data-nosnippet>680</a>                        <span class="self">self</span>.advance();
+<a href=#681 id=681 data-nosnippet>681</a>                        <span class="kw">let </span>len = <span class="self">self</span>.parse_integer()<span class="question-mark">?</span>;
+<a href=#682 id=682 data-nosnippet>682</a>                        <span class="self">self</span>.expect_token(<span class="kw-2">&amp;</span>TokenType::RightParen)<span class="question-mark">?</span>;
+<a href=#683 id=683 data-nosnippet>683</a>                        <span class="prelude-val">Some</span>(len <span class="kw">as </span>u16)
+<a href=#684 id=684 data-nosnippet>684</a>                    } <span class="kw">else </span>{
+<a href=#685 id=685 data-nosnippet>685</a>                        <span class="prelude-val">None
+<a href=#686 id=686 data-nosnippet>686</a>                    </span>};
+<a href=#687 id=687 data-nosnippet>687</a>                    <span class="prelude-val">Ok</span>(DataType::Varchar { length })
+<a href=#688 id=688 data-nosnippet>688</a>                }
+<a href=#689 id=689 data-nosnippet>689</a>                TokenType::Boolean =&gt; {
+<a href=#690 id=690 data-nosnippet>690</a>                    <span class="self">self</span>.advance();
+<a href=#691 id=691 data-nosnippet>691</a>                    <span class="prelude-val">Ok</span>(DataType::Boolean)
+<a href=#692 id=692 data-nosnippet>692</a>                }
+<a href=#693 id=693 data-nosnippet>693</a>                TokenType::Date =&gt; {
+<a href=#694 id=694 data-nosnippet>694</a>                    <span class="self">self</span>.advance();
+<a href=#695 id=695 data-nosnippet>695</a>                    <span class="prelude-val">Ok</span>(DataType::Date)
+<a href=#696 id=696 data-nosnippet>696</a>                }
+<a href=#697 id=697 data-nosnippet>697</a>                TokenType::Time =&gt; {
+<a href=#698 id=698 data-nosnippet>698</a>                    <span class="self">self</span>.advance();
+<a href=#699 id=699 data-nosnippet>699</a>                    <span class="prelude-val">Ok</span>(DataType::Time)
+<a href=#700 id=700 data-nosnippet>700</a>                }
+<a href=#701 id=701 data-nosnippet>701</a>                TokenType::Timestamp =&gt; {
+<a href=#702 id=702 data-nosnippet>702</a>                    <span class="self">self</span>.advance();
+<a href=#703 id=703 data-nosnippet>703</a>                    <span class="prelude-val">Ok</span>(DataType::Timestamp)
+<a href=#704 id=704 data-nosnippet>704</a>                }
+<a href=#705 id=705 data-nosnippet>705</a>                TokenType::Identifier =&gt; {
+<a href=#706 id=706 data-nosnippet>706</a>                    <span class="kw">let </span>type_name = token.value.to_uppercase();
+<a href=#707 id=707 data-nosnippet>707</a>                    <span class="self">self</span>.advance();
+<a href=#708 id=708 data-nosnippet>708</a>
+<a href=#709 id=709 data-nosnippet>709</a>                    <span class="kw">match </span>type_name.as_str() {
+<a href=#710 id=710 data-nosnippet>710</a>                        <span class="string">"INTEGER" </span>| <span class="string">"INT" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Integer),
+<a href=#711 id=711 data-nosnippet>711</a>                        <span class="string">"TEXT" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Text),
+<a href=#712 id=712 data-nosnippet>712</a>                        <span class="string">"REAL" </span>| <span class="string">"FLOAT" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Real),
+<a href=#713 id=713 data-nosnippet>713</a>                        <span class="string">"VARCHAR" </span>=&gt; {
+<a href=#714 id=714 data-nosnippet>714</a>                            <span class="comment">// Check if length is in parentheses
+<a href=#715 id=715 data-nosnippet>715</a>                            </span><span class="kw">let </span>length = <span class="kw">if </span><span class="self">self</span>.match_token(<span class="kw-2">&amp;</span>TokenType::LeftParen) {
+<a href=#716 id=716 data-nosnippet>716</a>                                <span class="self">self</span>.advance();
+<a href=#717 id=717 data-nosnippet>717</a>                                <span class="kw">let </span>len = <span class="self">self</span>.parse_integer()<span class="question-mark">?</span>;
+<a href=#718 id=718 data-nosnippet>718</a>                                <span class="self">self</span>.expect_token(<span class="kw-2">&amp;</span>TokenType::RightParen)<span class="question-mark">?</span>;
+<a href=#719 id=719 data-nosnippet>719</a>                                <span class="prelude-val">Some</span>(len <span class="kw">as </span>u16)
+<a href=#720 id=720 data-nosnippet>720</a>                            } <span class="kw">else </span>{
+<a href=#721 id=721 data-nosnippet>721</a>                                <span class="prelude-val">None
+<a href=#722 id=722 data-nosnippet>722</a>                            </span>};
+<a href=#723 id=723 data-nosnippet>723</a>                            <span class="prelude-val">Ok</span>(DataType::Varchar { length })
+<a href=#724 id=724 data-nosnippet>724</a>                        }
+<a href=#725 id=725 data-nosnippet>725</a>                        <span class="string">"BOOLEAN" </span>| <span class="string">"BOOL" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Boolean),
+<a href=#726 id=726 data-nosnippet>726</a>                        <span class="string">"DATE" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Date),
+<a href=#727 id=727 data-nosnippet>727</a>                        <span class="string">"TIME" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Time),
+<a href=#728 id=728 data-nosnippet>728</a>                        <span class="string">"TIMESTAMP" </span>=&gt; <span class="prelude-val">Ok</span>(DataType::Timestamp),
+<a href=#729 id=729 data-nosnippet>729</a>                        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(Error::parser(<span class="macro">format!</span>(<span class="string">"Unknown data type: {}"</span>, type_name))),
+<a href=#730 id=730 data-nosnippet>730</a>                    }
+<a href=#731 id=731 data-nosnippet>731</a>                }
+<a href=#732 id=732 data-nosnippet>732</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(Error::parser(<span class="string">"Expected data type"</span>.to_string())),
+<a href=#733 id=733 data-nosnippet>733</a>            },
+<a href=#734 id=734 data-nosnippet>734</a>            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(Error::parser(<span class="string">"Unexpected end of input"</span>.to_string())),
+<a href=#735 id=735 data-nosnippet>735</a>        }
+<a href=#736 id=736 data-nosnippet>736</a>    }
+<a href=#737 id=737 data-nosnippet>737</a>
+<a href=#738 id=738 data-nosnippet>738</a>    <span class="kw">fn </span>parse_alter(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SqlStatement&gt; {
+<a href=#739 id=739 data-nosnippet>739</a>        <span class="comment">// TODO: Implement full ALTER parsing
+<a href=#740 id=740 data-nosnippet>740</a>        </span><span class="prelude-val">Err</span>(Error::parser(<span class="string">"ALTER not implemented"</span>.to_string()))
+<a href=#741 id=741 data-nosnippet>741</a>    }
+<a href=#742 id=742 data-nosnippet>742</a>
+<a href=#743 id=743 data-nosnippet>743</a>    <span class="kw">fn </span>parse_drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SqlStatement&gt; {
+<a href=#744 id=744 data-nosnippet>744</a>        <span class="comment">// TODO: Implement full DROP parsing
+<a href=#745 id=745 data-nosnippet>745</a>        </span><span class="prelude-val">Err</span>(Error::parser(<span class="string">"DROP not implemented"</span>.to_string()))
+<a href=#746 id=746 data-nosnippet>746</a>    }
+<a href=#747 id=747 data-nosnippet>747</a>}
 </code></pre></div></section></main></body></html>

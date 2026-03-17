@@ -64,48 +64,51 @@
 <a href=#64 id=64 data-nosnippet>64</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(data);
 <a href=#65 id=65 data-nosnippet>65</a>        }
 <a href=#66 id=66 data-nosnippet>66</a>        <span class="kw">let </span>data = <span class="self">self</span>.inner.read_page(file_id, page_id)<span class="question-mark">?</span>;
-<a href=#67 id=67 data-nosnippet>67</a>        <span class="self">self</span>.cache.lock().unwrap().put(file_id, page_id, data.clone());
-<a href=#68 id=68 data-nosnippet>68</a>        <span class="prelude-val">Ok</span>(data)
-<a href=#69 id=69 data-nosnippet>69</a>    }
-<a href=#70 id=70 data-nosnippet>70</a>
-<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// Writes a page (to disk and updates cache)
-<a href=#72 id=72 data-nosnippet>72</a>    </span><span class="kw">pub fn </span>write_page(
-<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#74 id=74 data-nosnippet>74</a>        file_id: AdvancedFileId,
-<a href=#75 id=75 data-nosnippet>75</a>        page_id: PageId,
-<a href=#76 id=76 data-nosnippet>76</a>        data: <span class="kw-2">&amp;</span>[u8],
-<a href=#77 id=77 data-nosnippet>77</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#78 id=78 data-nosnippet>78</a>        <span class="self">self</span>.inner.write_page(file_id, page_id, data)<span class="question-mark">?</span>;
-<a href=#79 id=79 data-nosnippet>79</a>        <span class="self">self</span>.cache
-<a href=#80 id=80 data-nosnippet>80</a>            .lock()
-<a href=#81 id=81 data-nosnippet>81</a>            .unwrap()
-<a href=#82 id=82 data-nosnippet>82</a>            .put(file_id, page_id, data.to_vec());
-<a href=#83 id=83 data-nosnippet>83</a>        <span class="prelude-val">Ok</span>(())
-<a href=#84 id=84 data-nosnippet>84</a>    }
-<a href=#85 id=85 data-nosnippet>85</a>
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// Synchronizes a file to disk
-<a href=#87 id=87 data-nosnippet>87</a>    </span><span class="kw">pub fn </span>sync_file(<span class="kw-2">&amp;mut </span><span class="self">self</span>, file_id: AdvancedFileId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#88 id=88 data-nosnippet>88</a>        <span class="self">self</span>.inner.sync_file(file_id)
-<a href=#89 id=89 data-nosnippet>89</a>    }
-<a href=#90 id=90 data-nosnippet>90</a>
-<a href=#91 id=91 data-nosnippet>91</a>    <span class="doccomment">/// Returns file information
-<a href=#92 id=92 data-nosnippet>92</a>    </span><span class="kw">pub fn </span>get_file_info(<span class="kw-2">&amp;</span><span class="self">self</span>, file_id: AdvancedFileId) -&gt; <span class="prelude-ty">Option</span>&lt;FileInfo&gt; {
-<a href=#93 id=93 data-nosnippet>93</a>        <span class="self">self</span>.inner.get_file_info(file_id)
-<a href=#94 id=94 data-nosnippet>94</a>    }
-<a href=#95 id=95 data-nosnippet>95</a>
-<a href=#96 id=96 data-nosnippet>96</a>    <span class="doccomment">/// Closes a file
-<a href=#97 id=97 data-nosnippet>97</a>    </span><span class="kw">pub fn </span>close_file(<span class="kw-2">&amp;mut </span><span class="self">self</span>, file_id: AdvancedFileId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#98 id=98 data-nosnippet>98</a>        <span class="self">self</span>.inner.close_file(file_id)
-<a href=#99 id=99 data-nosnippet>99</a>    }
-<a href=#100 id=100 data-nosnippet>100</a>
-<a href=#101 id=101 data-nosnippet>101</a>    <span class="doccomment">/// Returns cache statistics (hits, misses, hit_ratio)
-<a href=#102 id=102 data-nosnippet>102</a>    </span><span class="kw">pub fn </span>cache_stats(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (u64, u64, f64) {
-<a href=#103 id=103 data-nosnippet>103</a>        <span class="self">self</span>.cache.lock().unwrap().get_stats()
-<a href=#104 id=104 data-nosnippet>104</a>    }
-<a href=#105 id=105 data-nosnippet>105</a>
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="doccomment">/// Clears the page cache
-<a href=#107 id=107 data-nosnippet>107</a>    </span><span class="kw">pub fn </span>clear_cache(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-<a href=#108 id=108 data-nosnippet>108</a>        <span class="self">self</span>.cache.lock().unwrap().clear();
-<a href=#109 id=109 data-nosnippet>109</a>    }
-<a href=#110 id=110 data-nosnippet>110</a>}
+<a href=#67 id=67 data-nosnippet>67</a>        <span class="self">self</span>.cache
+<a href=#68 id=68 data-nosnippet>68</a>            .lock()
+<a href=#69 id=69 data-nosnippet>69</a>            .unwrap()
+<a href=#70 id=70 data-nosnippet>70</a>            .put(file_id, page_id, data.clone());
+<a href=#71 id=71 data-nosnippet>71</a>        <span class="prelude-val">Ok</span>(data)
+<a href=#72 id=72 data-nosnippet>72</a>    }
+<a href=#73 id=73 data-nosnippet>73</a>
+<a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// Writes a page (to disk and updates cache)
+<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="kw">pub fn </span>write_page(
+<a href=#76 id=76 data-nosnippet>76</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#77 id=77 data-nosnippet>77</a>        file_id: AdvancedFileId,
+<a href=#78 id=78 data-nosnippet>78</a>        page_id: PageId,
+<a href=#79 id=79 data-nosnippet>79</a>        data: <span class="kw-2">&amp;</span>[u8],
+<a href=#80 id=80 data-nosnippet>80</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#81 id=81 data-nosnippet>81</a>        <span class="self">self</span>.inner.write_page(file_id, page_id, data)<span class="question-mark">?</span>;
+<a href=#82 id=82 data-nosnippet>82</a>        <span class="self">self</span>.cache
+<a href=#83 id=83 data-nosnippet>83</a>            .lock()
+<a href=#84 id=84 data-nosnippet>84</a>            .unwrap()
+<a href=#85 id=85 data-nosnippet>85</a>            .put(file_id, page_id, data.to_vec());
+<a href=#86 id=86 data-nosnippet>86</a>        <span class="prelude-val">Ok</span>(())
+<a href=#87 id=87 data-nosnippet>87</a>    }
+<a href=#88 id=88 data-nosnippet>88</a>
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="doccomment">/// Synchronizes a file to disk
+<a href=#90 id=90 data-nosnippet>90</a>    </span><span class="kw">pub fn </span>sync_file(<span class="kw-2">&amp;mut </span><span class="self">self</span>, file_id: AdvancedFileId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#91 id=91 data-nosnippet>91</a>        <span class="self">self</span>.inner.sync_file(file_id)
+<a href=#92 id=92 data-nosnippet>92</a>    }
+<a href=#93 id=93 data-nosnippet>93</a>
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="doccomment">/// Returns file information
+<a href=#95 id=95 data-nosnippet>95</a>    </span><span class="kw">pub fn </span>get_file_info(<span class="kw-2">&amp;</span><span class="self">self</span>, file_id: AdvancedFileId) -&gt; <span class="prelude-ty">Option</span>&lt;FileInfo&gt; {
+<a href=#96 id=96 data-nosnippet>96</a>        <span class="self">self</span>.inner.get_file_info(file_id)
+<a href=#97 id=97 data-nosnippet>97</a>    }
+<a href=#98 id=98 data-nosnippet>98</a>
+<a href=#99 id=99 data-nosnippet>99</a>    <span class="doccomment">/// Closes a file
+<a href=#100 id=100 data-nosnippet>100</a>    </span><span class="kw">pub fn </span>close_file(<span class="kw-2">&amp;mut </span><span class="self">self</span>, file_id: AdvancedFileId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#101 id=101 data-nosnippet>101</a>        <span class="self">self</span>.inner.close_file(file_id)
+<a href=#102 id=102 data-nosnippet>102</a>    }
+<a href=#103 id=103 data-nosnippet>103</a>
+<a href=#104 id=104 data-nosnippet>104</a>    <span class="doccomment">/// Returns cache statistics (hits, misses, hit_ratio)
+<a href=#105 id=105 data-nosnippet>105</a>    </span><span class="kw">pub fn </span>cache_stats(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (u64, u64, f64) {
+<a href=#106 id=106 data-nosnippet>106</a>        <span class="self">self</span>.cache.lock().unwrap().get_stats()
+<a href=#107 id=107 data-nosnippet>107</a>    }
+<a href=#108 id=108 data-nosnippet>108</a>
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="doccomment">/// Clears the page cache
+<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="kw">pub fn </span>clear_cache(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="self">self</span>.cache.lock().unwrap().clear();
+<a href=#112 id=112 data-nosnippet>112</a>    }
+<a href=#113 id=113 data-nosnippet>113</a>}
 </code></pre></div></section></main></body></html>
