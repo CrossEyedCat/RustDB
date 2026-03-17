@@ -1,4 +1,4 @@
-//! Менеджер страниц для rustdb
+//! Page manager for rustdb
 
 use crate::common::{
     types::{PageId, MAX_RECORD_SIZE, PAGE_HEADER_SIZE, PAGE_SIZE},
@@ -7,31 +7,31 @@ use crate::common::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Заголовок страницы
+/// Page header
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageHeader {
-    /// ID страницы
+    /// Page ID
     pub page_id: PageId,
-    /// Тип страницы
+    /// Page type
     pub page_type: PageType,
-    /// Время последнего изменения
+    /// Last modification time
     pub last_modified: u64,
-    /// Количество записей на странице
+    /// Number of records on the page
     pub record_count: u32,
-    /// Размер свободного места
+    /// Free space size
     pub free_space: u32,
-    /// Указатель на следующую страницу (для связанных страниц)
+    /// Pointer to the next page (for linked pages)
     pub next_page: Option<PageId>,
-    /// Указатель на предыдущую страницу (для связанных страниц)
+    /// Pointer to the previous page (for linked pages)
     pub prev_page: Option<PageId>,
-    /// Флаг "грязной" страницы (изменена в памяти)
+    /// Dirty page flag (modified in memory)
     pub is_dirty: bool,
-    /// Флаг зафиксированной страницы
+    /// Pinned page flag
     pub is_pinned: bool,
 }
 
 impl PageHeader {
-    /// Создает новый заголовок страницы
+    /// Creates a new page header
     pub fn new(page_id: PageId, page_type: PageType) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -51,12 +51,12 @@ impl PageHeader {
         }
     }
 
-    /// Размер заголовка в байтах
+    /// Header size in bytes
     pub fn size(&self) -> usize {
         PAGE_HEADER_SIZE
     }
 
-    /// Обновляет время последнего изменения
+    /// Updates the last modification time
     pub fn touch(&mut self) {
         self.last_modified = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -64,58 +64,58 @@ impl PageHeader {
             .as_secs();
     }
 
-    /// Помечает страницу как измененную
+    /// Marks the page as modified
     pub fn mark_dirty(&mut self) {
         self.is_dirty = true;
         self.touch();
     }
 
-    /// Помечает страницу как чистую
+    /// Marks the page as clean
     pub fn mark_clean(&mut self) {
         self.is_dirty = false;
     }
 
-    /// Фиксирует страницу в памяти
+    /// Pins the page in memory
     pub fn pin(&mut self) {
         self.is_pinned = true;
     }
 
-    /// Освобождает страницу из памяти
+    /// Unpins the page from memory
     pub fn unpin(&mut self) {
         self.is_pinned = false;
     }
 }
 
-/// Тип страницы
+/// Page type
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PageType {
-    /// Страница данных
+    /// Data page
     Data,
-    /// Страница индекса
+    /// Index page
     Index,
-    /// Страница свободного места
+    /// Free space page
     FreeSpace,
-    /// Страница метаданных
+    /// Metadata page
     Metadata,
-    /// Страница логов
+    /// Log page
     Log,
 }
 
-/// Слот записи на странице
+/// Record slot on a page
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordSlot {
-    /// Смещение записи от начала страницы
+    /// Record offset from the start of the page
     pub offset: u32,
-    /// Размер записи в байтах
+    /// Record size in bytes
     pub size: u32,
-    /// Флаг удаленной записи
+    /// Deleted record flag
     pub is_deleted: bool,
-    /// ID записи
+    /// Record ID
     pub record_id: u64,
 }
 
 impl RecordSlot {
-    /// Создает новый слот записи
+    /// Creates a new record slot
     pub fn new(offset: u32, size: u32, record_id: u64) -> Self {
         Self {
             offset,
@@ -125,46 +125,46 @@ impl RecordSlot {
         }
     }
 
-    /// Помечает запись как удаленную
+    /// Marks the record as deleted
     pub fn mark_deleted(&mut self) {
         self.is_deleted = true;
     }
 
-    /// Проверяет, удалена ли запись
+    /// Checks if the record is deleted
     pub fn is_deleted(&self) -> bool {
         self.is_deleted
     }
 }
 
-/// Компактная структура для сериализации страницы
+/// Compact structure for page serialization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CompactPage {
     header: PageHeader,
     slots: Vec<RecordSlot>,
     data: Vec<u8>,
-    // free_space_map не сериализуется, так как может быть пересчитана
+    // free_space_map is not serialized as it can be recalculated
 }
 
-/// Структура страницы
+/// Page structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Page {
-    /// Заголовок страницы
+    /// Page header
     pub header: PageHeader,
-    /// Слоты записей
+    /// Record slots
     pub slots: Vec<RecordSlot>,
-    /// Данные страницы
+    /// Page data
     pub data: Vec<u8>,
-    /// Карта свободного места
+    /// Free space map
     pub free_space_map: Vec<bool>,
 }
 
 impl Page {
-    /// Создает новую пустую страницу данных
+    /// Creates a new empty data page
     pub fn new(page_id: PageId) -> Self {
         Self::new_with_type(page_id, PageType::Data)
     }
 
-    /// Создает новую пустую страницу с указанным типом
+    /// Creates a new empty page with the specified type
     pub fn new_with_type(page_id: PageId, page_type: PageType) -> Self {
         let data = vec![0u8; PAGE_SIZE];
         let free_space_map = vec![true; PAGE_SIZE - PAGE_HEADER_SIZE];
@@ -177,19 +177,19 @@ impl Page {
         }
     }
 
-    /// Создает страницу из байтов (десериализация)
+    /// Creates a page from bytes (deserialization)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         use bincode;
 
-        // Десериализуем компактную структуру
+        // Deserialize compact structure
         let compact_page: CompactPage =
             bincode::deserialize(bytes).map_err(Error::BincodeSerialization)?;
 
-        // Восстанавливаем data до полного размера PAGE_SIZE
+        // Restore data to full PAGE_SIZE
         let mut data = compact_page.data.clone();
         data.resize(PAGE_SIZE, 0);
 
-        // Пересчитываем free_space_map
+        // Recalculate free_space_map
         let mut free_space_map = vec![true; PAGE_SIZE - PAGE_HEADER_SIZE];
         for slot in &compact_page.slots {
             if !slot.is_deleted {
@@ -209,13 +209,13 @@ impl Page {
         })
     }
 
-    /// Создает страницу из байтов с указанием page_id
+    /// Creates a page from bytes with specified page_id
     pub fn from_bytes_with_id(bytes: &[u8], page_id: PageId) -> Result<Self> {
         if bytes.len() != PAGE_SIZE {
-            return Err(Error::validation("Неверный размер страницы"));
+            return Err(Error::validation("Invalid page size"));
         }
 
-        // TODO: Реализовать полную десериализацию
+        // TODO: Implement full deserialization
         let header = PageHeader::new(page_id, PageType::Data);
         let data = bytes.to_vec();
         let free_space_map = vec![true; PAGE_SIZE - PAGE_HEADER_SIZE];
@@ -228,11 +228,11 @@ impl Page {
         })
     }
 
-    /// Сериализует страницу в байты
+    /// Serializes the page to bytes
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         use bincode;
 
-        // Определяем максимальный использованный offset
+        // Determine maximum used offset
         let max_offset = self
             .slots
             .iter()
@@ -241,10 +241,10 @@ impl Page {
             .max()
             .unwrap_or(PAGE_HEADER_SIZE as u32) as usize;
 
-        // Сериализуем только используемую часть data
+        // Serialize only the used part of data
         let used_data = self.data[..max_offset.min(self.data.len())].to_vec();
 
-        // Создаем компактную структуру для сериализации
+        // Create compact structure for serialization
         let compact_page = CompactPage {
             header: self.header.clone(),
             slots: self.slots.clone(),
@@ -254,65 +254,65 @@ impl Page {
         let mut serialized =
             bincode::serialize(&compact_page).map_err(Error::BincodeSerialization)?;
 
-        // Проверяем размер
+        // Check size
         if serialized.len() > PAGE_SIZE {
             return Err(Error::validation(&format!(
-                "Сериализованная страница слишком большая: {} байт (максимум {})",
+                "Serialized page is too large: {} bytes (maximum {})",
                 serialized.len(),
                 PAGE_SIZE
             )));
         }
 
-        // Дополняем нулями до PAGE_SIZE
+        // Pad with zeros to PAGE_SIZE
         serialized.resize(PAGE_SIZE, 0);
 
         Ok(serialized)
     }
 
-    /// Добавляет запись на страницу
+    /// Adds a record to the page
     pub fn add_record(&mut self, record_data: &[u8], record_id: u64) -> Result<u32> {
         if record_data.len() > MAX_RECORD_SIZE {
-            return Err(Error::validation("Запись слишком большая"));
+            return Err(Error::validation("Record is too large"));
         }
 
-        // Ищем свободное место
+        // Find free space
         let offset = self.find_free_space(record_data.len())?;
 
-        // Записываем данные
+        // Write data
         let end_offset = offset + record_data.len();
         self.data[offset..end_offset].copy_from_slice(record_data);
 
-        // Создаем слот
+        // Create slot
         let slot = RecordSlot::new(offset as u32, record_data.len() as u32, record_id);
         self.slots.push(slot);
 
-        // Обновляем заголовок
+        // Update header
         self.header.record_count += 1;
         self.header.free_space -= record_data.len() as u32;
         self.header.mark_dirty();
 
-        // Обновляем карту свободного места
+        // Update free space map
         self.update_free_space_map(offset, end_offset, false);
 
         Ok(offset as u32)
     }
 
-    /// Удаляет запись по ID
+    /// Deletes a record by ID
     pub fn delete_record(&mut self, record_id: u64) -> Result<bool> {
         if let Some(slot_index) = self.slots.iter().position(|s| s.record_id == record_id) {
             let slot = &mut self.slots[slot_index];
             if !slot.is_deleted {
                 slot.mark_deleted();
 
-                // Освобождаем место в карте
+                // Free space in the map
                 let start = slot.offset as usize;
                 let end = start + slot.size as usize;
                 let size = slot.size;
 
-                // Освобождаем слот
+                // Free the slot
                 let _ = slot;
 
-                // Теперь обновляем карту и заголовок
+                // Now update the map and header
                 self.update_free_space_map(start, end, true);
                 self.header.free_space += size;
                 self.header.mark_dirty();
@@ -323,7 +323,7 @@ impl Page {
         Ok(false)
     }
 
-    /// Получает запись по ID
+    /// Gets a record by ID
     pub fn get_record(&self, record_id: u64) -> Option<&[u8]> {
         if let Some(slot) = self
             .slots
@@ -338,10 +338,10 @@ impl Page {
         }
     }
 
-    /// Обновляет запись
+    /// Updates a record
     pub fn update_record(&mut self, record_id: u64, new_data: &[u8]) -> Result<bool> {
         if new_data.len() > MAX_RECORD_SIZE {
-            return Err(Error::validation("Новые данные слишком большие"));
+            return Err(Error::validation("New data is too large"));
         }
 
         let slot_index = if let Some(idx) = self
@@ -358,50 +358,50 @@ impl Page {
         let new_size = new_data.len();
 
         if new_size <= old_size {
-            // Записываем новые данные
+            // Write new data
             let start = self.slots[slot_index].offset as usize;
             let end = start + new_size;
             self.data[start..end].copy_from_slice(new_data);
 
-            // Обновляем слот
+            // Update slot
             self.slots[slot_index].size = new_size as u32;
 
-            // Обновляем заголовок
+            // Update header
             self.header.free_space += (old_size - new_size) as u32;
             self.header.mark_dirty();
 
-            // Обновляем карту свободного места
+            // Update free space map
             if new_size < old_size {
                 self.update_free_space_map(start + new_size, start + old_size, true);
             }
 
             Ok(true)
         } else {
-            // Нужно перераспределить место
-            // Сначала удаляем старую запись
+            // Need to redistribute space
+            // First delete the old record
             let slot = &mut self.slots[slot_index];
             let start = slot.offset as usize;
             let end = start + slot.size as usize;
             let size = slot.size;
 
-            // Удаляем слот
+            // Delete the slot
             slot.mark_deleted();
 
-            // Освобождаем слот
+            // Free the slot
             let _ = slot;
 
-            // Теперь обновляем карту и заголовок
+            // Now update the map and header
             self.update_free_space_map(start, end, true);
             self.header.free_space += size;
 
-            // Теперь добавляем новую запись
+            // Now add the new record
             let new_data_copy = new_data.to_vec();
             self.add_record(&new_data_copy, record_id)?;
             Ok(true)
         }
     }
 
-    /// Ищет свободное место для записи указанного размера
+    /// Finds free space for a record of the specified size
     fn find_free_space(&self, size: usize) -> Result<usize> {
         let mut consecutive_free = 0;
         let mut start_pos = PAGE_HEADER_SIZE;
@@ -422,11 +422,11 @@ impl Page {
         }
 
         Err(Error::validation(
-            "Недостаточно свободного места на странице",
+            "Not enough free space on the page",
         ))
     }
 
-    /// Обновляет карту свободного места
+    /// Updates the free space map
     fn update_free_space_map(&mut self, start: usize, end: usize, is_free: bool) {
         let map_start = start.saturating_sub(PAGE_HEADER_SIZE);
         let map_end = end.saturating_sub(PAGE_HEADER_SIZE);
@@ -438,32 +438,32 @@ impl Page {
         }
     }
 
-    /// Проверяет, есть ли свободное место для записи указанного размера
+    /// Checks if there is free space for a record of the specified size
     pub fn has_free_space(&self, size: usize) -> bool {
         self.header.free_space >= size as u32
     }
 
-    /// Возвращает количество свободного места
+    /// Returns the amount of free space
     pub fn free_space(&self) -> u32 {
         self.header.free_space
     }
 
-    /// Возвращает количество записей
+    /// Returns the number of records
     pub fn record_count(&self) -> u32 {
         self.header.record_count
     }
 
-    /// Проверяет, пуста ли страница
+    /// Checks if the page is empty
     pub fn is_empty(&self) -> bool {
         self.header.record_count == 0
     }
 
-    /// Проверяет, полна ли страница
+    /// Checks if the page is full
     pub fn is_full(&self) -> bool {
         self.header.free_space == 0
     }
 
-    /// Очищает страницу
+    /// Clears the page
     pub fn clear(&mut self) -> Result<()> {
         self.slots.clear();
         self.data.fill(0);
@@ -474,29 +474,29 @@ impl Page {
         Ok(())
     }
 
-    /// Получает коэффициент заполнения страницы (0.0 - 1.0)
+    /// Gets the page fill factor (0.0 - 1.0)
     pub fn get_fill_factor(&self) -> f64 {
         let used_space = MAX_RECORD_SIZE as u32 - self.header.free_space;
         used_space as f64 / MAX_RECORD_SIZE as f64
     }
 
-    /// Получает количество записей
+    /// Gets the number of records
     pub fn get_record_count(&self) -> u32 {
         self.header.record_count
     }
 
-    /// Получает размер свободного места
+    /// Gets the free space size
     pub fn get_free_space(&self) -> u32 {
         self.header.free_space
     }
 
-    /// Проверяет, нужна ли дефрагментация
+    /// Checks if defragmentation is needed
     pub fn needs_defragmentation(&self) -> bool {
-        // Простая эвристика: если есть удаленные записи
+        // Simple heuristic: if there are deleted records
         self.slots.iter().any(|slot| slot.is_deleted)
     }
 
-    /// Сканирует все записи на странице
+    /// Scans all records on the page
     pub fn scan_records(&self) -> Result<Vec<(u32, Vec<u8>)>> {
         let mut records = Vec::new();
 
@@ -515,7 +515,7 @@ impl Page {
         Ok(records)
     }
 
-    /// Получает все записи на странице
+    /// Gets all records on the page
     pub fn get_all_records(&self) -> Result<Vec<Vec<u8>>> {
         let mut records = Vec::new();
 
@@ -534,9 +534,9 @@ impl Page {
         Ok(records)
     }
 
-    /// Выполняет дефрагментацию страницы
+    /// Performs page defragmentation
     pub fn defragment(&mut self) -> Result<()> {
-        // Собираем все активные записи
+        // Collect all active records
         let mut active_records = Vec::new();
         for slot in &self.slots {
             if !slot.is_deleted {
@@ -547,10 +547,10 @@ impl Page {
             }
         }
 
-        // Очищаем страницу
+        // Clear the page
         self.clear()?;
 
-        // Добавляем записи обратно
+        // Add records back
         for (record_id, record_data) in active_records {
             self.add_record(&record_data, record_id)?;
         }
@@ -558,42 +558,42 @@ impl Page {
         Ok(())
     }
 
-    /// Обновляет запись по offset
+    /// Updates a record by offset
     pub fn update_record_by_offset(&mut self, offset: u32, new_data: &[u8]) -> Result<()> {
-        // Ищем слот по offset
+        // Find slot by offset
         if let Some(slot) = self
             .slots
             .iter_mut()
             .find(|s| s.offset == offset && !s.is_deleted)
         {
             if new_data.len() <= slot.size as usize {
-                // Обновляем данные in-place
+                // Update data in-place
                 let start = offset as usize;
                 let end = start + new_data.len();
                 self.data[start..end].copy_from_slice(new_data);
 
-                // Обновляем размер слота если нужно
+                // Update slot size if needed
                 if new_data.len() < slot.size as usize {
                     let size_diff = slot.size as usize - new_data.len();
                     let old_slot_end = start + slot.size as usize;
                     slot.size = new_data.len() as u32;
                     self.header.free_space += size_diff as u32;
 
-                    // Обновляем карту свободного места
+                    // Update free space map
                     self.update_free_space_map(end, old_slot_end, true);
                 }
 
                 self.header.mark_dirty();
                 Ok(())
             } else {
-                Err(Error::validation("Новые данные не помещаются в слот"))
+                Err(Error::validation("New data does not fit in the slot"))
             }
         } else {
-            Err(Error::validation("Запись не найдена"))
+            Err(Error::validation("Record not found"))
         }
     }
 
-    /// Удаляет запись по offset
+    /// Deletes a record by offset
     pub fn delete_record_by_offset(&mut self, offset: u32) -> Result<()> {
         if let Some(slot) = self
             .slots
@@ -602,33 +602,33 @@ impl Page {
         {
             slot.mark_deleted();
 
-            // Сохраняем значения перед изменением заимствования
+            // Save values before changing borrowing
             let start = slot.offset as usize;
             let end = start + slot.size as usize;
             let slot_size = slot.size;
 
-            // Освобождаем место
+            // Free space
             self.update_free_space_map(start, end, true);
             self.header.free_space += slot_size;
             self.header.mark_dirty();
 
             Ok(())
         } else {
-            Err(Error::validation("Запись не найдена"))
+            Err(Error::validation("Record not found"))
         }
     }
 }
 
-/// Менеджер страниц
+/// Page manager
 pub struct PageManager {
-    /// Кэш страниц
+    /// Page cache
     pages: HashMap<PageId, Page>,
-    /// Максимальное количество страниц в кэше
+    /// Maximum number of pages in the cache
     max_pages: usize,
 }
 
 impl PageManager {
-    /// Создает новый менеджер страниц
+    /// Creates a new page manager
     pub fn new(max_pages: usize) -> Self {
         Self {
             pages: HashMap::new(),
@@ -636,21 +636,21 @@ impl PageManager {
         }
     }
 
-    /// Получает страницу по ID
+    /// Gets a page by ID
     pub fn get_page(&mut self, page_id: PageId) -> Option<&Page> {
         self.pages.get(&page_id)
     }
 
-    /// Получает изменяемую ссылку на страницу
+    /// Gets a mutable reference to a page
     pub fn get_page_mut(&mut self, page_id: PageId) -> Option<&mut Page> {
         self.pages.get_mut(&page_id)
     }
 
-    /// Добавляет страницу в кэш
+    /// Adds a page to the cache
     pub fn add_page(&mut self, page: Page) {
         let page_id = page.header.page_id;
 
-        // Если превышен лимит, удаляем самую старую страницу
+        // If limit exceeded, remove the oldest page
         if self.pages.len() >= self.max_pages {
             self.evict_oldest_page();
         }
@@ -658,12 +658,12 @@ impl PageManager {
         self.pages.insert(page_id, page);
     }
 
-    /// Удаляет страницу из кэша
+    /// Removes a page from the cache
     pub fn remove_page(&mut self, page_id: PageId) -> Option<Page> {
         self.pages.remove(&page_id)
     }
 
-    /// Удаляет самую старую страницу из кэша
+    /// Removes the oldest page from the cache
     fn evict_oldest_page(&mut self) {
         if let Some((&oldest_id, _)) = self
             .pages
@@ -675,12 +675,12 @@ impl PageManager {
         }
     }
 
-    /// Возвращает количество страниц в кэше
+    /// Returns the number of pages in the cache
     pub fn page_count(&self) -> usize {
         self.pages.len()
     }
 
-    /// Проверяет, содержит ли кэш страницу
+    /// Checks if the cache contains a page
     pub fn contains_page(&self, page_id: PageId) -> bool {
         self.pages.contains_key(&page_id)
     }
@@ -728,7 +728,7 @@ mod tests {
 
         let deleted = page.delete_record(record_id).unwrap();
         assert!(deleted);
-        assert_eq!(page.header.record_count, 1); // Слот остается, но запись помечена как удаленная
+        assert_eq!(page.header.record_count, 1); // Slot remains, but the record is marked as deleted
 
         let retrieved = page.get_record(record_id);
         assert!(retrieved.is_none());
@@ -746,10 +746,10 @@ mod tests {
         assert_eq!(manager.page_count(), 2);
 
         manager.add_page(page3);
-        assert_eq!(manager.page_count(), 2); // Должна быть удалена самая старая страница
+        assert_eq!(manager.page_count(), 2); // Oldest page should have been removed
 
-        // После добавления 3 страниц в менеджер с capacity=2, должны остаться последние 2
-        // Проверим, какие страницы действительно остались
+        // After adding 3 pages to a manager with capacity=2, the last 2 should remain
+        // Check which pages actually remained
         assert!(manager.contains_page(2) || manager.contains_page(1));
         assert!(manager.contains_page(3));
     }

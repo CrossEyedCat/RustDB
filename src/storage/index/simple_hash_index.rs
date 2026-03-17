@@ -1,7 +1,7 @@
-//! Простой хеш-индекс для rustdb
+//! Simple hash index for rustdb
 //!
-//! Упрощенная реализация хеш-индекса без сериализации
-//! для быстрого поиска по ключу.
+//! Simplified hash index implementation without serialization
+//! for fast key-based search.
 
 use crate::common::{Error, Result};
 use crate::storage::index::{Index, IndexStatistics};
@@ -9,16 +9,16 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 
-/// Простой хеш-индекс на основе HashMap
+/// Simple hash index based on HashMap
 #[derive(Debug, Clone)]
 pub struct SimpleHashIndex<K, V>
 where
     K: Hash + Eq + Clone,
     V: Clone,
 {
-    /// Внутренняя хеш-таблица
+    /// Internal hash table
     data: HashMap<K, V>,
-    /// Статистика операций
+    /// Operation statistics
     statistics: IndexStatistics,
 }
 
@@ -27,7 +27,7 @@ where
     K: Hash + Eq + Clone,
     V: Clone,
 {
-    /// Создает новый простой хеш-индекс
+    /// Creates a new simple hash index
     pub fn new() -> Self {
         Self {
             data: HashMap::new(),
@@ -35,7 +35,7 @@ where
         }
     }
 
-    /// Создает новый хеш-индекс с заданной начальной емкостью
+    /// Creates a new hash index with given initial capacity
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             data: HashMap::with_capacity(capacity),
@@ -43,12 +43,12 @@ where
         }
     }
 
-    /// Возвращает статистику индекса
+    /// Returns index statistics
     pub fn get_statistics(&self) -> &IndexStatistics {
         &self.statistics
     }
 
-    /// Обновляет статистику индекса
+    /// Updates index statistics
     fn update_statistics(&mut self) {
         self.statistics.total_elements = self.data.len() as u64;
         self.statistics.fill_factor = if self.data.capacity() == 0 {
@@ -56,7 +56,7 @@ where
         } else {
             self.data.len() as f64 / self.data.capacity() as f64
         };
-        self.statistics.depth = 1; // Хеш-таблица имеет глубину 1
+        self.statistics.depth = 1; // Hash table has depth 1
     }
 }
 
@@ -76,7 +76,7 @@ where
     }
 
     fn search(&self, key: &Self::Key) -> Result<Option<Self::Value>> {
-        // self.statistics.search_operations += 1; // TODO: Сделать статистику мутабельной
+        // self.statistics.search_operations += 1; // TODO: Make statistics mutable
         Ok(self.data.get(key).cloned())
     }
 
@@ -92,10 +92,10 @@ where
         _start: &Self::Key,
         _end: &Self::Key,
     ) -> Result<Vec<(Self::Key, Self::Value)>> {
-        // self.statistics.range_search_operations += 1; // TODO: Сделать статистику мутабельной
+        // self.statistics.range_search_operations += 1; // TODO: Make statistics mutable
 
-        // Хеш-индексы не поддерживают эффективные диапазонные запросы
-        // Возвращаем пустой результат
+        // Hash indexes don't support efficient range queries
+        // Return empty result
         Ok(Vec::new())
     }
 
@@ -129,7 +129,7 @@ mod tests {
     fn test_simple_hash_index_insert_and_search() {
         let mut index = SimpleHashIndex::new();
 
-        // Вставляем элементы
+        // Insert entries
         index
             .insert("key1".to_string(), "value1".to_string())
             .unwrap();
@@ -142,7 +142,7 @@ mod tests {
 
         assert_eq!(index.size(), 3);
 
-        // Проверяем поиск
+        // Verify lookup
         assert_eq!(
             index.search(&"key1".to_string()).unwrap(),
             Some("value1".to_string())
@@ -162,25 +162,25 @@ mod tests {
     fn test_simple_hash_index_deletion() {
         let mut index = SimpleHashIndex::new();
 
-        // Вставляем элементы
+        // Insert entries
         for i in 1..=10 {
             index.insert(i, format!("value_{}", i)).unwrap();
         }
 
         assert_eq!(index.size(), 10);
 
-        // Удаляем некоторые элементы
+        // Remove some entries
         assert!(index.delete(&5).unwrap());
         assert!(index.delete(&7).unwrap());
-        assert!(!index.delete(&15).unwrap()); // Не существует
+        assert!(!index.delete(&15).unwrap()); // Does not exist
 
         assert_eq!(index.size(), 8);
 
-        // Проверяем, что удаленные элементы не найдены
+        // Ensure deleted entries are gone
         assert_eq!(index.search(&5).unwrap(), None);
         assert_eq!(index.search(&7).unwrap(), None);
 
-        // Проверяем, что остальные элементы на месте
+        // Ensure remaining entries are intact
         assert_eq!(index.search(&1).unwrap(), Some("value_1".to_string()));
         assert_eq!(index.search(&10).unwrap(), Some("value_10".to_string()));
     }
@@ -189,19 +189,19 @@ mod tests {
     fn test_simple_hash_index_update() {
         let mut index = SimpleHashIndex::new();
 
-        // Вставляем элемент
+        // Insert entry
         index
             .insert("key".to_string(), "original_value".to_string())
             .unwrap();
         assert_eq!(index.size(), 1);
 
-        // Обновляем тот же ключ
+        // Update same key
         index
             .insert("key".to_string(), "updated_value".to_string())
             .unwrap();
-        assert_eq!(index.size(), 1); // Размер не должен измениться
+        assert_eq!(index.size(), 1); // Size should stay the same
 
-        // Проверяем, что значение обновлено
+        // Ensure value was updated
         assert_eq!(
             index.search(&"key".to_string()).unwrap(),
             Some("updated_value".to_string())
@@ -212,12 +212,12 @@ mod tests {
     fn test_simple_hash_index_range_search() {
         let mut index = SimpleHashIndex::new();
 
-        // Вставляем элементы
+        // Insert entries
         for i in 1..=10 {
             index.insert(i, format!("value_{}", i)).unwrap();
         }
 
-        // Тестируем диапазонный поиск (должен возвращать пустой результат)
+        // Range search should return an empty result
         let results = index.range_search(&3, &7).unwrap();
         assert!(results.is_empty());
     }
@@ -226,7 +226,7 @@ mod tests {
     fn test_simple_hash_index_statistics() {
         let mut index = SimpleHashIndex::new();
 
-        // Вставляем элементы
+        // Insert entries
         for i in 1..=5 {
             index.insert(i, format!("value_{}", i)).unwrap();
         }
@@ -237,7 +237,7 @@ mod tests {
         assert!(stats.fill_factor > 0.0);
         assert_eq!(stats.depth, 1);
 
-        // Удаляем элемент
+        // Remove entry
         index.delete(&3).unwrap();
 
         let stats = index.get_statistics();

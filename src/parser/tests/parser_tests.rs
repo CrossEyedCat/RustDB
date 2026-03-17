@@ -1,4 +1,4 @@
-//! Тесты для синтаксического анализатора SQL
+//! SQL parser tests
 
 use crate::common::Result;
 use crate::parser::{
@@ -23,11 +23,11 @@ fn test_parse_simple_select() -> Result<()> {
             assert_eq!(select_stmt.select_list.len(), 1);
             match &select_stmt.select_list[0] {
                 SelectItem::Wildcard => {}
-                _ => panic!("Ожидался wildcard"),
+                _ => panic!("Expected wildcard"),
             }
             assert!(select_stmt.from.is_some());
         }
-        _ => panic!("Ожидался SELECT statement"),
+        _ => panic!("Expected SELECT statement"),
     }
 
     Ok(())
@@ -46,14 +46,14 @@ fn test_parse_select_columns() -> Result<()> {
                 SelectItem::Expression { expr, alias } => {
                     match expr {
                         Expression::Identifier(name) => assert_eq!(name, "name"),
-                        _ => panic!("Ожидался идентификатор"),
+                        _ => panic!("Expected identifier"),
                     }
                     assert!(alias.is_none());
                 }
-                _ => panic!("Ожидалось выражение"),
+                _ => panic!("Expected expression"),
             }
         }
-        _ => panic!("Ожидался SELECT statement"),
+        _ => panic!("Expected SELECT statement"),
     }
 
     Ok(())
@@ -69,7 +69,7 @@ fn test_parse_select_without_from() -> Result<()> {
             assert_eq!(select_stmt.select_list.len(), 1);
             assert!(select_stmt.from.is_none());
         }
-        _ => panic!("Ожидался SELECT statement"),
+        _ => panic!("Expected SELECT statement"),
     }
 
     Ok(())
@@ -88,16 +88,16 @@ fn test_parse_create_table() -> Result<()> {
             assert_eq!(create_stmt.columns[0].name, "id");
             match create_stmt.columns[0].data_type {
                 DataType::Integer => {}
-                _ => panic!("Ожидался INTEGER тип"),
+                _ => panic!("Expected INTEGER type"),
             }
 
             assert_eq!(create_stmt.columns[1].name, "name");
             match create_stmt.columns[1].data_type {
                 DataType::Text => {}
-                _ => panic!("Ожидался TEXT тип"),
+                _ => panic!("Expected TEXT type"),
             }
         }
-        _ => panic!("Ожидался CREATE TABLE statement"),
+        _ => panic!("Expected CREATE TABLE statement"),
     }
 
     Ok(())
@@ -115,20 +115,20 @@ fn test_parse_create_table_with_different_types() -> Result<()> {
 
             match create_stmt.columns[0].data_type {
                 DataType::Integer => {}
-                _ => panic!("Ожидался INTEGER тип"),
+                _ => panic!("Expected INTEGER type"),
             }
 
             match create_stmt.columns[1].data_type {
                 DataType::Boolean => {}
-                _ => panic!("Ожидался BOOLEAN тип"),
+                _ => panic!("Expected BOOLEAN type"),
             }
 
             match create_stmt.columns[2].data_type {
                 DataType::Timestamp => {}
-                _ => panic!("Ожидался TIMESTAMP тип"),
+                _ => panic!("Expected TIMESTAMP type"),
             }
         }
-        _ => panic!("Ожидался CREATE TABLE statement"),
+        _ => panic!("Expected CREATE TABLE statement"),
     }
 
     Ok(())
@@ -140,21 +140,21 @@ fn test_parse_transaction_statements() -> Result<()> {
     let statement = parser.parse()?;
     match statement {
         SqlStatement::BeginTransaction => {}
-        _ => panic!("Ожидался BEGIN TRANSACTION"),
+        _ => panic!("Expected BEGIN TRANSACTION"),
     }
 
     let mut parser = SqlParser::new("COMMIT")?;
     let statement = parser.parse()?;
     match statement {
         SqlStatement::CommitTransaction => {}
-        _ => panic!("Ожидался COMMIT"),
+        _ => panic!("Expected COMMIT"),
     }
 
     let mut parser = SqlParser::new("ROLLBACK")?;
     let statement = parser.parse()?;
     match statement {
         SqlStatement::RollbackTransaction => {}
-        _ => panic!("Ожидался ROLLBACK"),
+        _ => panic!("Expected ROLLBACK"),
     }
 
     Ok(())
@@ -169,12 +169,12 @@ fn test_parse_multiple_statements() -> Result<()> {
 
     match &statements[0] {
         SqlStatement::Select(_) => {}
-        _ => panic!("Первый statement должен быть SELECT"),
+        _ => panic!("First statement must be SELECT"),
     }
 
     match &statements[1] {
         SqlStatement::CreateTable(_) => {}
-        _ => panic!("Второй statement должен быть CREATE TABLE"),
+        _ => panic!("Second statement must be CREATE TABLE"),
     }
 
     Ok(())
@@ -182,17 +182,17 @@ fn test_parse_multiple_statements() -> Result<()> {
 
 #[test]
 fn test_parse_error_handling() {
-    // Тест на неправильный синтаксис
+    // Invalid syntax should fail
     let mut parser = SqlParser::new("SELECT FROM").unwrap();
     let result = parser.parse();
     assert!(result.is_err());
 
-    // Тест на неожиданный конец ввода
+    // Unexpected end-of-input should fail
     let mut parser = SqlParser::new("SELECT").unwrap();
     let result = parser.parse();
     assert!(result.is_err());
 
-    // Тест на неизвестное ключевое слово
+    // Unknown keyword should fail
     let mut parser = SqlParser::new("INVALID STATEMENT").unwrap();
     let result = parser.parse();
     assert!(result.is_err());
@@ -219,7 +219,7 @@ fn test_parser_cache() -> Result<()> {
     let mut parser = SqlParser::new("SELECT * FROM users")?;
     parser.clear_cache();
 
-    // Парсим дважды для проверки кэширования
+    // Parse twice to exercise cache behavior
     let _stmt1 = parser.parse()?;
 
     let mut parser = SqlParser::new("SELECT * FROM users")?;
@@ -243,10 +243,10 @@ fn test_parse_insert_simple() -> Result<()> {
                     assert_eq!(rows.len(), 1);
                     assert_eq!(rows[0].len(), 3);
                 }
-                _ => panic!("Ожидались VALUES"),
+                _ => panic!("Expected VALUES"),
             }
         }
-        _ => panic!("Ожидался INSERT statement"),
+        _ => panic!("Expected INSERT statement"),
     }
 
     Ok(())
@@ -274,10 +274,10 @@ fn test_parse_insert_with_columns() -> Result<()> {
                     assert_eq!(rows.len(), 1);
                     assert_eq!(rows[0].len(), 3);
                 }
-                _ => panic!("Ожидались VALUES"),
+                _ => panic!("Expected VALUES"),
             }
         }
-        _ => panic!("Ожидался INSERT statement"),
+        _ => panic!("Expected INSERT statement"),
     }
 
     Ok(())
@@ -298,10 +298,10 @@ fn test_parse_insert_multiple_rows() -> Result<()> {
                     assert_eq!(rows[0].len(), 2);
                     assert_eq!(rows[1].len(), 2);
                 }
-                _ => panic!("Ожидались VALUES"),
+                _ => panic!("Expected VALUES"),
             }
         }
-        _ => panic!("Ожидался INSERT statement"),
+        _ => panic!("Expected INSERT statement"),
     }
 
     Ok(())
@@ -319,7 +319,7 @@ fn test_parse_update_simple() -> Result<()> {
             assert_eq!(update_stmt.assignments[0].column, "name");
             assert!(update_stmt.where_clause.is_none());
         }
-        _ => panic!("Ожидался UPDATE statement"),
+        _ => panic!("Expected UPDATE statement"),
     }
 
     Ok(())
@@ -338,7 +338,7 @@ fn test_parse_update_with_where() -> Result<()> {
             assert_eq!(update_stmt.assignments[1].column, "age");
             assert!(update_stmt.where_clause.is_some());
         }
-        _ => panic!("Ожидался UPDATE statement"),
+        _ => panic!("Expected UPDATE statement"),
     }
 
     Ok(())
@@ -354,7 +354,7 @@ fn test_parse_delete_simple() -> Result<()> {
             assert_eq!(delete_stmt.table, "users");
             assert!(delete_stmt.where_clause.is_none());
         }
-        _ => panic!("Ожидался DELETE statement"),
+        _ => panic!("Expected DELETE statement"),
     }
 
     Ok(())
@@ -370,7 +370,7 @@ fn test_parse_delete_with_where() -> Result<()> {
             assert_eq!(delete_stmt.table, "users");
             assert!(delete_stmt.where_clause.is_some());
         }
-        _ => panic!("Ожидался DELETE statement"),
+        _ => panic!("Expected DELETE statement"),
     }
 
     Ok(())
@@ -378,17 +378,17 @@ fn test_parse_delete_with_where() -> Result<()> {
 
 #[test]
 fn test_parse_dml_error_handling() {
-    // Тест на неправильный синтаксис INSERT
+    // Invalid INSERT syntax
     let mut parser = SqlParser::new("INSERT INTO").unwrap();
     let result = parser.parse();
     assert!(result.is_err());
 
-    // Тест на неправильный синтаксис UPDATE
+    // Invalid UPDATE syntax
     let mut parser = SqlParser::new("UPDATE users SET").unwrap();
     let result = parser.parse();
     assert!(result.is_err());
 
-    // Тест на неправильный синтаксис DELETE
+    // Invalid DELETE syntax
     let mut parser = SqlParser::new("DELETE FROM").unwrap();
     let result = parser.parse();
     assert!(result.is_err());

@@ -1,4 +1,4 @@
-//! Каталог метаданных rustdb
+//! Metadata catalog for rustdb
 
 pub mod access;
 pub mod schema;
@@ -12,4 +12,4 @@ pub use statistics::{
     TableStatistics, ValueDistribution,
 };
 
-// TODO: Реализовать каталог метаданных
+// TODO: Implement metadata catalog

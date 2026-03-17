@@ -1,6 +1,6 @@
-//! Комплексный менеджер конкурентности
+//! Comprehensive concurrency manager
 //!
-//! Объединяет MVCC, блокировки и deadlock detection
+//! Combines MVCC, locks and deadlock detection
 
 use crate::common::{Error, Result};
 use crate::core::advanced_lock_manager::{
@@ -11,44 +11,44 @@ use crate::core::transaction::TransactionId;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Уровень изоляции для конкурентного доступа
+/// Isolation level for concurrent access
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IsolationLevel {
-    /// Read Uncommitted - минимальная изоляция
+    /// Read Uncommitted - minimal isolation
     ReadUncommitted,
-    /// Read Committed - читаем только зафиксированные данные
+    /// Read Committed - read only committed data
     ReadCommitted,
-    /// Repeatable Read - повторяемое чтение
+    /// Repeatable Read - repeatable read
     RepeatableRead,
-    /// Serializable - полная изоляция
+    /// Serializable - full isolation
     Serializable,
 }
 
-/// Гранулярность блокировки
+/// Lock granularity
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LockGranularity {
-    /// Блокировка на уровне базы данных
+    /// Database-level lock
     Database,
-    /// Блокировка на уровне таблицы
+    /// Table-level lock
     Table,
-    /// Блокировка на уровне страницы
+    /// Page-level lock
     Page,
-    /// Блокировка на уровне строки
+    /// Row-level lock
     Row,
 }
 
-/// Настройки менеджера конкурентности
+/// Concurrency manager settings
 #[derive(Debug, Clone)]
 pub struct ConcurrencyConfig {
-    /// Конфигурация блокировок
+    /// Lock configuration
     pub lock_config: AdvancedLockConfig,
-    /// Уровень изоляции по умолчанию
+    /// Default isolation level
     pub default_isolation_level: IsolationLevel,
-    /// Гранулярность блокировок по умолчанию
+    /// Default lock granularity
     pub default_lock_granularity: LockGranularity,
-    /// Включить MVCC
+    /// Enable MVCC
     pub enable_mvcc: bool,
-    /// Интервал автоматической очистки MVCC
+    /// MVCC automatic cleanup interval
     pub vacuum_interval: Duration,
 }
 
@@ -64,18 +64,18 @@ impl Default for ConcurrencyConfig {
     }
 }
 
-/// Комплексный менеджер конкурентности
+/// Comprehensive concurrency manager
 pub struct ConcurrencyManager {
-    /// Менеджер блокировок
+    /// Lock manager
     lock_manager: Arc<AdvancedLockManager>,
-    /// Менеджер MVCC
+    /// MVCC manager
     mvcc_manager: Arc<MVCCManager>,
-    /// Конфигурация
+    /// Configuration
     config: ConcurrencyConfig,
 }
 
 impl ConcurrencyManager {
-    /// Создаёт новый менеджер конкурентности
+    /// Creates a new concurrency manager
     pub fn new(config: ConcurrencyConfig) -> Self {
         let lock_manager = Arc::new(AdvancedLockManager::new(config.lock_config.clone()));
         let mvcc_manager = Arc::new(MVCCManager::new());
@@ -87,17 +87,17 @@ impl ConcurrencyManager {
         }
     }
 
-    /// Начинает транзакцию
+    /// Begins transaction
     pub fn begin_transaction(
         &self,
         transaction_id: TransactionId,
         isolation_level: IsolationLevel,
     ) -> Result<Timestamp> {
-        // Возвращаем snapshot timestamp для транзакции
+        // Return snapshot timestamp for transaction
         Ok(Timestamp::now())
     }
 
-    /// Получает блокировку для чтения
+    /// Acquires read lock
     pub async fn acquire_read_lock(
         &self,
         transaction_id: TransactionId,
@@ -106,17 +106,17 @@ impl ConcurrencyManager {
     ) -> Result<()> {
         match self.config.default_isolation_level {
             IsolationLevel::ReadUncommitted => {
-                // Не требуем блокировку для чтения
+                // Don't require lock for reading
                 Ok(())
             }
             IsolationLevel::ReadCommitted | IsolationLevel::RepeatableRead => {
-                // Shared блокировка
+                // Shared lock
                 self.lock_manager
                     .acquire_lock(transaction_id, resource, LockMode::Shared, timeout)
                     .await
             }
             IsolationLevel::Serializable => {
-                // Более строгая блокировка
+                // Stricter lock
                 self.lock_manager
                     .acquire_lock(transaction_id, resource, LockMode::Shared, timeout)
                     .await
@@ -124,20 +124,20 @@ impl ConcurrencyManager {
         }
     }
 
-    /// Получает блокировку для записи
+    /// Acquires write lock
     pub async fn acquire_write_lock(
         &self,
         transaction_id: TransactionId,
         resource: ResourceType,
         timeout: Option<Duration>,
     ) -> Result<()> {
-        // Для записи всегда требуем exclusive блокировку
+        // For writes always require exclusive lock
         self.lock_manager
             .acquire_lock(transaction_id, resource, LockMode::Exclusive, timeout)
             .await
     }
 
-    /// Читает данные с учётом MVCC
+    /// Reads data with MVCC consideration
     pub async fn read(
         &self,
         transaction_id: TransactionId,
@@ -148,83 +148,83 @@ impl ConcurrencyManager {
             self.mvcc_manager
                 .read_version(key, transaction_id, snapshot)
         } else {
-            // Fallback без MVCC - требуем блокировку
+            // Fallback without MVCC - require lock
             let resource = ResourceType::Record(key.table_id as u64, key.row_id);
             self.acquire_read_lock(transaction_id, resource, None)
                 .await?;
 
-            // TODO: Читать данные из storage
+            // TODO: Read data from storage
             Ok(None)
         }
     }
 
-    /// Записывает данные с учётом MVCC
+    /// Writes data with MVCC consideration
     pub async fn write(
         &self,
         transaction_id: TransactionId,
         key: RowKey,
         data: Vec<u8>,
     ) -> Result<()> {
-        // Получаем блокировку на запись
+        // Acquire write lock
         let resource = ResourceType::Record(key.table_id as u64, key.row_id);
         self.acquire_write_lock(transaction_id, resource, None)
             .await?;
 
         if self.config.enable_mvcc {
-            // Создаём новую версию
+            // Create new version
             self.mvcc_manager
                 .create_version(key, transaction_id, data)?;
         } else {
-            // TODO: Записать данные в storage напрямую
+            // TODO: Write data to storage directly
         }
 
         Ok(())
     }
 
-    /// Удаляет данные
+    /// Deletes data
     pub async fn delete(&self, transaction_id: TransactionId, key: &RowKey) -> Result<()> {
-        // Получаем блокировку на запись
+        // Acquire write lock
         let resource = ResourceType::Record(key.table_id as u64, key.row_id);
         self.acquire_write_lock(transaction_id, resource, None)
             .await?;
 
         if self.config.enable_mvcc {
-            // Помечаем для удаления
+            // Mark for deletion
             self.mvcc_manager.delete_version(key, transaction_id)?;
         } else {
-            // TODO: Удалить из storage напрямую
+            // TODO: Delete from storage directly
         }
 
         Ok(())
     }
 
-    /// Фиксирует транзакцию
+    /// Commits transaction
     pub fn commit_transaction(&self, transaction_id: TransactionId) -> Result<()> {
-        // Фиксируем версии MVCC
+        // Commit MVCC versions
         if self.config.enable_mvcc {
             self.mvcc_manager.commit_transaction(transaction_id)?;
         }
 
-        // Освобождаем все блокировки
+        // Release all locks
         self.lock_manager.release_all_locks(transaction_id)?;
 
         Ok(())
     }
 
-    /// Откатывает транзакцию
+    /// Aborts transaction
     pub fn abort_transaction(&self, transaction_id: TransactionId) -> Result<()> {
-        // Откатываем версии MVCC
+        // Rollback MVCC versions
         if self.config.enable_mvcc {
             self.mvcc_manager.abort_transaction(transaction_id)?;
         }
 
-        // Освобождаем все блокировки
+        // Release all locks
         self.lock_manager.release_all_locks(transaction_id)?;
 
         Ok(())
     }
 
-    /// Выполняет очистку старых версий
+    /// Performs cleanup of old versions
     pub fn vacuum(&self) -> Result<u64> {
         if self.config.enable_mvcc {
             self.mvcc_manager.vacuum()
@@ -233,19 +233,19 @@ impl ConcurrencyManager {
         }
     }
 
-    /// Возвращает статистику блокировок
+    /// Returns lock statistics
     pub fn get_lock_statistics(
         &self,
     ) -> crate::core::advanced_lock_manager::AdvancedLockStatistics {
         self.lock_manager.get_statistics()
     }
 
-    /// Возвращает статистику MVCC
+    /// Returns MVCC statistics
     pub fn get_mvcc_statistics(&self) -> crate::core::mvcc::MVCCStatistics {
         self.mvcc_manager.get_statistics()
     }
 
-    /// Обновляет минимальную активную транзакцию для VACUUM
+    /// Updates minimum active transaction for VACUUM
     pub fn update_min_active_transaction(&self, transaction_id: TransactionId) {
         self.mvcc_manager
             .update_min_active_transaction(transaction_id);
@@ -279,13 +279,13 @@ mod tests {
         let key = RowKey::new(1, 1);
         let data = vec![1, 2, 3, 4];
 
-        // Записываем данные
+        // Write data
         manager.write(tx1, key.clone(), data.clone()).await.unwrap();
 
-        // Фиксируем
+        // Commit
         manager.commit_transaction(tx1).unwrap();
 
-        // Читаем
+        // Read
         let tx2 = TransactionId::new(2);
         let snapshot = Timestamp::now();
         let read_data = manager.read(tx2, &key, snapshot).await.unwrap();
@@ -298,7 +298,7 @@ mod tests {
         let manager = ConcurrencyManager::default();
         let key = RowKey::new(1, 1);
 
-        // Транзакция 1 пишет
+        // Transaction 1 writes
         let tx1 = TransactionId::new(1);
         let data1 = vec![1, 2, 3];
         manager
@@ -306,14 +306,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Транзакция 2 читает до коммита tx1 (не видит изменений)
+        // Transaction 2 reads before tx1 commit (doesn't see changes)
         let tx2 = TransactionId::new(2);
         let snapshot_before = Timestamp::now();
 
-        // Фиксируем tx1
+        // Commit tx1
         manager.commit_transaction(tx1).unwrap();
 
-        // Транзакция 3 читает после коммита (видит изменения)
+        // Transaction 3 reads after commit (sees changes)
         let tx3 = TransactionId::new(3);
         let snapshot_after = Timestamp::now();
         let read_data = manager.read(tx3, &key, snapshot_after).await.unwrap();
@@ -328,13 +328,13 @@ mod tests {
         let key = RowKey::new(1, 1);
         let data = vec![1, 2, 3, 4];
 
-        // Записываем данные
+        // Write data
         manager.write(tx1, key.clone(), data).await.unwrap();
 
-        // Откатываем
+        // Abort
         manager.abort_transaction(tx1).unwrap();
 
-        // Проверяем статистику
+        // Check statistics
         let mvcc_stats = manager.get_mvcc_statistics();
         assert_eq!(mvcc_stats.aborted_versions, 1);
         assert_eq!(mvcc_stats.active_versions, 0);
@@ -347,11 +347,11 @@ mod tests {
         let key = RowKey::new(1, 1);
         let data = vec![1, 2, 3, 4];
 
-        // Создаём и откатываем транзакцию
+        // Create and abort transaction
         manager.write(tx1, key, data).await.unwrap();
         manager.abort_transaction(tx1).unwrap();
 
-        // Выполняем VACUUM
+        // Perform VACUUM
         manager.update_min_active_transaction(TransactionId::new(100));
         let cleaned = manager.vacuum().unwrap();
 

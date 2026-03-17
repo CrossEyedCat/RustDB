@@ -1,12 +1,11 @@
-//! Тесты производительности для индексов rustdb
+//! Performance tests for rustdb indexes
 //!
-//! Эти тесты измеряют производительность различных операций с индексами
-//! и помогают выявить узкие места в реализации.
+//! These tests measure index operation throughput and help uncover bottlenecks.
 
 use crate::storage::index::{BPlusTree, Index, SimpleHashIndex};
 use std::time::{Duration, Instant};
 
-/// Структура для хранения результатов бенчмарка
+/// Holds benchmark results
 #[derive(Debug)]
 struct BenchmarkResult {
     operation: String,
@@ -35,7 +34,7 @@ impl BenchmarkResult {
 
     fn print(&self) {
         println!(
-            "  {} - {}: {} элементов за {:?} ({:.0} ops/sec)",
+            "  {} - {}: {} elements in {:?} ({:.0} ops/sec)",
             self.index_type, self.operation, self.elements, self.duration, self.ops_per_second
         );
     }
@@ -43,13 +42,13 @@ impl BenchmarkResult {
 
 #[test]
 fn test_insertion_performance() {
-    println!("🚀 Тест производительности вставки:");
+    println!("🚀 Insertion performance test:");
 
     let test_sizes = [100, 1_000, 10_000];
     let mut results = Vec::new();
 
     for &size in &test_sizes {
-        // Тестируем B+ дерево
+        // Benchmark B+ tree
         let mut btree: BPlusTree<i32, String> = BPlusTree::new_default();
         let start = Instant::now();
 
@@ -59,13 +58,13 @@ fn test_insertion_performance() {
 
         let btree_duration = start.elapsed();
         results.push(BenchmarkResult::new(
-            "вставка",
-            "B+ дерево",
+            "insert",
+            "B+ tree",
             size,
             btree_duration,
         ));
 
-        // Тестируем хеш-индекс
+        // Benchmark hash index
         let mut hash_index: SimpleHashIndex<i32, String> = SimpleHashIndex::with_capacity(size);
         let start = Instant::now();
 
@@ -75,8 +74,8 @@ fn test_insertion_performance() {
 
         let hash_duration = start.elapsed();
         results.push(BenchmarkResult::new(
-            "вставка",
-            "Хеш-индекс",
+            "insert",
+            "Hash index",
             size,
             hash_duration,
         ));
@@ -86,11 +85,11 @@ fn test_insertion_performance() {
         result.print();
     }
 
-    // Проверяем, что операции выполняются за разумное время
+    // Ensure operations complete within reasonable time
     for result in &results {
         assert!(
             result.ops_per_second > 1000.0,
-            "Слишком медленная вставка: {:.0} ops/sec",
+            "Insert benchmark too slow: {:.0} ops/sec",
             result.ops_per_second
         );
     }
@@ -98,32 +97,32 @@ fn test_insertion_performance() {
 
 #[test]
 fn test_search_performance() {
-    println!("🔍 Тест производительности поиска:");
+    println!("🔍 Search performance test:");
 
     const SIZE: usize = 10_000;
     let mut results = Vec::new();
 
-    // Подготавливаем B+ дерево
+    // Populate B+ tree
     let mut btree: BPlusTree<i32, String> = BPlusTree::new_default();
     for i in 1..=SIZE {
         btree.insert(i as i32, format!("value_{}", i)).unwrap();
     }
 
-    // Подготавливаем хеш-индекс
+    // Populate hash index
     let mut hash_index: SimpleHashIndex<i32, String> = SimpleHashIndex::with_capacity(SIZE);
     for i in 1..=SIZE {
         hash_index.insert(i as i32, format!("value_{}", i)).unwrap();
     }
 
-    // Тестируем последовательный поиск
+    // Sequential searches
     let start = Instant::now();
     for i in 1..=SIZE {
         let _ = btree.search(&(i as i32)).unwrap();
     }
     let btree_sequential = start.elapsed();
     results.push(BenchmarkResult::new(
-        "последовательный поиск",
-        "B+ дерево",
+        "sequential search",
+        "B+ tree",
         SIZE,
         btree_sequential,
     ));
@@ -134,13 +133,13 @@ fn test_search_performance() {
     }
     let hash_sequential = start.elapsed();
     results.push(BenchmarkResult::new(
-        "последовательный поиск",
-        "Хеш-индекс",
+        "sequential search",
+        "Hash index",
         SIZE,
         hash_sequential,
     ));
 
-    // Тестируем случайный поиск
+    // Random searches
     let random_keys: Vec<i32> = (1..=SIZE).map(|i| ((i * 7919) % SIZE + 1) as i32).collect();
 
     let start = Instant::now();
@@ -149,8 +148,8 @@ fn test_search_performance() {
     }
     let btree_random = start.elapsed();
     results.push(BenchmarkResult::new(
-        "случайный поиск",
-        "B+ дерево",
+        "random search",
+        "B+ tree",
         SIZE,
         btree_random,
     ));
@@ -161,8 +160,8 @@ fn test_search_performance() {
     }
     let hash_random = start.elapsed();
     results.push(BenchmarkResult::new(
-        "случайный поиск",
-        "Хеш-индекс",
+        "random search",
+        "Hash index",
         SIZE,
         hash_random,
     ));
@@ -171,11 +170,11 @@ fn test_search_performance() {
         result.print();
     }
 
-    // Проверяем производительность
+    // Guardrail assertions
     for result in &results {
         assert!(
             result.ops_per_second > 10_000.0,
-            "Слишком медленный поиск: {:.0} ops/sec",
+            "Search benchmark too slow: {:.0} ops/sec",
             result.ops_per_second
         );
     }
@@ -183,12 +182,12 @@ fn test_search_performance() {
 
 #[test]
 fn test_range_query_performance() {
-    println!("📊 Тест производительности диапазонных запросов:");
+    println!("📊 Range-query performance test:");
 
     const SIZE: usize = 10_000;
     let mut btree: BPlusTree<i32, String> = BPlusTree::new_default();
 
-    // Подготавливаем данные
+    // Populate tree
     for i in 1..=SIZE {
         btree.insert(i as i32, format!("value_{}", i)).unwrap();
     }
@@ -204,32 +203,32 @@ fn test_range_query_performance() {
         let duration = start.elapsed();
 
         println!(
-            "  Диапазон размером {}: {} результатов за {:?}",
+            "  Range size {}: {} results in {:?}",
             range_size,
             results.len(),
             duration
         );
 
-        // Проверяем корректность результатов
-        assert!(results.len() <= range_size + 1); // +1 из-за включительных границ
-        assert!(duration.as_millis() < 100); // Должно быть быстро
+        // Validate result set
+        assert!(results.len() <= range_size + 1); // +1 due to inclusive bounds
+        assert!(duration.as_millis() < 100); // Should remain fast
     }
 }
 
 #[test]
 fn test_deletion_performance() {
-    println!("🗑️ Тест производительности удаления:");
+    println!("🗑️ Deletion performance test:");
 
     const SIZE: usize = 10_000;
     let mut results = Vec::new();
 
-    // Подготавливаем хеш-индекс
+    // Populate hash index
     let mut hash_index: SimpleHashIndex<i32, String> = SimpleHashIndex::with_capacity(SIZE);
     for i in 1..=SIZE {
         hash_index.insert(i as i32, format!("value_{}", i)).unwrap();
     }
 
-    // Тестируем удаление каждого второго элемента
+    // Delete every second element
     let keys_to_delete: Vec<i32> = (1..=SIZE).step_by(2).map(|i| i as i32).collect();
     let delete_count = keys_to_delete.len();
 
@@ -240,18 +239,18 @@ fn test_deletion_performance() {
     let deletion_duration = start.elapsed();
 
     results.push(BenchmarkResult::new(
-        "удаление",
-        "Хеш-индекс",
+        "delete",
+        "Hash index",
         delete_count,
         deletion_duration,
     ));
 
-    // Проверяем, что элементы действительно удалены
+    // Confirm elements were removed
     for &key in &keys_to_delete {
         assert_eq!(hash_index.search(&key).unwrap(), None);
     }
 
-    // Проверяем, что оставшиеся элементы на месте
+    // Remaining elements should still be present
     for i in (2..=SIZE).step_by(2) {
         assert!(hash_index.search(&(i as i32)).unwrap().is_some());
     }
@@ -265,7 +264,7 @@ fn test_deletion_performance() {
 
 #[test]
 fn test_mixed_operations_performance() {
-    println!("🔄 Тест производительности смешанных операций:");
+    println!("🔄 Mixed operations performance test:");
 
     const OPERATIONS: usize = 10_000;
     let mut hash_index: SimpleHashIndex<i32, String> = SimpleHashIndex::new();
@@ -275,21 +274,21 @@ fn test_mixed_operations_performance() {
     for i in 0..OPERATIONS {
         match i % 4 {
             0 => {
-                // Вставка
+                // Insert
                 hash_index.insert(i as i32, format!("value_{}", i)).unwrap();
             }
             1 => {
-                // Поиск существующего элемента
+                // Search existing element
                 if i > 0 {
                     let _ = hash_index.search(&((i - 1) as i32)).unwrap();
                 }
             }
             2 => {
-                // Поиск несуществующего элемента
+                // Search missing element
                 let _ = hash_index.search(&(-1)).unwrap();
             }
             3 => {
-                // Удаление
+                // Delete
                 if i > 3 {
                     hash_index.delete(&((i - 3) as i32)).unwrap();
                 }
@@ -302,27 +301,27 @@ fn test_mixed_operations_performance() {
     let ops_per_second = OPERATIONS as f64 / total_duration.as_secs_f64();
 
     println!(
-        "  Смешанные операции: {} операций за {:?} ({:.0} ops/sec)",
+        "  Mixed operations: {} ops in {:?} ({:.0} ops/sec)",
         OPERATIONS, total_duration, ops_per_second
     );
 
     assert!(
         ops_per_second > 50_000.0,
-        "Слишком медленные смешанные операции: {:.0} ops/sec",
+        "Mixed operations too slow: {:.0} ops/sec",
         ops_per_second
     );
 }
 
 #[test]
 fn test_memory_usage_scaling() {
-    println!("💾 Тест масштабирования использования памяти:");
+    println!("💾 Memory usage scaling test:");
 
     use std::mem;
 
     let sizes = [100, 1_000, 10_000];
 
     for &size in &sizes {
-        // Тестируем B+ дерево
+        // Evaluate B+ tree
         let mut btree: BPlusTree<i32, String> = BPlusTree::new_default();
         for i in 1..=size {
             btree.insert(i as i32, format!("value_{:06}", i)).unwrap();
@@ -330,11 +329,11 @@ fn test_memory_usage_scaling() {
 
         let btree_size = mem::size_of_val(&btree);
         println!(
-            "  B+ дерево с {} элементами: ~{} байт базовой структуры",
+            "  B+ tree with {} elements: ~{} bytes for base structure",
             size, btree_size
         );
 
-        // Тестируем хеш-индекс
+        // Evaluate hash index
         let mut hash_index: SimpleHashIndex<i32, String> = SimpleHashIndex::new();
         for i in 1..=size {
             hash_index
@@ -344,11 +343,11 @@ fn test_memory_usage_scaling() {
 
         let hash_size = mem::size_of_val(&hash_index);
         println!(
-            "  Хеш-индекс с {} элементами: ~{} байт базовой структуры",
+            "  Hash index with {} elements: ~{} bytes for base structure",
             size, hash_size
         );
 
-        // Базовые структуры не должны сильно расти
+        // Base structures should not grow dramatically
         assert!(btree_size < 1024);
         assert!(hash_size < 1024);
     }
@@ -356,24 +355,24 @@ fn test_memory_usage_scaling() {
 
 #[test]
 fn test_cache_efficiency() {
-    println!("⚡ Тест эффективности кеша:");
+    println!("⚡ Cache efficiency test:");
 
     const SIZE: usize = 100_000;
     let mut btree: BPlusTree<i32, i32> = BPlusTree::new_default();
 
-    // Заполняем индекс
+    // Populate index
     for i in 1..=SIZE {
         btree.insert(i as i32, i as i32).unwrap();
     }
 
-    // Тестируем локальность доступа (последовательный доступ)
+    // Sequential access pattern
     let start = Instant::now();
     for i in 1..=SIZE {
         let _ = btree.search(&(i as i32)).unwrap();
     }
     let sequential_duration = start.elapsed();
 
-    // Тестируем случайный доступ
+    // Random access pattern
     let random_keys: Vec<i32> = (1..=SIZE)
         .map(|i| ((i * 31337) % SIZE + 1) as i32)
         .collect();
@@ -383,17 +382,17 @@ fn test_cache_efficiency() {
     }
     let random_duration = start.elapsed();
 
-    println!("  Последовательный доступ: {:?}", sequential_duration);
-    println!("  Случайный доступ: {:?}", random_duration);
+    println!("  Sequential access: {:?}", sequential_duration);
+    println!("  Random access: {:?}", random_duration);
 
-    // Последовательный доступ должен быть быстрее (лучше использует кеш)
+    // Sequential access should be faster due to cache locality
     let sequential_ops_per_sec = SIZE as f64 / sequential_duration.as_secs_f64();
     let random_ops_per_sec = SIZE as f64 / random_duration.as_secs_f64();
 
-    println!("  Последовательный: {:.0} ops/sec", sequential_ops_per_sec);
-    println!("  Случайный: {:.0} ops/sec", random_ops_per_sec);
+    println!("  Sequential: {:.0} ops/sec", sequential_ops_per_sec);
+    println!("  Random: {:.0} ops/sec", random_ops_per_sec);
 
-    // Оба типа доступа должны быть достаточно быстрыми
+    // Both access patterns should remain performant
     assert!(sequential_ops_per_sec > 100_000.0);
     assert!(random_ops_per_sec > 50_000.0);
 }

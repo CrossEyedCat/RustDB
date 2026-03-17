@@ -1,4 +1,4 @@
-//! Операторы выполнения для rustdb
+//! Execution operators for rustdb
 
 use crate::common::types::{ColumnValue, DataType};
 use crate::common::{Error, Result};
@@ -13,62 +13,62 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Базовый трейт для всех операторов
+/// Base trait for all operators
 pub trait Operator {
-    /// Получить следующую строку результата
+    /// Get next result row
     fn next(&mut self) -> Result<Option<Row>>;
 
-    /// Сбросить оператор для повторного выполнения
+    /// Reset operator for re-execution
     fn reset(&mut self) -> Result<()>;
 
-    /// Получить схему результата
+    /// Get result schema
     fn get_schema(&self) -> Result<Vec<String>>;
 
-    /// Получить статистику выполнения
+    /// Get execution statistics
     fn get_statistics(&self) -> OperatorStatistics;
 }
 
-/// Статистика выполнения оператора
+/// Operator execution statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OperatorStatistics {
-    /// Количество обработанных строк
+    /// Number of processed rows
     pub rows_processed: usize,
-    /// Количество возвращенных строк
+    /// Number of returned rows
     pub rows_returned: usize,
-    /// Время выполнения в миллисекундах
+    /// Execution time in milliseconds
     pub execution_time_ms: u64,
-    /// Количество операций I/O
+    /// Number of I/O operations
     pub io_operations: usize,
-    /// Количество операций с памятью
+    /// Number of memory operations
     pub memory_operations: usize,
-    /// Использованная память в байтах
+    /// Memory used in bytes
     pub memory_used_bytes: usize,
 }
 
-/// Оператор сканирования таблицы
+/// Table scan operator
 pub struct TableScanOperator {
-    /// Имя таблицы
+    /// Table name
     table_name: String,
-    /// Менеджер страниц
+    /// Page manager
     page_manager: Arc<Mutex<StoragePageManager>>,
-    /// Текущая страница
+    /// Current page
     current_page_id: Option<PageId>,
-    /// Текущая позиция в странице
+    /// Current position in page
     current_position: usize,
-    /// Условие фильтрации
+    /// Filter condition
     filter_condition: Option<String>,
-    /// Схема таблицы
+    /// Table schema
     schema: Vec<String>,
-    /// Статистика
+    /// Statistics
     statistics: OperatorStatistics,
-    /// Буфер страниц
+    /// Page buffer
     page_buffer: HashMap<PageId, Vec<u8>>,
-    /// Максимальный размер буфера
+    /// Maximum buffer size
     max_buffer_size: usize,
 }
 
 impl TableScanOperator {
-    /// Создать новый оператор сканирования таблицы
+    /// Create new table scan operator
     pub fn new(
         table_name: String,
         page_manager: Arc<Mutex<StoragePageManager>>,
@@ -84,23 +84,23 @@ impl TableScanOperator {
             schema,
             statistics: OperatorStatistics::default(),
             page_buffer: HashMap::new(),
-            max_buffer_size: 100, // Максимум 100 страниц в буфере
+            max_buffer_size: 100, // Maximum 100 pages in buffer
         })
     }
 
-    /// Загрузить страницу в буфер (упрощенная версия)
+    /// Load page into buffer (simplified version)
     fn load_page(&mut self, page_id: PageId) -> Result<Vec<u8>> {
-        // Проверяем, есть ли страница в буфере
+        // Check if page is in buffer
         if let Some(page_data) = self.page_buffer.get(&page_id) {
             return Ok(page_data.clone());
         }
 
-        // Упрощенная реализация - создаем тестовые данные
-        let page_data = vec![0u8; 4096]; // Стандартный размер страницы
+        // Simplified implementation - create test data
+        let page_data = vec![0u8; 4096]; // Standard page size
 
-        // Добавляем в буфер
+        // Add to buffer
         if self.page_buffer.len() >= self.max_buffer_size {
-            // Удаляем самую старую страницу (простая стратегия FIFO)
+            // Remove oldest page (simple FIFO strategy)
             let oldest_page = self.page_buffer.keys().next().cloned();
             if let Some(old_page_id) = oldest_page {
                 self.page_buffer.remove(&old_page_id);
@@ -113,16 +113,16 @@ impl TableScanOperator {
         Ok(page_data)
     }
 
-    /// Найти следующую страницу с данными (упрощенная версия)
+    /// Find next page with data (simplified version)
     fn find_next_page(&mut self) -> Result<Option<PageId>> {
-        // Упрощенная реализация - возвращаем последовательные страницы
+        // Simplified implementation - return sequential pages
         let next_page = if let Some(current) = self.current_page_id {
             current + 1
         } else {
-            1 // Первая страница данных
+            1 // First data page
         };
 
-        // Ограничиваем количество страниц для тестирования
+        // Limit number of pages for testing
         if next_page <= 10 {
             Ok(Some(next_page))
         } else {
@@ -130,19 +130,19 @@ impl TableScanOperator {
         }
     }
 
-    /// Применить фильтр к строке
+    /// Apply filter to row
     fn apply_filter(&self, row: &Row) -> bool {
         if let Some(condition) = &self.filter_condition {
-            // Упрощенная реализация фильтрации
+            // Simplified filter implementation
             self.evaluate_condition(row, condition)
         } else {
-            true // Нет фильтра - пропускаем все строки
+            true // No filter - pass all rows
         }
     }
 
-    /// Оценить условие фильтрации
+    /// Evaluate filter condition
     fn evaluate_condition(&self, row: &Row, condition: &str) -> bool {
-        // Упрощенная реализация - просто проверяем наличие подстроки
+        // Simplified implementation - just check for substring presence
         let row_string = format!("{:?}", row);
         row_string.contains(condition)
     }
@@ -153,11 +153,11 @@ impl Operator for TableScanOperator {
         let start_time = std::time::Instant::now();
 
         loop {
-            // Если у нас нет текущей страницы, находим следующую
+            // If we don't have current page, find next one
             if self.current_page_id.is_none() {
                 self.current_page_id = self.find_next_page()?;
                 if self.current_page_id.is_none() {
-                    // Больше страниц нет
+                    // No more pages
                     break;
                 }
                 self.current_position = 0;
@@ -166,16 +166,16 @@ impl Operator for TableScanOperator {
             let page_id = self.current_page_id.unwrap();
             let page_data = self.load_page(page_id)?;
 
-            // Парсим страницу и извлекаем строки
+            // Parse page and extract rows
             let rows = self.parse_page_rows(&page_data)?;
 
-            // Обрабатываем строки на текущей странице
+            // Process rows on current page
             while self.current_position < rows.len() {
                 let row = &rows[self.current_position];
                 self.current_position += 1;
                 self.statistics.rows_processed += 1;
 
-                // Применяем фильтр
+                // Apply filter
                 if self.apply_filter(row) {
                     self.statistics.rows_returned += 1;
                     self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
@@ -183,7 +183,7 @@ impl Operator for TableScanOperator {
                 }
             }
 
-            // Переходим к следующей странице
+            // Move to next page
             self.current_page_id = None;
         }
 
@@ -209,12 +209,12 @@ impl Operator for TableScanOperator {
 }
 
 impl TableScanOperator {
-    /// Парсить строки из данных страницы
+    /// Parse rows from page data
     fn parse_page_rows(&self, _page_data: &[u8]) -> Result<Vec<Row>> {
-        // Упрощенная реализация - создаем тестовые строки
+        // Simplified implementation - create test rows
         let mut rows = Vec::new();
 
-        // Создаем несколько тестовых строк
+        // Create several test rows
         for i in 0..10 {
             let mut row = Row::new();
             for col in &self.schema {
@@ -230,42 +230,42 @@ impl TableScanOperator {
     }
 }
 
-/// Оператор сканирования по индексу
+/// Index scan operator
 pub struct IndexScanOperator {
-    /// Имя таблицы
+    /// Table name
     table_name: String,
-    /// Имя индекса
+    /// Index name
     index_name: String,
-    /// Индекс для сканирования
+    /// Index for scanning
     index: Arc<Mutex<BPlusTree<String, PageId>>>,
-    /// Менеджер страниц
+    /// Page manager
     page_manager: Arc<Mutex<StoragePageManager>>,
-    /// Условия поиска
+    /// Search conditions
     search_conditions: Vec<IndexCondition>,
-    /// Текущая позиция в результате индекса
+    /// Current position in index result
     current_position: usize,
-    /// Результат поиска по индексу
+    /// Index search result
     index_result: Vec<PageId>,
-    /// Схема таблицы
+    /// Table schema
     schema: Vec<String>,
-    /// Статистика
+    /// Statistics
     statistics: OperatorStatistics,
-    /// Буфер страниц
+    /// Page buffer
     page_buffer: HashMap<PageId, Vec<u8>>,
 }
 
-/// Условие поиска по индексу
+/// Index search condition
 #[derive(Debug, Clone)]
 pub struct IndexCondition {
-    /// Имя колонки
+    /// Column name
     pub column: String,
-    /// Оператор сравнения
+    /// Comparison operator
     pub operator: IndexOperator,
-    /// Значение для сравнения
+    /// Value for comparison
     pub value: String,
 }
 
-/// Оператор сравнения для индекса
+/// Index comparison operator
 #[derive(Debug, Clone)]
 pub enum IndexOperator {
     Equal,
@@ -278,7 +278,7 @@ pub enum IndexOperator {
 }
 
 impl IndexScanOperator {
-    /// Создать новый оператор сканирования по индексу
+    /// Create new index scan operator
     pub fn new(
         table_name: String,
         index_name: String,
@@ -300,41 +300,41 @@ impl IndexScanOperator {
             page_buffer: HashMap::new(),
         };
 
-        // Выполняем поиск по индексу
+        // Perform index search
         operator.perform_index_search()?;
 
         Ok(operator)
     }
 
-    /// Выполнить поиск по индексу (упрощенная версия)
+    /// Perform index search (simplified version)
     fn perform_index_search(&mut self) -> Result<()> {
-        // Упрощенная реализация - создаем тестовые результаты
-        self.index_result = vec![1, 2, 3, 4, 5]; // Тестовые page_id
+        // Simplified implementation - create test results
+        self.index_result = vec![1, 2, 3, 4, 5]; // Test page_ids
 
         self.statistics.io_operations += 1;
         Ok(())
     }
 
-    /// Загрузить страницу в буфер (упрощенная версия)
+    /// Load page into buffer (simplified version)
     fn load_page(&mut self, page_id: PageId) -> Result<Vec<u8>> {
-        // Проверяем, есть ли страница в буфере
+        // Check if page is in buffer
         if let Some(page_data) = self.page_buffer.get(&page_id) {
             return Ok(page_data.clone());
         }
 
-        // Упрощенная реализация - создаем тестовые данные
-        let page_data = vec![0u8; 4096]; // Стандартный размер страницы
+        // Simplified implementation - create test data
+        let page_data = vec![0u8; 4096]; // Standard page size
 
-        // Добавляем в буфер
+        // Add to buffer
         self.page_buffer.insert(page_id, page_data.clone());
         self.statistics.io_operations += 1;
 
         Ok(page_data)
     }
 
-    /// Применить условия поиска к строке
+    /// Apply search conditions to row
     fn apply_search_conditions(&self, _row: &Row) -> bool {
-        // Упрощенная реализация - всегда возвращаем true
+        // Simplified implementation - always return true
         true
     }
 }
@@ -347,13 +347,13 @@ impl Operator for IndexScanOperator {
             let page_id = self.index_result[self.current_position];
             self.current_position += 1;
 
-            // Загружаем страницу
+            // Load page
             let page_data = self.load_page(page_id)?;
 
-            // Парсим строки из страницы
+            // Parse rows from page
             let rows = self.parse_page_rows(&page_data)?;
 
-            // Ищем подходящую строку
+            // Find matching row
             for row in rows {
                 self.statistics.rows_processed += 1;
 
@@ -387,12 +387,12 @@ impl Operator for IndexScanOperator {
 }
 
 impl IndexScanOperator {
-    /// Парсить строки из данных страницы
+    /// Parse rows from page data
     fn parse_page_rows(&self, _page_data: &[u8]) -> Result<Vec<Row>> {
-        // Упрощенная реализация - создаем тестовые строки
+        // Simplified implementation - create test rows
         let mut rows = Vec::new();
 
-        // Создаем несколько тестовых строк
+        // Create several test rows
         for i in 0..5 {
             let mut row = Row::new();
             for col in &self.schema {
@@ -408,20 +408,20 @@ impl IndexScanOperator {
     }
 }
 
-/// Оператор сканирования по диапазону
+/// Range scan operator
 pub struct RangeScanOperator {
-    /// Базовый оператор сканирования
+    /// Base scan operator
     base_operator: Box<dyn Operator>,
-    /// Начальное значение диапазона
+    /// Range start value
     start_value: Option<String>,
-    /// Конечное значение диапазона
+    /// Range end value
     end_value: Option<String>,
-    /// Статистика
+    /// Statistics
     statistics: OperatorStatistics,
 }
 
 impl RangeScanOperator {
-    /// Создать новый оператор сканирования по диапазону
+    /// Create new range scan operator
     pub fn new(
         base_operator: Box<dyn Operator>,
         start_value: Option<String>,
@@ -435,7 +435,7 @@ impl RangeScanOperator {
         })
     }
 
-    /// Проверить, находится ли значение в диапазоне
+    /// Check if value is in range
     fn is_in_range(&self, value: &str) -> bool {
         if let Some(start) = &self.start_value {
             if value < start.as_str() {
@@ -460,8 +460,8 @@ impl Operator for RangeScanOperator {
         while let Some(row) = self.base_operator.next()? {
             self.statistics.rows_processed += 1;
 
-            // Проверяем, находится ли первое значение строки в диапазоне
-            // Упрощенная проверка - берем версию строки как строковое значение
+            // Check if first row value is in range
+            // Simplified check - take row version as string value
             let row_value = row.version.to_string();
             if self.is_in_range(&row_value) {
                 self.statistics.rows_returned += 1;
@@ -489,18 +489,18 @@ impl Operator for RangeScanOperator {
     }
 }
 
-/// Оператор сканирования по условию
+/// Conditional scan operator
 pub struct ConditionalScanOperator {
-    /// Базовый оператор сканирования
+    /// Base scan operator
     base_operator: Box<dyn Operator>,
-    /// Условие фильтрации
+    /// Filter condition
     condition: String,
-    /// Статистика
+    /// Statistics
     statistics: OperatorStatistics,
 }
 
 impl ConditionalScanOperator {
-    /// Создать новый оператор сканирования по условию
+    /// Create new conditional scan operator
     pub fn new(base_operator: Box<dyn Operator>, condition: String) -> Result<Self> {
         Ok(Self {
             base_operator,
@@ -509,9 +509,9 @@ impl ConditionalScanOperator {
         })
     }
 
-    /// Оценить условие для строки
+    /// Evaluate condition for row
     fn evaluate_condition(&self, row: &Row) -> bool {
-        // Упрощенная реализация - проверяем наличие подстроки
+        // Simplified implementation - check for substring presence
         let row_string = format!("{:?}", row);
         row_string.contains(&self.condition)
     }
@@ -550,7 +550,7 @@ impl Operator for ConditionalScanOperator {
     }
 }
 
-/// Тип соединения
+/// Join type
 #[derive(Debug, Clone)]
 pub enum JoinType {
     /// INNER JOIN
@@ -563,18 +563,18 @@ pub enum JoinType {
     FullOuter,
 }
 
-/// Условие соединения
+/// Join condition
 #[derive(Debug, Clone)]
 pub struct JoinCondition {
-    /// Левая колонка
+    /// Left column
     pub left_column: String,
-    /// Правая колонка
+    /// Right column
     pub right_column: String,
-    /// Оператор сравнения
+    /// Comparison operator
     pub operator: JoinOperator,
 }
 
-/// Оператор сравнения для соединения
+/// Join comparison operator
 #[derive(Debug, Clone)]
 pub enum JoinOperator {
     Equal,
@@ -585,32 +585,32 @@ pub enum JoinOperator {
     GreaterThanOrEqual,
 }
 
-/// Оператор Nested Loop Join
+/// Nested Loop Join operator
 pub struct NestedLoopJoinOperator {
-    /// Левый входной оператор
+    /// Left input operator
     left_input: Box<dyn Operator>,
-    /// Правый входной оператор
+    /// Right input operator
     right_input: Box<dyn Operator>,
-    /// Условие соединения
+    /// Join condition
     join_condition: JoinCondition,
-    /// Тип соединения
+    /// Join type
     join_type: JoinType,
-    /// Текущая строка из левого входа
+    /// Current row from left input
     current_left_row: Option<Row>,
-    /// Текущая позиция в правом входе
+    /// Current position in right input
     current_right_position: usize,
-    /// Буфер для правого входа
+    /// Buffer for right input
     right_buffer: Vec<Row>,
-    /// Схема результата
+    /// Result schema
     schema: Vec<String>,
-    /// Статистика
+    /// Statistics
     statistics: OperatorStatistics,
-    /// Размер блока для block nested loop
+    /// Block size for block nested loop
     block_size: usize,
 }
 
 impl NestedLoopJoinOperator {
-    /// Создать новый оператор Nested Loop Join
+    /// Create new Nested Loop Join operator
     pub fn new(
         left_input: Box<dyn Operator>,
         right_input: Box<dyn Operator>,
@@ -621,7 +621,7 @@ impl NestedLoopJoinOperator {
         let mut left_schema = left_input.get_schema()?;
         let right_schema = right_input.get_schema()?;
 
-        // Объединяем схемы
+        // Combine schemas
         left_schema.extend(right_schema);
 
         Ok(Self {
@@ -638,12 +638,12 @@ impl NestedLoopJoinOperator {
         })
     }
 
-    /// Загрузить блок строк из правого входа
+    /// Load block of rows from right input
     fn load_right_block(&mut self) -> Result<()> {
         self.right_buffer.clear();
         self.current_right_position = 0;
 
-        // Загружаем блок строк
+        // Load block of rows
         for _ in 0..self.block_size {
             if let Some(row) = self.right_input.next()? {
                 self.right_buffer.push(row);
@@ -656,7 +656,7 @@ impl NestedLoopJoinOperator {
         Ok(())
     }
 
-    /// Проверить условие соединения
+    /// Check join condition
     fn check_join_condition(&self, left_row: &Row, right_row: &Row) -> bool {
         let left_value = left_row.get_value(&self.join_condition.left_column);
         let right_value = right_row.get_value(&self.join_condition.right_column);
@@ -682,24 +682,24 @@ impl NestedLoopJoinOperator {
         }
     }
 
-    /// Сравнить значения колонок
+    /// Compare column values
     fn compare_values(&self, left: &ColumnValue, right: &ColumnValue) -> std::cmp::Ordering {
-        // Упрощенное сравнение - сравниваем строковые представления
+        // Simplified comparison - compare string representations
         let left_str = format!("{:?}", left);
         let right_str = format!("{:?}", right);
         left_str.cmp(&right_str)
     }
 
-    /// Объединить строки
+    /// Combine rows
     fn combine_rows(&self, left_row: &Row, right_row: &Row) -> Row {
         let mut combined_row = Row::new();
 
-        // Копируем значения из левой строки
+        // Copy values from left row
         for (column, value) in &left_row.values {
             combined_row.set_value(column, value.clone());
         }
 
-        // Копируем значения из правой строки
+        // Copy values from right row
         for (column, value) in &right_row.values {
             combined_row.set_value(column, value.clone());
         }
@@ -713,15 +713,15 @@ impl Operator for NestedLoopJoinOperator {
         let start_time = std::time::Instant::now();
 
         loop {
-            // Если у нас нет текущей строки из левого входа, получаем следующую
+            // If we don't have current row from left input, get next one
             if self.current_left_row.is_none() {
                 self.current_left_row = self.left_input.next()?;
                 if self.current_left_row.is_none() {
-                    // Больше строк в левом входе нет
+                    // No more rows in left input
                     break;
                 }
 
-                // Сбрасываем правый вход для новой строки из левого входа
+                // Reset right input for new row from left input
                 self.right_input.reset()?;
                 self.load_right_block()?;
             }
@@ -729,7 +729,7 @@ impl Operator for NestedLoopJoinOperator {
             let left_row = self.current_left_row.as_ref().unwrap();
             self.statistics.rows_processed += 1;
 
-            // Проверяем строки в текущем блоке правого входа
+            // Check rows in current block of right input
             while self.current_right_position < self.right_buffer.len() {
                 let right_row = &self.right_buffer[self.current_right_position];
                 self.current_right_position += 1;
@@ -742,11 +742,11 @@ impl Operator for NestedLoopJoinOperator {
                 }
             }
 
-            // Если блок закончился, загружаем следующий
+            // If block ended, load next one
             if self.current_right_position >= self.right_buffer.len() {
                 self.load_right_block()?;
 
-                // Если больше нет строк в правом входе, переходим к следующей строке из левого
+                // If no more rows in right input, move to next row from left
                 if self.right_buffer.is_empty() {
                     self.current_left_row = None;
                 }
@@ -776,34 +776,34 @@ impl Operator for NestedLoopJoinOperator {
     }
 }
 
-/// Оператор Hash Join
+/// Hash Join operator
 pub struct HashJoinOperator {
-    /// Левый входной оператор
+    /// Left input operator
     left_input: Box<dyn Operator>,
-    /// Правый входной оператор
+    /// Right input operator
     right_input: Box<dyn Operator>,
-    /// Условие соединения
+    /// Join condition
     join_condition: JoinCondition,
-    /// Тип соединения
+    /// Join type
     join_type: JoinType,
-    /// Хеш-таблица для правого входа
+    /// Hash table for right input
     hash_table: HashMap<String, Vec<Row>>,
-    /// Текущая строка из левого входа
+    /// Current row from left input
     current_left_row: Option<Row>,
-    /// Текущая позиция в списке совпадений
+    /// Current position in match list
     current_match_position: usize,
-    /// Текущий список совпадений
+    /// Current match list
     current_matches: Vec<Row>,
-    /// Схема результата
+    /// Result schema
     schema: Vec<String>,
-    /// Статистика
+    /// Statistics
     statistics: OperatorStatistics,
-    /// Размер хеш-таблицы
+    /// Hash table size
     hash_table_size: usize,
 }
 
 impl HashJoinOperator {
-    /// Создать новый оператор Hash Join
+    /// Create new Hash Join operator
     pub fn new(
         left_input: Box<dyn Operator>,
         right_input: Box<dyn Operator>,
@@ -814,7 +814,7 @@ impl HashJoinOperator {
         let mut left_schema = left_input.get_schema()?;
         let right_schema = right_input.get_schema()?;
 
-        // Объединяем схемы
+        // Combine schemas
         left_schema.extend(right_schema);
 
         let mut operator = Self {
@@ -831,17 +831,17 @@ impl HashJoinOperator {
             hash_table_size,
         };
 
-        // Строим хеш-таблицу
+        // Build hash table
         operator.build_hash_table()?;
 
         Ok(operator)
     }
 
-    /// Построить хеш-таблицу из правого входа
+    /// Build hash table from right input
     fn build_hash_table(&mut self) -> Result<()> {
         self.hash_table.clear();
 
-        // Сканируем правый вход и строим хеш-таблицу
+        // Scan right input and build hash table
         while let Some(row) = self.right_input.next()? {
             let key = self.get_join_key(&row, &self.join_condition.right_column);
             self.hash_table
@@ -854,7 +854,7 @@ impl HashJoinOperator {
         Ok(())
     }
 
-    /// Получить ключ соединения
+    /// Get join key
     fn get_join_key(&self, row: &Row, column: &str) -> String {
         if let Some(value) = row.get_value(column) {
             format!("{:?}", value)
@@ -863,7 +863,7 @@ impl HashJoinOperator {
         }
     }
 
-    /// Проверить условие соединения
+    /// Check join condition
     fn check_join_condition(&self, left_row: &Row, right_row: &Row) -> bool {
         let left_value = left_row.get_value(&self.join_condition.left_column);
         let right_value = right_row.get_value(&self.join_condition.right_column);
@@ -889,24 +889,24 @@ impl HashJoinOperator {
         }
     }
 
-    /// Сравнить значения колонок
+    /// Compare column values
     fn compare_values(&self, left: &ColumnValue, right: &ColumnValue) -> std::cmp::Ordering {
-        // Упрощенное сравнение - сравниваем строковые представления
+        // Simplified comparison - compare string representations
         let left_str = format!("{:?}", left);
         let right_str = format!("{:?}", right);
         left_str.cmp(&right_str)
     }
 
-    /// Объединить строки
+    /// Combine rows
     fn combine_rows(&self, left_row: &Row, right_row: &Row) -> Row {
         let mut combined_row = Row::new();
 
-        // Копируем значения из левой строки
+        // Copy values from left row
         for (column, value) in &left_row.values {
             combined_row.set_value(column, value.clone());
         }
 
-        // Копируем значения из правой строки
+        // Copy values from right row
         for (column, value) in &right_row.values {
             combined_row.set_value(column, value.clone());
         }
@@ -920,15 +920,15 @@ impl Operator for HashJoinOperator {
         let start_time = std::time::Instant::now();
 
         loop {
-            // Если у нас нет текущей строки из левого входа, получаем следующую
+            // If we don't have current row from left input, get next one
             if self.current_left_row.is_none() {
                 self.current_left_row = self.left_input.next()?;
                 if self.current_left_row.is_none() {
-                    // Больше строк в левом входе нет
+                    // No more rows in left input
                     break;
                 }
 
-                // Ищем совпадения в хеш-таблице
+                // Find matches in hash table
                 let left_row = self.current_left_row.as_ref().unwrap();
                 let key = self.get_join_key(left_row, &self.join_condition.left_column);
 
@@ -939,7 +939,7 @@ impl Operator for HashJoinOperator {
             let left_row = self.current_left_row.as_ref().unwrap();
             self.statistics.rows_processed += 1;
 
-            // Проверяем совпадения
+            // Check matches
             while self.current_match_position < self.current_matches.len() {
                 let right_row = &self.current_matches[self.current_match_position];
                 self.current_match_position += 1;
@@ -952,7 +952,7 @@ impl Operator for HashJoinOperator {
                 }
             }
 
-            // Если совпадения закончились, переходим к следующей строке из левого входа
+            // If matches ended, move to next row from left input
             self.current_left_row = None;
         }
 
@@ -980,34 +980,34 @@ impl Operator for HashJoinOperator {
     }
 }
 
-/// Оператор Merge Join
+/// Merge Join operator
 pub struct MergeJoinOperator {
-    /// Левый входной оператор
+    /// Left input operator
     left_input: Box<dyn Operator>,
-    /// Правый входной оператор
+    /// Right input operator
     right_input: Box<dyn Operator>,
-    /// Условие соединения
+    /// Join condition
     join_condition: JoinCondition,
-    /// Тип соединения
+    /// Join type
     join_type: JoinType,
-    /// Текущая строка из левого входа
+    /// Current row from left input
     current_left_row: Option<Row>,
-    /// Текущая строка из правого входа
+    /// Current row from right input
     current_right_row: Option<Row>,
-    /// Буфер для строк с одинаковыми ключами
+    /// Buffer for rows with same keys
     left_buffer: Vec<Row>,
     right_buffer: Vec<Row>,
-    /// Позиции в буферах
+    /// Positions in buffers
     left_buffer_pos: usize,
     right_buffer_pos: usize,
-    /// Схема результата
+    /// Result schema
     schema: Vec<String>,
-    /// Статистика
+    /// Statistics
     statistics: OperatorStatistics,
 }
 
 impl MergeJoinOperator {
-    /// Создать новый оператор Merge Join
+    /// Create new Merge Join operator
     pub fn new(
         left_input: Box<dyn Operator>,
         right_input: Box<dyn Operator>,
@@ -1017,7 +1017,7 @@ impl MergeJoinOperator {
         let mut left_schema = left_input.get_schema()?;
         let right_schema = right_input.get_schema()?;
 
-        // Объединяем схемы
+        // Combine schemas
         left_schema.extend(right_schema);
 
         Ok(Self {
@@ -1036,7 +1036,7 @@ impl MergeJoinOperator {
         })
     }
 
-    /// Получить ключ соединения
+    /// Get join key
     fn get_join_key(&self, row: &Row, column: &str) -> String {
         if let Some(value) = row.get_value(column) {
             format!("{:?}", value)
@@ -1045,19 +1045,19 @@ impl MergeJoinOperator {
         }
     }
 
-    /// Сравнить ключи соединения
+    /// Compare join keys
     fn compare_keys(&self, left_key: &str, right_key: &str) -> std::cmp::Ordering {
         left_key.cmp(right_key)
     }
 
-    /// Загрузить строки с одинаковыми ключами в буферы
+    /// Load rows with same keys into buffers
     fn load_matching_keys(&mut self) -> Result<()> {
         self.left_buffer.clear();
         self.right_buffer.clear();
         self.left_buffer_pos = 0;
         self.right_buffer_pos = 0;
 
-        // Получаем текущие строки
+        // Get current rows
         if self.current_left_row.is_none() {
             self.current_left_row = self.left_input.next()?;
         }
@@ -1072,10 +1072,10 @@ impl MergeJoinOperator {
 
             match self.compare_keys(&left_key, &right_key) {
                 std::cmp::Ordering::Equal => {
-                    // Загружаем все строки с одинаковыми ключами
+                    // Load all rows with same keys
                     let target_key = left_key.clone();
 
-                    // Загружаем строки из левого входа
+                    // Load rows from left input
                     while let Some(row) = &self.current_left_row {
                         let key = self.get_join_key(row, &self.join_condition.left_column);
                         if key == target_key {
@@ -1086,7 +1086,7 @@ impl MergeJoinOperator {
                         }
                     }
 
-                    // Загружаем строки из правого входа
+                    // Load rows from right input
                     while let Some(row) = &self.current_right_row {
                         let key = self.get_join_key(row, &self.join_condition.right_column);
                         if key == target_key {
@@ -1098,11 +1098,11 @@ impl MergeJoinOperator {
                     }
                 }
                 std::cmp::Ordering::Less => {
-                    // Левая строка меньше, переходим к следующей левой
+                    // Left row is less, move to next left row
                     self.current_left_row = self.left_input.next()?;
                 }
                 std::cmp::Ordering::Greater => {
-                    // Правая строка меньше, переходим к следующей правой
+                    // Right row is less, move to next right row
                     self.current_right_row = self.right_input.next()?;
                 }
             }
@@ -1111,16 +1111,16 @@ impl MergeJoinOperator {
         Ok(())
     }
 
-    /// Объединить строки
+    /// Combine rows
     fn combine_rows(&self, left_row: &Row, right_row: &Row) -> Row {
         let mut combined_row = Row::new();
 
-        // Копируем значения из левой строки
+        // Copy values from left row
         for (column, value) in &left_row.values {
             combined_row.set_value(column, value.clone());
         }
 
-        // Копируем значения из правой строки
+        // Copy values from right row
         for (column, value) in &right_row.values {
             combined_row.set_value(column, value.clone());
         }
@@ -1134,13 +1134,13 @@ impl Operator for MergeJoinOperator {
         let start_time = std::time::Instant::now();
 
         loop {
-            // Если буферы пусты, загружаем новые совпадающие ключи
+            // If buffers are empty, load new matching keys
             if self.left_buffer_pos >= self.left_buffer.len()
                 || self.right_buffer_pos >= self.right_buffer.len()
             {
                 self.load_matching_keys()?;
 
-                // Если больше нет данных, завершаем
+                // If no more data, finish
                 if self.left_buffer.is_empty() || self.right_buffer.is_empty() {
                     if self.current_left_row.is_none() && self.current_right_row.is_none() {
                         break;
@@ -1149,7 +1149,7 @@ impl Operator for MergeJoinOperator {
                 }
             }
 
-            // Возвращаем следующую комбинацию строк
+            // Return next combination of rows
             let left_row = &self.left_buffer[self.left_buffer_pos];
             let right_row = &self.right_buffer[self.right_buffer_pos];
 
@@ -1159,7 +1159,7 @@ impl Operator for MergeJoinOperator {
             self.statistics.rows_returned += 1;
             self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
 
-            // Переходим к следующей комбинации
+            // Move to next combination
             self.right_buffer_pos += 1;
             if self.right_buffer_pos >= self.right_buffer.len() {
                 self.right_buffer_pos = 0;
@@ -1195,16 +1195,16 @@ impl Operator for MergeJoinOperator {
     }
 }
 
-/// Фабрика для создания операторов сканирования
+/// Factory for creating scan operators
 pub struct ScanOperatorFactory {
-    /// Менеджер страниц
+    /// Page manager
     page_manager: Arc<Mutex<StoragePageManager>>,
-    /// Индексы для таблиц
+    /// Indexes for tables
     indexes: HashMap<String, Arc<Mutex<BPlusTree<String, PageId>>>>,
 }
 
 impl ScanOperatorFactory {
-    /// Создать новую фабрику операторов сканирования
+    /// Create new scan operator factory
     pub fn new(page_manager: Arc<Mutex<StoragePageManager>>) -> Self {
         Self {
             page_manager,
@@ -1212,12 +1212,12 @@ impl ScanOperatorFactory {
         }
     }
 
-    /// Добавить индекс для таблицы
+    /// Add index for table
     pub fn add_index(&mut self, table_name: String, index: Arc<Mutex<BPlusTree<String, PageId>>>) {
         self.indexes.insert(table_name, index);
     }
 
-    /// Создать оператор сканирования таблицы
+    /// Create table scan operator
     pub fn create_table_scan(
         &self,
         table_name: String,
@@ -1229,7 +1229,7 @@ impl ScanOperatorFactory {
         Ok(Box::new(operator))
     }
 
-    /// Создать оператор сканирования по диапазону
+    /// Create range scan operator
     pub fn create_range_scan(
         &self,
         base_operator: Box<dyn Operator>,
@@ -1240,7 +1240,7 @@ impl ScanOperatorFactory {
         Ok(Box::new(operator))
     }
 
-    /// Создать оператор сканирования с условием
+    /// Create conditional scan operator
     pub fn create_conditional_scan(
         &self,
         base_operator: Box<dyn Operator>,
@@ -1250,7 +1250,7 @@ impl ScanOperatorFactory {
         Ok(Box::new(operator))
     }
 
-    /// Создать оператор сканирования по индексу
+    /// Create index scan operator
     pub fn create_index_scan(
         &self,
         table_name: String,
@@ -1269,12 +1269,12 @@ impl ScanOperatorFactory {
             )?;
             Ok(Box::new(operator))
         } else {
-            Err(Error::query_execution("Индекс не найден для таблицы"))
+            Err(Error::query_execution("Index not found for table"))
         }
     }
 }
 
-/// Тип агрегатной функции
+/// Aggregate function type
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AggregateFunction {
     Count,
@@ -1285,37 +1285,37 @@ pub enum AggregateFunction {
     CountDistinct,
 }
 
-/// Группа для агрегации
+/// Aggregate group
 #[derive(Debug, Clone)]
 pub struct AggregateGroup {
-    /// Ключи группировки
+    /// Grouping keys
     pub keys: Vec<ColumnValue>,
-    /// Значения агрегатных функций
+    /// Aggregate function values
     pub aggregates: Vec<ColumnValue>,
-    /// Количество строк в группе
+    /// Number of rows in group
     pub count: usize,
 }
 
-/// Упрощенный оператор группировки (демонстрационная версия)
+/// Simplified grouping operator (demonstration version)
 pub struct HashGroupByOperator {
-    /// Входной оператор
+    /// Input operator
     input: Box<dyn Operator>,
-    /// Ключи группировки (индексы колонок)
+    /// Grouping keys (column indices)
     group_keys: Vec<usize>,
-    /// Агрегатные функции
+    /// Aggregate functions
     aggregate_functions: Vec<(AggregateFunction, usize)>,
-    /// Схема результата
+    /// Result schema
     result_schema: Vec<String>,
-    /// Статистика
+    /// Statistics
     statistics: OperatorStatistics,
-    /// Обработанные результаты
+    /// Processed results
     results: Vec<Row>,
-    /// Текущий индекс
+    /// Current index
     current_index: usize,
 }
 
 impl HashGroupByOperator {
-    /// Создать новый оператор группировки
+    /// Create new grouping operator
     pub fn new(
         input: Box<dyn Operator>,
         group_keys: Vec<usize>,
@@ -1333,19 +1333,19 @@ impl HashGroupByOperator {
         })
     }
 
-    /// Обработать входные данные (упрощенная версия)
+    /// Process input data (simplified version)
     fn process_input(&mut self) -> Result<()> {
-        // Читаем все строки из входного оператора
+        // Read all rows from input operator
         while let Some(_row) = self.input.next()? {
             self.statistics.rows_processed += 1;
 
-            // Создаем упрощенный результат группировки
+            // Create simplified grouping result
             let mut result_tuple = Tuple::new(self.results.len() as u64);
 
-            // Добавляем ключи группировки (используем первые несколько колонок)
+            // Add grouping keys (use first few columns)
             for (i, &key_index) in self.group_keys.iter().enumerate() {
                 if key_index < 4 {
-                    // Ограничиваем для демонстрации
+                    // Limit for demonstration
                     result_tuple.set_value(
                         &format!("key_{}", i),
                         ColumnValue::new(DataType::Integer(i as i32)),
@@ -1353,7 +1353,7 @@ impl HashGroupByOperator {
                 }
             }
 
-            // Добавляем агрегатные функции (демонстрационные значения)
+            // Add aggregate functions (demonstration values)
             for (i, (function, _)) in self.aggregate_functions.iter().enumerate() {
                 match function {
                     AggregateFunction::Count => {
@@ -1405,12 +1405,12 @@ impl HashGroupByOperator {
 
 impl Operator for HashGroupByOperator {
     fn next(&mut self) -> Result<Option<Row>> {
-        // Если это первый вызов, обрабатываем входные данные
+        // If this is first call, process input data
         if self.results.is_empty() && self.current_index == 0 {
             self.process_input()?;
         }
 
-        // Возвращаем следующую группу
+        // Return next group
         if self.current_index < self.results.len() {
             let row = self.results[self.current_index].clone();
             self.current_index += 1;
@@ -1438,26 +1438,26 @@ impl Operator for HashGroupByOperator {
     }
 }
 
-/// Упрощенный оператор сортировки (демонстрационная версия)
+/// Simplified sort operator (demonstration version)
 pub struct SortOperator {
-    /// Входной оператор
+    /// Input operator
     input: Box<dyn Operator>,
-    /// Индексы колонок для сортировки
+    /// Column indices for sorting
     sort_columns: Vec<usize>,
-    /// Направление сортировки (true = ASC, false = DESC)
+    /// Sort direction (true = ASC, false = DESC)
     sort_directions: Vec<bool>,
-    /// Схема результата
+    /// Result schema
     result_schema: Vec<String>,
-    /// Статистика
+    /// Statistics
     statistics: OperatorStatistics,
-    /// Отсортированные строки
+    /// Sorted rows
     sorted_rows: Vec<Row>,
-    /// Текущий индекс
+    /// Current index
     current_index: usize,
 }
 
 impl SortOperator {
-    /// Создать новый оператор сортировки
+    /// Create new sort operator
     pub fn new(
         input: Box<dyn Operator>,
         sort_columns: Vec<usize>,
@@ -1466,7 +1466,7 @@ impl SortOperator {
     ) -> Result<Self> {
         if sort_columns.len() != sort_directions.len() {
             return Err(Error::QueryExecution {
-                message: "Количество колонок и направлений сортировки не совпадает".to_string(),
+                message: "Number of columns and sort directions does not match".to_string(),
             });
         }
 
@@ -1481,17 +1481,17 @@ impl SortOperator {
         })
     }
 
-    /// Загрузить и отсортировать все строки (упрощенная версия)
+    /// Load and sort all rows (simplified version)
     fn load_and_sort(&mut self) -> Result<()> {
         let mut rows = Vec::new();
 
-        // Читаем все строки из входного оператора
+        // Read all rows from input operator
         while let Some(row) = self.input.next()? {
             rows.push(row);
             self.statistics.rows_processed += 1;
         }
 
-        // Простая сортировка по версии (демонстрационная версия)
+        // Simple sort by version (demonstration version)
         rows.sort_by(|a, b| a.version.cmp(&b.version));
 
         self.sorted_rows = rows;
@@ -1503,12 +1503,12 @@ impl SortOperator {
 
 impl Operator for SortOperator {
     fn next(&mut self) -> Result<Option<Row>> {
-        // Если это первый вызов, загружаем и сортируем данные
+        // If this is first call, load and sort data
         if self.sorted_rows.is_empty() && self.current_index == 0 {
             self.load_and_sort()?;
         }
 
-        // Возвращаем следующую строку
+        // Return next row
         if self.current_index < self.sorted_rows.len() {
             let row = self.sorted_rows[self.current_index].clone();
             self.current_index += 1;
@@ -1536,26 +1536,26 @@ impl Operator for SortOperator {
     }
 }
 
-/// Упрощенный оператор сортировки-группировки (демонстрационная версия)
+/// Simplified sort-grouping operator (demonstration version)
 pub struct SortGroupByOperator {
-    /// Входной оператор
+    /// Input operator
     input: Box<dyn Operator>,
-    /// Ключи группировки (индексы колонок)
+    /// Grouping keys (column indices)
     group_keys: Vec<usize>,
-    /// Агрегатные функции
+    /// Aggregate functions
     aggregate_functions: Vec<(AggregateFunction, usize)>,
-    /// Схема результата
+    /// Result schema
     result_schema: Vec<String>,
-    /// Статистика
+    /// Statistics
     statistics: OperatorStatistics,
-    /// Результаты групп
+    /// Group results
     group_results: Vec<Row>,
-    /// Индекс результата
+    /// Result index
     result_index: usize,
 }
 
 impl SortGroupByOperator {
-    /// Создать новый оператор сортировки-группировки
+    /// Create new sort-grouping operator
     pub fn new(
         input: Box<dyn Operator>,
         group_keys: Vec<usize>,
@@ -1573,22 +1573,22 @@ impl SortGroupByOperator {
         })
     }
 
-    /// Загрузить и обработать данные (упрощенная версия)
+    /// Load and process data (simplified version)
     fn load_and_process(&mut self) -> Result<()> {
         let mut rows = Vec::new();
 
-        // Читаем все строки из входного оператора
+        // Read all rows from input operator
         while let Some(row) = self.input.next()? {
             rows.push(row);
             self.statistics.rows_processed += 1;
         }
 
-        // Создаем демонстрационные результаты групп
+        // Create demonstration group results
         for (i, _) in rows.iter().enumerate().take(3) {
-            // Ограничиваем для демонстрации
+            // Limit for demonstration
             let mut result_tuple = Tuple::new(i as u64);
 
-            // Добавляем ключи группировки
+            // Add grouping keys
             for (j, &key_index) in self.group_keys.iter().enumerate() {
                 if key_index < 4 {
                     result_tuple.set_value(
@@ -1598,7 +1598,7 @@ impl SortGroupByOperator {
                 }
             }
 
-            // Добавляем агрегатные функции
+            // Add aggregate functions
             for (j, (function, _)) in self.aggregate_functions.iter().enumerate() {
                 match function {
                     AggregateFunction::Count => {
@@ -1650,12 +1650,12 @@ impl SortGroupByOperator {
 
 impl Operator for SortGroupByOperator {
     fn next(&mut self) -> Result<Option<Row>> {
-        // Если это первый вызов, загружаем и обрабатываем данные
+        // If this is first call, load and process data
         if self.group_results.is_empty() && self.result_index == 0 {
             self.load_and_process()?;
         }
 
-        // Возвращаем следующий результат группы
+        // Return next group result
         if self.result_index < self.group_results.len() {
             let row = self.group_results[self.result_index].clone();
             self.result_index += 1;
@@ -1683,11 +1683,11 @@ impl Operator for SortGroupByOperator {
     }
 }
 
-/// Фабрика для создания операторов агрегации и сортировки
+/// Factory for creating aggregation and sort operators
 pub struct AggregationSortOperatorFactory;
 
 impl AggregationSortOperatorFactory {
-    /// Создать оператор группировки
+    /// Create grouping operator
     pub fn create_group_by(
         input: Box<dyn Operator>,
         group_keys: Vec<usize>,
@@ -1712,7 +1712,7 @@ impl AggregationSortOperatorFactory {
         }
     }
 
-    /// Создать оператор сортировки
+    /// Create sort operator
     pub fn create_sort(
         input: Box<dyn Operator>,
         sort_columns: Vec<usize>,

@@ -1,4 +1,4 @@
-//! Тесты для LogWriter
+//! LogWriter tests
 
 use crate::logging::log_record::{LogOperationData, LogPriority, LogRecord, LogRecordType};
 use crate::logging::log_writer::{LogFileInfo, LogWriter, LogWriterConfig, SyncLevel};
@@ -50,14 +50,14 @@ async fn test_log_writer_write() {
     };
 
     let result = writer.write_log(record).await;
-    assert!(result.is_ok() || result.is_err()); // Может быть ошибка из-за отсутствия директории
+    assert!(result.is_ok() || result.is_err()); // May fail if directory is missing
 }
 
 #[tokio::test]
 async fn test_log_writer_file_rotation() {
     let config = LogWriterConfig {
         log_directory: PathBuf::from("test_logs"),
-        max_log_file_size: 1024, // 1KB для быстрой ротации
+        max_log_file_size: 1024, // 1 KB to trigger rotation quickly
         max_log_files: 3,
         write_buffer_size: 10,
         max_buffer_time: std::time::Duration::from_secs(1),
@@ -69,7 +69,7 @@ async fn test_log_writer_file_rotation() {
 
     let writer = LogWriter::new(config).unwrap();
 
-    // Записываем много записей для триггера ротации
+    // Write many records to trigger rotation
     for i in 1..=100 {
         let record = LogRecord {
             lsn: i,
@@ -150,7 +150,7 @@ async fn test_log_writer_buffer_management() {
 
     let writer = LogWriter::new(config).unwrap();
 
-    // Записываем несколько записей в буфер
+    // Write several records into the buffer
     for i in 1..=10 {
         let record = LogRecord {
             lsn: i,
@@ -168,7 +168,7 @@ async fn test_log_writer_buffer_management() {
         let _ = writer.write_log(record).await;
     }
 
-    // Проверяем статистику
+    // Inspect statistics
     let stats = writer.get_statistics();
     assert!(stats.total_records_written <= 10);
 }

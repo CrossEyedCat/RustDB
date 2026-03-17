@@ -1,6 +1,6 @@
-//! Расширенная система восстановления базы данных
+//! Advanced database recovery system
 //!
-//! Обеспечивает полное восстановление после сбоев с использованием WAL
+//! Provides complete recovery after failures using WAL
 
 use crate::common::{Error, Result};
 use crate::core::transaction::TransactionId;
@@ -11,90 +11,90 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Состояние транзакции при восстановлении
+/// Transaction state during recovery
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecoveryTransactionState {
-    /// Активна
+    /// Active
     Active,
-    /// Подготовлена (2PC)
+    /// Prepared (2PC)
     Prepared,
-    /// Зафиксирована
+    /// Committed
     Committed,
-    /// Откачена
+    /// Aborted
     Aborted,
 }
 
-/// Информация о транзакции для восстановления
+/// Transaction information for recovery
 #[derive(Debug, Clone)]
 pub struct RecoveryTransactionInfo {
-    /// ID транзакции
+    /// Transaction ID
     pub transaction_id: TransactionId,
-    /// Состояние
+    /// State
     pub state: RecoveryTransactionState,
-    /// Первый LSN
+    /// First LSN
     pub first_lsn: LogSequenceNumber,
-    /// Последний LSN
+    /// Last LSN
     pub last_lsn: LogSequenceNumber,
-    /// Операции транзакции
+    /// Transaction operations
     pub operations: Vec<LogRecord>,
-    /// Изменённые страницы
+    /// Modified pages
     pub dirty_pages: HashSet<(u32, u64)>, // (file_id, page_id)
 }
 
-/// Результат анализа логов
+/// Log analysis result
 #[derive(Debug, Clone)]
 pub struct AnalysisResult {
-    /// Последний LSN
+    /// Last LSN
     pub last_lsn: LogSequenceNumber,
-    /// Контрольная точка
+    /// Checkpoint
     pub checkpoint_lsn: Option<LogSequenceNumber>,
-    /// Активные транзакции
+    /// Active transactions
     pub active_transactions: HashMap<TransactionId, RecoveryTransactionInfo>,
-    /// Зафиксированные транзакции
+    /// Committed transactions
     pub committed_transactions: HashMap<TransactionId, RecoveryTransactionInfo>,
-    /// Откаченные транзакции
+    /// Aborted transactions
     pub aborted_transactions: HashMap<TransactionId, RecoveryTransactionInfo>,
-    /// Все изменённые страницы
+    /// All modified pages
     pub dirty_pages: HashSet<(u32, u64)>,
-    /// Всего записей
+    /// Total records
     pub total_records: u64,
 }
 
-/// Статистика восстановления
+/// Recovery statistics
 #[derive(Debug, Clone, Default)]
 pub struct RecoveryStatistics {
-    /// Всего лог-файлов
+    /// Total log files
     pub log_files_processed: u32,
-    /// Всего записей
+    /// Total records
     pub total_records: u64,
-    /// Операций REDO
+    /// REDO operations
     pub redo_operations: u64,
-    /// Операций UNDO
+    /// UNDO operations
     pub undo_operations: u64,
-    /// Восстановлено транзакций
+    /// Recovered transactions
     pub recovered_transactions: u64,
-    /// Откачено транзакций
+    /// Rolled back transactions
     pub rolled_back_transactions: u64,
-    /// Восстановлено страниц
+    /// Recovered pages
     pub recovered_pages: u64,
-    /// Время восстановления (мс)
+    /// Recovery time (ms)
     pub recovery_time_ms: u64,
-    /// Ошибки восстановления
+    /// Recovery errors
     pub recovery_errors: u64,
 }
 
-/// Конфигурация восстановления
+/// Recovery configuration
 #[derive(Debug, Clone)]
 pub struct RecoveryConfig {
-    /// Максимальное время восстановления
+    /// Maximum recovery time
     pub max_recovery_time: Duration,
-    /// Включить параллельное восстановление
+    /// Enable parallel recovery
     pub enable_parallel: bool,
-    /// Количество потоков
+    /// Number of threads
     pub num_threads: usize,
-    /// Создать резервную копию перед восстановлением
+    /// Create backup before recovery
     pub create_backup: bool,
-    /// Включить валидацию после восстановления
+    /// Enable validation after recovery
     pub enable_validation: bool,
 }
 
@@ -110,18 +110,18 @@ impl Default for RecoveryConfig {
     }
 }
 
-/// Расширенный менеджер восстановления
+/// Advanced recovery manager
 pub struct AdvancedRecoveryManager {
-    /// Конфигурация
+    /// Configuration
     config: RecoveryConfig,
-    /// Статистика
+    /// Statistics
     statistics: Arc<Mutex<RecoveryStatistics>>,
     /// WAL
     wal: Option<Arc<WriteAheadLog>>,
 }
 
 impl AdvancedRecoveryManager {
-    /// Создаёт новый менеджер восстановления
+    /// Creates a new recovery manager
     pub fn new(config: RecoveryConfig) -> Self {
         Self {
             config,
@@ -130,19 +130,19 @@ impl AdvancedRecoveryManager {
         }
     }
 
-    /// Устанавливает WAL
+    /// Sets WAL
     pub fn set_wal(&mut self, wal: Arc<WriteAheadLog>) {
         self.wal = Some(wal);
     }
 
-    /// Проверяет, требуется ли восстановление
+    /// Checks if recovery is needed
     pub fn needs_recovery(&self, log_directory: &Path) -> bool {
-        // Проверяем наличие незавершенных транзакций
+        // Check for uncommitted transactions
         if !log_directory.exists() {
             return false;
         }
 
-        // Проверяем наличие лог-файлов
+        // Check for log files
         if let Ok(entries) = std::fs::read_dir(log_directory) {
             for entry in entries.flatten() {
                 if entry.path().extension().and_then(|s| s.to_str()) == Some("log") {
@@ -154,38 +154,38 @@ impl AdvancedRecoveryManager {
         false
     }
 
-    /// Выполняет восстановление базы данных
+    /// Performs database recovery
     pub fn recover(&mut self, log_directory: &Path) -> Result<RecoveryStatistics> {
         let start_time = Instant::now();
 
-        println!("🔄 Начинаем восстановление базы данных...");
+        println!("🔄 Starting database recovery...");
 
-        // Этап 1: Анализ логов
-        println!("📊 Этап 1: Анализ лог-файлов");
+        // Stage 1: Log analysis
+        println!("📊 Stage 1: Log file analysis");
         let analysis_result = self.analyze_logs(log_directory)?;
 
         println!(
-            "   ✅ Обработано {} лог-записей",
+            "   ✅ Processed {} log records",
             analysis_result.total_records
         );
         println!(
-            "   ✅ Активных транзакций: {}",
+            "   ✅ Active transactions: {}",
             analysis_result.active_transactions.len()
         );
         println!(
-            "   ✅ Зафиксированных: {}",
+            "   ✅ Committed: {}",
             analysis_result.committed_transactions.len()
         );
 
-        // Этап 2: REDO
-        println!("🔄 Этап 2: Восстановление зафиксированных транзакций (REDO)");
+        // Stage 2: REDO
+        println!("🔄 Stage 2: Restoring committed transactions (REDO)");
         self.perform_redo(&analysis_result)?;
 
-        // Этап 3: UNDO
-        println!("↩️  Этап 3: Откат незавершённых транзакций (UNDO)");
+        // Stage 3: UNDO
+        println!("↩️  Stage 3: Rolling back uncommitted transactions (UNDO)");
         self.perform_undo(&analysis_result)?;
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self.statistics.lock().unwrap();
             stats.recovery_time_ms = start_time.elapsed().as_millis() as u64;
@@ -193,14 +193,14 @@ impl AdvancedRecoveryManager {
         }
 
         println!(
-            "✅ Восстановление завершено за {} мс",
+            "✅ Recovery completed in {} ms",
             start_time.elapsed().as_millis()
         );
 
         Ok(self.get_statistics())
     }
 
-    /// Анализирует лог-файлы
+    /// Analyzes log files
     fn analyze_logs(&mut self, log_directory: &Path) -> Result<AnalysisResult> {
         let mut result = AnalysisResult {
             last_lsn: 0,
@@ -212,7 +212,7 @@ impl AdvancedRecoveryManager {
             total_records: 0,
         };
 
-        // Получаем лог-файлы
+        // Get log files
         let log_files = self.get_log_files(log_directory)?;
 
         {
@@ -220,9 +220,9 @@ impl AdvancedRecoveryManager {
             stats.log_files_processed = log_files.len() as u32;
         }
 
-        // Обрабатываем каждый файл
+        // Process each file
         for file_path in log_files {
-            println!("   📖 Обрабатываем: {:?}", file_path.file_name());
+            println!("   📖 Processing: {:?}", file_path.file_name());
 
             let records = self.read_log_file(&file_path)?;
 
@@ -232,12 +232,12 @@ impl AdvancedRecoveryManager {
             }
         }
 
-        println!("   📍 Последний LSN: {}", result.last_lsn);
+        println!("   📍 Last LSN: {}", result.last_lsn);
 
         Ok(result)
     }
 
-    /// Получает список лог-файлов
+    /// Gets list of log files
     fn get_log_files(&self, log_directory: &Path) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
 
@@ -246,7 +246,7 @@ impl AdvancedRecoveryManager {
         }
 
         let entries = std::fs::read_dir(log_directory)
-            .map_err(|e| Error::internal(format!("Не удалось прочитать директорию: {}", e)))?;
+            .map_err(|e| Error::internal(format!("Failed to read directory: {}", e)))?;
 
         for entry in entries.flatten() {
             let path = entry.path();
@@ -255,35 +255,35 @@ impl AdvancedRecoveryManager {
             }
         }
 
-        // Сортируем по имени файла (предполагается формат с timestamp)
+        // Sort by file name (assuming format with timestamp)
         files.sort();
 
         Ok(files)
     }
 
-    /// Читает лог-записи из файла
+    /// Reads log records from file
     fn read_log_file(&self, file_path: &Path) -> Result<Vec<LogRecord>> {
-        // Симуляция чтения - в реальности читаем и десериализуем из файла
-        // TODO: Интеграция с реальным форматом WAL
+        // Simulation - in reality read and deserialize from file
+        // TODO: Integration with real WAL format
         Ok(Vec::new())
     }
 
-    /// Обрабатывает одну лог-запись
+    /// Processes one log record
     fn process_record(&mut self, result: &mut AnalysisResult, record: LogRecord) -> Result<()> {
-        // Обновляем последний LSN
+        // Update last LSN
         if record.lsn > result.last_lsn {
             result.last_lsn = record.lsn;
         }
 
-        // Проверяем, есть ли transaction_id
+        // Check if transaction_id exists
         let tx_id = match record.transaction_id {
             Some(id) => TransactionId::new(id),
-            None => return Ok(()), // Пропускаем записи без транзакции
+            None => return Ok(()), // Skip records without transaction
         };
 
         match record.record_type {
             LogRecordType::TransactionBegin => {
-                // Начало транзакции
+                // Transaction begin
                 let tx_info = RecoveryTransactionInfo {
                     transaction_id: tx_id,
                     state: RecoveryTransactionState::Active,
@@ -296,7 +296,7 @@ impl AdvancedRecoveryManager {
             }
 
             LogRecordType::TransactionCommit => {
-                // Фиксация транзакции
+                // Transaction commit
                 if let Some(mut tx_info) = result.active_transactions.remove(&tx_id) {
                     tx_info.state = RecoveryTransactionState::Committed;
                     tx_info.last_lsn = record.lsn;
@@ -308,7 +308,7 @@ impl AdvancedRecoveryManager {
             }
 
             LogRecordType::TransactionAbort => {
-                // Откат транзакции
+                // Transaction abort
                 if let Some(mut tx_info) = result.active_transactions.remove(&tx_id) {
                     tx_info.state = RecoveryTransactionState::Aborted;
                     tx_info.last_lsn = record.lsn;
@@ -319,7 +319,7 @@ impl AdvancedRecoveryManager {
             }
 
             LogRecordType::DataInsert | LogRecordType::DataUpdate | LogRecordType::DataDelete => {
-                // Операция с данными
+                // Data operation
                 if let Some(tx_info) = result.active_transactions.get_mut(&tx_id) {
                     tx_info.last_lsn = record.lsn;
                     tx_info.operations.push(record.clone());
@@ -327,23 +327,23 @@ impl AdvancedRecoveryManager {
             }
 
             LogRecordType::Checkpoint => {
-                // Контрольная точка
+                // Checkpoint
                 result.checkpoint_lsn = Some(record.lsn);
             }
 
             _ => {
-                // Другие типы записей
+                // Other record types
             }
         }
 
         Ok(())
     }
 
-    /// Выполняет операции REDO
+    /// Performs REDO operations
     fn perform_redo(&mut self, analysis: &AnalysisResult) -> Result<()> {
         let mut redo_count = 0;
 
-        // Собираем все операции из зафиксированных транзакций
+        // Collect all operations from committed transactions
         let mut operations: BTreeMap<LogSequenceNumber, &LogRecord> = BTreeMap::new();
 
         for tx_info in analysis.committed_transactions.values() {
@@ -359,13 +359,13 @@ impl AdvancedRecoveryManager {
             }
         }
 
-        // Применяем в порядке LSN
+        // Apply in LSN order
         for (lsn, operation) in operations {
             self.apply_redo_operation(operation)?;
             redo_count += 1;
 
             if redo_count % 100 == 0 {
-                println!("   📝 REDO: {} операций", redo_count);
+                println!("   📝 REDO: {} operations", redo_count);
             }
         }
 
@@ -376,20 +376,20 @@ impl AdvancedRecoveryManager {
             stats.recovered_pages = analysis.dirty_pages.len() as u64;
         }
 
-        println!("   ✅ Выполнено {} операций REDO", redo_count);
+        println!("   ✅ Performed {} REDO operations", redo_count);
 
         Ok(())
     }
 
-    /// Выполняет операции UNDO
+    /// Performs UNDO operations
     fn perform_undo(&mut self, analysis: &AnalysisResult) -> Result<()> {
         let mut undo_count = 0;
 
-        // Откатываем активные транзакции (в обратном порядке)
+        // Rollback active transactions (in reverse order)
         for tx_info in analysis.active_transactions.values() {
-            println!("   ↩️  Откатываем транзакцию TXN{}", tx_info.transaction_id);
+            println!("   ↩️  Rolling back transaction TXN{}", tx_info.transaction_id);
 
-            // Операции в обратном порядке
+            // Operations in reverse order
             for operation in tx_info.operations.iter().rev() {
                 if matches!(
                     operation.record_type,
@@ -409,68 +409,68 @@ impl AdvancedRecoveryManager {
             stats.rolled_back_transactions = analysis.active_transactions.len() as u64;
         }
 
-        println!("   ✅ Выполнено {} операций UNDO", undo_count);
+        println!("   ✅ Performed {} UNDO operations", undo_count);
 
         Ok(())
     }
 
-    /// Применяет одну операцию REDO
+    /// Applies one REDO operation
     fn apply_redo_operation(&self, operation: &LogRecord) -> Result<()> {
         match operation.record_type {
             LogRecordType::DataInsert => {
-                // Повторяем INSERT
-                // TODO: Интеграция с storage для реального применения
+                // Repeat INSERT
+                // TODO: Integration with storage for real application
                 Ok(())
             }
             LogRecordType::DataUpdate => {
-                // Повторяем UPDATE
-                // TODO: Интеграция с storage для реального применения
+                // Repeat UPDATE
+                // TODO: Integration with storage for real application
                 Ok(())
             }
             LogRecordType::DataDelete => {
-                // Повторяем DELETE
-                // TODO: Интеграция с storage для реального применения
+                // Repeat DELETE
+                // TODO: Integration with storage for real application
                 Ok(())
             }
             _ => Ok(()),
         }
     }
 
-    /// Применяет одну операцию UNDO
+    /// Applies one UNDO operation
     fn apply_undo_operation(&self, operation: &LogRecord) -> Result<()> {
         match operation.record_type {
             LogRecordType::DataInsert => {
-                // Для INSERT делаем DELETE
-                // TODO: Интеграция с storage
+                // For INSERT do DELETE
+                // TODO: Integration with storage
                 Ok(())
             }
             LogRecordType::DataUpdate => {
-                // Для UPDATE восстанавливаем старые данные
-                // TODO: Интеграция с storage
+                // For UPDATE restore old data
+                // TODO: Integration with storage
                 Ok(())
             }
             LogRecordType::DataDelete => {
-                // Для DELETE восстанавливаем удалённые данные
-                // TODO: Интеграция с storage
+                // For DELETE restore deleted data
+                // TODO: Integration with storage
                 Ok(())
             }
             _ => Ok(()),
         }
     }
 
-    /// Создаёт резервную копию перед восстановлением
+    /// Creates backup before recovery
     pub fn create_backup(&self, source_dir: &Path, backup_dir: &Path) -> Result<()> {
         if !self.config.create_backup {
             return Ok(());
         }
 
-        println!("💾 Создание резервной копии...");
+        println!("💾 Creating backup...");
 
-        // Создаём директорию для backup
+        // Create backup directory
         std::fs::create_dir_all(backup_dir)
-            .map_err(|e| Error::internal(format!("Не удалось создать директорию backup: {}", e)))?;
+            .map_err(|e| Error::internal(format!("Failed to create backup directory: {}", e)))?;
 
-        // Копируем файлы
+        // Copy files
         let mut copied_files = 0;
 
         if let Ok(entries) = std::fs::read_dir(source_dir) {
@@ -481,46 +481,46 @@ impl AdvancedRecoveryManager {
                     let dest_path = backup_dir.join(file_name);
 
                     std::fs::copy(&path, &dest_path)
-                        .map_err(|e| Error::internal(format!("Ошибка копирования: {}", e)))?;
+                        .map_err(|e| Error::internal(format!("Copy error: {}", e)))?;
 
                     copied_files += 1;
                 }
             }
         }
 
-        println!("   ✅ Скопировано {} файлов", copied_files);
+        println!("   ✅ Copied {} files", copied_files);
 
         Ok(())
     }
 
-    /// Валидирует результат восстановления
+    /// Validates recovery result
     pub fn validate_recovery(&self, analysis: &AnalysisResult) -> Result<()> {
         if !self.config.enable_validation {
             return Ok(());
         }
 
-        println!("🔍 Валидация восстановления...");
+        println!("🔍 Validating recovery...");
 
-        // Проверяем, что все активные транзакции откачены
+        // Check that all active transactions are rolled back
         if !analysis.active_transactions.is_empty() {
             return Err(Error::internal(
-                "Обнаружены незавершённые активные транзакции после восстановления",
+                "Found uncommitted active transactions after recovery",
             ));
         }
 
-        // Проверяем консистентность
-        println!("   ✅ Все активные транзакции откачены");
-        println!("   ✅ Все зафиксированные транзакции восстановлены");
+        // Check consistency
+        println!("   ✅ All active transactions rolled back");
+        println!("   ✅ All committed transactions recovered");
 
         Ok(())
     }
 
-    /// Возвращает статистику
+    /// Returns statistics
     pub fn get_statistics(&self) -> RecoveryStatistics {
         self.statistics.lock().unwrap().clone()
     }
 
-    /// Возвращает конфигурацию
+    /// Returns configuration
     pub fn config(&self) -> &RecoveryConfig {
         &self.config
     }

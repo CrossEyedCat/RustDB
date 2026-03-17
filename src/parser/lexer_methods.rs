@@ -1,19 +1,19 @@
-// Методы лексического анализатора
+// Lexer methods
 
 impl Lexer {
-    /// Возвращает следующий токен
+    /// Returns next token
     pub fn next_token(&mut self) -> Result<Token> {
-        // Проверяем буфер токенов
+        // Check token buffer
         if self.buffer_position < self.token_buffer.len() {
             let token = self.token_buffer[self.buffer_position].clone();
             self.buffer_position += 1;
             return Ok(token);
         }
         
-        // Пропускаем пробелы
+        // Skip whitespace
         self.skip_whitespace();
         
-        // Проверяем конец файла
+        // Check end of file
         if self.position >= self.input.len() {
             return Ok(Token::new(
                 TokenType::Eof,
@@ -25,23 +25,23 @@ impl Lexer {
         let start_position = self.current_position.clone();
         let current_char = self.input[self.position];
         
-        // Определяем тип токена по первому символу
+        // Determine token type by first character
         let token = match current_char {
-            // Строковые литералы
+            // String literals
             '\'' => self.read_string_literal()?,
             '"' => self.read_quoted_identifier()?,
             
-            // Числовые литералы
+            // Numeric literals
             '0'..='9' => self.read_number()?,
             
-            // Идентификаторы и ключевые слова
+            // Identifiers and keywords
             'a'..='z' | 'A'..='Z' | '_' => self.read_identifier_or_keyword()?,
             
-            // Комментарии (проверяем после операторов)
+            // Comments (check after operators)
             '-' if self.position + 1 < self.input.len() && self.input[self.position + 1] == '-' => self.read_single_line_comment()?,
             '/' if self.position + 1 < self.input.len() && self.input[self.position + 1] == '*' => self.read_multi_line_comment()?,
             
-            // Операторы и символы
+            // Operators and symbols
             '+' => self.read_single_char_token(TokenType::Plus),
             '-' => self.read_single_char_token(TokenType::Minus),
             '*' => self.read_single_char_token(TokenType::Multiply),
@@ -55,7 +55,7 @@ impl Lexer {
             ':' if self.position + 1 < self.input.len() && self.input[self.position + 1] == ':' => self.read_two_char_token(TokenType::DoubleColon),
             ':' => self.read_single_char_token(TokenType::Colon),
             
-            // Разделители
+            // Delimiters
             '(' => self.read_single_char_token(TokenType::LeftParen),
             ')' => self.read_single_char_token(TokenType::RightParen),
             '[' => self.read_single_char_token(TokenType::LeftBracket),
@@ -67,7 +67,7 @@ impl Lexer {
             '.' => self.read_single_char_token(TokenType::Dot),
             '?' => self.read_single_char_token(TokenType::Question),
             
-            // Неизвестный символ
+            // Unknown character
             _ => {
                 let unknown_char = self.advance();
                 Token::new(
@@ -81,18 +81,18 @@ impl Lexer {
         Ok(token)
     }
     
-    /// Возвращает следующий токен без его потребления (lookahead)
+    /// Returns next token without consuming it (lookahead)
     pub fn peek_token(&mut self) -> Result<Token> {
         let token = self.next_token()?;
         
-        // Добавляем токен в буфер
+        // Add token to buffer
         if self.buffer_position == self.token_buffer.len() {
             self.token_buffer.push(token.clone());
         } else {
             self.token_buffer[self.buffer_position] = token.clone();
         }
         
-        // Возвращаем позицию буфера назад
+        // Move buffer position back
         if self.buffer_position > 0 {
             self.buffer_position -= 1;
         }
@@ -100,7 +100,7 @@ impl Lexer {
         Ok(token)
     }
     
-    /// Возвращает все токены из входного текста
+    /// Returns all tokens from input text
     pub fn tokenize(&mut self) -> Result<Vec<Token>> {
         let mut tokens = Vec::new();
         
@@ -108,7 +108,7 @@ impl Lexer {
             let token = self.next_token()?;
             let is_eof = token.token_type == TokenType::Eof;
             
-            // Пропускаем пробелы и комментарии в финальном списке токенов
+            // Skip whitespace and comments in final token list
             if !token.token_type.should_skip() {
                 tokens.push(token);
             }
@@ -121,9 +121,9 @@ impl Lexer {
         Ok(tokens)
     }
     
-    // === Вспомогательные методы ===
+    // === Helper methods ===
     
-    /// Возвращает текущий символ и продвигает позицию
+    /// Returns current character and advances position
     pub(crate) fn advance(&mut self) -> char {
         if self.position >= self.input.len() {
             return '\0';
@@ -143,7 +143,7 @@ impl Lexer {
         ch
     }
     
-    /// Возвращает следующий символ без продвижения позиции
+    /// Returns next character without advancing position
     pub(crate) fn peek(&self) -> Option<char> {
         if self.position >= self.input.len() {
             None
@@ -152,7 +152,7 @@ impl Lexer {
         }
     }
     
-    /// Возвращает символ на определенном расстоянии от текущей позиции
+    /// Returns character at specified distance from current position
     pub(crate) fn peek_ahead(&self, offset: usize) -> Option<char> {
         let pos = self.position + offset;
         if pos >= self.input.len() {
@@ -162,7 +162,7 @@ impl Lexer {
         }
     }
     
-    /// Пропускает пробельные символы
+    /// Skips whitespace characters
     pub(crate) fn skip_whitespace(&mut self) {
         while let Some(ch) = self.peek() {
             if ch.is_whitespace() {
@@ -173,14 +173,14 @@ impl Lexer {
         }
     }
     
-    /// Читает токен из одного символа
+    /// Reads token from single character
     pub(crate) fn read_single_char_token(&mut self, token_type: TokenType) -> Token {
         let start_position = self.current_position.clone();
         let ch = self.advance();
         Token::new(token_type, ch.to_string(), start_position)
     }
     
-    /// Читает токен из двух символов
+    /// Reads token from two characters
     pub(crate) fn read_two_char_token(&mut self, token_type: TokenType) -> Token {
         let start_position = self.current_position.clone();
         let first = self.advance();

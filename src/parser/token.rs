@@ -1,11 +1,11 @@
-//! Токены для SQL лексера rustdb
+//! Tokens for SQL lexer in rustdb
 //!
-//! Определяет все типы токенов, которые может распознать лексический анализатор,
-//! включая ключевые слова SQL, идентификаторы, литералы и операторы.
+//! Defines all token types that can be recognized by the lexer,
+//! including SQL keywords, identifiers, literals, and operators.
 
 use std::fmt;
 
-/// Позиция токена в исходном тексте
+/// Token position in source text
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Position {
     pub line: usize,
@@ -33,7 +33,7 @@ impl fmt::Display for Position {
     }
 }
 
-/// Токен с позицией и значением
+/// Token with position and value
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub token_type: TokenType,
@@ -61,10 +61,10 @@ impl fmt::Display for Token {
     }
 }
 
-/// Типы токенов SQL
+/// SQL token types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
-    // === Ключевые слова SQL ===
+    // === SQL Keywords ===
     // DDL (Data Definition Language)
     Create,
     Drop,
@@ -100,7 +100,7 @@ pub enum TokenType {
     Limit,
     Offset,
 
-    // JOIN операции
+    // JOIN operations
     Join,
     InnerJoin,
     LeftJoin,
@@ -110,7 +110,7 @@ pub enum TokenType {
     On,
     Using,
 
-    // Логические операторы
+    // Logical operators
     And,
     Or,
     Not,
@@ -122,7 +122,7 @@ pub enum TokenType {
     IsNull,
     IsNotNull,
 
-    // Функции и агрегаты
+    // Functions and aggregates
     Count,
     Sum,
     Avg,
@@ -131,7 +131,7 @@ pub enum TokenType {
     Distinct,
     All,
 
-    // Типы данных
+    // Data types
     Integer,
     Varchar,
     Char,
@@ -144,25 +144,25 @@ pub enum TokenType {
     Float,
     Double,
 
-    // Транзакции
+    // Transactions
     Begin,
     Commit,
     Rollback,
     Transaction,
 
-    // Условные операторы
+    // Conditional operators
     Case,
     When,
     Then,
     Else,
     End,
 
-    // Подзапросы
+    // Subqueries
     Union,
     Intersect,
     Except,
 
-    // Прочие ключевые слова
+    // Other keywords
     As,
     Asc,
     Desc,
@@ -170,45 +170,45 @@ pub enum TokenType {
     False,
     Null,
 
-    // === Идентификаторы и литералы ===
-    /// Идентификатор (имя таблицы, колонки, etc.)
+    // === Identifiers and literals ===
+    /// Identifier (table name, column name, etc.)
     Identifier,
 
-    /// Строковый литерал
+    /// String literal
     StringLiteral,
 
-    /// Целое число
+    /// Integer
     IntegerLiteral,
 
-    /// Число с плавающей точкой
+    /// Floating point number
     FloatLiteral,
 
-    /// Булевый литерал
+    /// Boolean literal
     BooleanLiteral,
 
-    /// NULL литерал
+    /// NULL literal
     NullLiteral,
 
-    // === Операторы ===
-    // Арифметические
+    // === Operators ===
+    // Arithmetic
     Plus,     // +
     Minus,    // -
     Multiply, // *
     Divide,   // /
     Modulo,   // %
 
-    // Сравнения
+    // Comparisons
     Equal,        // =
-    NotEqual,     // <> или !=
+    NotEqual,     // <> or !=
     Less,         // <
     Greater,      // >
     LessEqual,    // <=
     GreaterEqual, // >=
 
-    // Присваивания
+    // Assignment
     Assign, // :=
 
-    // === Разделители и символы ===
+    // === Delimiters and symbols ===
     LeftParen,    // (
     RightParen,   // )
     LeftBracket,  // [
@@ -222,25 +222,25 @@ pub enum TokenType {
     DoubleColon,  // ::
     Question,     // ?
 
-    // === Специальные токены ===
-    /// Комментарий (однострочный или многострочный)
+    // === Special tokens ===
+    /// Comment (single-line or multi-line)
     Comment,
 
-    /// Пробельный символ
+    /// Whitespace character
     Whitespace,
 
-    /// Конец строки
+    /// End of line
     Newline,
 
-    /// Конец файла
+    /// End of file
     Eof,
 
-    /// Неизвестный символ (ошибка)
+    /// Unknown character (error)
     Unknown,
 }
 
 impl TokenType {
-    /// Проверяет, является ли токен ключевым словом
+    /// Checks if token is a keyword
     pub fn is_keyword(&self) -> bool {
         match self {
             TokenType::Create
@@ -332,7 +332,7 @@ impl TokenType {
         }
     }
 
-    /// Проверяет, является ли токен литералом
+    /// Checks if token is a literal
     pub fn is_literal(&self) -> bool {
         match self {
             TokenType::StringLiteral
@@ -344,7 +344,7 @@ impl TokenType {
         }
     }
 
-    /// Проверяет, является ли токен оператором
+    /// Checks if token is an operator
     pub fn is_operator(&self) -> bool {
         match self {
             TokenType::Plus
@@ -363,7 +363,7 @@ impl TokenType {
         }
     }
 
-    /// Проверяет, является ли токен разделителем
+    /// Checks if token is a delimiter
     pub fn is_delimiter(&self) -> bool {
         match self {
             TokenType::LeftParen
@@ -382,7 +382,7 @@ impl TokenType {
         }
     }
 
-    /// Проверяет, следует ли пропустить токен при парсинге
+    /// Checks if token should be skipped during parsing
     pub fn should_skip(&self) -> bool {
         match self {
             TokenType::Whitespace | TokenType::Newline | TokenType::Comment => true,
@@ -390,7 +390,7 @@ impl TokenType {
         }
     }
 
-    /// Возвращает приоритет оператора (для парсинга выражений)
+    /// Returns operator precedence (for expression parsing)
     pub fn precedence(&self) -> u8 {
         match self {
             TokenType::Or => 1,
@@ -543,7 +543,7 @@ impl fmt::Display for TokenType {
     }
 }
 
-/// Карта ключевых слов для быстрого поиска
+/// Keyword map for fast lookup
 pub fn keyword_map() -> std::collections::HashMap<&'static str, TokenType> {
     let mut map = std::collections::HashMap::new();
 
@@ -584,7 +584,7 @@ pub fn keyword_map() -> std::collections::HashMap<&'static str, TokenType> {
     map.insert("ON", TokenType::On);
     map.insert("USING", TokenType::Using);
 
-    // Логические операторы
+    // Logical operators
     map.insert("AND", TokenType::And);
     map.insert("OR", TokenType::Or);
     map.insert("NOT", TokenType::Not);
@@ -594,7 +594,7 @@ pub fn keyword_map() -> std::collections::HashMap<&'static str, TokenType> {
     map.insert("LIKE", TokenType::Like);
     map.insert("IS", TokenType::Is);
 
-    // Функции
+    // Functions
     map.insert("COUNT", TokenType::Count);
     map.insert("SUM", TokenType::Sum);
     map.insert("AVG", TokenType::Avg);
@@ -603,7 +603,7 @@ pub fn keyword_map() -> std::collections::HashMap<&'static str, TokenType> {
     map.insert("DISTINCT", TokenType::Distinct);
     map.insert("ALL", TokenType::All);
 
-    // Типы данных
+    // Data types
     map.insert("INTEGER", TokenType::Integer);
     map.insert("INT", TokenType::Integer);
     map.insert("VARCHAR", TokenType::Varchar);
@@ -618,25 +618,25 @@ pub fn keyword_map() -> std::collections::HashMap<&'static str, TokenType> {
     map.insert("FLOAT", TokenType::Float);
     map.insert("DOUBLE", TokenType::Double);
 
-    // Транзакции
+    // Transactions
     map.insert("BEGIN", TokenType::Begin);
     map.insert("COMMIT", TokenType::Commit);
     map.insert("ROLLBACK", TokenType::Rollback);
     map.insert("TRANSACTION", TokenType::Transaction);
 
-    // Условные операторы
+    // Conditional operators
     map.insert("CASE", TokenType::Case);
     map.insert("WHEN", TokenType::When);
     map.insert("THEN", TokenType::Then);
     map.insert("ELSE", TokenType::Else);
     map.insert("END", TokenType::End);
 
-    // Подзапросы
+    // Subqueries
     map.insert("UNION", TokenType::Union);
     map.insert("INTERSECT", TokenType::Intersect);
     map.insert("EXCEPT", TokenType::Except);
 
-    // Прочие
+    // Other
     map.insert("AS", TokenType::As);
     map.insert("ASC", TokenType::Asc);
     map.insert("DESC", TokenType::Desc);
@@ -644,14 +644,14 @@ pub fn keyword_map() -> std::collections::HashMap<&'static str, TokenType> {
     map.insert("FALSE", TokenType::False);
     map.insert("NULL", TokenType::Null);
 
-    // Составные ключевые слова
-    map.insert("GROUP", TokenType::GroupBy); // будет обрабатываться отдельно с BY
-    map.insert("ORDER", TokenType::OrderBy); // будет обрабатываться отдельно с BY
-    map.insert("INNER", TokenType::InnerJoin); // будет обрабатываться отдельно с JOIN
-    map.insert("LEFT", TokenType::LeftJoin); // будет обрабатываться отдельно с JOIN
-    map.insert("RIGHT", TokenType::RightJoin); // будет обрабатываться отдельно с JOIN
-    map.insert("FULL", TokenType::FullJoin); // будет обрабатываться отдельно с JOIN
-    map.insert("CROSS", TokenType::CrossJoin); // будет обрабатываться отдельно с JOIN
+    // Compound keywords
+    map.insert("GROUP", TokenType::GroupBy); // will be handled separately with BY
+    map.insert("ORDER", TokenType::OrderBy); // will be handled separately with BY
+    map.insert("INNER", TokenType::InnerJoin); // will be handled separately with JOIN
+    map.insert("LEFT", TokenType::LeftJoin); // will be handled separately with JOIN
+    map.insert("RIGHT", TokenType::RightJoin); // will be handled separately with JOIN
+    map.insert("FULL", TokenType::FullJoin); // will be handled separately with JOIN
+    map.insert("CROSS", TokenType::CrossJoin); // will be handled separately with JOIN
 
     map
 }

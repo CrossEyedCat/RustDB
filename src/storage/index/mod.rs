@@ -1,11 +1,11 @@
-//! Модуль индексов для rustdb
+//! Index module for rustdb
 //!
-//! Этот модуль предоставляет реализации различных типов индексов,
-//! включая B+ деревья и хеш-индексы.
+//! This module provides implementations of various index types,
+//! including B+ trees and hash indexes.
 
 pub mod btree;
 pub mod simple_hash_index;
-// pub mod hash_index; // Временно отключено
+// pub mod hash_index; // Temporarily disabled
 
 pub use btree::BPlusTree;
 pub use simple_hash_index::SimpleHashIndex;
@@ -17,52 +17,52 @@ use crate::common::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Трейт для всех типов индексов
+/// Trait for all index types
 pub trait Index {
     type Key: Ord + Clone;
     type Value: Clone;
 
-    /// Вставляет ключ-значение в индекс
+    /// Inserts key-value pair into index
     fn insert(&mut self, key: Self::Key, value: Self::Value) -> Result<()>;
 
-    /// Ищет значение по ключу
+    /// Searches for value by key
     fn search(&self, key: &Self::Key) -> Result<Option<Self::Value>>;
 
-    /// Удаляет ключ из индекса
+    /// Deletes key from index
     fn delete(&mut self, key: &Self::Key) -> Result<bool>;
 
-    /// Возвращает все ключи в диапазоне [start, end]
+    /// Returns all keys in range [start, end]
     fn range_search(
         &self,
         start: &Self::Key,
         end: &Self::Key,
     ) -> Result<Vec<(Self::Key, Self::Value)>>;
 
-    /// Возвращает количество элементов в индексе
+    /// Returns number of elements in index
     fn size(&self) -> usize;
 
-    /// Проверяет, пуст ли индекс
+    /// Checks if index is empty
     fn is_empty(&self) -> bool {
         self.size() == 0
     }
 }
 
-/// Статистика индекса
+/// Index statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexStatistics {
-    /// Общее количество элементов
+    /// Total number of elements
     pub total_elements: u64,
-    /// Количество операций вставки
+    /// Number of insert operations
     pub insert_operations: u64,
-    /// Количество операций поиска
+    /// Number of search operations
     pub search_operations: u64,
-    /// Количество операций удаления
+    /// Number of delete operations
     pub delete_operations: u64,
-    /// Количество операций диапазонного поиска
+    /// Number of range search operations
     pub range_search_operations: u64,
-    /// Глубина индекса (для деревьев)
+    /// Index depth (for trees)
     pub depth: u32,
-    /// Коэффициент заполнения
+    /// Fill factor
     pub fill_factor: f64,
 }
 
@@ -80,27 +80,27 @@ impl Default for IndexStatistics {
     }
 }
 
-/// Тип индекса
+/// Index type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IndexType {
-    /// B+ дерево
+    /// B+ tree
     BPlusTree,
-    /// Хеш-индекс
+    /// Hash index
     Hash,
 }
 
-/// Конфигурация индекса
+/// Index configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexConfig {
-    /// Тип индекса
+    /// Index type
     pub index_type: IndexType,
-    /// Максимальное количество ключей в узле (для B+ дерева)
+    /// Maximum number of keys per node (for B+ tree)
     pub max_keys_per_node: usize,
-    /// Начальный размер хеш-таблицы
+    /// Initial hash table size
     pub initial_hash_size: usize,
-    /// Коэффициент загрузки для расширения хеш-таблицы
+    /// Load factor threshold for hash table expansion
     pub load_factor_threshold: f64,
-    /// Включить ли кеширование
+    /// Enable caching
     pub enable_caching: bool,
 }
 
@@ -108,7 +108,7 @@ impl Default for IndexConfig {
     fn default() -> Self {
         Self {
             index_type: IndexType::BPlusTree,
-            max_keys_per_node: 255, // Стандартный размер для B+ дерева
+            max_keys_per_node: 255, // Standard size for B+ tree
             initial_hash_size: 1024,
             load_factor_threshold: 0.75,
             enable_caching: true,

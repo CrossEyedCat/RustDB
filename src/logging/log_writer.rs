@@ -1,11 +1,10 @@
-//! Система записи логов в файл для rustdb
+//! File-based log writer for rustdb
 //!
-//! Этот модуль реализует буферизованную запись лог-записей в файл
-//! с использованием оптимизированного I/O:
-//! - Буферизация записей для повышения производительности
-//! - Асинхронная запись с контролем приоритетов
-//! - Ротация лог-файлов и управление размером
-//! - Интеграция с системой оптимизации I/O
+//! This module implements buffered log writing with optimized I/O:
+//! - Buffered record batching to improve throughput
+//! - Asynchronous writing with priority control
+//! - Log file rotation and size management
+//! - Integration with the I/O optimization subsystem
 
 use crate::common::{Error, Result};
 use crate::logging::log_record::{LogRecord, LogSequenceNumber};
@@ -18,39 +17,39 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio::task::JoinHandle;
 
-/// Конфигурация системы записи логов
+/// Log writer configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogWriterConfig {
-    /// Путь к директории с лог-файлами
+    /// Directory containing log files
     pub log_directory: PathBuf,
-    /// Максимальный размер лог-файла (в байтах)
+    /// Maximum log file size (bytes)
     pub max_log_file_size: u64,
-    /// Максимальное количество лог-файлов
+    /// Maximum number of log files
     pub max_log_files: u32,
-    /// Размер буфера записи (количество записей)
+    /// Write buffer size (number of records)
     pub write_buffer_size: usize,
-    /// Максимальное время буферизации
+    /// Maximum buffering time
     pub max_buffer_time: Duration,
-    /// Включить сжатие старых логов
+    /// Enable compression for old logs
     pub enable_compression: bool,
-    /// Уровень синхронизации
+    /// Synchronization level
     pub sync_level: SyncLevel,
-    /// Размер пула потоков для записи
+    /// Writer thread pool size
     pub writer_thread_pool_size: usize,
-    /// Включить проверку целостности
+    /// Enable integrity checks
     pub enable_integrity_check: bool,
 }
 
-/// Уровень синхронизации логов
+/// Log synchronization level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SyncLevel {
-    /// Никогда не синхронизировать (быстро, но небезопасно)
+    /// Never sync (fast but unsafe)
     Never,
-    /// Синхронизировать периодически
+    /// Sync periodically
     Periodic,
-    /// Синхронизировать после каждого коммита
+    /// Sync after each commit
     OnCommit,
-    /// Синхронизировать после каждой записи (медленно, но безопасно)
+    /// Sync after every write (slow but safest)
     Always,
 }
 
@@ -70,103 +69,103 @@ impl Default for LogWriterConfig {
     }
 }
 
-/// Информация о лог-файле
+/// Log file information
 #[derive(Debug, Clone, PartialEq)]
 pub struct LogFileInfo {
-    /// Имя файла
+    /// File name
     pub filename: String,
-    /// Полный путь к файлу
+    /// Absolute path to file
     pub path: PathBuf,
-    /// Размер файла в байтах
+    /// File size in bytes
     pub size: u64,
-    /// Количество записей в файле
+    /// Number of records in file
     pub record_count: u64,
-    /// Первый LSN в файле
+    /// First LSN present in file
     pub first_lsn: LogSequenceNumber,
-    /// Последний LSN в файле
+    /// Last LSN present in file
     pub last_lsn: LogSequenceNumber,
-    /// Время создания файла
+    /// File creation timestamp
     pub created_at: u64,
-    /// Время последнего обновления
+    /// Last modification timestamp
     pub updated_at: u64,
-    /// Сжат ли файл
+    /// Whether file is compressed
     pub is_compressed: bool,
 }
 
-/// Запрос на запись лога
+/// Log write request
 #[derive(Debug)]
 pub struct LogWriteRequest {
-    /// Лог-запись для записи
+    /// Log record to be written
     pub record: LogRecord,
-    /// Канал для ответа
+    /// Response channel
     pub response_tx: Option<oneshot::Sender<Result<()>>>,
-    /// Требует ли немедленной синхронизации
+    /// Indicates whether immediate sync is required
     pub force_sync: bool,
 }
 
-/// Статистика записи логов
+/// Log writer statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LogWriterStatistics {
-    /// Общее количество записанных записей
+    /// Total records written
     pub total_records_written: u64,
-    /// Общее количество байт записанных
+    /// Total bytes written
     pub total_bytes_written: u64,
-    /// Количество операций синхронизации
+    /// Number of sync operations
     pub sync_operations: u64,
-    /// Количество ротаций файлов
+    /// Number of file rotations
     pub file_rotations: u64,
-    /// Среднее время записи (микросекунды)
+    /// Average write time (microseconds)
     pub average_write_time_us: u64,
-    /// Количество ошибок записи
+    /// Number of write errors
     pub write_errors: u64,
-    /// Текущий размер буфера
+    /// Current buffer size
     pub current_buffer_size: usize,
-    /// Максимальный размер буфера за сессию
+    /// Maximum buffer size observed
     pub max_buffer_size_reached: usize,
-    /// Пропускная способность записи (записей/сек)
+    /// Write throughput (records/sec)
     pub write_throughput: f64,
 }
 
-/// Система записи логов
+/// Log writer implementation
 pub struct LogWriter {
-    /// Конфигурация
+    /// Configuration
     config: LogWriterConfig,
-    /// Текущий активный файл
+    /// Current active file
     current_file: Arc<RwLock<Option<LogFileInfo>>>,
-    /// Список всех лог-файлов
+    /// List of all log files
     log_files: Arc<RwLock<Vec<LogFileInfo>>>,
-    /// Буфер записей
+    /// Record buffer
     write_buffer: Arc<Mutex<VecDeque<LogRecord>>>,
-    /// Канал для отправки запросов на запись
+    /// Channel for write requests
     write_tx: mpsc::UnboundedSender<LogWriteRequest>,
-    /// Генератор LSN
+    /// LSN generator
     lsn_generator: Arc<Mutex<LogSequenceNumber>>,
-    /// Статистика
+    /// Statistics
     statistics: Arc<RwLock<LogWriterStatistics>>,
-    /// Семафор для ограничения одновременных операций
+    /// Semaphore to limit concurrent operations
     semaphore: Arc<Semaphore>,
-    /// Обработчик фоновых задач
+    /// Background task handle
     background_handle: Option<JoinHandle<()>>,
-    /// Обработчик записи
+    /// Write task handle
     writer_handle: Option<JoinHandle<()>>,
-    /// Менеджер оптимизированного I/O
+    /// Optimized I/O manager
     io_manager: Option<Arc<BufferedIoManager>>,
 }
 
 impl LogWriter {
-    /// Создает новую систему записи логов
+    /// Creates a new log writer
     pub fn new(config: LogWriterConfig) -> Result<Self> {
-        // Создаем директорию для логов если не существует
+        // Create log directory if it does not exist
         if !config.log_directory.exists() {
             std::fs::create_dir_all(&config.log_directory).map_err(|e| {
-                Error::internal(&format!("Не удалось создать директорию логов: {}", e))
+                Error::internal(&format!("Failed to create log directory: {}", e))
             })?;
         }
 
         let (write_tx, write_rx) = mpsc::unbounded_channel();
         let semaphore = Arc::new(Semaphore::new(config.writer_thread_pool_size));
 
-        // Настройка оптимизированного I/O
+        // Configure optimized I/O
         let io_manager = if config.write_buffer_size > 0 {
             let mut io_config = IoBufferConfig::default();
             io_config.max_write_buffer_size = config.write_buffer_size;
@@ -190,28 +189,28 @@ impl LogWriter {
             io_manager,
         };
 
-        // Загружаем существующие лог-файлы
+        // Load existing log files
         writer.load_existing_log_files()?;
 
-        // Запускаем фоновые задачи
+        // Start background tasks
         writer.start_background_tasks(write_rx);
 
         Ok(writer)
     }
 
-    /// Загружает существующие лог-файлы
+    /// Loads existing log files
     fn load_existing_log_files(&mut self) -> Result<()> {
         let mut files = Vec::new();
         let mut max_lsn = 0;
 
         if self.config.log_directory.exists() {
             let entries = std::fs::read_dir(&self.config.log_directory).map_err(|e| {
-                Error::internal(&format!("Не удалось прочитать директорию логов: {}", e))
+                Error::internal(&format!("Failed to read log directory: {}", e))
             })?;
 
             for entry in entries {
-                let entry =
-                    entry.map_err(|e| Error::internal(&format!("Ошибка чтения записи: {}", e)))?;
+                let entry = entry
+                    .map_err(|e| Error::internal(&format!("Failed to read directory entry: {}", e)))?;
                 let path = entry.path();
 
                 if path.extension().and_then(|s| s.to_str()) == Some("log") {
@@ -225,26 +224,26 @@ impl LogWriter {
             }
         }
 
-        // Сортируем файлы по времени создания
+        // Sort files by creation time
         files.sort_by_key(|f| f.created_at);
 
-        // Устанавливаем последний файл как текущий
+        // Set the last file as the current file
         if let Some(latest_file) = files.last() {
             *self.current_file.write().unwrap() = Some(latest_file.clone());
         }
 
         *self.log_files.write().unwrap() = files;
 
-        // Устанавливаем следующий LSN
+        // Set next LSN
         *self.lsn_generator.lock().unwrap() = max_lsn + 1;
 
         Ok(())
     }
 
-    /// Анализирует лог-файл и возвращает информацию о нем
+    /// Analyzes a log file and returns metadata
     fn analyze_log_file(&self, path: &Path) -> Result<LogFileInfo> {
         let metadata = std::fs::metadata(path).map_err(|e| {
-            Error::internal(&format!("Не удалось получить метаданные файла: {}", e))
+            Error::internal(&format!("Failed to obtain file metadata: {}", e))
         })?;
 
         let filename = path
@@ -253,14 +252,14 @@ impl LogWriter {
             .unwrap_or("unknown")
             .to_string();
 
-        // Простая реализация - в реальной системе нужно читать заголовок файла
+        // Simplified implementation — real system should read file header
         let file_info = LogFileInfo {
             filename,
             path: path.to_path_buf(),
             size: metadata.len(),
-            record_count: 0, // Требует чтения файла
-            first_lsn: 0,    // Требует чтения файла
-            last_lsn: 0,     // Требует чтения файла
+            record_count: 0, // Requires file reading
+            first_lsn: 0,    // Requires file reading
+            last_lsn: 0,     // Requires file reading
             created_at: metadata
                 .created()
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
@@ -279,7 +278,7 @@ impl LogWriter {
         Ok(file_info)
     }
 
-    /// Запускает фоновые задачи
+    /// Starts background tasks
     fn start_background_tasks(&mut self, mut write_rx: mpsc::UnboundedReceiver<LogWriteRequest>) {
         let config = self.config.clone();
         let write_buffer = self.write_buffer.clone();
@@ -289,7 +288,7 @@ impl LogWriter {
         let _semaphore = self.semaphore.clone();
         let io_manager = self.io_manager.clone();
 
-        // Задача обработки запросов на запись
+        // Task that processes write requests
         self.writer_handle = Some(tokio::spawn(async move {
             while let Some(request) = write_rx.recv().await {
                 let buffer = write_buffer.clone();
@@ -299,12 +298,12 @@ impl LogWriter {
                 let cfg = config.clone();
                 let io_mgr = io_manager.clone();
 
-                // Обрабатываем запрос напрямую без семафора для упрощения
+                // Handle request directly without semaphore for simplicity
                 Self::handle_write_request(request, buffer, stats, file, files, cfg, io_mgr).await;
             }
         }));
 
-        // Задача периодического сброса буфера
+        // Task that periodically flushes the buffer
         let flush_buffer = self.write_buffer.clone();
         let flush_stats = self.statistics.clone();
         let flush_config = self.config.clone();
@@ -319,7 +318,7 @@ impl LogWriter {
         }));
     }
 
-    /// Обрабатывает запрос на запись
+    /// Handles a write request
     async fn handle_write_request(
         request: LogWriteRequest,
         write_buffer: Arc<Mutex<VecDeque<LogRecord>>>,
@@ -332,18 +331,18 @@ impl LogWriter {
         let start_time = Instant::now();
         let result = Ok(());
 
-        // Добавляем запись в буфер
+        // Push record into buffer
         {
             let mut buffer = write_buffer.lock().unwrap();
             buffer.push_back(request.record.clone());
         }
 
-        // Если требуется немедленная синхронизация, сбрасываем буфер
+        // Flush buffer immediately when required
         if request.force_sync || request.record.requires_immediate_flush() {
             Self::flush_write_buffer(&write_buffer, &statistics).await;
         }
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = statistics.write().unwrap();
             stats.total_records_written += 1;
@@ -367,13 +366,13 @@ impl LogWriter {
             }
         }
 
-        // Отправляем результат
+        // Return result
         if let Some(response_tx) = request.response_tx {
             let _ = response_tx.send(result);
         }
     }
 
-    /// Сбрасывает буфер записи на диск
+    /// Flushes write buffer to disk
     async fn flush_write_buffer(
         write_buffer: &Arc<Mutex<VecDeque<LogRecord>>>,
         statistics: &Arc<RwLock<LogWriterStatistics>>,
@@ -388,26 +387,26 @@ impl LogWriter {
             records
         };
 
-        // В реальной реализации здесь была бы запись в файл
-        // Пока что просто симулируем запись
+        // In real implementation this would write to disk.
+        // Currently we just simulate the operation.
         tokio::time::sleep(Duration::from_micros(50 * records_to_write.len() as u64)).await;
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = statistics.write().unwrap();
             stats.sync_operations += 1;
             stats.current_buffer_size = 0;
 
-            // Вычисляем пропускную способность
+            // Calculate throughput
             if stats.total_records_written > 0 && stats.average_write_time_us > 0 {
                 stats.write_throughput = 1_000_000.0 / stats.average_write_time_us as f64;
             }
         }
     }
 
-    /// Записывает лог-запись
+    /// Writes a log record
     pub async fn write_log(&self, mut record: LogRecord) -> Result<LogSequenceNumber> {
-        // Генерируем LSN если не установлен
+        // Generate LSN if not already set
         if record.lsn == 0 {
             record.lsn = self.generate_lsn();
         }
@@ -421,16 +420,16 @@ impl LogWriter {
 
         self.write_tx
             .send(request)
-            .map_err(|_| Error::internal("Не удалось отправить запрос на запись лога"))?;
+            .map_err(|_| Error::internal("Failed to send log write request"))?;
 
         response_rx
             .await
-            .map_err(|_| Error::internal("Не удалось получить результат записи лога"))??;
+            .map_err(|_| Error::internal("Failed to receive log write result"))??;
 
         Ok(record.lsn)
     }
 
-    /// Записывает лог-запись с принудительной синхронизацией
+    /// Writes a log record with forced synchronization
     pub async fn write_log_sync(&self, mut record: LogRecord) -> Result<LogSequenceNumber> {
         if record.lsn == 0 {
             record.lsn = self.generate_lsn();
@@ -443,18 +442,18 @@ impl LogWriter {
             force_sync: true,
         };
 
-        self.write_tx.send(request).map_err(|_| {
-            Error::internal("Не удалось отправить запрос на синхронную запись лога")
-        })?;
+        self.write_tx
+            .send(request)
+            .map_err(|_| Error::internal("Failed to send synchronous log write request"))?;
 
         response_rx.await.map_err(|_| {
-            Error::internal("Не удалось получить результат синхронной записи лога")
+            Error::internal("Failed to receive synchronous log write result")
         })??;
 
         Ok(record.lsn)
     }
 
-    /// Принудительно сбрасывает все буферы на диск
+    /// Forces flushing of all buffers to disk
     pub async fn flush(&self) -> Result<()> {
         Self::flush_write_buffer(&self.write_buffer, &self.statistics).await;
 
@@ -466,7 +465,7 @@ impl LogWriter {
         Ok(())
     }
 
-    /// Генерирует следующий LSN
+    /// Generates next LSN
     fn generate_lsn(&self) -> LogSequenceNumber {
         let mut generator = self.lsn_generator.lock().unwrap();
         let lsn = *generator;
@@ -474,30 +473,30 @@ impl LogWriter {
         lsn
     }
 
-    /// Возвращает текущий LSN
+    /// Returns current LSN
     pub fn current_lsn(&self) -> LogSequenceNumber {
         let generator = self.lsn_generator.lock().unwrap();
         *generator - 1
     }
 
-    /// Возвращает статистику записи логов
+    /// Returns log writer statistics
     pub fn get_statistics(&self) -> LogWriterStatistics {
         self.statistics.read().unwrap().clone()
     }
 
-    /// Возвращает информацию о текущем файле
+    /// Returns current log file information
     pub fn get_current_file_info(&self) -> Option<LogFileInfo> {
         self.current_file.read().unwrap().clone()
     }
 
-    /// Возвращает список всех лог-файлов
+    /// Returns list of all log files
     pub fn get_log_files(&self) -> Vec<LogFileInfo> {
         self.log_files.read().unwrap().clone()
     }
 
-    /// Выполняет ротацию лог-файлов
+    /// Performs log file rotation
     pub async fn rotate_log_file(&self) -> Result<()> {
-        // В реальной реализации здесь была бы логика ротации файлов
+        // In real implementation file rotation logic would go here
         {
             let mut stats = self.statistics.write().unwrap();
             stats.file_rotations += 1;
@@ -506,21 +505,21 @@ impl LogWriter {
         Ok(())
     }
 
-    /// Проверяет целостность лог-файлов
+    /// Verifies log file integrity
     pub async fn verify_integrity(&self) -> Result<Vec<(String, bool)>> {
         let files = self.get_log_files();
         let mut results = Vec::new();
 
         for file in files {
-            // В реальной реализации здесь была бы проверка целостности файла
-            let is_valid = true; // Заглушка
+            // In real implementation file integrity would be verified here
+            let is_valid = true; // Placeholder
             results.push((file.filename, is_valid));
         }
 
         Ok(results)
     }
 
-    /// Очищает старые лог-файлы
+    /// Cleans up old log files
     pub async fn cleanup_old_logs(&self, keep_files: u32) -> Result<u32> {
         let files = self.get_log_files();
         let mut removed_count = 0;
@@ -528,19 +527,19 @@ impl LogWriter {
         if files.len() > keep_files as usize {
             let files_to_remove = files.len() - keep_files as usize;
 
-            // В реальной реализации здесь было бы удаление файлов
+            // In real implementation files would be deleted here
             removed_count = files_to_remove as u32;
         }
 
         Ok(removed_count)
     }
 
-    /// Возвращает общий размер всех лог-файлов
+    /// Returns total size of all log files
     pub fn get_total_log_size(&self) -> u64 {
         self.get_log_files().iter().map(|f| f.size).sum()
     }
 
-    /// Проверяет, нужна ли ротация файла
+    /// Checks whether log rotation is required
     pub fn needs_rotation(&self) -> bool {
         if let Some(current) = self.get_current_file_info() {
             current.size >= self.config.max_log_file_size
@@ -552,7 +551,7 @@ impl LogWriter {
 
 impl Drop for LogWriter {
     fn drop(&mut self) {
-        // Останавливаем фоновые задачи
+        // Stop background tasks
         if let Some(handle) = self.background_handle.take() {
             handle.abort();
         }
@@ -626,14 +625,14 @@ mod tests {
 
         let writer = LogWriter::new(config)?;
 
-        // Записываем несколько записей
+        // Write multiple records
         for i in 0..10 {
             let record =
                 LogRecord::new_data_insert(0, 100 + i, 1, i as u64, 0, vec![i as u8; 10], None);
             writer.write_log(record).await?;
         }
 
-        // Принудительно сбрасываем буфер
+        // Force flush buffer
         writer.flush().await?;
 
         let stats = writer.get_statistics();
@@ -672,7 +671,7 @@ mod tests {
 
         let writer = LogWriter::new(config)?;
 
-        // Записываем несколько записей разных типов
+        // Write records of different types
         writer
             .write_log(LogRecord::new_transaction_begin(
                 0,
@@ -719,13 +718,13 @@ mod tests {
 
         let writer = LogWriter::new(config)?;
 
-        // Записываем записи, которые должны остаться в буфере
+        // Write records that should stay buffered
         for i in 0..2 {
             let record = LogRecord::new_data_insert(0, 100, 1, i, 0, vec![i as u8], None);
             writer.write_log(record).await?;
         }
 
-        // Ждем автоматического сброса буфера
+        // Wait for automatic buffer flush
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let stats = writer.get_statistics();

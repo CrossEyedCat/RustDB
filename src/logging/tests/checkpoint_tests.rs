@@ -1,4 +1,4 @@
-//! Тесты для CheckpointManager
+//! CheckpointManager tests
 
 use crate::logging::checkpoint::{CheckpointConfig, CheckpointInfo, CheckpointManager};
 use crate::logging::log_writer::{LogWriter, LogWriterConfig};
@@ -15,7 +15,7 @@ async fn test_checkpoint_manager_creation() {
     let log_writer = create_test_log_writer();
     let _manager = CheckpointManager::new(config, log_writer);
 
-    // Менеджер создается напрямую, не как Result
+    // Manager is constructed directly rather than returning Result
     assert!(true);
 }
 
@@ -53,7 +53,7 @@ async fn test_checkpoint_creation() {
     let manager = CheckpointManager::new(config, log_writer);
 
     let result = manager.create_checkpoint().await;
-    // Может быть ошибка из-за отсутствия данных
+    // May fail when no data is present
     assert!(result.is_ok() || result.is_err());
 }
 
@@ -73,10 +73,10 @@ async fn test_checkpoint_multiple() {
     let log_writer = create_test_log_writer();
     let manager = CheckpointManager::new(config, log_writer);
 
-    // Создаем несколько контрольных точек
+    // Create several checkpoints
     for _ in 0..3 {
         let _result = manager.create_checkpoint().await;
-        // Может быть ошибка, это нормально
+        // Errors are acceptable here
     }
 }
 
@@ -95,7 +95,7 @@ async fn test_checkpoint_config_validation() {
     let log_writer = create_test_log_writer();
     let _manager = CheckpointManager::new(config, log_writer);
 
-    // Менеджер создается напрямую
+    // Manager constructed directly
     assert!(true);
 }
 
@@ -114,7 +114,7 @@ async fn test_checkpoint_config_disabled_auto() {
     let log_writer = create_test_log_writer();
     let _manager = CheckpointManager::new(config, log_writer);
 
-    // Менеджер создается напрямую
+    // Manager constructed directly
     assert!(true);
 }
 
@@ -129,7 +129,7 @@ async fn test_multiple_checkpoints() {
     }
 
     let stats = manager.get_statistics().await;
-    // Статистика может быть разной в зависимости от успешности операций
+    // Statistics depend on whether operations succeeded
     assert!(stats.total_checkpoints >= 0);
 }
 
@@ -151,7 +151,7 @@ async fn test_checkpoint_config_thread_settings() {
         let log_writer = create_test_log_writer();
         let _manager = CheckpointManager::new(config, log_writer);
 
-        // Менеджер создается напрямую
+        // Manager constructed directly
         assert!(true);
     }
 }
@@ -174,7 +174,7 @@ async fn test_checkpoint_config_batch_sizes() {
         let log_writer = create_test_log_writer();
         let _manager = CheckpointManager::new(config, log_writer);
 
-        // Менеджер создается напрямую
+        // Manager constructed directly
         assert!(true);
     }
 }

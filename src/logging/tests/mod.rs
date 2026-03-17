@@ -1,4 +1,4 @@
-//! Тесты для модуля логирования
+//! Logging module tests
 
 pub mod checkpoint_tests;
 pub mod log_record_tests;

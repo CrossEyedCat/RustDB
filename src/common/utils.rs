@@ -1,82 +1,82 @@
-//! Утилиты для rustdb
+//! Utilities for rustdb
 
 use crate::common::constants::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-/// Вычисляет хеш для заданного значения
+/// Calculates a hash for the given value
 pub fn calculate_hash<T: Hash>(value: &T) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
     hasher.finish()
 }
 
-/// Проверяет, является ли размер страницы поддерживаемым
+/// Checks if the page size is supported
 pub fn is_valid_page_size(size: usize) -> bool {
     SUPPORTED_PAGE_SIZES.contains(&size)
 }
 
-/// Проверяет, является ли имя таблицы валидным
+/// Checks if the table name is valid
 pub fn is_valid_table_name(name: &str) -> bool {
     if name.is_empty() || name.len() > MAX_TABLE_NAME_LENGTH {
         return false;
     }
 
-    // Проверяем, что имя начинается с буквы или подчеркивания
+    // Check that the name starts with a letter or underscore
     if !name.chars().next().unwrap().is_alphabetic() && !name.starts_with('_') {
         return false;
     }
 
-    // Проверяем, что имя содержит только буквы, цифры и подчеркивания
+    // Check that the name contains only letters, digits, and underscores
     name.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// Проверяет, является ли имя колонки валидным
+/// Checks if the column name is valid
 pub fn is_valid_column_name(name: &str) -> bool {
     if name.is_empty() || name.len() > MAX_COLUMN_NAME_LENGTH {
         return false;
     }
 
-    // Проверяем, что имя начинается с буквы или подчеркивания
+    // Check that the name starts with a letter or underscore
     if !name.chars().next().unwrap().is_alphabetic() && !name.starts_with('_') {
         return false;
     }
 
-    // Проверяем, что имя содержит только буквы, цифры и подчеркивания
+    // Check that the name contains only letters, digits, and underscores
     name.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// Проверяет, является ли имя индекса валидным
+/// Checks if the index name is valid
 pub fn is_valid_index_name(name: &str) -> bool {
     if name.is_empty() || name.len() > MAX_INDEX_NAME_LENGTH {
         return false;
     }
 
-    // Проверяем, что имя начинается с буквы или подчеркивания
+    // Check that the name starts with a letter or underscore
     if !name.chars().next().unwrap().is_alphabetic() && !name.starts_with('_') {
         return false;
     }
 
-    // Проверяем, что имя содержит только буквы, цифры и подчеркивания
+    // Check that the name contains only letters, digits, and underscores
     name.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// Вычисляет размер заголовка страницы на основе размера страницы
+/// Calculates the page header size based on the page size
 pub fn calculate_page_header_size(page_size: usize) -> usize {
     (page_size as f64 * PAGE_HEADER_PERCENTAGE) as usize
 }
 
-/// Вычисляет максимальный размер записи на странице
+/// Calculates the maximum record size on a page
 pub fn calculate_max_record_size(page_size: usize) -> usize {
     page_size - calculate_page_header_size(page_size)
 }
 
-/// Проверяет, можно ли разместить запись на странице
+/// Checks if a record can fit on a page
 pub fn can_fit_record_on_page(record_size: usize, page_size: usize) -> bool {
     record_size <= calculate_max_record_size(page_size)
 }
 
-/// Вычисляет количество страниц, необходимых для хранения данных
+/// Calculates the number of pages needed to store data
 pub fn calculate_pages_needed(data_size: usize, page_size: usize) -> usize {
     let max_record_size = calculate_max_record_size(page_size);
     if max_record_size == 0 {
@@ -86,7 +86,7 @@ pub fn calculate_pages_needed(data_size: usize, page_size: usize) -> usize {
     data_size.div_ceil(max_record_size)
 }
 
-/// Вычисляет оптимальный размер страницы для заданного размера данных
+/// Calculates the optimal page size for the given data size
 pub fn calculate_optimal_page_size(record_size: usize) -> usize {
     for &page_size in SUPPORTED_PAGE_SIZES {
         if can_fit_record_on_page(record_size, page_size) {
@@ -94,65 +94,65 @@ pub fn calculate_optimal_page_size(record_size: usize) -> usize {
         }
     }
 
-    // Если не можем подобрать оптимальный размер, возвращаем максимальный
+    // If we can't find an optimal size, return the maximum
     MAX_PAGE_SIZE
 }
 
-/// Проверяет, нужно ли разделить страницу
+/// Checks if a page should be split
 pub fn should_split_page(used_space: usize, page_size: usize) -> bool {
     let threshold = (page_size as f64 * PAGE_SPLIT_THRESHOLD) as usize;
     used_space >= threshold
 }
 
-/// Проверяет, нужно ли объединить страницы
+/// Checks if pages should be merged
 pub fn should_merge_pages(used_space: usize, page_size: usize) -> bool {
     let threshold = (page_size as f64 * PAGE_MERGE_THRESHOLD) as usize;
     used_space <= threshold
 }
 
-/// Вычисляет оптимальный порядок B+ дерева для заданного размера ключа
+/// Calculates the optimal B+ tree order for the given key size
 pub fn calculate_optimal_btree_order(key_size: usize) -> usize {
     let page_size = DEFAULT_PAGE_SIZE;
     let header_size = calculate_page_header_size(page_size);
     let available_space = page_size - header_size;
 
-    // Каждый узел содержит ключи и указатели
-    // Упрощенная формула: (available_space - sizeof(pointer)) / (key_size + sizeof(pointer))
+    // Each node contains keys and pointers
+    // Simplified formula: (available_space - sizeof(pointer)) / (key_size + sizeof(pointer))
     let pointer_size = std::mem::size_of::<usize>();
     let order = (available_space - pointer_size) / (key_size + pointer_size);
 
-    // Ограничиваем порядок допустимыми значениями
+    // Clamp order to valid values
     order.clamp(MIN_BTREE_ORDER, MAX_BTREE_ORDER)
 }
 
-/// Вычисляет оптимальный размер хеш-таблицы для заданного количества элементов
+/// Calculates the optimal hash table size for the given number of elements
 pub fn calculate_optimal_hash_table_size(element_count: usize) -> usize {
     let load_factor = DEFAULT_HASH_LOAD_FACTOR;
     let optimal_size = (element_count as f64 / load_factor) as usize;
 
-    // Округляем до ближайшей степени 2
+    // Round to nearest power of 2
     let mut size = 1;
     while size < optimal_size {
         size *= 2;
     }
 
-    // Ограничиваем размер допустимыми значениями
+    // Clamp size to valid values
     size.clamp(DEFAULT_HASH_TABLE_SIZE, MAX_HASH_TABLE_SIZE)
 }
 
-/// Проверяет, нужно ли расширить хеш-таблицу
+/// Checks if a hash table should be expanded
 pub fn should_expand_hash_table(current_size: usize, element_count: usize) -> bool {
     let load_factor = element_count as f64 / current_size as f64;
     load_factor >= MAX_HASH_LOAD_FACTOR
 }
 
-/// Проверяет, нужно ли сжать хеш-таблицу
+/// Checks if a hash table should be shrunk
 pub fn should_shrink_hash_table(current_size: usize, element_count: usize) -> bool {
     let load_factor = element_count as f64 / current_size as f64;
     load_factor <= MIN_HASH_LOAD_FACTOR
 }
 
-/// Форматирует размер в байтах в читаемый вид
+/// Formats bytes size into a readable format
 pub fn format_bytes(bytes: usize) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
 
@@ -171,7 +171,7 @@ pub fn format_bytes(bytes: usize) -> String {
     }
 }
 
-/// Форматирует время в секундах в читаемый вид
+/// Formats time in seconds into a readable format
 pub fn format_duration(seconds: u64) -> String {
     if seconds < 60 {
         format!("{}s", seconds)
@@ -194,12 +194,12 @@ pub fn format_duration(seconds: u64) -> String {
     }
 }
 
-/// Проверяет, является ли число степенью 2
+/// Checks if a number is a power of 2
 pub fn is_power_of_two(n: usize) -> bool {
     n > 0 && (n & (n - 1)) == 0
 }
 
-/// Вычисляет ближайшую степень 2, большую или равную заданному числу
+/// Calculates the nearest power of 2 greater than or equal to the given number
 pub fn next_power_of_two(n: usize) -> usize {
     if n == 0 {
         return 1;
@@ -212,7 +212,7 @@ pub fn next_power_of_two(n: usize) -> usize {
     power
 }
 
-/// Вычисляет ближайшую степень 2, меньшую или равную заданному числу
+/// Calculates the nearest power of 2 less than or equal to the given number
 pub fn prev_power_of_two(n: usize) -> usize {
     if n == 0 {
         return 0;

@@ -1,15 +1,15 @@
-//! Исполнитель запросов для rustdb
+//! Query executor for rustdb
 
 use crate::common::{Error, Result};
 
-// TODO: Реализовать исполнитель запросов
+// TODO: Implement query executor
 pub struct QueryExecutor {
-    // TODO: Реализовать структуру
+    // TODO: Implement structure
 }
 
 impl QueryExecutor {
     pub fn new() -> Result<Self> {
-        // TODO: Реализовать инициализацию
+        // TODO: Implement initialization
         Ok(Self {})
     }
 }

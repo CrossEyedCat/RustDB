@@ -1,4 +1,4 @@
-//! Оптимизатор запросов для rustdb
+//! Query optimizer for rustdb
 
 use crate::analyzer::{AnalysisContext, SemanticAnalyzer};
 use crate::common::{Error, Result};
@@ -8,32 +8,32 @@ use crate::planner::planner::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Оптимизатор запросов
+/// Query optimizer
 pub struct QueryOptimizer {
-    /// Семантический анализатор
+    /// Semantic analyzer
     semantic_analyzer: SemanticAnalyzer,
-    /// Настройки оптимизатора
+    /// Optimizer settings
     settings: OptimizerSettings,
-    /// Статистика оптимизации
+    /// Optimization statistics
     statistics: OptimizationStatistics,
 }
 
-/// Настройки оптимизатора
+/// Optimizer settings
 #[derive(Debug, Clone)]
 pub struct OptimizerSettings {
-    /// Включить перестановку JOIN
+    /// Enable JOIN reordering
     pub enable_join_reordering: bool,
-    /// Включить выбор индексов
+    /// Enable index selection
     pub enable_index_selection: bool,
-    /// Включить упрощение выражений
+    /// Enable expression simplification
     pub enable_expression_simplification: bool,
-    /// Включить выталкивание предикатов
+    /// Enable predicate pushdown
     pub enable_predicate_pushdown: bool,
-    /// Максимальное количество итераций оптимизации
+    /// Maximum number of optimization iterations
     pub max_optimization_iterations: usize,
-    /// Порог стоимости для применения оптимизации
+    /// Cost threshold for applying optimizations
     pub cost_threshold: f64,
-    /// Включить детальное логирование
+    /// Enable detailed logging
     pub enable_debug_logging: bool,
 }
 
@@ -51,36 +51,36 @@ impl Default for OptimizerSettings {
     }
 }
 
-/// Статистика оптимизации
+/// Optimization statistics
 #[derive(Debug, Clone, Default)]
 pub struct OptimizationStatistics {
-    /// Количество примененных оптимизаций
+    /// Number of applied optimizations
     pub optimizations_applied: usize,
-    /// Время оптимизации в миллисекундах
+    /// Optimization time in milliseconds
     pub optimization_time_ms: u64,
-    /// Улучшение стоимости (в процентах)
+    /// Cost improvement (in percent)
     pub cost_improvement_percent: f64,
-    /// Количество перестановок JOIN
+    /// Number of JOIN reorders
     pub join_reorders: usize,
-    /// Количество примененных индексов
+    /// Number of applied indexes
     pub indexes_applied: usize,
-    /// Количество упрощений выражений
+    /// Number of expression simplifications
     pub expression_simplifications: usize,
 }
 
-/// Результат оптимизации
+/// Optimization result
 #[derive(Debug, Clone)]
 pub struct OptimizationResult {
-    /// Оптимизированный план
+    /// Optimized plan
     pub optimized_plan: ExecutionPlan,
-    /// Статистика оптимизации
+    /// Optimization statistics
     pub statistics: OptimizationStatistics,
-    /// Сообщения об оптимизациях
+    /// Optimization messages
     pub messages: Vec<String>,
 }
 
 impl QueryOptimizer {
-    /// Создать новый оптимизатор запросов
+    /// Create a new query optimizer
     pub fn new() -> Result<Self> {
         let semantic_analyzer = SemanticAnalyzer::default();
         Ok(Self {
@@ -90,7 +90,7 @@ impl QueryOptimizer {
         })
     }
 
-    /// Создать оптимизатор с настройками
+    /// Create optimizer with settings
     pub fn with_settings(settings: OptimizerSettings) -> Result<Self> {
         let semantic_analyzer = SemanticAnalyzer::default();
         Ok(Self {
@@ -100,7 +100,7 @@ impl QueryOptimizer {
         })
     }
 
-    /// Оптимизировать план выполнения
+    /// Optimize execution plan
     pub fn optimize(&mut self, plan: ExecutionPlan) -> Result<OptimizationResult> {
         let start_time = std::time::Instant::now();
         let original_cost = plan.metadata.estimated_cost;
@@ -108,7 +108,7 @@ impl QueryOptimizer {
         let mut messages = Vec::new();
         let mut optimizations_applied = 0;
 
-        // Применяем различные оптимизации
+        // Apply various optimizations
         if self.settings.enable_predicate_pushdown {
             if let Some((new_plan, msg)) = self.apply_predicate_pushdown(&optimized_plan)? {
                 optimized_plan = new_plan;
@@ -141,7 +141,7 @@ impl QueryOptimizer {
             }
         }
 
-        // Обновляем статистику
+        // Update statistics
         let optimization_time = start_time.elapsed().as_millis() as u64;
         let cost_improvement = if original_cost > 0.0 {
             ((original_cost - optimized_plan.metadata.estimated_cost) / original_cost) * 100.0
@@ -177,7 +177,7 @@ impl QueryOptimizer {
         })
     }
 
-    /// Применить выталкивание предикатов
+    /// Apply predicate pushdown
     fn apply_predicate_pushdown(
         &self,
         plan: &ExecutionPlan,
@@ -185,7 +185,7 @@ impl QueryOptimizer {
         let mut new_plan = plan.clone();
         let mut pushed_down = false;
 
-        // Находим фильтры и пытаемся их вытолкнуть ближе к таблицам
+        // Find filters and try to push them closer to tables
         new_plan.root = self.pushdown_predicates_recursive(&plan.root)?;
 
         if new_plan.root != plan.root {
@@ -195,21 +195,21 @@ impl QueryOptimizer {
         if pushed_down {
             Ok(Some((
                 new_plan,
-                "Применено выталкивание предикатов".to_string(),
+                "Predicate pushdown applied".to_string(),
             )))
         } else {
             Ok(None)
         }
     }
 
-    /// Рекурсивно выталкиваем предикаты
+    /// Recursively push down predicates
     fn pushdown_predicates_recursive(&self, node: &PlanNode) -> Result<PlanNode> {
         match node {
             PlanNode::Filter(filter) => {
-                // Пытаемся вытолкнуть условие фильтра вниз
+                // Try to push down the filter condition
                 let optimized_input = self.pushdown_predicates_recursive(&filter.input)?;
 
-                // Если входной узел - это JOIN, пытаемся вытолкнуть условие в одну из веток
+                // If the input node is a JOIN, try to push the condition into one of the branches
                 if let PlanNode::Join(join) = &optimized_input {
                     let (left_condition, right_condition) =
                         self.split_join_condition(&filter.condition, join)?;
@@ -217,12 +217,12 @@ impl QueryOptimizer {
                     let mut left = self.pushdown_predicates_recursive(&join.left)?;
                     let mut right = self.pushdown_predicates_recursive(&join.right)?;
 
-                    // Добавляем условия к соответствующим веткам
+                    // Add conditions to the corresponding branches
                     if let Some(condition) = left_condition {
                         left = PlanNode::Filter(FilterNode {
                             condition,
                             input: Box::new(left),
-                            selectivity: 0.5, // TODO: Рассчитать селективность
+                            selectivity: 0.5, // TODO: Calculate selectivity
                             cost: 0.0,
                         });
                     }
@@ -244,7 +244,7 @@ impl QueryOptimizer {
                         cost: join.cost,
                     }))
                 } else {
-                    // Для других узлов просто применяем фильтр
+                    // For other nodes, simply apply the filter
                     Ok(PlanNode::Filter(FilterNode {
                         condition: filter.condition.clone(),
                         input: Box::new(optimized_input),
@@ -266,30 +266,30 @@ impl QueryOptimizer {
                 }))
             }
             _ => {
-                // Для других узлов рекурсивно обрабатываем дочерние узлы
+                // For other nodes, recursively process child nodes
                 let child_nodes = self.get_child_nodes(node);
                 if child_nodes.is_empty() {
                     Ok(node.clone())
                 } else {
-                    // Упрощенная обработка - просто клонируем узел
+                    // Simplified processing - just clone the node
                     Ok(node.clone())
                 }
             }
         }
     }
 
-    /// Разделить условие JOIN на условия для левой и правой ветки
+    /// Split JOIN condition into conditions for left and right branches
     fn split_join_condition(
         &self,
         condition: &str,
         join: &JoinNode,
     ) -> Result<(Option<String>, Option<String>)> {
-        // Упрощенная реализация - просто возвращаем None для обеих веток
-        // В реальной реализации здесь был бы анализ условия и его разделение
+        // Simplified implementation - just return None for both branches
+        // In a real implementation, condition analysis and splitting would occur here
         Ok((None, None))
     }
 
-    /// Применить перестановку JOIN
+    /// Apply JOIN reordering
     fn apply_join_reordering(
         &self,
         plan: &ExecutionPlan,
@@ -297,7 +297,7 @@ impl QueryOptimizer {
         let mut new_plan = plan.clone();
         let mut reordered = false;
 
-        // Находим JOIN узлы и пытаемся их переставить
+        // Find JOIN nodes and try to reorder them
         new_plan.root = self.reorder_joins_recursive(&plan.root)?;
 
         if new_plan.root != plan.root {
@@ -305,20 +305,20 @@ impl QueryOptimizer {
         }
 
         if reordered {
-            Ok(Some((new_plan, "Применена перестановка JOIN".to_string())))
+            Ok(Some((new_plan, "JOIN reordering applied".to_string())))
         } else {
             Ok(None)
         }
     }
 
-    /// Рекурсивно переставляем JOIN операции
+    /// Recursively reorder JOIN operations
     fn reorder_joins_recursive(&self, node: &PlanNode) -> Result<PlanNode> {
         match node {
             PlanNode::Join(join) => {
                 let left = self.reorder_joins_recursive(&join.left)?;
                 let right = self.reorder_joins_recursive(&join.right)?;
 
-                // Простая эвристика: если правая ветка меньше левой, меняем местами
+                // Simple heuristic: if the right branch is smaller than the left, swap them
                 let left_cost = self.estimate_node_cost(&left);
                 let right_cost = self.estimate_node_cost(&right);
 
@@ -345,14 +345,14 @@ impl QueryOptimizer {
                 if child_nodes.is_empty() {
                     Ok(node.clone())
                 } else {
-                    // Упрощенная обработка - просто клонируем узел
+                    // Simplified processing - just clone the node
                     Ok(node.clone())
                 }
             }
         }
     }
 
-    /// Применить выбор индексов
+    /// Apply index selection
     fn apply_index_selection(
         &self,
         plan: &ExecutionPlan,
@@ -360,7 +360,7 @@ impl QueryOptimizer {
         let mut new_plan = plan.clone();
         let mut indexes_applied = false;
 
-        // Заменяем TableScan на IndexScan где это возможно
+        // Replace TableScan with IndexScan where possible
         new_plan.root = self.select_indexes_recursive(&plan.root)?;
 
         if new_plan.root != plan.root {
@@ -368,17 +368,17 @@ impl QueryOptimizer {
         }
 
         if indexes_applied {
-            Ok(Some((new_plan, "Применен выбор индексов".to_string())))
+            Ok(Some((new_plan, "Index selection applied".to_string())))
         } else {
             Ok(None)
         }
     }
 
-    /// Рекурсивно выбираем индексы
+    /// Recursively select indexes
     fn select_indexes_recursive(&self, node: &PlanNode) -> Result<PlanNode> {
         match node {
             PlanNode::TableScan(table_scan) => {
-                // Проверяем, есть ли подходящий индекс для этой таблицы
+                // Check if there is a suitable index for this table
                 if let Some(index_scan) = self.find_best_index(table_scan)? {
                     Ok(PlanNode::IndexScan(index_scan))
                 } else {
@@ -390,21 +390,21 @@ impl QueryOptimizer {
                 if child_nodes.is_empty() {
                     Ok(node.clone())
                 } else {
-                    // Упрощенная обработка - просто клонируем узел
+                    // Simplified processing - just clone the node
                     Ok(node.clone())
                 }
             }
         }
     }
 
-    /// Найти лучший индекс для таблицы
+    /// Find the best index for a table
     fn find_best_index(&self, table_scan: &TableScanNode) -> Result<Option<IndexScanNode>> {
-        // Упрощенная реализация - возвращаем None
-        // В реальной реализации здесь был бы поиск доступных индексов
+        // Simplified implementation - just return None
+        // In a real implementation, available indexes would be searched here
         Ok(None)
     }
 
-    /// Применить упрощение выражений
+    /// Apply expression simplification
     fn apply_expression_simplification(
         &self,
         plan: &ExecutionPlan,
@@ -412,7 +412,7 @@ impl QueryOptimizer {
         let mut new_plan = plan.clone();
         let mut simplified = false;
 
-        // Упрощаем выражения в плане
+        // Simplify expressions in the plan
         new_plan.root = self.simplify_expressions_recursive(&plan.root)?;
 
         if new_plan.root != plan.root {
@@ -422,21 +422,21 @@ impl QueryOptimizer {
         if simplified {
             Ok(Some((
                 new_plan,
-                "Применено упрощение выражений".to_string(),
+                "Expression simplification applied".to_string(),
             )))
         } else {
             Ok(None)
         }
     }
 
-    /// Рекурсивно упрощаем выражения
+    /// Recursively simplify expressions
     fn simplify_expressions_recursive(&self, node: &PlanNode) -> Result<PlanNode> {
-        // Упрощенная реализация - просто клонируем узел
-        // В реальной реализации здесь было бы упрощение выражений
+        // Simplified implementation - just clone the node
+        // In a real implementation, expression simplification would occur here
         Ok(node.clone())
     }
 
-    /// Получить дочерние узлы плана
+    /// Get child nodes of the plan
     fn get_child_nodes<'a>(&self, node: &'a PlanNode) -> Vec<&'a PlanNode> {
         match node {
             PlanNode::Filter(node) => vec![&node.input],
@@ -451,7 +451,7 @@ impl QueryOptimizer {
         }
     }
 
-    /// Оценить стоимость узла
+    /// Estimate the cost of a node
     fn estimate_node_cost(&self, node: &PlanNode) -> f64 {
         match node {
             PlanNode::TableScan(node) => node.cost,
@@ -470,22 +470,22 @@ impl QueryOptimizer {
         }
     }
 
-    /// Получить настройки оптимизатора
+    /// Get optimizer settings
     pub fn settings(&self) -> &OptimizerSettings {
         &self.settings
     }
 
-    /// Обновить настройки оптимизатора
+    /// Update optimizer settings
     pub fn update_settings(&mut self, settings: OptimizerSettings) {
         self.settings = settings;
     }
 
-    /// Получить статистику оптимизации
+    /// Get optimization statistics
     pub fn statistics(&self) -> &OptimizationStatistics {
         &self.statistics
     }
 
-    /// Сбросить статистику
+    /// Reset statistics
     pub fn reset_statistics(&mut self) {
         self.statistics = OptimizationStatistics::default();
     }

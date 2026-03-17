@@ -1,4 +1,4 @@
-//! Менеджер буферов для rustdb
+//! Buffer manager for rustdb
 
 use crate::common::{types::PageId, Error, Result};
 use crate::storage::page::{Page, PageHeader};
@@ -6,25 +6,25 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Статистика буфера
+/// Buffer statistics
 #[derive(Debug, Clone)]
 pub struct BufferStats {
-    /// Количество обращений к кэшу
+    /// Number of cache accesses
     pub total_accesses: u64,
-    /// Количество попаданий в кэш
+    /// Number of cache hits
     pub cache_hits: u64,
-    /// Количество промахов кэша
+    /// Number of cache misses
     pub cache_misses: u64,
-    /// Количество операций записи
+    /// Number of write operations
     pub write_operations: u64,
-    /// Количество операций чтения
+    /// Number of read operations
     pub read_operations: u64,
-    /// Время последнего сброса статистики
+    /// Time of last statistics reset
     pub last_reset: Instant,
 }
 
 impl BufferStats {
-    /// Создает новую статистику
+    /// Creates new statistics
     pub fn new() -> Self {
         Self {
             total_accesses: 0,
@@ -36,7 +36,7 @@ impl BufferStats {
         }
     }
 
-    /// Возвращает hit ratio (отношение попаданий к общему количеству обращений)
+    /// Returns hit ratio (ratio of hits to total accesses)
     pub fn hit_ratio(&self) -> f64 {
         if self.total_accesses == 0 {
             0.0
@@ -45,7 +45,7 @@ impl BufferStats {
         }
     }
 
-    /// Возвращает miss ratio (отношение промахов к общему количеству обращений)
+    /// Returns miss ratio (ratio of misses to total accesses)
     pub fn miss_ratio(&self) -> f64 {
         if self.total_accesses == 0 {
             0.0
@@ -54,7 +54,7 @@ impl BufferStats {
         }
     }
 
-    /// Сбрасывает статистику
+    /// Resets statistics
     pub fn reset(&mut self) {
         self.total_accesses = 0;
         self.cache_hits = 0;
@@ -64,7 +64,7 @@ impl BufferStats {
         self.last_reset = Instant::now();
     }
 
-    /// Регистрирует обращение к кэшу
+    /// Records cache access
     pub fn record_access(&mut self, is_hit: bool) {
         self.total_accesses += 1;
         if is_hit {
@@ -74,32 +74,32 @@ impl BufferStats {
         }
     }
 
-    /// Регистрирует операцию записи
+    /// Records write operation
     pub fn record_write(&mut self) {
         self.write_operations += 1;
     }
 
-    /// Регистрирует операцию чтения
+    /// Records read operation
     pub fn record_read(&mut self) {
         self.read_operations += 1;
     }
 }
 
-/// Элемент LRU кэша
+/// LRU cache entry
 #[derive(Debug, Clone)]
 struct LRUEntry {
-    /// Страница
+    /// Page
     page: Page,
-    /// Время последнего доступа
+    /// Last access time
     last_access: Instant,
-    /// Количество обращений
+    /// Access count
     access_count: u32,
-    /// Флаг "грязной" страницы
+    /// Dirty page flag
     is_dirty: bool,
 }
 
 impl LRUEntry {
-    /// Создает новый элемент LRU
+    /// Creates new LRU entry
     fn new(page: Page) -> Self {
         Self {
             page,
@@ -109,54 +109,54 @@ impl LRUEntry {
         }
     }
 
-    /// Обновляет время доступа
+    /// Updates access time
     fn touch(&mut self) {
         self.last_access = Instant::now();
         self.access_count += 1;
     }
 
-    /// Помечает страницу как измененную
+    /// Marks page as modified
     fn mark_dirty(&mut self) {
         self.is_dirty = true;
     }
 
-    /// Помечает страницу как чистую
+    /// Marks page as clean
     fn mark_clean(&mut self) {
         self.is_dirty = false;
     }
 }
 
-/// Стратегия вытеснения
+/// Eviction strategy
 #[derive(Debug, Clone, PartialEq)]
 pub enum EvictionStrategy {
     /// LRU (Least Recently Used)
     LRU,
-    /// Clock алгоритм
+    /// Clock algorithm
     Clock,
-    /// Адаптивная стратегия
+    /// Adaptive strategy
     Adaptive,
 }
 
-/// Менеджер буферов с LRU кэшем
+/// Buffer manager with LRU cache
 pub struct BufferManager {
-    /// LRU кэш страниц
+    /// LRU page cache
     cache: HashMap<PageId, LRUEntry>,
-    /// Очередь LRU для отслеживания порядка доступа
+    /// LRU queue for tracking access order
     lru_queue: VecDeque<PageId>,
-    /// Максимальное количество страниц в кэше
+    /// Maximum number of pages in cache
     max_pages: usize,
-    /// Стратегия вытеснения
+    /// Eviction strategy
     strategy: EvictionStrategy,
-    /// Статистика буфера
+    /// Buffer statistics
     stats: BufferStats,
-    /// Указатель для Clock алгоритма
+    /// Pointer for Clock algorithm
     clock_pointer: usize,
-    /// Счетчик обращений для адаптивной стратегии
+    /// Access counter for adaptive strategy
     access_counter: u64,
 }
 
 impl BufferManager {
-    /// Создает новый менеджер буферов
+    /// Creates a new buffer manager
     pub fn new(max_pages: usize, strategy: EvictionStrategy) -> Self {
         Self {
             cache: HashMap::new(),
@@ -169,7 +169,7 @@ impl BufferManager {
         }
     }
 
-    /// Получает страницу по ID
+    /// Gets page by ID
     pub fn get_page(&mut self, page_id: PageId) -> Option<&Page> {
         self.stats.record_read();
 
@@ -180,10 +180,10 @@ impl BufferManager {
 
         self.stats.record_access(true);
 
-        // Сначала обновляем LRU порядок
+        // First update LRU order
         self.update_lru_order(page_id);
 
-        // Затем получаем ссылку на страницу
+        // Then get reference to page
         if let Some(entry) = self.cache.get_mut(&page_id) {
             entry.touch();
             Some(&entry.page)
@@ -192,7 +192,7 @@ impl BufferManager {
         }
     }
 
-    /// Получает изменяемую ссылку на страницу
+    /// Gets mutable reference to page
     pub fn get_page_mut(&mut self, page_id: PageId) -> Option<&mut Page> {
         self.stats.record_write();
 
@@ -203,10 +203,10 @@ impl BufferManager {
 
         self.stats.record_access(true);
 
-        // Сначала обновляем LRU порядок
+        // First update LRU order
         self.update_lru_order(page_id);
 
-        // Затем получаем изменяемую ссылку на страницу
+        // Then get mutable reference to page
         if let Some(entry) = self.cache.get_mut(&page_id) {
             entry.touch();
             entry.mark_dirty();
@@ -216,22 +216,22 @@ impl BufferManager {
         }
     }
 
-    /// Добавляет страницу в кэш
+    /// Adds page to cache
     pub fn add_page(&mut self, page: Page) -> Result<()> {
         let page_id = page.header.page_id;
 
-        // Если страница уже существует, обновляем её
+        // If page already exists, update it
         if self.cache.contains_key(&page_id) {
             self.update_page(page)?;
             return Ok(());
         }
 
-        // Если превышен лимит, вытесняем страницу
+        // If limit exceeded, evict a page
         if self.cache.len() >= self.max_pages {
             self.evict_page()?;
         }
 
-        // Добавляем страницу в кэш
+        // Add page to cache
         let entry = LRUEntry::new(page);
         self.cache.insert(page_id, entry);
         self.lru_queue.push_back(page_id);
@@ -239,7 +239,7 @@ impl BufferManager {
         Ok(())
     }
 
-    /// Обновляет существующую страницу
+    /// Updates existing page
     pub fn update_page(&mut self, page: Page) -> Result<()> {
         let page_id = page.header.page_id;
 
@@ -247,10 +247,10 @@ impl BufferManager {
             return Ok(());
         }
 
-        // Сначала обновляем LRU порядок
+        // First update LRU order
         self.update_lru_order(page_id);
 
-        // Затем обновляем страницу
+        // Then update page
         if let Some(entry) = self.cache.get_mut(&page_id) {
             entry.page = page;
             entry.touch();
@@ -260,10 +260,10 @@ impl BufferManager {
         Ok(())
     }
 
-    /// Удаляет страницу из кэша
+    /// Removes page from cache
     pub fn remove_page(&mut self, page_id: PageId) -> Option<Page> {
         if let Some(entry) = self.cache.remove(&page_id) {
-            // Удаляем из LRU очереди
+            // Remove from LRU queue
             if let Some(pos) = self.lru_queue.iter().position(|&id| id == page_id) {
                 self.lru_queue.remove(pos);
             }
@@ -273,7 +273,7 @@ impl BufferManager {
         }
     }
 
-    /// Вытесняет страницу из кэша
+    /// Evicts page from cache
     fn evict_page(&mut self) -> Result<()> {
         let page_id = match self.strategy {
             EvictionStrategy::LRU => self.evict_lru()?,
@@ -282,23 +282,23 @@ impl BufferManager {
         };
 
         if let Some(page) = self.remove_page(page_id) {
-            // Если страница "грязная", нужно записать её на диск
+            // If page is dirty, need to write it to disk
             if page.header.is_dirty {
-                // TODO: Реализовать запись на диск
-                log::warn!("Вытеснение грязной страницы {} без записи на диск", page_id);
+                // TODO: Implement disk write
+                log::warn!("Evicting dirty page {} without writing to disk", page_id);
             }
         }
 
         Ok(())
     }
 
-    /// Вытесняет страницу по LRU алгоритму
+    /// Evicts page using LRU algorithm
     fn evict_lru(&mut self) -> Result<PageId> {
         if let Some(page_id) = self.lru_queue.front().copied() {
-            // Проверяем, не зафиксирована ли страница
+            // Check if page is pinned
             if let Some(entry) = self.cache.get(&page_id) {
                 if entry.page.header.is_pinned {
-                    // Ищем следующую незафиксированную страницу
+                    // Find next unpinned page
                     for &id in self.lru_queue.iter().skip(1) {
                         if let Some(entry) = self.cache.get(&id) {
                             if !entry.page.header.is_pinned {
@@ -306,16 +306,16 @@ impl BufferManager {
                             }
                         }
                     }
-                    return Err(Error::validation("Все страницы зафиксированы"));
+                    return Err(Error::validation("All pages are pinned"));
                 }
             }
             Ok(page_id)
         } else {
-            Err(Error::validation("Кэш пуст"))
+            Err(Error::validation("Cache is empty"))
         }
     }
 
-    /// Вытесняет страницу по Clock алгоритму
+    /// Evicts page using Clock algorithm
     fn evict_clock(&mut self) -> Result<PageId> {
         let mut attempts = 0;
         let max_attempts = self.cache.len() * 2;
@@ -323,7 +323,7 @@ impl BufferManager {
         while attempts < max_attempts {
             let page_ids: Vec<PageId> = self.cache.keys().copied().collect();
             if page_ids.is_empty() {
-                return Err(Error::validation("Кэш пуст"));
+                return Err(Error::validation("Cache is empty"));
             }
 
             let page_id = page_ids[self.clock_pointer % page_ids.len()];
@@ -334,7 +334,7 @@ impl BufferManager {
                     if entry.access_count == 0 {
                         return Ok(page_id);
                     } else {
-                        // Уменьшаем счетчик обращений
+                        // Decrease access counter
                         if let Some(entry_mut) = self.cache.get_mut(&page_id) {
                             entry_mut.access_count = entry_mut.access_count.saturating_sub(1);
                         }
@@ -346,83 +346,83 @@ impl BufferManager {
         }
 
         Err(Error::validation(
-            "Не удалось найти страницу для вытеснения",
+            "Failed to find page for eviction",
         ))
     }
 
-    /// Вытесняет страницу по адаптивной стратегии
+    /// Evicts page using adaptive strategy
     fn evict_adaptive(&mut self) -> Result<PageId> {
-        // Адаптивная стратегия: комбинация LRU и Clock
+        // Adaptive strategy: combination of LRU and Clock
         let hit_ratio = self.stats.hit_ratio();
 
         if hit_ratio > 0.8 {
-            // Высокий hit ratio - используем LRU
+            // High hit ratio - use LRU
             self.evict_lru()
         } else if hit_ratio < 0.2 {
-            // Низкий hit ratio - используем Clock
+            // Low hit ratio - use Clock
             self.evict_clock()
         } else {
-            // Средний hit ratio - используем LRU
+            // Medium hit ratio - use LRU
             self.evict_lru()
         }
     }
 
-    /// Обновляет порядок LRU
+    /// Updates LRU order
     fn update_lru_order(&mut self, page_id: PageId) {
-        // Удаляем страницу из текущей позиции
+        // Remove page from current position
         if let Some(pos) = self.lru_queue.iter().position(|&id| id == page_id) {
             self.lru_queue.remove(pos);
         }
-        // Добавляем в конец (самая недавно использованная)
+        // Add to end (most recently used)
         self.lru_queue.push_back(page_id);
     }
 
-    /// Фиксирует страницу в памяти
+    /// Pins page in memory
     pub fn pin_page(&mut self, page_id: PageId) -> Result<()> {
         if let Some(entry) = self.cache.get_mut(&page_id) {
             entry.page.header.pin();
         } else {
-            return Err(Error::validation("Страница не найдена в кэше"));
+            return Err(Error::validation("Page not found in cache"));
         }
         Ok(())
     }
 
-    /// Освобождает страницу из памяти
+    /// Unpins page from memory
     pub fn unpin_page(&mut self, page_id: PageId) -> Result<()> {
         if let Some(entry) = self.cache.get_mut(&page_id) {
             entry.page.header.unpin();
         } else {
-            return Err(Error::validation("Страница не найдена в кэше"));
+            return Err(Error::validation("Page not found in cache"));
         }
         Ok(())
     }
 
-    /// Возвращает статистику буфера
+    /// Returns buffer statistics
     pub fn get_stats(&self) -> BufferStats {
         self.stats.clone()
     }
 
-    /// Сбрасывает статистику
+    /// Resets statistics
     pub fn reset_stats(&mut self) {
         self.stats.reset();
     }
 
-    /// Возвращает количество страниц в кэше
+    /// Returns number of pages in cache
     pub fn page_count(&self) -> usize {
         self.cache.len()
     }
 
-    /// Проверяет, содержит ли кэш страницу
+    /// Checks if cache contains page
     pub fn contains_page(&self, page_id: PageId) -> bool {
         self.cache.contains_key(&page_id)
     }
 
-    /// Возвращает количество "грязных" страниц
+    /// Returns number of dirty pages
     pub fn dirty_page_count(&self) -> usize {
         self.cache.values().filter(|entry| entry.is_dirty).count()
     }
 
-    /// Принудительно записывает все "грязные" страницы
+    /// Forces write of all dirty pages
     pub fn flush_dirty_pages(&mut self) -> Result<usize> {
         let mut flushed_count = 0;
         let dirty_pages: Vec<PageId> = self
@@ -434,7 +434,7 @@ impl BufferManager {
 
         for page_id in dirty_pages {
             if let Some(entry) = self.cache.get_mut(&page_id) {
-                // TODO: Реализовать запись на диск
+                // TODO: Implement disk write
                 entry.mark_clean();
                 flushed_count += 1;
             }
@@ -443,23 +443,23 @@ impl BufferManager {
         Ok(flushed_count)
     }
 
-    /// Изменяет стратегию вытеснения
+    /// Changes eviction strategy
     pub fn set_eviction_strategy(&mut self, strategy: EvictionStrategy) {
         self.strategy = strategy;
-        // Сбрасываем указатель для Clock алгоритма
+        // Reset pointer for Clock algorithm
         self.clock_pointer = 0;
     }
 
-    /// Возвращает текущую стратегию вытеснения
+    /// Returns current eviction strategy
     pub fn get_eviction_strategy(&self) -> EvictionStrategy {
         self.strategy.clone()
     }
 }
 
-/// Потокобезопасный менеджер буферов
+/// Thread-safe buffer manager
 pub type SharedBufferManager = Arc<Mutex<BufferManager>>;
 
-/// Создает потокобезопасный менеджер буферов
+/// Creates thread-safe buffer manager
 pub fn create_shared_buffer_manager(
     max_pages: usize,
     strategy: EvictionStrategy,
@@ -497,12 +497,12 @@ mod tests {
     fn test_lru_eviction() {
         let mut manager = BufferManager::new(2, EvictionStrategy::LRU);
 
-        // Добавляем 3 страницы
+        // Add 3 pages
         manager.add_page(Page::new(1)).unwrap();
         manager.add_page(Page::new(2)).unwrap();
         manager.add_page(Page::new(3)).unwrap();
 
-        // Должна быть вытеснена первая страница
+        // First page should be evicted
         assert_eq!(manager.page_count(), 2);
         assert!(!manager.contains_page(1));
         assert!(manager.contains_page(2));
@@ -516,15 +516,15 @@ mod tests {
         manager.add_page(Page::new(1)).unwrap();
         manager.pin_page(1).unwrap();
 
-        // Добавляем еще 2 страницы
+        // Add 2 more pages
         manager.add_page(Page::new(2)).unwrap();
         manager.add_page(Page::new(3)).unwrap();
 
-        // Зафиксированная страница не должна быть вытеснена
+        // Pinned page should not be evicted
         assert!(manager.contains_page(1));
-        // В буфере должно быть максимум 2 страницы (размер буфера)
+        // Buffer should have maximum 2 pages (buffer size)
         assert_eq!(manager.page_count(), 2);
-        // Страница 3 должна быть в буфере (последняя добавленная)
+        // Page 3 should be in buffer (last added)
         assert!(manager.contains_page(3));
     }
 
@@ -536,7 +536,7 @@ mod tests {
         manager.add_page(page).unwrap();
         manager.get_page(1);
         manager.get_page(1);
-        manager.get_page(999); // Промах
+        manager.get_page(999); // Miss
 
         let stats = manager.get_stats();
         assert_eq!(stats.total_accesses, 3);
@@ -549,7 +549,7 @@ mod tests {
     fn test_eviction_strategies() {
         let mut manager = BufferManager::new(2, EvictionStrategy::LRU);
 
-        // Тестируем смену стратегии
+        // Test strategy change
         manager.set_eviction_strategy(EvictionStrategy::Clock);
         assert_eq!(manager.get_eviction_strategy(), EvictionStrategy::Clock);
 

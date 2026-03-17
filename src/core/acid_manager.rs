@@ -1,10 +1,10 @@
-//! Менеджер ACID свойств для rustdb
+//! ACID properties manager for rustdb
 //!
-//! Этот модуль реализует полную поддержку ACID свойств:
-//! - Atomicity (Атомарность) - все операции транзакции выполняются или откатываются
-//! - Consistency (Согласованность) - база данных остается в согласованном состоянии
-//! - Isolation (Изоляция) - транзакции изолированы друг от друга
-//! - Durability (Долговечность) - зафиксированные изменения сохраняются навсегда
+//! This module implements full ACID properties support:
+//! - Atomicity - all transaction operations are executed or rolled back
+//! - Consistency - database remains in consistent state
+//! - Isolation - transactions are isolated from each other
+//! - Durability - committed changes are permanently saved
 
 use crate::common::{Error, Result};
 use crate::core::lock::{LockManager, LockMode, LockType};
@@ -15,28 +15,28 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
-/// Ошибки ACID менеджера
+/// ACID manager errors
 #[derive(Debug, thiserror::Error)]
 pub enum AcidError {
-    #[error("Транзакция не найдена: {0}")]
+    #[error("Transaction not found: {0}")]
     TransactionNotFound(TransactionId),
 
-    #[error("Нарушение изоляции: {0}")]
+    #[error("Isolation violation: {0}")]
     IsolationViolation(String),
 
-    #[error("Нарушение согласованности: {0}")]
+    #[error("Consistency violation: {0}")]
     ConsistencyViolation(String),
 
-    #[error("Ошибка логирования: {0}")]
+    #[error("Logging error: {0}")]
     LoggingError(String),
 
-    #[error("Дедлок обнаружен: {0}")]
+    #[error("Deadlock detected: {0}")]
     DeadlockDetected(String),
 
-    #[error("Таймаут блокировки: {0}")]
+    #[error("Lock timeout: {0}")]
     LockTimeout(String),
 
-    #[error("Ошибка восстановления: {0}")]
+    #[error("Recovery error: {0}")]
     RecoveryError(String),
 }
 
@@ -46,22 +46,22 @@ impl From<AcidError> for Error {
     }
 }
 
-/// Конфигурация ACID менеджера
+/// ACID manager configuration
 #[derive(Debug, Clone)]
 pub struct AcidConfig {
-    /// Максимальное время ожидания блокировки
+    /// Maximum lock wait time
     pub lock_timeout: Duration,
-    /// Интервал проверки дедлоков
+    /// Deadlock check interval
     pub deadlock_check_interval: Duration,
-    /// Максимальное количество попыток получения блокировки
+    /// Maximum number of lock acquisition attempts
     pub max_lock_retries: u32,
-    /// Включить строгую проверку согласованности
+    /// Enable strict consistency checking
     pub strict_consistency: bool,
-    /// Включить автоматическое обнаружение дедлоков
+    /// Enable automatic deadlock detection
     pub auto_deadlock_detection: bool,
-    /// Включить MVCC
+    /// Enable MVCC
     pub enable_mvcc: bool,
-    /// Максимальное количество версий для хранения
+    /// Maximum number of versions to store
     pub max_versions: usize,
 }
 
@@ -79,47 +79,47 @@ impl Default for AcidConfig {
     }
 }
 
-/// Информация о версии записи для MVCC
+/// Record version information for MVCC
 #[derive(Debug, Clone)]
 pub struct VersionInfo {
-    /// ID версии
+    /// Version ID
     pub version_id: u64,
-    /// ID транзакции, создавшей версию
+    /// ID of transaction that created the version
     pub created_by: TransactionId,
-    /// Время создания версии
+    /// Version creation time
     pub created_at: SystemTime,
-    /// Время удаления версии (если удалена)
+    /// Version deletion time (if deleted)
     pub deleted_at: Option<SystemTime>,
-    /// ID транзакции, удалившей версию
+    /// ID of transaction that deleted the version
     pub deleted_by: Option<TransactionId>,
-    /// Данные версии
+    /// Version data
     pub data: Vec<u8>,
 }
 
-/// Менеджер ACID свойств
+/// ACID properties manager
 pub struct AcidManager {
-    /// Конфигурация
+    /// Configuration
     config: AcidConfig,
-    /// Менеджер блокировок
+    /// Lock manager
     lock_manager: Arc<LockManager>,
     /// Write-Ahead Log
     wal: Arc<WriteAheadLog>,
-    /// Менеджер страниц
+    /// Page manager
     page_manager: Arc<PageManager>,
-    /// Активные транзакции
+    /// Active transactions
     active_transactions: Arc<RwLock<HashMap<TransactionId, TransactionInfo>>>,
-    /// Граф ожидания для обнаружения дедлоков
+    /// Wait-for graph for deadlock detection
     wait_for_graph: Arc<Mutex<HashMap<TransactionId, HashSet<TransactionId>>>>,
-    /// Очередь транзакций, ожидающих блокировок
+    /// Queue of transactions waiting for locks
     waiting_transactions: Arc<Mutex<VecDeque<(TransactionId, LockType, LockMode)>>>,
-    /// Версии записей для MVCC
+    /// Record versions for MVCC
     versions: Arc<RwLock<HashMap<(u64, u64), Vec<VersionInfo>>>>, // (page_id, record_id) -> versions
-    /// Счетчик версий
+    /// Version counter
     version_counter: Arc<Mutex<u64>>,
 }
 
 impl AcidManager {
-    /// Создает новый ACID менеджер
+    /// Creates a new ACID manager
     pub fn new(
         config: AcidConfig,
         lock_manager: Arc<LockManager>,
@@ -139,24 +139,24 @@ impl AcidManager {
         })
     }
 
-    /// Начинает новую транзакцию
+    /// Begins a new transaction
     pub fn begin_transaction(
         &self,
         transaction_id: TransactionId,
         isolation_level: IsolationLevel,
         read_only: bool,
     ) -> Result<()> {
-        // Создаем информацию о транзакции
+        // Create transaction information
         let transaction_info =
             TransactionInfo::new(transaction_id, isolation_level.clone(), read_only);
 
-        // TODO: Записать в WAL
+        // TODO: Write to WAL
         println!(
-            "Начата транзакция {} с уровнем изоляции {:?}",
+            "Started transaction {} with isolation level {:?}",
             transaction_id, isolation_level
         );
 
-        // Добавляем в активные транзакции
+        // Add to active transactions
         {
             let mut transactions = self.active_transactions.write().unwrap();
             transactions.insert(transaction_id, transaction_info);
@@ -165,32 +165,32 @@ impl AcidManager {
         Ok(())
     }
 
-    /// Завершает транзакцию
+    /// Commits transaction
     pub fn commit_transaction(&self, transaction_id: TransactionId) -> Result<()> {
-        // Проверяем, что транзакция существует и активна
+        // Check that transaction exists and is active
         let transaction_info = self.get_transaction_info(transaction_id)?;
 
         if transaction_info.state != TransactionState::Active {
             return Err(AcidError::ConsistencyViolation(format!(
-                "Транзакция {} не может быть зафиксирована в состоянии {:?}",
+                "Transaction {} cannot be committed in state {:?}",
                 transaction_id, transaction_info.state
             ))
             .into());
         }
 
-        // TODO: Записать COMMIT в WAL
-        println!("Зафиксирована транзакция {}", transaction_id);
+        // TODO: Write COMMIT to WAL
+        println!("Committed transaction {}", transaction_id);
 
-        // TODO: Освободить все блокировки
+        // TODO: Release all locks
         // self.lock_manager.release_all_locks(transaction_id)?;
 
-        // Удаляем из активных транзакций
+        // Remove from active transactions
         {
             let mut transactions = self.active_transactions.write().unwrap();
             transactions.remove(&transaction_id);
         }
 
-        // Удаляем из графа ожидания
+        // Remove from wait-for graph
         {
             let mut graph = self.wait_for_graph.lock().unwrap();
             graph.remove(&transaction_id);
@@ -199,27 +199,27 @@ impl AcidManager {
         Ok(())
     }
 
-    /// Откатывает транзакцию
+    /// Aborts transaction
     pub fn abort_transaction(&self, transaction_id: TransactionId) -> Result<()> {
-        // Проверяем, что транзакция существует
+        // Check that transaction exists
         let transaction_info = self.get_transaction_info(transaction_id)?;
 
-        // TODO: Записать ABORT в WAL
-        println!("Откачена транзакция {}", transaction_id);
+        // TODO: Write ABORT to WAL
+        println!("Aborted transaction {}", transaction_id);
 
-        // TODO: Выполнить откат изменений (UNDO)
+        // TODO: Perform rollback of changes (UNDO)
         // self.undo_transaction_changes(transaction_id)?;
 
-        // TODO: Освободить все блокировки
+        // TODO: Release all locks
         // self.lock_manager.release_all_locks(transaction_id)?;
 
-        // Удаляем из активных транзакций
+        // Remove from active transactions
         {
             let mut transactions = self.active_transactions.write().unwrap();
             transactions.remove(&transaction_id);
         }
 
-        // Удаляем из графа ожидания
+        // Remove from wait-for graph
         {
             let mut graph = self.wait_for_graph.lock().unwrap();
             graph.remove(&transaction_id);
@@ -228,7 +228,7 @@ impl AcidManager {
         Ok(())
     }
 
-    /// Получает блокировку для транзакции
+    /// Acquires lock for transaction
     pub fn acquire_lock(
         &self,
         transaction_id: TransactionId,
@@ -239,28 +239,28 @@ impl AcidManager {
         let retry_count = 0;
 
         while retry_count < self.config.max_lock_retries {
-            // TODO: Пытаться получить блокировку
+            // TODO: Try to acquire lock
             // match self.lock_manager.acquire_lock(transaction_id, lock_type.clone(), lock_mode.clone()) {
             //     Ok(()) => {
             //         self.update_transaction_locks(transaction_id, &lock_type)?;
             //         return Ok(());
             //     }
             //     Err(_) => {
-            //         // Обработка ошибок
+            //         // Error handling
             //     }
             // }
 
-            // Временно просто возвращаем успех
+            // Temporarily just return success
             println!(
-                "Получена блокировка для транзакции {} на ресурс {:?}",
+                "Acquired lock for transaction {} on resource {:?}",
                 transaction_id, lock_type
             );
             return Ok(());
 
-            // Проверяем таймаут
+            // Check timeout
             if start_time.elapsed() > self.config.lock_timeout {
                 return Err(AcidError::LockTimeout(format!(
-                    "Таймаут получения блокировки для транзакции {}",
+                    "Lock acquisition timeout for transaction {}",
                     transaction_id
                 ))
                 .into());
@@ -268,32 +268,32 @@ impl AcidManager {
         }
 
         Err(AcidError::LockTimeout(format!(
-            "Не удалось получить блокировку после {} попыток",
+            "Failed to acquire lock after {} attempts",
             self.config.max_lock_retries
         ))
         .into())
     }
 
-    /// Освобождает блокировку
+    /// Releases lock
     pub fn release_lock(&self, transaction_id: TransactionId, lock_type: LockType) -> Result<()> {
-        // TODO: Освободить блокировку
+        // TODO: Release lock
         // self.lock_manager.release_lock(transaction_id, lock_type.clone())?;
 
         println!(
-            "Освобождена блокировка для транзакции {} на ресурс {:?}",
+            "Released lock for transaction {} on resource {:?}",
             transaction_id, lock_type
         );
 
-        // Удаляем из заблокированных ресурсов транзакции
+        // Remove from transaction's locked resources
         self.remove_transaction_lock(transaction_id, &lock_type)?;
 
-        // Удаляем из графа ожидания
+        // Remove from wait-for graph
         self.remove_wait_edge(transaction_id, lock_type)?;
 
         Ok(())
     }
 
-    /// Выполняет операцию чтения с учетом изоляции
+    /// Performs read operation with isolation consideration
     pub fn read_record(
         &self,
         transaction_id: TransactionId,
@@ -304,25 +304,25 @@ impl AcidManager {
 
         match transaction_info.isolation_level {
             IsolationLevel::ReadUncommitted => {
-                // Читаем незафиксированные данные
+                // Read uncommitted data
                 self.read_uncommitted_record(page_id, record_id)
             }
             IsolationLevel::ReadCommitted => {
-                // Читаем только зафиксированные данные
+                // Read only committed data
                 self.read_committed_record(page_id, record_id)
             }
             IsolationLevel::RepeatableRead => {
-                // Читаем снимок данных на момент начала транзакции
+                // Read data snapshot at transaction start time
                 self.read_repeatable_record(transaction_id, page_id, record_id)
             }
             IsolationLevel::Serializable => {
-                // Строгая изоляция
+                // Strict isolation
                 self.read_serializable_record(transaction_id, page_id, record_id)
             }
         }
     }
 
-    /// Выполняет операцию записи с учетом ACID
+    /// Performs write operation with ACID consideration
     pub fn write_record(
         &self,
         transaction_id: TransactionId,
@@ -334,50 +334,50 @@ impl AcidManager {
 
         if transaction_info.read_only {
             return Err(AcidError::ConsistencyViolation(
-                "Транзакция только для чтения не может изменять данные".to_string(),
+                "Read-only transaction cannot modify data".to_string(),
             )
             .into());
         }
 
-        // Получаем блокировку на запись
+        // Acquire write lock
         self.acquire_lock(
             transaction_id,
             LockType::Record(page_id, record_id),
             LockMode::Exclusive,
         )?;
 
-        // TODO: Читать старые данные для UNDO
+        // TODO: Read old data for UNDO
         // let old_data = self.page_manager.read_record(page_id, record_id)?;
 
-        // Создаем версию для MVCC
+        // Create version for MVCC
         if self.config.enable_mvcc {
-            // TODO: Создать версию
+            // TODO: Create version
             // self.create_version(page_id, record_id, transaction_id, &old_data)?;
         }
 
-        // TODO: Записать в WAL
+        // TODO: Write to WAL
         // let log_record = LogRecord { ... };
         // self.wal.write_record(&log_record)?;
 
-        // TODO: Записать данные на страницу
+        // TODO: Write data to page
         // self.page_manager.write_record(page_id, record_id, new_data)?;
 
         println!(
-            "Записаны данные для транзакции {} на страницу {} запись {}",
+            "Wrote data for transaction {} to page {} record {}",
             transaction_id, page_id, record_id
         );
 
-        // Обновляем информацию о транзакции
+        // Update transaction information
         self.update_transaction_dirty_pages(transaction_id, page_id)?;
 
         Ok(())
     }
 
-    /// Обнаруживает дедлок
+    /// Detects deadlock
     fn detect_deadlock(&self, transaction_id: TransactionId) -> Result<bool> {
         let graph = self.wait_for_graph.lock().unwrap();
 
-        // Простая проверка на циклы в графе
+        // Simple cycle check in graph
         let mut visited = HashSet::new();
         let mut rec_stack = HashSet::new();
 
@@ -418,9 +418,9 @@ impl AcidManager {
         ))
     }
 
-    /// Добавляет ребро в граф ожидания
+    /// Adds edge to wait-for graph
     fn add_wait_edge(&self, _waiting: TransactionId, _lock_type: LockType) -> Result<()> {
-        // TODO: Найти транзакцию, владеющую блокировкой
+        // TODO: Find transaction owning the lock
         // if let Some(owner) = self.lock_manager.get_lock_owner(&lock_type)? {
         //     let mut graph = self.wait_for_graph.lock().unwrap();
         //     graph.entry(waiting).or_insert_with(HashSet::new).insert(owner);
@@ -428,16 +428,16 @@ impl AcidManager {
         Ok(())
     }
 
-    /// Удаляет ребро из графа ожидания
+    /// Removes edge from wait-for graph
     fn remove_wait_edge(&self, transaction: TransactionId, _lock_type: LockType) -> Result<()> {
         let mut graph = self.wait_for_graph.lock().unwrap();
 
-        // Удаляем все рёбра, где transaction ждет других
+        // Remove all edges where transaction is waiting for others
         if let Some(waiting_for) = graph.get_mut(&transaction) {
             waiting_for.clear();
         }
 
-        // Удаляем все рёбра, где другие ждут transaction
+        // Remove all edges where others are waiting for transaction
         for waiting_for in graph.values_mut() {
             waiting_for.remove(&transaction);
         }
@@ -445,7 +445,7 @@ impl AcidManager {
         Ok(())
     }
 
-    /// Создает новую версию записи для MVCC
+    /// Creates a new record version for MVCC
     fn create_version(
         &self,
         page_id: u64,
@@ -473,57 +473,57 @@ impl AcidManager {
             .or_insert_with(Vec::new)
             .push(version_info);
 
-        // Ограничиваем количество версий
+        // Limit number of versions
         if let Some(record_versions) = versions.get_mut(&key) {
             if record_versions.len() > self.config.max_versions {
-                record_versions.remove(0); // Удаляем самую старую версию
+                record_versions.remove(0); // Remove oldest version
             }
         }
 
         Ok(())
     }
 
-    /// Читает незафиксированные данные
+    /// Reads uncommitted data
     fn read_uncommitted_record(&self, _page_id: u64, _record_id: u64) -> Result<Vec<u8>> {
-        // TODO: Реализовать чтение незафиксированных данных
+        // TODO: Implement reading uncommitted data
         Ok(b"uncommitted_data".to_vec())
     }
 
-    /// Читает только зафиксированные данные
+    /// Reads only committed data
     fn read_committed_record(&self, _page_id: u64, _record_id: u64) -> Result<Vec<u8>> {
-        // TODO: Реализовать чтение только зафиксированных данных
+        // TODO: Implement reading only committed data
         Ok(b"committed_data".to_vec())
     }
 
-    /// Читает снимок данных для повторяемого чтения
+    /// Reads data snapshot for repeatable read
     fn read_repeatable_record(
         &self,
         _transaction_id: TransactionId,
         _page_id: u64,
         _record_id: u64,
     ) -> Result<Vec<u8>> {
-        // TODO: Реализовать чтение снимка данных
+        // TODO: Implement reading data snapshot
         Ok(b"repeatable_data".to_vec())
     }
 
-    /// Читает данные с строгой изоляцией
+    /// Reads data with strict isolation
     fn read_serializable_record(
         &self,
         _transaction_id: TransactionId,
         _page_id: u64,
         _record_id: u64,
     ) -> Result<Vec<u8>> {
-        // TODO: Реализовать строгую изоляцию
+        // TODO: Implement strict isolation
         Ok(b"serializable_data".to_vec())
     }
 
-    /// Выполняет откат изменений транзакции
+    /// Performs rollback of transaction changes
     fn undo_transaction_changes(&self, _transaction_id: TransactionId) -> Result<()> {
-        // TODO: Реализовать откат изменений
+        // TODO: Implement rollback of changes
         Ok(())
     }
 
-    /// Получает информацию о транзакции
+    /// Gets transaction information
     fn get_transaction_info(&self, transaction_id: TransactionId) -> Result<TransactionInfo> {
         let transactions = self.active_transactions.read().unwrap();
         transactions
@@ -532,7 +532,7 @@ impl AcidManager {
             .ok_or_else(|| AcidError::TransactionNotFound(transaction_id).into())
     }
 
-    /// Обновляет список заблокированных ресурсов транзакции
+    /// Updates list of transaction's locked resources
     fn update_transaction_locks(
         &self,
         transaction_id: TransactionId,
@@ -545,7 +545,7 @@ impl AcidManager {
         Ok(())
     }
 
-    /// Удаляет блокировку из списка транзакции
+    /// Removes lock from transaction's list
     fn remove_transaction_lock(
         &self,
         transaction_id: TransactionId,
@@ -558,26 +558,26 @@ impl AcidManager {
         Ok(())
     }
 
-    /// Обновляет список измененных страниц транзакции
+    /// Updates list of transaction's modified pages
     fn update_transaction_dirty_pages(
         &self,
         _transaction_id: TransactionId,
         _page_id: u64,
     ) -> Result<()> {
-        // TODO: Добавить page_id в dirty_pages
+        // TODO: Add page_id to dirty_pages
         Ok(())
     }
 
-    /// Получает следующий LSN
+    /// Gets next LSN
     fn get_next_lsn(&self) -> Result<LogSequenceNumber> {
-        // TODO: Реализовать получение следующего LSN
+        // TODO: Implement getting next LSN
         Ok(SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64)
     }
 
-    /// Получает статистику ACID менеджера
+    /// Gets ACID manager statistics
     pub fn get_statistics(&self) -> Result<AcidStatistics> {
         let active_count = self.active_transactions.read().unwrap().len();
         let waiting_count = self.waiting_transactions.lock().unwrap().len();
@@ -593,29 +593,29 @@ impl AcidManager {
             active_transactions: active_count,
             waiting_transactions: waiting_count,
             total_versions: version_count,
-            deadlocks_detected: 0,     // TODO: Добавить счетчик
-            transactions_committed: 0, // TODO: Добавить счетчик
-            transactions_aborted: 0,   // TODO: Добавить счетчик
+            deadlocks_detected: 0,     // TODO: Add counter
+            transactions_committed: 0, // TODO: Add counter
+            transactions_aborted: 0,   // TODO: Add counter
         })
     }
 }
 
-/// Статистика ACID менеджера
+/// ACID manager statistics
 #[derive(Debug, Clone)]
 pub struct AcidStatistics {
-    /// Количество активных транзакций
+    /// Number of active transactions
     pub active_transactions: usize,
-    /// Количество транзакций, ожидающих блокировок
+    /// Number of transactions waiting for locks
     pub waiting_transactions: usize,
-    /// Общее количество версий для MVCC
+    /// Total number of versions for MVCC
     pub total_versions: usize,
-    /// Количество обнаруженных дедлоков
+    /// Number of detected deadlocks
     pub deadlocks_detected: u64,
-    /// Количество зафиксированных транзакций
+    /// Number of committed transactions
     pub transactions_committed: u64,
-    /// Количество отмененных транзакций
+    /// Number of aborted transactions
     pub transactions_aborted: u64,
 }
 
-/// Тип для LSN (временно)
+/// Type for LSN (temporary)
 pub type LogSequenceNumber = u64;

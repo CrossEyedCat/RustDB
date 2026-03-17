@@ -1,7 +1,6 @@
-//! Профилировщик CPU и Memory для rustdb
+//! CPU and memory profiler for rustdb
 //!
-//! Предоставляет инструменты для профилирования производительности
-//! и использования памяти
+//! Provides tools for profiling performance and memory usage
 
 #![allow(clippy::absurd_extreme_comparisons)]
 
@@ -12,96 +11,96 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 
-/// Тип профилирования
+/// Profiling mode
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum ProfilingType {
-    /// CPU профилирование
+    /// CPU profiling
     Cpu,
-    /// Memory профилирование
+    /// Memory profiling
     Memory,
-    /// Комбинированное профилирование
+    /// Combined profiling
     Combined,
 }
 
-/// Метрика CPU
+/// CPU metric
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuMetric {
-    /// Временная метка
+    /// Timestamp
     pub timestamp: u64,
-    /// Использование CPU (%)
+    /// CPU usage (%)
     pub cpu_usage: f64,
-    /// Количество потоков
+    /// Thread count
     pub thread_count: usize,
-    /// Время пользователя (микросекунды)
+    /// User time (microseconds)
     pub user_time_us: u64,
-    /// Время системы (микросекунды)
+    /// System time (microseconds)
     pub system_time_us: u64,
-    /// Время простоя (микросекунды)
+    /// Idle time (microseconds)
     pub idle_time_us: u64,
 }
 
-/// Метрика памяти
+/// Memory metric
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryMetric {
-    /// Временная метка
+    /// Timestamp
     pub timestamp: u64,
-    /// Используемая память (байты)
+    /// Used memory (bytes)
     pub used_memory: u64,
-    /// Доступная память (байты)
+    /// Available memory (bytes)
     pub available_memory: u64,
-    /// Общая память (байты)
+    /// Total memory (bytes)
     pub total_memory: u64,
-    /// Использование памяти (%)
+    /// Memory usage (%)
     pub memory_usage_percent: f64,
-    /// Память процесса (байты)
+    /// Process memory (bytes)
     pub process_memory: u64,
-    /// Виртуальная память процесса (байты)
+    /// Process virtual memory (bytes)
     pub process_virtual_memory: u64,
-    /// Количество страниц в памяти
+    /// Number of pages in memory
     pub page_count: u64,
-    /// Количество страниц в swap
+    /// Number of pages in swap
     pub swap_count: u64,
 }
 
-/// Снимок производительности
+/// Performance snapshot
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceSnapshot {
-    /// Временная метка
+    /// Timestamp
     pub timestamp: u64,
-    /// CPU метрики
+    /// CPU metrics
     pub cpu: Option<CpuMetric>,
-    /// Memory метрики
+    /// Memory metrics
     pub memory: Option<MemoryMetric>,
-    /// Дополнительные метрики
+    /// Additional metrics
     pub additional_metrics: HashMap<String, f64>,
 }
 
-/// Статистика профилирования
+/// Profiling stats
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProfilingStats {
-    /// Общее количество снимков
+    /// Total number of snapshots
     pub total_snapshots: u64,
-    /// Среднее использование CPU (%)
+    /// Average CPU usage (%)
     pub avg_cpu_usage: f64,
-    /// Максимальное использование CPU (%)
+    /// Maximum CPU usage (%)
     pub max_cpu_usage: f64,
-    /// Среднее использование памяти (%)
+    /// Average memory usage (%)
     pub avg_memory_usage: f64,
-    /// Максимальное использование памяти (%)
+    /// Maximum memory usage (%)
     pub max_memory_usage: f64,
-    /// Средняя память процесса (МБ)
+    /// Average process memory (MB)
     pub avg_process_memory_mb: f64,
-    /// Максимальная память процесса (МБ)
+    /// Maximum process memory (MB)
     pub max_process_memory_mb: f64,
-    /// Время начала профилирования
+    /// Profiling start time
     pub start_time: u64,
-    /// Время последнего снимка
+    /// Timestamp of last snapshot
     pub last_snapshot_time: u64,
-    /// Длительность профилирования (секунды)
+    /// Profiling duration (seconds)
     pub profiling_duration_seconds: u64,
 }
 
-/// Профилировщик
+/// Profiler
 pub struct Profiler {
     config: DebugConfig,
     snapshots: Arc<RwLock<Vec<PerformanceSnapshot>>>,
@@ -111,7 +110,7 @@ pub struct Profiler {
 }
 
 impl Profiler {
-    /// Создает новый профилировщик
+    /// Creates a new profiler
     pub fn new(config: &DebugConfig) -> Self {
         let mut profiler = Self {
             config: config.clone(),
@@ -121,7 +120,7 @@ impl Profiler {
             is_profiling: Arc::new(RwLock::new(false)),
         };
 
-        // Запускаем фоновую задачу профилирования
+        // Start background profiling task
         if config.enable_cpu_profiling || config.enable_memory_profiling {
             profiler.start_profiling();
         }
@@ -129,10 +128,10 @@ impl Profiler {
         profiler
     }
 
-    /// Запускает профилирование
+    /// Starts profiling
     pub fn start_profiling(&mut self) {
         if *self.is_profiling.read().unwrap() {
-            return; // Уже запущено
+            return; // Already running
         }
 
         *self.is_profiling.write().unwrap() = true;
@@ -142,7 +141,7 @@ impl Profiler {
         let is_profiling = self.is_profiling.clone();
         let config = self.config.clone();
 
-        // Инициализируем статистику
+        // Initialize statistics
         {
             let mut stats = stats.write().unwrap();
             stats.start_time = SystemTime::now()
@@ -159,25 +158,25 @@ impl Profiler {
 
                 let snapshot = Self::collect_performance_snapshot(&config);
 
-                // Добавляем снимок
+                // Store snapshot
                 {
                     let mut snapshots = snapshots.write().unwrap();
                     snapshots.push(snapshot.clone());
 
-                    // Ограничиваем количество снимков
+                    // Limit number of snapshots
                     let len = snapshots.len();
                     if len > 10000 {
                         snapshots.drain(0..len - 10000);
                     }
                 }
 
-                // Обновляем статистику
+                // Update stats
                 Self::update_stats(&stats, &snapshot);
             }
         }));
     }
 
-    /// Останавливает профилирование
+    /// Stops profiling
     pub fn stop_profiling(&mut self) {
         *self.is_profiling.write().unwrap() = false;
 
@@ -186,7 +185,7 @@ impl Profiler {
         }
     }
 
-    /// Собирает снимок производительности
+    /// Collects a performance snapshot
     fn collect_performance_snapshot(config: &DebugConfig) -> PerformanceSnapshot {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -200,17 +199,17 @@ impl Profiler {
             additional_metrics: HashMap::new(),
         };
 
-        // Собираем CPU метрики
+        // Collect CPU metrics
         if config.enable_cpu_profiling {
             snapshot.cpu = Some(Self::collect_cpu_metrics());
         }
 
-        // Собираем Memory метрики
+        // Collect memory metrics
         if config.enable_memory_profiling {
             snapshot.memory = Some(Self::collect_memory_metrics());
         }
 
-        // Дополнительные метрики
+        // Additional metrics
         snapshot.additional_metrics.insert(
             "gc_collections".to_string(),
             Self::get_gc_collections() as f64,
@@ -219,15 +218,14 @@ impl Profiler {
         snapshot
     }
 
-    /// Собирает CPU метрики
+    /// Collects CPU metrics
     fn collect_cpu_metrics() -> CpuMetric {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros() as u64;
 
-        // В реальной реализации здесь был бы вызов системных API
-        // Для демонстрации используем симуляцию
+        // Real implementation would call system APIs; we simulate here
         CpuMetric {
             timestamp,
             cpu_usage: Self::get_cpu_usage(),
@@ -238,15 +236,14 @@ impl Profiler {
         }
     }
 
-    /// Собирает Memory метрики
+    /// Collects memory metrics
     fn collect_memory_metrics() -> MemoryMetric {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros() as u64;
 
-        // В реальной реализации здесь был бы вызов системных API
-        // Для демонстрации используем симуляцию
+        // Real implementation would call system APIs; we simulate here
         let (used_memory, total_memory) = Self::get_memory_info();
         let process_memory = Self::get_process_memory();
         let process_virtual_memory = Self::get_process_virtual_memory();
@@ -264,7 +261,7 @@ impl Profiler {
         }
     }
 
-    /// Обновляет статистику
+    /// Updates statistics
     fn update_stats(stats: &Arc<RwLock<ProfilingStats>>, snapshot: &PerformanceSnapshot) {
         let mut stats = stats.write().unwrap();
         stats.total_snapshots += 1;
@@ -294,10 +291,9 @@ impl Profiler {
         stats.profiling_duration_seconds = (snapshot.timestamp / 1_000_000) - stats.start_time;
     }
 
-    /// Получает использование CPU (симуляция)
+    /// Returns simulated CPU usage
     fn get_cpu_usage() -> f64 {
-        // В реальной реализации здесь был бы вызов системных API
-        // Для демонстрации возвращаем случайное значение
+        // Real implementation would call system APIs; here we return a pseudo-random value
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -306,15 +302,15 @@ impl Profiler {
         (hasher.finish() % 100) as f64
     }
 
-    /// Получает количество потоков (симуляция)
+    /// Returns simulated thread count
     fn get_thread_count() -> usize {
-        // В реальной реализации здесь был бы вызов системных API
-        4 // Примерное значение
+        // Real implementation would call system APIs
+        4 // Approximate value
     }
 
-    /// Получает время пользователя (симуляция)
+    /// Returns simulated user time
     fn get_user_time() -> u64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // Real implementation would call system APIs
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -322,9 +318,9 @@ impl Profiler {
             % 1000000
     }
 
-    /// Получает время системы (симуляция)
+    /// Returns simulated system time
     fn get_system_time() -> u64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // Real implementation would call system APIs
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -332,9 +328,9 @@ impl Profiler {
             % 100000
     }
 
-    /// Получает время простоя (симуляция)
+    /// Returns simulated idle time
     fn get_idle_time() -> u64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // Real implementation would call system APIs
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -342,41 +338,41 @@ impl Profiler {
             % 1000000
     }
 
-    /// Получает информацию о памяти (симуляция)
+    /// Returns simulated memory info
     fn get_memory_info() -> (u64, u64) {
-        // В реальной реализации здесь был бы вызов системных API
+        // Real implementation would call system APIs
         let total = 16 * 1024 * 1024 * 1024; // 16 GB
-        let used = total / 2; // 50% используется
+        let used = total / 2; // 50% usage
         (used, total)
     }
 
-    /// Получает память процесса (симуляция)
+    /// Returns simulated process memory usage
     fn get_process_memory() -> u64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // Real implementation would call system APIs
         100 * 1024 * 1024 // 100 MB
     }
 
-    /// Получает виртуальную память процесса (симуляция)
+    /// Returns simulated process virtual memory usage
     fn get_process_virtual_memory() -> u64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // Real implementation would call system APIs
         200 * 1024 * 1024 // 200 MB
     }
 
-    /// Получает количество страниц в памяти (симуляция)
+    /// Returns simulated page count
     fn get_page_count() -> u64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // Real implementation would call system APIs
         1000
     }
 
-    /// Получает количество страниц в swap (симуляция)
+    /// Returns simulated swap page count
     fn get_swap_count() -> u64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // Real implementation would call system APIs
         100
     }
 
-    /// Получает количество сборок мусора (симуляция)
+    /// Returns simulated GC run count
     fn get_gc_collections() -> u64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // Real implementation would call system APIs
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -384,79 +380,79 @@ impl Profiler {
             % 1000
     }
 
-    /// Получает снимки производительности
+    /// Returns performance snapshots
     pub fn get_snapshots(&self, limit: usize) -> Vec<PerformanceSnapshot> {
         let snapshots = self.snapshots.read().unwrap();
         let start = snapshots.len().saturating_sub(limit);
         snapshots[start..].to_vec()
     }
 
-    /// Получает статистику профилирования
+    /// Returns profiling stats
     pub fn get_stats(&self) -> ProfilingStats {
         self.stats.read().unwrap().clone()
     }
 
-    /// Создает отчет о производительности
+    /// Generates performance report
     pub fn generate_performance_report(&self) -> String {
         let stats = self.get_stats();
         let recent_snapshots = self.get_snapshots(100);
 
         let mut report = String::new();
 
-        report.push_str("=== Отчет о производительности системы ===\n\n");
+        report.push_str("=== System performance report ===\n\n");
 
-        // Общая информация
-        report.push_str("Общая информация:\n");
+        // General information
+        report.push_str("General information:\n");
         report.push_str(&format!(
-            "  Длительность профилирования: {} секунд\n",
+            "  Profiling duration: {} seconds\n",
             stats.profiling_duration_seconds
         ));
         report.push_str(&format!(
-            "  Количество снимков: {}\n",
+            "  Snapshot count: {}\n",
             stats.total_snapshots
         ));
-        report.push_str(&format!("  Интервал снимков: 100 мс\n"));
+        report.push_str(&format!("  Snapshot interval: 100 ms\n"));
         report.push_str("\n");
 
-        // CPU статистика
+        // CPU statistics
         if self.config.enable_cpu_profiling {
-            report.push_str("CPU статистика:\n");
+            report.push_str("CPU statistics:\n");
             report.push_str(&format!(
-                "  Среднее использование: {:.1}%\n",
+                "  Average usage: {:.1}%\n",
                 stats.avg_cpu_usage
             ));
             report.push_str(&format!(
-                "  Максимальное использование: {:.1}%\n",
+                "  Peak usage: {:.1}%\n",
                 stats.max_cpu_usage
             ));
             report.push_str("\n");
         }
 
-        // Memory статистика
+        // Memory statistics
         if self.config.enable_memory_profiling {
-            report.push_str("Memory статистика:\n");
+            report.push_str("Memory statistics:\n");
             report.push_str(&format!(
-                "  Среднее использование: {:.1}%\n",
+                "  Average usage: {:.1}%\n",
                 stats.avg_memory_usage
             ));
             report.push_str(&format!(
-                "  Максимальное использование: {:.1}%\n",
+                "  Peak usage: {:.1}%\n",
                 stats.max_memory_usage
             ));
             report.push_str(&format!(
-                "  Средняя память процесса: {:.1} МБ\n",
+                "  Average process memory: {:.1} MB\n",
                 stats.avg_process_memory_mb
             ));
             report.push_str(&format!(
-                "  Максимальная память процесса: {:.1} МБ\n",
+                "  Peak process memory: {:.1} MB\n",
                 stats.max_process_memory_mb
             ));
             report.push_str("\n");
         }
 
-        // Анализ трендов
+        // Trend analysis
         if recent_snapshots.len() >= 10 {
-            report.push_str("Анализ трендов (последние 10 снимков):\n");
+            report.push_str("Trend analysis (last 10 snapshots):\n");
 
             let cpu_trend =
                 Self::analyze_trend(&recent_snapshots, |s| s.cpu.as_ref().map(|c| c.cpu_usage));
@@ -465,28 +461,28 @@ impl Profiler {
             });
 
             if let Some(trend) = cpu_trend {
-                report.push_str(&format!("  CPU тренд: {}\n", trend));
+                report.push_str(&format!("  CPU trend: {}\n", trend));
             }
 
             if let Some(trend) = memory_trend {
-                report.push_str(&format!("  Memory тренд: {}\n", trend));
+                report.push_str(&format!("  Memory trend: {}\n", trend));
             }
 
             report.push_str("\n");
         }
 
-        // Рекомендации
-        report.push_str("Рекомендации:\n");
+        // Recommendations
+        report.push_str("Recommendations:\n");
         if stats.avg_cpu_usage > 80.0 {
             report
-                .push_str("  ⚠️  Высокое использование CPU. Рассмотрите оптимизацию алгоритмов.\n");
+                .push_str("  ⚠️  High CPU usage detected. Consider optimizing algorithms.\n");
         }
         if stats.avg_memory_usage > 90.0 {
-            report.push_str("  ⚠️  Высокое использование памяти. Проверьте утечки памяти.\n");
+            report.push_str("  ⚠️  High memory usage. Inspect for memory leaks.\n");
         }
         if stats.max_process_memory_mb > 1000.0 {
             report.push_str(
-                "  ⚠️  Большое потребление памяти процессом. Оптимизируйте структуры данных.\n",
+                "  ⚠️  Process memory is large. Optimize data structures.\n",
             );
         }
 
@@ -494,13 +490,13 @@ impl Profiler {
             && stats.avg_memory_usage <= 90.0
             && stats.max_process_memory_mb <= 1000.0
         {
-            report.push_str("  ✅ Система работает в пределах нормальных параметров.\n");
+            report.push_str("  ✅ System operates within normal parameters.\n");
         }
 
         report
     }
 
-    /// Анализирует тренд значений
+    /// Analyzes trend of values
     fn analyze_trend<F>(snapshots: &[PerformanceSnapshot], extractor: F) -> Option<String>
     where
         F: Fn(&PerformanceSnapshot) -> Option<f64>,
@@ -520,15 +516,15 @@ impl Profiler {
         let change_percent = ((second_avg - first_avg) / first_avg) * 100.0;
 
         if change_percent > 5.0 {
-            Some(format!("Растущий (+{:.1}%)", change_percent))
+            Some(format!("Increasing (+{:.1}%)", change_percent))
         } else if change_percent < -5.0 {
-            Some(format!("Снижающийся ({:.1}%)", change_percent))
+            Some(format!("Decreasing ({:.1}%)", change_percent))
         } else {
-            Some("Стабильный".to_string())
+            Some("Stable".to_string())
         }
     }
 
-    /// Создает отчет о состоянии профилировщика
+    /// Generates profiler status report
     pub fn generate_status_report(&self) -> String {
         let stats = self.get_stats();
         let is_profiling = *self.is_profiling.read().unwrap();
@@ -536,32 +532,32 @@ impl Profiler {
 
         let mut report = String::new();
 
-        report.push_str(&format!("Профилирование активно: {}\n", is_profiling));
+        report.push_str(&format!("Profiling active: {}\n", is_profiling));
         report.push_str(&format!(
-            "Количество снимков в памяти: {}\n",
+            "Snapshots stored in memory: {}\n",
             snapshot_count
         ));
         report.push_str(&format!(
-            "Общее количество снимков: {}\n",
+            "Total snapshots: {}\n",
             stats.total_snapshots
         ));
         report.push_str(&format!(
-            "CPU профилирование: {}\n",
+            "CPU profiling: {}\n",
             self.config.enable_cpu_profiling
         ));
         report.push_str(&format!(
-            "Memory профилирование: {}\n",
+            "Memory profiling: {}\n",
             self.config.enable_memory_profiling
         ));
         report.push_str(&format!(
-            "Длительность профилирования: {} секунд\n",
+            "Profiling duration: {} seconds\n",
             stats.profiling_duration_seconds
         ));
 
         report
     }
 
-    /// Останавливает профилировщик
+    /// Stops the profiler
     pub fn shutdown(&mut self) {
         self.stop_profiling();
     }
@@ -587,26 +583,26 @@ mod tests {
 
         let mut profiler = Profiler::new(&config);
 
-        // Ждем немного, чтобы накопились снимки
+        // Wait a bit to accumulate snapshots
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Проверяем статистику
+        // Validate statistics
         let stats = profiler.get_stats();
         assert!(stats.total_snapshots > 0);
-        // Время профилирования может быть 0, если тест выполнился очень быстро
+        // Time profiling might be 0 if the test ran very quickly
         assert!(stats.profiling_duration_seconds >= 0);
 
-        // Проверяем снимки
+        // Validate snapshots
         let snapshots = profiler.get_snapshots(10);
         assert!(!snapshots.is_empty());
 
-        // Проверяем отчет
+        // Validate report output
         let report = profiler.generate_performance_report();
-        assert!(report.contains("Отчет о производительности системы"));
-        assert!(report.contains("CPU статистика"));
-        assert!(report.contains("Memory статистика"));
+        assert!(report.contains("performance report"));
+        assert!(report.contains("CPU statistics"));
+        assert!(report.contains("Memory statistics"));
 
-        // Останавливаем профилирование
+        // Stop profiling
         profiler.stop_profiling();
 
         let is_profiling = *profiler.is_profiling.read().unwrap();
@@ -685,6 +681,6 @@ mod tests {
 
         let trend = Profiler::analyze_trend(&snapshots, |s| s.cpu.as_ref().map(|c| c.cpu_usage));
         assert!(trend.is_some());
-        assert!(trend.unwrap().contains("Растущий"));
+        assert!(trend.unwrap().contains("Increasing"));
     }
 }

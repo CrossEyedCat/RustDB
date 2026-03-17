@@ -1,7 +1,7 @@
-//! Менеджер блокировок для rustdb
+//! Lock manager for rustdb
 //!
-//! Реализует систему блокировок с поддержкой Shared/Exclusive блокировок,
-//! обнаружения дедлоков и двухфазного блокирования (2PL).
+//! Implements a locking system with support for Shared/Exclusive locks,
+//! deadlock detection and two-phase locking (2PL).
 
 use crate::common::{Error, Result};
 use crate::core::transaction::TransactionId;
@@ -9,18 +9,18 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
-/// Тип блокировки
+/// Lock type
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LockType {
-    /// Блокировка страницы
+    /// Page lock
     Page(u64),
-    /// Блокировка таблицы
+    /// Table lock
     Table(String),
-    /// Блокировка записи
+    /// Record lock
     Record(u64, u64), // (page_id, record_id)
-    /// Блокировка индекса
+    /// Index lock
     Index(String),
-    /// Произвольный ресурс
+    /// Arbitrary resource lock
     Resource(String),
 }
 
@@ -36,62 +36,62 @@ impl std::fmt::Display for LockType {
     }
 }
 
-/// Режим блокировки
+/// Lock mode
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LockMode {
-    /// Разделяемая блокировка (Shared) - для чтения
+    /// Shared lock - for reading
     Shared,
-    /// Исключительная блокировка (Exclusive) - для записи
+    /// Exclusive lock - for writing
     Exclusive,
 }
 
 impl LockMode {
-    /// Проверяет совместимость режимов блокировки
+    /// Checks lock mode compatibility
     pub fn is_compatible(&self, other: &LockMode) -> bool {
         match (self, other) {
-            // Shared блокировки совместимы между собой
+            // Shared locks are compatible with each other
             (LockMode::Shared, LockMode::Shared) => true,
-            // Exclusive блокировки не совместимы ни с чем
+            // Exclusive locks are not compatible with anything
             (LockMode::Exclusive, _) | (_, LockMode::Exclusive) => false,
         }
     }
 }
 
-/// Информация о блокировке
+/// Lock information
 #[derive(Debug, Clone)]
 pub struct LockInfo {
-    /// Транзакция, владеющая блокировкой
+    /// Transaction owning the lock
     pub transaction_id: TransactionId,
-    /// Тип ресурса
+    /// Resource type
     pub lock_type: LockType,
-    /// Режим блокировки
+    /// Lock mode
     pub lock_mode: LockMode,
-    /// Время получения блокировки
+    /// Lock acquisition time
     pub acquired_at: Instant,
 }
 
-/// Запрос на блокировку в очереди ожидания
+/// Lock request in wait queue
 #[derive(Debug, Clone)]
 pub struct LockRequest {
-    /// Транзакция, запрашивающая блокировку
+    /// Transaction requesting the lock
     pub transaction_id: TransactionId,
-    /// Тип ресурса
+    /// Resource type
     pub lock_type: LockType,
-    /// Режим блокировки
+    /// Lock mode
     pub lock_mode: LockMode,
-    /// Время создания запроса
+    /// Request creation time
     pub requested_at: Instant,
 }
 
-/// Граф ожидания для обнаружения дедлоков
+/// Wait-for graph for deadlock detection
 #[derive(Debug, Default)]
 pub struct WaitForGraph {
-    /// Рёбра графа: транзакция -> множество транзакций, которых она ждет
+    /// Graph edges: transaction -> set of transactions it's waiting for
     edges: HashMap<TransactionId, HashSet<TransactionId>>,
 }
 
 impl WaitForGraph {
-    /// Добавляет ребро в граф (transaction ждет waiting_for)
+    /// Adds edge to graph (transaction waits for waiting_for)
     pub fn add_edge(&mut self, transaction: TransactionId, waiting_for: TransactionId) {
         self.edges
             .entry(transaction)
@@ -99,7 +99,7 @@ impl WaitForGraph {
             .insert(waiting_for);
     }
 
-    /// Удаляет все рёбра, связанные с транзакцией
+    /// Removes all edges related to transaction
     pub fn remove_transaction(&mut self, transaction: TransactionId) {
         self.edges.remove(&transaction);
         for edges in self.edges.values_mut() {
@@ -107,7 +107,7 @@ impl WaitForGraph {
         }
     }
 
-    /// Обнаруживает циклы в графе (дедлоки)
+    /// Detects cycles in graph (deadlocks)
     pub fn detect_deadlock(&self) -> Option<Vec<TransactionId>> {
         let mut visited = HashSet::new();
         let mut rec_stack = HashSet::new();
@@ -126,7 +126,7 @@ impl WaitForGraph {
         None
     }
 
-    /// Поиск в глубину для обнаружения циклов
+    /// Depth-first search for cycle detection
     fn dfs_detect_cycle(
         &self,
         transaction: TransactionId,
@@ -145,7 +145,7 @@ impl WaitForGraph {
                         return Some(cycle);
                     }
                 } else if rec_stack.contains(&neighbor) {
-                    // Найден цикл
+                    // Cycle found
                     let cycle_start = path.iter().position(|&t| t == neighbor).unwrap();
                     return Some(path[cycle_start..].to_vec());
                 }
@@ -158,41 +158,41 @@ impl WaitForGraph {
     }
 }
 
-/// Статистика менеджера блокировок
+/// Lock manager statistics
 #[derive(Debug, Clone, Default)]
 pub struct LockManagerStats {
-    /// Общее количество запросов блокировок
+    /// Total number of lock requests
     pub total_lock_requests: u64,
-    /// Количество успешно полученных блокировок
+    /// Number of successfully acquired locks
     pub locks_acquired: u64,
-    /// Количество освобожденных блокировок
+    /// Number of released locks
     pub locks_released: u64,
-    /// Количество заблокированных запросов
+    /// Number of blocked requests
     pub blocked_requests: u64,
-    /// Количество обнаруженных дедлоков
+    /// Number of detected deadlocks
     pub deadlocks_detected: u64,
-    /// Среднее время ожидания блокировки (в миллисекундах)
+    /// Average lock wait time (in milliseconds)
     pub average_wait_time: f64,
-    /// Количество активных блокировок
+    /// Number of active locks
     pub active_locks: u64,
-    /// Количество запросов в очереди ожидания
+    /// Number of requests in wait queue
     pub waiting_requests: u64,
 }
 
-/// Менеджер блокировок
+/// Lock manager
 pub struct LockManager {
-    /// Активные блокировки: ресурс -> список блокировок
+    /// Active locks: resource -> list of locks
     active_locks: Arc<RwLock<HashMap<String, Vec<LockInfo>>>>,
-    /// Очереди ожидания: ресурс -> очередь запросов
+    /// Wait queues: resource -> queue of requests
     wait_queues: Arc<Mutex<HashMap<String, VecDeque<LockRequest>>>>,
-    /// Граф ожидания для обнаружения дедлоков
+    /// Wait-for graph for deadlock detection
     wait_for_graph: Arc<Mutex<WaitForGraph>>,
-    /// Статистика
+    /// Statistics
     stats: Arc<Mutex<LockManagerStats>>,
 }
 
 impl LockManager {
-    /// Создает новый менеджер блокировок
+    /// Creates a new lock manager
     pub fn new() -> Result<Self> {
         Ok(Self {
             active_locks: Arc::new(RwLock::new(HashMap::new())),
@@ -202,7 +202,7 @@ impl LockManager {
         })
     }
 
-    /// Пытается получить блокировку
+    /// Attempts to acquire lock
     pub fn acquire_lock(
         &self,
         transaction_id: TransactionId,
@@ -210,7 +210,7 @@ impl LockManager {
         lock_type: LockType,
         lock_mode: LockMode,
     ) -> Result<bool> {
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self
                 .stats
@@ -219,55 +219,55 @@ impl LockManager {
             stats.total_lock_requests += 1;
         }
 
-        // Проверяем совместимость с существующими блокировками
+        // Check compatibility with existing locks
         let can_acquire = {
             let active_locks = self.active_locks.read().map_err(|_| {
                 Error::internal("Failed to acquire read lock on active locks".to_string())
             })?;
 
             if let Some(existing_locks) = active_locks.get(&resource) {
-                // Проверяем, может ли эта транзакция уже владеть блокировкой
+                // Check if this transaction already owns a lock
                 if let Some(existing) = existing_locks
                     .iter()
                     .find(|l| l.transaction_id == transaction_id)
                 {
-                    // Транзакция уже владеет блокировкой - проверяем upgrade
+                    // Transaction already owns lock - check upgrade
                     if existing.lock_mode == lock_mode {
-                        return Ok(true); // Уже есть нужная блокировка
+                        return Ok(true); // Already has required lock
                     } else if existing.lock_mode == LockMode::Shared
                         && lock_mode == LockMode::Exclusive
                     {
-                        // Пытаемся upgrade с Shared на Exclusive
-                        // Это возможно только если нет других Shared блокировок
+                        // Attempting upgrade from Shared to Exclusive
+                        // This is only possible if there are no other Shared locks
                         existing_locks.len() == 1
                     } else {
-                        false // Downgrade не поддерживается
+                        false // Downgrade not supported
                     }
                 } else {
-                    // Проверяем совместимость с блокировками других транзакций
+                    // Check compatibility with locks from other transactions
                     existing_locks
                         .iter()
                         .all(|existing| lock_mode.is_compatible(&existing.lock_mode))
                 }
             } else {
-                true // Нет существующих блокировок
+                true // No existing locks
             }
         };
 
         if can_acquire {
-            // Можем получить блокировку немедленно
+            // Can acquire lock immediately
             self.grant_lock(transaction_id, resource, lock_type, lock_mode)?;
             Ok(true)
         } else {
-            // Добавляем в очередь ожидания
+            // Add to wait queue
             self.add_to_wait_queue(transaction_id, resource, lock_type, lock_mode)?;
             Ok(false)
         }
     }
 
-    /// Освобождает блокировку
+    /// Releases lock
     pub fn release_lock(&self, transaction_id: TransactionId, resource: String) -> Result<()> {
-        // Удаляем блокировку
+        // Remove lock
         let removed = {
             let mut active_locks = self.active_locks.write().map_err(|_| {
                 Error::internal("Failed to acquire write lock on active locks".to_string())
@@ -295,7 +295,7 @@ impl LockManager {
         };
 
         if removed {
-            // Обновляем граф ожидания
+            // Update wait-for graph
             {
                 let mut graph = self.wait_for_graph.lock().map_err(|_| {
                     Error::internal("Failed to acquire wait-for graph lock".to_string())
@@ -303,7 +303,7 @@ impl LockManager {
                 graph.remove_transaction(transaction_id);
             }
 
-            // Обновляем статистику
+            // Update statistics
             {
                 let mut stats = self
                     .stats
@@ -313,14 +313,14 @@ impl LockManager {
                 stats.active_locks = stats.active_locks.saturating_sub(1);
             }
 
-            // Проверяем очередь ожидания
+            // Process wait queue
             self.process_wait_queue(&resource)?;
         }
 
         Ok(())
     }
 
-    /// Предоставляет блокировку
+    /// Grants lock
     fn grant_lock(
         &self,
         transaction_id: TransactionId,
@@ -346,7 +346,7 @@ impl LockManager {
                 .push(lock_info);
         }
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self
                 .stats
@@ -359,7 +359,7 @@ impl LockManager {
         Ok(())
     }
 
-    /// Добавляет запрос в очередь ожидания
+    /// Adds request to wait queue
     fn add_to_wait_queue(
         &self,
         transaction_id: TransactionId,
@@ -386,10 +386,10 @@ impl LockManager {
                 .push_back(request);
         }
 
-        // Обновляем граф ожидания
+        // Update wait-for graph
         self.update_wait_for_graph(transaction_id, &resource)?;
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self
                 .stats
@@ -399,13 +399,13 @@ impl LockManager {
             stats.waiting_requests += 1;
         }
 
-        // Проверяем на дедлок
+        // Check for deadlock
         self.check_for_deadlock()?;
 
         Ok(())
     }
 
-    /// Обрабатывает очередь ожидания для ресурса
+    /// Processes wait queue for resource
     fn process_wait_queue(&self, resource: &str) -> Result<()> {
         let mut requests_to_grant = Vec::new();
 
@@ -417,7 +417,7 @@ impl LockManager {
 
             if let Some(queue) = wait_queues.get_mut(resource) {
                 while let Some(request) = queue.front() {
-                    // Проверяем, можно ли предоставить блокировку
+                    // Check if lock can be granted
                     let can_grant = {
                         let active_locks = self.active_locks.read().map_err(|_| {
                             Error::internal(
@@ -438,7 +438,7 @@ impl LockManager {
                         let request = queue.pop_front().unwrap();
                         requests_to_grant.push(request);
                     } else {
-                        break; // Не можем предоставить - останавливаемся
+                        break; // Cannot grant - stop
                     }
                 }
 
@@ -448,7 +448,7 @@ impl LockManager {
             }
         }
 
-        // Предоставляем блокировки вне блокировки очереди
+        // Grant locks outside queue lock
         for request in requests_to_grant {
             self.grant_lock(
                 request.transaction_id,
@@ -457,7 +457,7 @@ impl LockManager {
                 request.lock_mode,
             )?;
 
-            // Обновляем статистику
+            // Update statistics
             let mut stats = self
                 .stats
                 .lock()
@@ -468,7 +468,7 @@ impl LockManager {
         Ok(())
     }
 
-    /// Обновляет граф ожидания
+    /// Updates wait-for graph
     fn update_wait_for_graph(
         &self,
         waiting_transaction: TransactionId,
@@ -479,7 +479,7 @@ impl LockManager {
             .lock()
             .map_err(|_| Error::internal("Failed to acquire wait-for graph lock".to_string()))?;
 
-        // Находим транзакции, владеющие блокировками на этот ресурс
+        // Find transactions owning locks on this resource
         let active_locks = self.active_locks.read().map_err(|_| {
             Error::internal("Failed to acquire read lock on active locks".to_string())
         })?;
@@ -495,7 +495,7 @@ impl LockManager {
         Ok(())
     }
 
-    /// Проверяет наличие дедлоков
+    /// Checks for deadlocks
     fn check_for_deadlock(&self) -> Result<()> {
         let graph = self
             .wait_for_graph
@@ -503,7 +503,7 @@ impl LockManager {
             .map_err(|_| Error::internal("Failed to acquire wait-for graph lock".to_string()))?;
 
         if let Some(cycle) = graph.detect_deadlock() {
-            // Обновляем статистику
+            // Update statistics
             {
                 let mut stats = self
                     .stats
@@ -512,7 +512,7 @@ impl LockManager {
                 stats.deadlocks_detected += 1;
             }
 
-            // Возвращаем ошибку дедлока
+            // Return deadlock error
             return Err(Error::DeadlockDetected(format!(
                 "Deadlock detected involving transactions: {:?}",
                 cycle
@@ -522,7 +522,7 @@ impl LockManager {
         Ok(())
     }
 
-    /// Получает статистику менеджера блокировок
+    /// Gets lock manager statistics
     pub fn get_statistics(&self) -> Result<LockManagerStats> {
         let stats = self
             .stats
@@ -531,7 +531,7 @@ impl LockManager {
         Ok(stats.clone())
     }
 
-    /// Получает информацию о всех активных блокировках
+    /// Gets information about all active locks
     pub fn get_active_locks(&self) -> Result<HashMap<String, Vec<LockInfo>>> {
         let active_locks = self.active_locks.read().map_err(|_| {
             Error::internal("Failed to acquire read lock on active locks".to_string())
@@ -539,7 +539,7 @@ impl LockManager {
         Ok(active_locks.clone())
     }
 
-    /// Получает информацию о всех ожидающих запросах
+    /// Gets information about all waiting requests
     pub fn get_waiting_requests(&self) -> Result<HashMap<String, VecDeque<LockRequest>>> {
         let wait_queues = self
             .wait_queues

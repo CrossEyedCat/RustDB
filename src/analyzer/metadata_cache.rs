@@ -1,4 +1,4 @@
-//! Модуль для кэширования метаданных семантического анализатора
+//! Module for caching semantic analyzer metadata
 
 // use crate::common::{Error, Result}; // Not used in this simplified version
 use crate::parser::ast::DataType;
@@ -6,18 +6,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-/// Запись в кэше метаданных
+/// Metadata cache entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheEntry {
-    /// Данные записи
+    /// Entry data
     pub data: CacheData,
-    /// Время создания записи
-    pub created_at: u64, // Unix timestamp в миллисекундах
-    /// Время последнего доступа
+    /// Entry creation time
+    pub created_at: u64, // Unix timestamp in milliseconds
+    /// Last access time
     pub last_accessed: u64,
-    /// Количество обращений к записи
+    /// Number of accesses to entry
     pub access_count: u64,
-    /// Время жизни записи (TTL) в миллисекундах
+    /// Entry time to live (TTL) in milliseconds
     pub ttl_ms: Option<u64>,
 }
 
@@ -57,17 +57,17 @@ impl CacheEntry {
     }
 }
 
-/// Данные, хранящиеся в кэше
+/// Data stored in cache
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CacheData {
-    /// Информация о таблице
+    /// Table information
     TableInfo {
         name: String,
         columns: Vec<ColumnInfo>,
         indexes: Vec<String>,
         exists: bool,
     },
-    /// Информация о колонке
+    /// Column information
     ColumnInfo {
         table_name: String,
         column_name: String,
@@ -76,7 +76,7 @@ pub enum CacheData {
         is_primary_key: bool,
         exists: bool,
     },
-    /// Информация об индексе
+    /// Index information
     IndexInfo {
         name: String,
         table_name: String,
@@ -84,13 +84,13 @@ pub enum CacheData {
         is_unique: bool,
         exists: bool,
     },
-    /// Результат проверки типов
+    /// Type check result
     TypeCheckResult {
         expression: String,
         result_type: DataType,
         is_valid: bool,
     },
-    /// Результат проверки прав доступа
+    /// Access check result
     AccessCheckResult {
         object_name: String,
         username: String,
@@ -99,7 +99,7 @@ pub enum CacheData {
     },
 }
 
-/// Информация о колонке
+/// Column information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnInfo {
     pub name: String,
@@ -109,20 +109,20 @@ pub struct ColumnInfo {
     pub default_value: Option<String>,
 }
 
-/// Статистика кэша
+/// Cache statistics
 #[derive(Debug, Clone)]
 pub struct CacheStatistics {
-    /// Общее количество записей
+    /// Total number of entries
     pub total_entries: usize,
-    /// Количество попаданий в кэш
+    /// Number of cache hits
     pub hits: u64,
-    /// Количество промахов кэша
+    /// Number of cache misses
     pub misses: u64,
-    /// Количество истёкших записей
+    /// Number of expired entries
     pub expired_entries: usize,
-    /// Размер кэша в байтах (примерный)
+    /// Cache size in bytes (approximate)
     pub estimated_size_bytes: usize,
-    /// Время последней очистки
+    /// Time of last cleanup
     pub last_cleanup: Option<u64>,
 }
 
@@ -152,31 +152,31 @@ impl CacheStatistics {
     }
 }
 
-/// Стратегия вытеснения записей из кэша
+/// Cache eviction strategy
 #[derive(Debug, Clone)]
 pub enum EvictionStrategy {
-    /// Least Recently Used - вытесняем наименее недавно используемые
+    /// Least Recently Used - evict least recently used
     LRU,
-    /// Least Frequently Used - вытесняем наименее часто используемые
+    /// Least Frequently Used - evict least frequently used
     LFU,
-    /// First In First Out - вытесняем самые старые
+    /// First In First Out - evict oldest
     FIFO,
-    /// Time To Live - вытесняем истёкшие
+    /// Time To Live - evict expired
     TTL,
 }
 
-/// Настройки кэша
+/// Cache settings
 #[derive(Debug, Clone)]
 pub struct CacheSettings {
-    /// Максимальное количество записей в кэше
+    /// Maximum number of entries in cache
     pub max_entries: usize,
-    /// Стратегия вытеснения
+    /// Eviction strategy
     pub eviction_strategy: EvictionStrategy,
-    /// TTL по умолчанию для записей
+    /// Default TTL for entries
     pub default_ttl: Option<Duration>,
-    /// Интервал автоматической очистки
+    /// Automatic cleanup interval
     pub cleanup_interval: Duration,
-    /// Включена ли сериализация кэша
+    /// Whether cache serialization is enabled
     pub enable_persistence: bool,
 }
 
@@ -185,29 +185,29 @@ impl Default for CacheSettings {
         Self {
             max_entries: 1000,
             eviction_strategy: EvictionStrategy::LRU,
-            default_ttl: Some(Duration::from_secs(3600)), // 1 час
-            cleanup_interval: Duration::from_secs(300),   // 5 минут
+            default_ttl: Some(Duration::from_secs(3600)), // 1 hour
+            cleanup_interval: Duration::from_secs(300),   // 5 minutes
             enable_persistence: false,
         }
     }
 }
 
-/// Кэш метаданных
+/// Metadata cache
 pub struct MetadataCache {
-    /// Хранилище записей кэша
+    /// Cache entries storage
     entries: HashMap<String, CacheEntry>,
-    /// Настройки кэша
+    /// Cache settings
     settings: CacheSettings,
-    /// Статистика кэша
+    /// Cache statistics
     statistics: CacheStatistics,
-    /// Включен ли кэш
+    /// Whether cache is enabled
     enabled: bool,
-    /// Время последней очистки
+    /// Time of last cleanup
     last_cleanup: Instant,
 }
 
 impl MetadataCache {
-    /// Создает новый кэш метаданных
+    /// Create new metadata cache
     pub fn new(enabled: bool) -> Self {
         Self {
             entries: HashMap::new(),
@@ -218,7 +218,7 @@ impl MetadataCache {
         }
     }
 
-    /// Создает кэш с настройками
+    /// Create cache with settings
     pub fn with_settings(enabled: bool, settings: CacheSettings) -> Self {
         Self {
             entries: HashMap::new(),
@@ -229,13 +229,13 @@ impl MetadataCache {
         }
     }
 
-    /// Получает запись из кэша
+    /// Get entry from cache
     pub fn get(&mut self, key: &str) -> Option<CacheData> {
         if !self.enabled {
             return None;
         }
 
-        // Сначала проверяем, не истекла ли запись
+        // First check if entry has expired
         let is_expired = if let Some(entry) = self.entries.get(key) {
             entry.is_expired()
         } else {
@@ -249,7 +249,7 @@ impl MetadataCache {
         }
 
         if let Some(entry) = self.entries.get_mut(key) {
-            // Обновляем статистику доступа
+            // Update access statistics
             entry.access();
             self.statistics.hits += 1;
             Some(entry.data.clone())
@@ -259,7 +259,7 @@ impl MetadataCache {
         }
     }
 
-    /// Добавляет запись в кэш
+    /// Add entry to cache
     pub fn put(&mut self, key: String, data: CacheData) {
         if !self.enabled {
             return;
@@ -267,12 +267,12 @@ impl MetadataCache {
 
         let mut entry = CacheEntry::new(data);
 
-        // Применяем TTL по умолчанию
+        // Apply default TTL
         if let Some(default_ttl) = self.settings.default_ttl {
             entry = entry.with_ttl(default_ttl);
         }
 
-        // Проверяем, нужно ли освободить место
+        // Check if we need to free space
         if self.entries.len() >= self.settings.max_entries {
             self.evict_entries();
         }
@@ -281,7 +281,7 @@ impl MetadataCache {
         self.update_statistics();
     }
 
-    /// Добавляет запись с кастомным TTL
+    /// Add entry with custom TTL
     pub fn put_with_ttl(&mut self, key: String, data: CacheData, ttl: Duration) {
         if !self.enabled {
             return;
@@ -289,7 +289,7 @@ impl MetadataCache {
 
         let entry = CacheEntry::new(data).with_ttl(ttl);
 
-        // Проверяем, нужно ли освободить место
+        // Check if we need to free space
         if self.entries.len() >= self.settings.max_entries {
             self.evict_entries();
         }
@@ -298,7 +298,7 @@ impl MetadataCache {
         self.update_statistics();
     }
 
-    /// Удаляет запись из кэша
+    /// Remove entry from cache
     pub fn remove(&mut self, key: &str) -> bool {
         if self.entries.remove(key).is_some() {
             self.update_statistics();
@@ -308,7 +308,7 @@ impl MetadataCache {
         }
     }
 
-    /// Проверяет существование записи в кэше
+    /// Check if entry exists in cache
     pub fn contains(&self, key: &str) -> bool {
         if !self.enabled {
             return false;
@@ -321,17 +321,17 @@ impl MetadataCache {
         }
     }
 
-    /// Очищает весь кэш
+    /// Clear entire cache
     pub fn clear(&mut self) {
         self.entries.clear();
         self.statistics = CacheStatistics::new();
     }
 
-    /// Выполняет очистку истёкших записей
+    /// Cleanup expired entries
     pub fn cleanup(&mut self) {
         let now = Instant::now();
 
-        // Проверяем, нужна ли очистка
+        // Check if cleanup is needed
         if now.duration_since(self.last_cleanup) < self.settings.cleanup_interval {
             return;
         }
@@ -353,7 +353,7 @@ impl MetadataCache {
         self.update_statistics();
     }
 
-    /// Получает статистику кэша
+    /// Get cache statistics
     pub fn statistics(&self) -> (usize, usize) {
         (
             self.statistics.hits as usize,
@@ -361,13 +361,13 @@ impl MetadataCache {
         )
     }
 
-    /// Получает подробную статистику кэша
+    /// Get detailed cache statistics
     pub fn detailed_statistics(&mut self) -> CacheStatistics {
         self.update_statistics();
         self.statistics.clone()
     }
 
-    /// Включает или отключает кэш
+    /// Enable or disable cache
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
@@ -375,25 +375,25 @@ impl MetadataCache {
         }
     }
 
-    /// Проверяет, включен ли кэш
+    /// Check if cache is enabled
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
-    /// Обновляет настройки кэша
+    /// Update cache settings
     pub fn update_settings(&mut self, settings: CacheSettings) {
         self.settings = settings;
     }
 
-    /// Получает текущие настройки кэша
+    /// Get current cache settings
     pub fn settings(&self) -> &CacheSettings {
         &self.settings
     }
 
-    // Вспомогательные методы
+    // Helper methods
 
     fn evict_entries(&mut self) {
-        let evict_count = self.entries.len() / 4; // Удаляем 25% записей
+        let evict_count = self.entries.len() / 4; // Remove 25% of entries
 
         match self.settings.eviction_strategy {
             EvictionStrategy::LRU => self.evict_lru(evict_count),
@@ -463,13 +463,13 @@ impl MetadataCache {
             .filter(|entry| entry.is_expired())
             .count();
 
-        // Примерная оценка размера (очень грубая)
-        self.statistics.estimated_size_bytes = self.entries.len() * 256; // ~256 байт на запись
+        // Approximate size estimate (very rough)
+        self.statistics.estimated_size_bytes = self.entries.len() * 256; // ~256 bytes per entry
     }
 
-    // Удобные методы для работы с конкретными типами данных
+    // Convenience methods for working with specific data types
 
-    /// Кэширует информацию о таблице
+    /// Cache table information
     pub fn cache_table_info(
         &mut self,
         table_name: &str,
@@ -487,7 +487,7 @@ impl MetadataCache {
         self.put(key, data);
     }
 
-    /// Получает информацию о таблице из кэша
+    /// Get table information from cache
     pub fn get_table_info(
         &mut self,
         table_name: &str,
@@ -506,7 +506,7 @@ impl MetadataCache {
         }
     }
 
-    /// Кэширует информацию о колонке
+    /// Cache column information
     pub fn cache_column_info(
         &mut self,
         table_name: &str,
@@ -528,7 +528,7 @@ impl MetadataCache {
         self.put(key, data);
     }
 
-    /// Получает информацию о колонке из кэша
+    /// Get column information from cache
     pub fn get_column_info(
         &mut self,
         table_name: &str,
@@ -549,7 +549,7 @@ impl MetadataCache {
         }
     }
 
-    /// Кэширует результат проверки типов
+    /// Cache type check result
     pub fn cache_type_check(&mut self, expression: &str, result_type: DataType, is_valid: bool) {
         let key = format!("type_check:{}", expression);
         let data = CacheData::TypeCheckResult {
@@ -560,7 +560,7 @@ impl MetadataCache {
         self.put(key, data);
     }
 
-    /// Получает результат проверки типов из кэша
+    /// Get type check result from cache
     pub fn get_type_check(&mut self, expression: &str) -> Option<(DataType, bool)> {
         let key = format!("type_check:{}", expression);
         if let Some(CacheData::TypeCheckResult {
@@ -582,7 +582,7 @@ impl Default for MetadataCache {
     }
 }
 
-// Вспомогательная функция для получения текущего времени
+// Helper function to get current time
 fn current_timestamp_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -619,7 +619,7 @@ mod tests {
 
         let entry = CacheEntry::new(data).with_ttl(Duration::from_millis(1));
 
-        // Ждем истечения TTL
+        // Wait for TTL expiration
         std::thread::sleep(Duration::from_millis(2));
         assert!(entry.is_expired());
     }
@@ -635,15 +635,15 @@ mod tests {
             exists: true,
         };
 
-        // Добавляем запись
+        // Add entry
         cache.put("test_key".to_string(), data);
         assert!(cache.contains("test_key"));
 
-        // Получаем запись
+        // Get entry
         let retrieved = cache.get("test_key");
         assert!(retrieved.is_some());
 
-        // Удаляем запись
+        // Remove entry
         assert!(cache.remove("test_key"));
         assert!(!cache.contains("test_key"));
     }
@@ -659,13 +659,13 @@ mod tests {
             exists: true,
         };
 
-        // Добавляем запись
+        // Add entry
         cache.put("test_key".to_string(), data);
 
-        // Попадание в кэш
+        // Cache hit
         cache.get("test_key");
 
-        // Промах кэша
+        // Cache miss
         cache.get("nonexistent_key");
 
         let (hits, misses) = cache.statistics();
@@ -684,10 +684,10 @@ mod tests {
             exists: true,
         };
 
-        // Попытка добавить в отключенный кэш
+        // Try to add to disabled cache
         cache.put("test_key".to_string(), data);
 
-        // Запись не должна быть добавлена
+        // Entry should not be added
         assert!(!cache.contains("test_key"));
         assert!(cache.get("test_key").is_none());
     }
@@ -711,16 +711,16 @@ mod tests {
             exists: true,
         };
 
-        // Добавляем запись
+        // Add entry
         cache.put("test_key".to_string(), data);
 
-        // Ждем истечения TTL
+        // Wait for TTL expiration
         std::thread::sleep(Duration::from_millis(2));
 
-        // Выполняем очистку
+        // Perform cleanup
         cache.cleanup();
 
-        // Запись должна быть удалена
+        // Entry should be removed
         assert!(!cache.contains("test_key"));
     }
 
@@ -728,10 +728,10 @@ mod tests {
     fn test_convenience_methods() {
         let mut cache = MetadataCache::new(true);
 
-        // Кэшируем информацию о таблице
+        // Cache table information
         cache.cache_table_info("users", Vec::new(), Vec::new(), true);
 
-        // Получаем информацию о таблице
+        // Get table information
         let table_info = cache.get_table_info("users");
         assert!(table_info.is_some());
 

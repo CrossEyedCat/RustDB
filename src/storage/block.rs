@@ -1,50 +1,50 @@
-//! Структуры блоков для rustdb
+//! Block structures for rustdb
 
 use crate::common::{types::PageId, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Идентификатор блока
+/// Block identifier
 pub type BlockId = u64;
 
-/// Тип блока
+/// Block type
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BlockType {
-    /// Блок данных
+    /// Data block
     Data,
-    /// Блок индекса
+    /// Index block
     Index,
-    /// Блок метаданных
+    /// Metadata block
     Metadata,
-    /// Блок логов
+    /// Log block
     Log,
-    /// Блок свободного места
+    /// Free space block
     FreeSpace,
 }
 
-/// Заголовок блока
+/// Block header
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockHeader {
-    /// ID блока
+    /// Block ID
     pub block_id: BlockId,
-    /// Тип блока
+    /// Block type
     pub block_type: BlockType,
-    /// Размер блока в байтах
+    /// Block size in bytes
     pub size: u32,
-    /// Количество страниц в блоке
+    /// Number of pages in the block
     pub page_count: u32,
-    /// Время создания блока
+    /// Block creation time
     pub created_at: u64,
-    /// Время последнего изменения
+    /// Last modification time
     pub last_modified: u64,
-    /// Флаг "грязного" блока
+    /// Dirty block flag
     pub is_dirty: bool,
-    /// Флаг зафиксированного блока
+    /// Pinned block flag
     pub is_pinned: bool,
 }
 
 impl BlockHeader {
-    /// Создает новый заголовок блока
+    /// Creates a new block header
     pub fn new(block_id: BlockId, block_type: BlockType, size: u32) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -63,7 +63,7 @@ impl BlockHeader {
         }
     }
 
-    /// Обновляет время последнего изменения
+    /// Updates the last modification time
     pub fn touch(&mut self) {
         self.last_modified = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -71,43 +71,43 @@ impl BlockHeader {
             .as_secs();
     }
 
-    /// Помечает блок как измененный
+    /// Marks the block as modified
     pub fn mark_dirty(&mut self) {
         self.is_dirty = true;
         self.touch();
     }
 
-    /// Помечает блок как чистый
+    /// Marks the block as clean
     pub fn mark_clean(&mut self) {
         self.is_dirty = false;
     }
 
-    /// Фиксирует блок в памяти
+    /// Pins the block in memory
     pub fn pin(&mut self) {
         self.is_pinned = true;
     }
 
-    /// Освобождает блок из памяти
+    /// Unpins the block from memory
     pub fn unpin(&mut self) {
         self.is_pinned = false;
     }
 }
 
-/// Структура блока
+/// Block structure
 #[derive(Debug, Clone)]
 pub struct Block {
-    /// Заголовок блока
+    /// Block header
     pub header: BlockHeader,
-    /// Страницы в блоке
+    /// Pages in the block
     pub pages: HashMap<PageId, Vec<u8>>,
-    /// Связи с другими блоками
+    /// Links to other blocks
     pub links: BlockLinks,
-    /// Метаданные блока
+    /// Block metadata
     pub metadata: HashMap<String, String>,
 }
 
 impl Block {
-    /// Создает новый пустой блок
+    /// Creates a new empty block
     pub fn new(block_id: BlockId, block_type: BlockType, size: u32) -> Self {
         Self {
             header: BlockHeader::new(block_id, block_type, size),
@@ -117,14 +117,14 @@ impl Block {
         }
     }
 
-    /// Добавляет страницу в блок
+    /// Adds a page to the block
     pub fn add_page(&mut self, page_id: PageId, page_data: Vec<u8>) -> Result<()> {
-        // Проверяем, не превышает ли размер данных размер блока
+        // Check if data size exceeds block size
         let total_size: usize =
             self.pages.values().map(|p| p.len()).sum::<usize>() + page_data.len();
         if total_size > (self.header.size as usize - 256) {
-            // оставляем место для метаданных
-            return Err(Error::validation("Блок переполнен"));
+            // leave space for metadata
+            return Err(Error::validation("Block overflow"));
         }
 
         self.pages.insert(page_id, page_data);
@@ -133,7 +133,7 @@ impl Block {
         Ok(())
     }
 
-    /// Удаляет страницу из блока
+    /// Removes a page from the block
     pub fn remove_page(&mut self, page_id: PageId) -> Option<Vec<u8>> {
         let page_data = self.pages.remove(&page_id);
         if page_data.is_some() {
@@ -143,57 +143,57 @@ impl Block {
         page_data
     }
 
-    /// Получает страницу по ID
+    /// Gets a page by ID
     pub fn get_page(&self, page_id: PageId) -> Option<&Vec<u8>> {
         self.pages.get(&page_id)
     }
 
-    /// Получает изменяемую ссылку на страницу
+    /// Gets a mutable reference to a page
     pub fn get_page_mut(&mut self, page_id: PageId) -> Option<&mut Vec<u8>> {
         self.pages.get_mut(&page_id)
     }
 
-    /// Проверяет, содержит ли блок страницу
+    /// Checks if the block contains a page
     pub fn contains_page(&self, page_id: PageId) -> bool {
         self.pages.contains_key(&page_id)
     }
 
-    /// Возвращает количество страниц в блоке
+    /// Returns the number of pages in the block
     pub fn page_count(&self) -> u32 {
         self.header.page_count
     }
 
-    /// Проверяет, пуст ли блок
+    /// Checks if the block is empty
     pub fn is_empty(&self) -> bool {
         self.header.page_count == 0
     }
 
-    /// Проверяет, полон ли блок
+    /// Checks if the block is full
     pub fn is_full(&self) -> bool {
         self.pages.len() >= self.header.page_count as usize
     }
 
-    /// Очищает блок
+    /// Clears the block
     pub fn clear(&mut self) {
         self.pages.clear();
         self.header.page_count = 0;
         self.header.mark_dirty();
     }
 
-    /// Сериализует блок в байты
+    /// Serializes the block to bytes
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        // TODO: Реализовать полную сериализацию
+        // TODO: Implement full serialization
         let mut bytes = Vec::new();
 
-        // Добавляем заголовок
+        // Add header
         let header_bytes =
             bincode::serialize(&self.header).map_err(|e| Error::BincodeSerialization(e))?;
         bytes.extend_from_slice(&header_bytes);
 
-        // Добавляем количество страниц
+        // Add page count
         bytes.extend_from_slice(&(self.pages.len() as u32).to_le_bytes());
 
-        // Добавляем страницы
+        // Add pages
         for (page_id, page_data) in &self.pages {
             bytes.extend_from_slice(&page_id.to_le_bytes());
             bytes.extend_from_slice(&(page_data.len() as u32).to_le_bytes());
@@ -203,17 +203,17 @@ impl Block {
         Ok(bytes)
     }
 
-    /// Создает блок из байтов (десериализация)
+    /// Creates a block from bytes (deserialization)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         use std::io::Cursor;
 
-        // Минимальная проверка будет сделана после вычисления header_size
+        // Minimum check will be done after calculating header_size
 
-        // Десериализуем заголовок
-        // Сначала пытаемся десериализовать напрямую из начала массива
-        // bincode с default config может попытаться прочитать больше, чем нужно
-        // Поэтому используем Cursor для контроля позиции чтения
-        // Определяем размер заголовка, сериализуя тестовый заголовок
+        // Deserialize header
+        // First, try to deserialize directly from the beginning of the array
+        // bincode with default config may try to read more than needed
+        // Therefore, use Cursor to control read position
+        // Determine header size by serializing a test header
         let test_header = BlockHeader::new(0, BlockType::Data, 0);
         let test_header_bytes = bincode::serialize(&test_header)
             .map_err(|e| Error::BincodeSerialization(Box::new(*e)))?;
@@ -221,31 +221,31 @@ impl Block {
 
         if bytes.len() < header_size {
             return Err(Error::validation(&format!(
-                "Неверный размер блока: требуется минимум {} байт, получено {}",
+                "Invalid block size: requires at least {} bytes, got {}",
                 header_size,
                 bytes.len()
             )));
         }
 
-        // Десериализуем заголовок из начала массива
+        // Deserialize header from the beginning of the array
         let mut cursor = Cursor::new(&bytes[..header_size]);
 
         let header: BlockHeader = bincode::deserialize_from(&mut cursor).map_err(Error::from)?;
 
-        // Получаем позицию после чтения заголовка
-        // Если использовали прямой десериализацию, нужно определить размер заголовка
+        // Get position after reading header
+        // If we used direct deserialization, we need to determine header size
         let header_end = header_size;
 
-        // Проверяем, достаточно ли данных для чтения количества страниц
+        // Check if there's enough data to read page count
         if bytes.len() < header_end + 4 {
             return Err(Error::validation(&format!(
-                "Неверный размер блока: требуется минимум {} байт, получено {}",
+                "Invalid block size: requires at least {} bytes, got {}",
                 header_end + 4,
                 bytes.len()
             )));
         }
 
-        // Читаем количество страниц
+        // Read page count
         let page_count = u32::from_le_bytes([
             bytes[header_end],
             bytes[header_end + 1],
@@ -253,18 +253,18 @@ impl Block {
             bytes[header_end + 3],
         ]);
 
-        // Десериализуем страницы
+        // Deserialize pages
         let mut pages = HashMap::new();
         let mut offset = header_end + 4;
 
         for _ in 0..page_count {
             if offset + 12 > bytes.len() {
                 return Err(Error::validation(
-                    "Неверный размер блока: недостаточно данных для страницы",
+                    "Invalid block size: not enough data for page",
                 ));
             }
 
-            // Читаем page_id (u64, 8 байт)
+            // Read page_id (u64, 8 bytes)
             let page_id = u64::from_le_bytes([
                 bytes[offset],
                 bytes[offset + 1],
@@ -276,7 +276,7 @@ impl Block {
                 bytes[offset + 7],
             ]);
 
-            // Читаем размер данных страницы (u32, 4 байта)
+            // Read page data size (u32, 4 bytes)
             let page_data_len = u32::from_le_bytes([
                 bytes[offset + 8],
                 bytes[offset + 9],
@@ -286,20 +286,20 @@ impl Block {
 
             offset += 12;
 
-            // Проверяем, достаточно ли данных
+            // Check if there's enough data
             if offset + page_data_len > bytes.len() {
                 return Err(Error::validation(
-                    "Неверный размер блока: недостаточно данных для страницы",
+                    "Invalid block size: not enough data for page",
                 ));
             }
 
-            // Читаем данные страницы
+            // Read page data
             let page_data = bytes[offset..offset + page_data_len].to_vec();
             pages.insert(page_id, page_data);
             offset += page_data_len;
         }
 
-        // Создаем блок
+        // Create block
         let block = Self {
             header,
             pages,
@@ -311,21 +311,21 @@ impl Block {
     }
 }
 
-/// Связи блока с другими блоками
+/// Block links to other blocks
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockLinks {
-    /// Следующий блок в цепочке
+    /// Next block in the chain
     pub next_block: Option<BlockId>,
-    /// Предыдущий блок в цепочке
+    /// Previous block in the chain
     pub prev_block: Option<BlockId>,
-    /// Родительский блок (для иерархических структур)
+    /// Parent block (for hierarchical structures)
     pub parent_block: Option<BlockId>,
-    /// Дочерние блоки
+    /// Child blocks
     pub child_blocks: Vec<BlockId>,
 }
 
 impl BlockLinks {
-    /// Создает новые связи блока
+    /// Creates new block links
     pub fn new() -> Self {
         Self {
             next_block: None,
@@ -335,29 +335,29 @@ impl BlockLinks {
         }
     }
 
-    /// Устанавливает следующий блок
+    /// Sets the next block
     pub fn set_next(&mut self, block_id: BlockId) {
         self.next_block = Some(block_id);
     }
 
-    /// Устанавливает предыдущий блок
+    /// Sets the previous block
     pub fn set_prev(&mut self, block_id: BlockId) {
         self.prev_block = Some(block_id);
     }
 
-    /// Устанавливает родительский блок
+    /// Sets the parent block
     pub fn set_parent(&mut self, block_id: BlockId) {
         self.parent_block = Some(block_id);
     }
 
-    /// Добавляет дочерний блок
+    /// Adds a child block
     pub fn add_child(&mut self, block_id: BlockId) {
         if !self.child_blocks.contains(&block_id) {
             self.child_blocks.push(block_id);
         }
     }
 
-    /// Удаляет дочерний блок
+    /// Removes a child block
     pub fn remove_child(&mut self, block_id: BlockId) -> bool {
         if let Some(pos) = self.child_blocks.iter().position(|&id| id == block_id) {
             self.child_blocks.remove(pos);
@@ -367,27 +367,27 @@ impl BlockLinks {
         }
     }
 
-    /// Проверяет, является ли блок листовым
+    /// Checks if the block is a leaf
     pub fn is_leaf(&self) -> bool {
         self.child_blocks.is_empty()
     }
 
-    /// Возвращает количество дочерних блоков
+    /// Returns the number of child blocks
     pub fn child_count(&self) -> usize {
         self.child_blocks.len()
     }
 }
 
-/// Менеджер блоков
+/// Block manager
 pub struct BlockManager {
-    /// Кэш блоков
+    /// Block cache
     blocks: HashMap<BlockId, Block>,
-    /// Максимальное количество блоков в кэше
+    /// Maximum number of blocks in the cache
     max_blocks: usize,
 }
 
 impl BlockManager {
-    /// Создает новый менеджер блоков
+    /// Creates a new block manager
     pub fn new(max_blocks: usize) -> Self {
         Self {
             blocks: HashMap::new(),
@@ -395,21 +395,21 @@ impl BlockManager {
         }
     }
 
-    /// Получает блок по ID
+    /// Gets a block by ID
     pub fn get_block(&self, block_id: BlockId) -> Option<&Block> {
         self.blocks.get(&block_id)
     }
 
-    /// Получает изменяемую ссылку на блок
+    /// Gets a mutable reference to a block
     pub fn get_block_mut(&mut self, block_id: BlockId) -> Option<&mut Block> {
         self.blocks.get_mut(&block_id)
     }
 
-    /// Добавляет блок в кэш
+    /// Adds a block to the cache
     pub fn add_block(&mut self, block: Block) {
         let block_id = block.header.block_id;
 
-        // Если превышен лимит, удаляем самый старый блок
+        // If limit exceeded, remove the oldest block
         if self.blocks.len() >= self.max_blocks {
             self.evict_oldest_block();
         }
@@ -417,12 +417,12 @@ impl BlockManager {
         self.blocks.insert(block_id, block);
     }
 
-    /// Удаляет блок из кэша
+    /// Removes a block from the cache
     pub fn remove_block(&mut self, block_id: BlockId) -> Option<Block> {
         self.blocks.remove(&block_id)
     }
 
-    /// Удаляет самый старый блок из кэша
+    /// Removes the oldest block from the cache
     fn evict_oldest_block(&mut self) {
         if let Some((&oldest_id, _)) = self
             .blocks
@@ -434,17 +434,17 @@ impl BlockManager {
         }
     }
 
-    /// Возвращает количество блоков в кэше
+    /// Returns the number of blocks in the cache
     pub fn block_count(&self) -> usize {
         self.blocks.len()
     }
 
-    /// Проверяет, содержит ли кэш блок
+    /// Checks if the cache contains a block
     pub fn contains_block(&self, block_id: BlockId) -> bool {
         self.blocks.contains_key(&block_id)
     }
 
-    /// Создает новый блок
+    /// Creates a new block
     pub fn create_block(&mut self, block_type: BlockType, size: u32) -> BlockId {
         let block_id = self.generate_block_id();
         let block = Block::new(block_id, block_type, size);
@@ -452,7 +452,7 @@ impl BlockManager {
         block_id
     }
 
-    /// Генерирует уникальный ID блока
+    /// Generates a unique block ID
     fn generate_block_id(&self) -> BlockId {
         use std::time::{SystemTime, UNIX_EPOCH};
         let now = SystemTime::now()
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(manager.block_count(), 2);
 
         manager.add_block(block3);
-        assert_eq!(manager.block_count(), 2); // Должен быть удален самый старый блок
+        assert_eq!(manager.block_count(), 2); // Oldest block should have been removed
 
         assert!(manager.contains_block(2));
         assert!(manager.contains_block(3));

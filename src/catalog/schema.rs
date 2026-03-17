@@ -1,15 +1,15 @@
-//! Менеджер схем для rustdb
+//! Schema manager for rustdb
 
 use crate::common::{Error, Result};
 
-// TODO: Реализовать менеджер схем
+// TODO: Implement schema manager
 pub struct SchemaManager {
-    // TODO: Реализовать структуру
+    // TODO: Implement structure
 }
 
 impl SchemaManager {
     pub fn new() -> Result<Self> {
-        // TODO: Реализовать инициализацию
+        // TODO: Implement initialization
         Ok(Self {})
     }
 }

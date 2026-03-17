@@ -1,15 +1,15 @@
-//! Результаты запросов для rustdb
+//! Query results for rustdb
 
 use crate::common::{Error, Result};
 
-// TODO: Реализовать результаты запросов
+// TODO: Implement query results
 pub struct ResultSet {
-    // TODO: Реализовать структуру
+    // TODO: Implement structure
 }
 
 impl ResultSet {
     pub fn new() -> Result<Self> {
-        // TODO: Реализовать инициализацию
+        // TODO: Implement initialization
         Ok(Self {})
     }
 }

@@ -1,10 +1,10 @@
-//! Расширенный менеджер блокировок для rustdb
+//! Advanced lock manager for rustdb
 //!
-//! Этот модуль реализует продвинутую систему блокировок:
-//! - Гранулярные блокировки (строки, страницы, таблицы)
-//! - Intention блокировки (IS, IX, SIX)
-//! - Улучшенное обнаружение дедлоков
-//! - Таймауты и автоматический откат
+//! This module implements an advanced locking system:
+//! - Granular locks (rows, pages, tables)
+//! - Intention locks (IS, IX, SIX)
+//! - Improved deadlock detection
+//! - Timeouts and automatic rollback
 
 use crate::common::{Error, Result};
 use crate::core::transaction::TransactionId;
@@ -12,22 +12,22 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-/// Тип ресурса для блокировки
+/// Resource type for locking
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ResourceType {
-    /// Блокировка на уровне базы данных
+    /// Database-level lock
     Database,
-    /// Блокировка на уровне схемы
+    /// Schema-level lock
     Schema(String),
-    /// Блокировка на уровне таблицы
+    /// Table-level lock
     Table(String),
-    /// Блокировка на уровне страницы
+    /// Page-level lock
     Page(u64),
-    /// Блокировка на уровне записи
+    /// Record-level lock
     Record(u64, u64), // (page_id, record_id)
-    /// Блокировка на уровне индекса
+    /// Index-level lock
     Index(String),
-    /// Блокировка на уровне файла
+    /// File-level lock
     File(String),
 }
 
@@ -47,49 +47,49 @@ impl std::fmt::Display for ResourceType {
     }
 }
 
-/// Режим блокировки
+/// Lock mode
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LockMode {
-    /// Intention Shared (IS) - намерение получить Shared блокировку
+    /// Intention Shared (IS) - intention to acquire Shared lock
     IntentionShared,
-    /// Shared (S) - разделяемая блокировка для чтения
+    /// Shared (S) - shared lock for reading
     Shared,
-    /// Intention Exclusive (IX) - намерение получить Exclusive блокировку
+    /// Intention Exclusive (IX) - intention to acquire Exclusive lock
     IntentionExclusive,
-    /// Shared Intention Exclusive (SIX) - Shared + намерение Exclusive
+    /// Shared Intention Exclusive (SIX) - Shared + intention Exclusive
     SharedIntentionExclusive,
-    /// Exclusive (X) - исключительная блокировка для записи
+    /// Exclusive (X) - exclusive lock for writing
     Exclusive,
 }
 
 impl LockMode {
-    /// Проверяет совместимость режимов блокировки
+    /// Checks lock mode compatibility
     pub fn is_compatible(&self, other: &LockMode) -> bool {
         match (self, other) {
-            // Intention блокировки совместимы между собой
+            // Intention locks are compatible with each other
             (LockMode::IntentionShared, LockMode::IntentionShared) => true,
             (LockMode::IntentionShared, LockMode::IntentionExclusive) => true,
             (LockMode::IntentionExclusive, LockMode::IntentionShared) => true,
             (LockMode::IntentionExclusive, LockMode::IntentionExclusive) => true,
 
-            // Shared блокировки совместимы с IS
+            // Shared locks are compatible with IS
             (LockMode::Shared, LockMode::IntentionShared) => true,
             (LockMode::IntentionShared, LockMode::Shared) => true,
             (LockMode::Shared, LockMode::Shared) => true,
 
-            // SIX совместим с IS
+            // SIX is compatible with IS
             (LockMode::SharedIntentionExclusive, LockMode::IntentionShared) => true,
             (LockMode::IntentionShared, LockMode::SharedIntentionExclusive) => true,
 
-            // Exclusive не совместим ни с чем
+            // Exclusive is not compatible with anything
             (LockMode::Exclusive, _) | (_, LockMode::Exclusive) => false,
 
-            // Остальные комбинации не совместимы
+            // Other combinations are not compatible
             _ => false,
         }
     }
 
-    /// Возвращает уровень блокировки (для сортировки)
+    /// Returns lock level (for sorting)
     pub fn level(&self) -> u8 {
         match self {
             LockMode::IntentionShared => 1,
@@ -101,51 +101,51 @@ impl LockMode {
     }
 }
 
-/// Информация о блокировке
+/// Lock information
 #[derive(Debug, Clone)]
 pub struct AdvancedLockInfo {
-    /// Транзакция, владеющая блокировкой
+    /// Transaction owning the lock
     pub transaction_id: TransactionId,
-    /// Тип ресурса
+    /// Resource type
     pub resource_type: ResourceType,
-    /// Режим блокировки
+    /// Lock mode
     pub lock_mode: LockMode,
-    /// Время получения блокировки
+    /// Lock acquisition time
     pub acquired_at: Instant,
-    /// Количество запросов на блокировку (для upgrade)
+    /// Number of lock requests (for upgrade)
     pub request_count: u32,
 }
 
-/// Запрос на блокировку в очереди ожидания
+/// Lock request in waiting queue
 #[derive(Debug, Clone)]
 pub struct AdvancedLockRequest {
-    /// Транзакция, запрашивающая блокировку
+    /// Transaction requesting the lock
     pub transaction_id: TransactionId,
-    /// Тип ресурса
+    /// Resource type
     pub resource_type: ResourceType,
-    /// Режим блокировки
+    /// Lock mode
     pub lock_mode: LockMode,
-    /// Время создания запроса
+    /// Request creation time
     pub requested_at: Instant,
-    /// Приоритет запроса (меньше = выше приоритет)
+    /// Request priority (lower = higher priority)
     pub priority: u32,
-    /// Таймаут ожидания
+    /// Wait timeout
     pub timeout: Duration,
 }
 
-/// Граф ожидания для обнаружения дедлоков
+/// Wait-for graph for deadlock detection
 #[derive(Debug)]
 pub struct AdvancedWaitForGraph {
-    /// Рёбра графа: транзакция -> множество транзакций, которых она ждет
+    /// Graph edges: transaction -> set of transactions it's waiting for
     edges: HashMap<TransactionId, HashSet<TransactionId>>,
-    /// Обратные рёбра: транзакция -> множество транзакций, которые ждут её
+    /// Reverse edges: transaction -> set of transactions waiting for it
     reverse_edges: HashMap<TransactionId, HashSet<TransactionId>>,
-    /// Время последнего обновления графа
+    /// Last graph update time
     last_updated: Instant,
 }
 
 impl AdvancedWaitForGraph {
-    /// Создает новый граф ожидания
+    /// Creates a new wait-for graph
     pub fn new() -> Self {
         Self {
             edges: HashMap::new(),
@@ -154,7 +154,7 @@ impl AdvancedWaitForGraph {
         }
     }
 
-    /// Добавляет ребро в граф (transaction ждет waiting_for)
+    /// Adds edge to graph (transaction waits for waiting_for)
     pub fn add_edge(&mut self, transaction: TransactionId, waiting_for: TransactionId) {
         self.edges
             .entry(transaction)
@@ -167,9 +167,9 @@ impl AdvancedWaitForGraph {
         self.last_updated = Instant::now();
     }
 
-    /// Удаляет все рёбра, связанные с транзакцией
+    /// Removes all edges related to transaction
     pub fn remove_transaction(&mut self, transaction: TransactionId) {
-        // Удаляем рёбра, где transaction ждет других
+        // Remove edges where transaction waits for others
         if let Some(waiting_for) = self.edges.remove(&transaction) {
             for waiting in waiting_for {
                 if let Some(reverse) = self.reverse_edges.get_mut(&waiting) {
@@ -178,7 +178,7 @@ impl AdvancedWaitForGraph {
             }
         }
 
-        // Удаляем рёбра, где другие ждут transaction
+        // Remove edges where others wait for transaction
         if let Some(waiting) = self.reverse_edges.remove(&transaction) {
             for waiter in waiting {
                 if let Some(edges) = self.edges.get_mut(&waiter) {
@@ -190,7 +190,7 @@ impl AdvancedWaitForGraph {
         self.last_updated = Instant::now();
     }
 
-    /// Проверяет наличие циклов (дедлоков)
+    /// Checks for cycles (deadlocks)
     pub fn has_cycle(&self) -> Option<Vec<TransactionId>> {
         let mut visited = HashSet::new();
         let mut rec_stack = HashSet::new();
@@ -207,7 +207,7 @@ impl AdvancedWaitForGraph {
         None
     }
 
-    /// DFS для обнаружения циклов
+    /// DFS for cycle detection
     fn dfs_cycle_detection(
         &self,
         node: TransactionId,
@@ -216,7 +216,7 @@ impl AdvancedWaitForGraph {
         path: &mut Vec<TransactionId>,
     ) -> bool {
         if rec_stack.contains(&node) {
-            // Найден цикл
+            // Cycle found
             if let Some(pos) = path.iter().position(|&x| x == node) {
                 path.drain(0..pos);
             }
@@ -244,7 +244,7 @@ impl AdvancedWaitForGraph {
         false
     }
 
-    /// Получает транзакции, которые ждут данную транзакцию
+    /// Gets transactions waiting for this transaction
     pub fn get_waiting_transactions(&self, transaction: TransactionId) -> Vec<TransactionId> {
         self.reverse_edges
             .get(&transaction)
@@ -254,7 +254,7 @@ impl AdvancedWaitForGraph {
             .collect()
     }
 
-    /// Получает транзакции, которых ждет данная транзакция
+    /// Gets transactions this transaction is waiting for
     pub fn get_waiting_for(&self, transaction: TransactionId) -> Vec<TransactionId> {
         self.edges
             .get(&transaction)
@@ -265,36 +265,36 @@ impl AdvancedWaitForGraph {
     }
 }
 
-/// Расширенный менеджер блокировок
+/// Advanced lock manager
 pub struct AdvancedLockManager {
-    /// Активные блокировки по ресурсам
+    /// Active locks by resource
     locks: Arc<RwLock<HashMap<ResourceType, Vec<AdvancedLockInfo>>>>,
-    /// Очередь ожидания по ресурсам
+    /// Waiting queues by resource
     waiting_queues: Arc<RwLock<HashMap<ResourceType, VecDeque<AdvancedLockRequest>>>>,
-    /// Граф ожидания для обнаружения дедлоков
+    /// Wait-for graph for deadlock detection
     wait_for_graph: Arc<Mutex<AdvancedWaitForGraph>>,
-    /// Транзакции, владеющие блокировками
+    /// Transactions owning locks
     transaction_locks: Arc<RwLock<HashMap<TransactionId, HashSet<ResourceType>>>>,
-    /// Конфигурация
+    /// Configuration
     config: AdvancedLockConfig,
-    /// Статистика
+    /// Statistics
     statistics: Arc<Mutex<AdvancedLockStatistics>>,
 }
 
-/// Конфигурация расширенного менеджера блокировок
+/// Advanced lock manager configuration
 #[derive(Debug, Clone)]
 pub struct AdvancedLockConfig {
-    /// Максимальное время ожидания блокировки
+    /// Maximum lock wait time
     pub lock_timeout: Duration,
-    /// Интервал проверки дедлоков
+    /// Deadlock check interval
     pub deadlock_check_interval: Duration,
-    /// Максимальное количество попыток получения блокировки
+    /// Maximum number of lock acquisition attempts
     pub max_lock_retries: u32,
-    /// Включить автоматическое обнаружение дедлоков
+    /// Enable automatic deadlock detection
     pub auto_deadlock_detection: bool,
-    /// Включить приоритизацию запросов
+    /// Enable request prioritization
     pub enable_priority: bool,
-    /// Включить upgrade блокировок
+    /// Enable lock upgrade
     pub enable_lock_upgrade: bool,
 }
 
@@ -311,25 +311,25 @@ impl Default for AdvancedLockConfig {
     }
 }
 
-/// Статистика расширенного менеджера блокировок
+/// Advanced lock manager statistics
 #[derive(Debug, Clone)]
 pub struct AdvancedLockStatistics {
-    /// Общее количество активных блокировок
+    /// Total number of active locks
     pub total_locks: usize,
-    /// Количество транзакций в очереди ожидания
+    /// Number of transactions in waiting queue
     pub waiting_transactions: usize,
-    /// Количество обнаруженных дедлоков
+    /// Number of detected deadlocks
     pub deadlocks_detected: u64,
-    /// Количество таймаутов блокировок
+    /// Number of lock timeouts
     pub lock_timeouts: u64,
-    /// Количество upgrade блокировок
+    /// Number of lock upgrades
     pub lock_upgrades: u64,
-    /// Время последнего обновления статистики
+    /// Time of last statistics update
     pub last_updated: Instant,
 }
 
 impl AdvancedLockStatistics {
-    /// Создает новую статистику блокировок
+    /// Creates new lock statistics
     pub fn new() -> Self {
         Self {
             total_locks: 0,
@@ -343,7 +343,7 @@ impl AdvancedLockStatistics {
 }
 
 impl AdvancedLockManager {
-    /// Создает новый расширенный менеджер блокировок
+    /// Creates a new advanced lock manager
     pub fn new(config: AdvancedLockConfig) -> Self {
         Self {
             locks: Arc::new(RwLock::new(HashMap::new())),
@@ -355,7 +355,7 @@ impl AdvancedLockManager {
         }
     }
 
-    /// Получает блокировку
+    /// Acquires lock
     pub async fn acquire_lock(
         &self,
         transaction_id: TransactionId,
@@ -368,23 +368,23 @@ impl AdvancedLockManager {
         let retry_interval = Duration::from_millis(10);
 
         loop {
-            // Пытаемся получить блокировку
+            // Try to acquire lock
             match self.try_acquire_lock(transaction_id, &resource_type, lock_mode.clone()) {
                 Ok(()) => {
                     self.update_statistics_lock_acquired();
                     return Ok(());
                 }
                 Err(_) => {
-                    // Проверяем таймаут
+                    // Check timeout
                     if start_time.elapsed() >= timeout {
                         self.update_statistics_timeout();
                         return Err(Error::timeout(format!(
-                            "Не удалось получить блокировку для транзакции {} в течение {:?}",
+                            "Failed to acquire lock for transaction {} within {:?}",
                             transaction_id, timeout
                         )));
                     }
 
-                    // Добавляем в очередь ожидания и обновляем граф зависимостей
+                    // Add to waiting queue and update dependency graph
                     if self.config.auto_deadlock_detection {
                         if let Err(_) = self.add_to_waiting_queue(
                             transaction_id,
@@ -392,35 +392,35 @@ impl AdvancedLockManager {
                             lock_mode.clone(),
                             timeout,
                         ) {
-                            // Если не удалось добавить в очередь, просто ждем
+                            // If failed to add to queue, just wait
                         }
 
-                        // Проверяем на deadlock
+                        // Check for deadlock
                         if let Some(cycle) = self.detect_deadlock() {
-                            // Если текущая транзакция в цикле, проверяем, нужно ли её откатить
+                            // If current transaction is in cycle, check if it needs to be rolled back
                             if cycle.contains(&transaction_id) {
-                                // Выбираем жертву (самая молодая транзакция)
+                                // Choose victim (youngest transaction)
                                 if self.should_abort_transaction(&cycle, transaction_id) {
-                                    // Убираем из очереди ожидания
+                                    // Remove from waiting queue
                                     self.remove_from_waiting_queue(transaction_id, &resource_type);
 
                                     return Err(Error::conflict(format!(
-                                        "Deadlock обнаружен: транзакция {} выбрана жертвой",
+                                        "Deadlock detected: transaction {} chosen as victim",
                                         transaction_id
                                     )));
                                 } else {
-                                    // Другая транзакция будет откачена, продолжаем ожидание
+                                    // Another transaction will be rolled back, continue waiting
                                     if let Err(_) = self.resolve_deadlock(&cycle) {
-                                        // Если не удалось разрешить deadlock, просто ждем
+                                        // If failed to resolve deadlock, just wait
                                     }
                                 }
                             }
                         }
 
-                        // Небольшая задержка перед повтором
+                        // Small delay before retry
                         tokio::time::sleep(retry_interval).await;
                     } else {
-                        // Без deadlock detection просто ждём немного
+                        // Without deadlock detection just wait a bit
                         tokio::time::sleep(retry_interval).await;
                     }
                 }
@@ -428,7 +428,7 @@ impl AdvancedLockManager {
         }
     }
 
-    /// Проверяет совместимость блокировки
+    /// Checks lock compatibility
     fn is_lock_compatible(&self, resource_type: &ResourceType, lock_mode: &LockMode) -> bool {
         let locks = self.locks.read().unwrap();
         if let Some(resource_locks) = locks.get(resource_type) {
@@ -441,7 +441,7 @@ impl AdvancedLockManager {
         true
     }
 
-    /// Пытается получить блокировку без ожидания
+    /// Tries to acquire lock without waiting
     fn try_acquire_lock(
         &self,
         transaction_id: TransactionId,
@@ -451,25 +451,25 @@ impl AdvancedLockManager {
         let mut locks = self.locks.write().unwrap();
         let resource_locks = locks.entry(resource_type.clone()).or_insert_with(Vec::new);
 
-        // Проверяем совместимость с существующими блокировками
+        // Check compatibility with existing locks
         for existing_lock in resource_locks.iter() {
             if !lock_mode.is_compatible(&existing_lock.lock_mode) {
-                return Err(Error::conflict("Блокировка не совместима с существующей"));
+                return Err(Error::conflict("Lock is not compatible with existing lock"));
             }
         }
 
-        // Проверяем, есть ли уже блокировка у этой транзакции
+        // Check if transaction already owns a lock on this resource
         if let Some(_existing_index) = resource_locks
             .iter()
             .position(|l| l.transaction_id == transaction_id)
         {
-            // Для тестов просто возвращаем ошибку, чтобы избежать зависания
+            // For tests just return error to avoid hanging
             return Err(Error::conflict(
-                "Транзакция уже владеет блокировку на этот ресурс",
+                "Transaction already owns lock on this resource",
             ));
         }
 
-        // Создаем новую блокировку
+        // Create new lock
         let lock_info = AdvancedLockInfo {
             transaction_id,
             resource_type: resource_type.clone(),
@@ -480,7 +480,7 @@ impl AdvancedLockManager {
 
         resource_locks.push(lock_info);
 
-        // Обновляем информацию о транзакции
+        // Update transaction information
         {
             let mut transaction_locks = self.transaction_locks.write().unwrap();
             transaction_locks
@@ -492,7 +492,7 @@ impl AdvancedLockManager {
         Ok(())
     }
 
-    /// Добавляет запрос в очередь ожидания
+    /// Adds request to waiting queue
     fn add_to_waiting_queue(
         &self,
         transaction_id: TransactionId,
@@ -505,11 +505,11 @@ impl AdvancedLockManager {
             resource_type: resource_type.clone(),
             lock_mode,
             requested_at: Instant::now(),
-            priority: 0, // TODO: Реализовать приоритизацию
+            priority: 0, // TODO: Implement prioritization
             timeout,
         };
 
-        // Добавляем в очередь ожидания
+        // Add to waiting queue
         {
             let mut queues = self.waiting_queues.write().unwrap();
             let queue = queues
@@ -518,13 +518,13 @@ impl AdvancedLockManager {
             queue.push_back(request);
         }
 
-        // Обновляем граф ожидания
+        // Update wait-for graph
         if let Some(owner) = self.get_lock_owner(&resource_type)? {
             let mut graph = self.wait_for_graph.lock().unwrap();
             graph.add_edge(transaction_id, owner);
         }
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self.statistics.lock().unwrap();
             stats.waiting_transactions += 1;
@@ -533,7 +533,7 @@ impl AdvancedLockManager {
         Ok(())
     }
 
-    /// Освобождает блокировку
+    /// Releases lock
     pub fn release_lock(
         &self,
         transaction_id: TransactionId,
@@ -542,16 +542,16 @@ impl AdvancedLockManager {
         let mut locks = self.locks.write().unwrap();
 
         if let Some(resource_locks) = locks.get_mut(&resource_type) {
-            // Удаляем блокировку
+            // Remove lock
             resource_locks.retain(|lock| lock.transaction_id != transaction_id);
 
-            // Если ресурс больше не заблокирован, удаляем его
+            // If resource is no longer locked, remove it
             if resource_locks.is_empty() {
                 locks.remove(&resource_type);
             }
         }
 
-        // Обновляем информацию о транзакции
+        // Update transaction information
         {
             let mut transaction_locks = self.transaction_locks.write().unwrap();
             if let Some(transaction_resources) = transaction_locks.get_mut(&transaction_id) {
@@ -559,33 +559,33 @@ impl AdvancedLockManager {
             }
         }
 
-        // Удаляем из графа ожидания
+        // Remove from wait-for graph
         {
             let mut graph = self.wait_for_graph.lock().unwrap();
             graph.remove_transaction(transaction_id);
         }
 
-        // Обрабатываем очередь ожидания
+        // Process waiting queue
         self.process_waiting_queue(&resource_type)?;
 
-        // Обновляем статистику при освобождении блокировки
+        // Update statistics when releasing lock
         self.update_statistics_lock_released();
 
         Ok(())
     }
 
-    /// Освобождает все блокировки транзакции
+    /// Releases all transaction locks
     pub fn release_all_locks(&self, transaction_id: TransactionId) -> Result<()> {
-        // Получаем список ресурсов и сразу освобождаем read lock
+        // Get list of resources and immediately release read lock
         let resources_to_release = {
             let transaction_locks = self.transaction_locks.read().unwrap();
             transaction_locks
                 .get(&transaction_id)
                 .map(|resources| resources.iter().cloned().collect::<Vec<_>>())
                 .unwrap_or_default()
-        }; // read lock освобождается здесь
+        }; // read lock is released here
 
-        // Теперь можно безопасно освобождать блокировки
+        // Now can safely release locks
         for resource in resources_to_release {
             self.release_lock_internal(transaction_id, resource)?;
         }
@@ -593,7 +593,7 @@ impl AdvancedLockManager {
         Ok(())
     }
 
-    /// Внутренний метод освобождения блокировки без обработки очереди ожидания
+    /// Internal method for releasing lock without processing waiting queue
     fn release_lock_internal(
         &self,
         transaction_id: TransactionId,
@@ -602,16 +602,16 @@ impl AdvancedLockManager {
         let mut locks = self.locks.write().unwrap();
 
         if let Some(resource_locks) = locks.get_mut(&resource_type) {
-            // Удаляем блокировку
+            // Remove lock
             resource_locks.retain(|lock| lock.transaction_id != transaction_id);
 
-            // Если ресурс больше не заблокирован, удаляем его
+            // If resource is no longer locked, remove it
             if resource_locks.is_empty() {
                 locks.remove(&resource_type);
             }
         }
 
-        // Обновляем информацию о транзакции
+        // Update transaction information
         {
             let mut transaction_locks = self.transaction_locks.write().unwrap();
             if let Some(transaction_resources) = transaction_locks.get_mut(&transaction_id) {
@@ -619,24 +619,24 @@ impl AdvancedLockManager {
             }
         }
 
-        // Удаляем из графа ожидания
+        // Remove from wait-for graph
         {
             let mut graph = self.wait_for_graph.lock().unwrap();
             graph.remove_transaction(transaction_id);
         }
 
-        // Обновляем статистику при освобождении блокировки
+        // Update statistics when releasing lock
         self.update_statistics_lock_released();
 
         Ok(())
     }
 
-    /// Получает владельца блокировки на ресурс
+    /// Gets lock owner on resource
     fn get_lock_owner(&self, resource_type: &ResourceType) -> Result<Option<TransactionId>> {
         let locks = self.locks.read().unwrap();
 
         if let Some(resource_locks) = locks.get(resource_type) {
-            // Возвращаем транзакцию с самой сильной блокировкой
+            // Return transaction with strongest lock
             if let Some(strongest_lock) = resource_locks.iter().max_by_key(|l| l.lock_mode.level())
             {
                 return Ok(Some(strongest_lock.transaction_id));
@@ -646,31 +646,31 @@ impl AdvancedLockManager {
         Ok(None)
     }
 
-    /// Обрабатывает очередь ожидания для ресурса
+    /// Processes waiting queue for resource
     fn process_waiting_queue(&self, resource_type: &ResourceType) -> Result<()> {
         let mut queues = self.waiting_queues.write().unwrap();
 
         if let Some(queue) = queues.get_mut(resource_type) {
             let mut processed = 0;
-            let max_process = queue.len(); // Защита от бесконечного цикла
+            let max_process = queue.len(); // Protection from infinite loop
 
             while let Some(request) = queue.front() {
                 if processed >= max_process {
-                    break; // Защита от зависания
+                    break; // Protection from hanging
                 }
 
-                // Проверяем, можно ли выдать блокировку
+                // Check if lock can be granted
                 if self.can_grant_lock(resource_type, &request.lock_mode)? {
                     let request = queue.pop_front().unwrap();
 
-                    // Выдаем блокировку
+                    // Grant lock
                     self.try_acquire_lock(
                         request.transaction_id,
                         resource_type,
                         request.lock_mode,
                     )?;
 
-                    // Обновляем статистику
+                    // Update statistics
                     {
                         let mut stats = self.statistics.lock().unwrap();
                         stats.waiting_transactions = stats.waiting_transactions.saturating_sub(1);
@@ -686,7 +686,7 @@ impl AdvancedLockManager {
         Ok(())
     }
 
-    /// Проверяет, можно ли выдать блокировку
+    /// Checks if lock can be granted
     fn can_grant_lock(
         &self,
         resource_type: &ResourceType,
@@ -705,20 +705,20 @@ impl AdvancedLockManager {
         Ok(true)
     }
 
-    /// Обнаруживает дедлок
+    /// Detects deadlock
     fn detect_deadlock(&self) -> Option<Vec<TransactionId>> {
         let graph = self.wait_for_graph.lock().unwrap();
         graph.has_cycle()
     }
 
-    /// Разрешает дедлок
+    /// Resolves deadlock
     fn resolve_deadlock(&self, cycle: &[TransactionId]) -> Result<()> {
-        // Выбираем жертву (самую молодую транзакцию - с максимальным ID)
+        // Choose victim (youngest transaction - with maximum ID)
         if let Some(victim) = cycle.iter().max() {
-            // Освобождаем все блокировки жертвы
+            // Release all victim's locks
             self.release_all_locks(*victim)?;
 
-            // Убираем жертву из очереди ожидания
+            // Remove victim from waiting queue
             {
                 let mut queues = self.waiting_queues.write().unwrap();
                 for queue in queues.values_mut() {
@@ -726,7 +726,7 @@ impl AdvancedLockManager {
                 }
             }
 
-            // Обновляем статистику
+            // Update statistics
             {
                 let mut stats = self.statistics.lock().unwrap();
                 stats.deadlocks_detected += 1;
@@ -736,20 +736,20 @@ impl AdvancedLockManager {
         Ok(())
     }
 
-    /// Проверяет, должна ли транзакция быть откачена при deadlock
+    /// Checks if transaction should be aborted on deadlock
     fn should_abort_transaction(
         &self,
         cycle: &[TransactionId],
         transaction_id: TransactionId,
     ) -> bool {
-        // Выбираем жертвой самую молодую транзакцию (с максимальным ID)
+        // Choose youngest transaction as victim (with maximum ID)
         if let Some(max_id) = cycle.iter().max() {
             return transaction_id == *max_id;
         }
         false
     }
 
-    /// Убирает транзакцию из очереди ожидания
+    /// Removes transaction from waiting queue
     fn remove_from_waiting_queue(
         &self,
         transaction_id: TransactionId,
@@ -759,57 +759,57 @@ impl AdvancedLockManager {
         if let Some(queue) = queues.get_mut(resource_type) {
             queue.retain(|req| req.transaction_id != transaction_id);
 
-            // Если очередь пуста, удаляем её
+            // If queue is empty, remove it
             if queue.is_empty() {
                 queues.remove(resource_type);
             }
         }
 
-        // Убираем из графа ожидания
+        // Remove from wait-for graph
         let mut graph = self.wait_for_graph.lock().unwrap();
         graph.remove_transaction(transaction_id);
     }
 
-    /// Обновляет статистику при получении блокировки
+    /// Updates statistics when acquiring lock
     fn update_statistics_lock_acquired(&self) {
         let mut stats = self.statistics.lock().unwrap();
         stats.total_locks += 1;
         stats.last_updated = Instant::now();
     }
 
-    /// Обновляет статистику при таймауте
+    /// Updates statistics on timeout
     fn update_statistics_timeout(&self) {
         let mut stats = self.statistics.lock().unwrap();
         stats.lock_timeouts += 1;
         stats.last_updated = Instant::now();
     }
 
-    /// Обновляет статистику при upgrade
+    /// Updates statistics on upgrade
     fn update_statistics_upgrade(&self) {
         let mut stats = self.statistics.lock().unwrap();
         stats.lock_upgrades += 1;
         stats.last_updated = Instant::now();
     }
 
-    /// Обновляет статистику при освобождении блокировки
+    /// Updates statistics when releasing lock
     fn update_statistics_lock_released(&self) {
         let mut stats = self.statistics.lock().unwrap();
         stats.total_locks = stats.total_locks.saturating_sub(1);
         stats.last_updated = Instant::now();
     }
 
-    /// Получает статистику
+    /// Gets statistics
     pub fn get_statistics(&self) -> AdvancedLockStatistics {
         self.statistics.lock().unwrap().clone()
     }
 
-    /// Получает информацию о блокировках на ресурс
+    /// Gets lock information on resource
     pub fn get_resource_locks(&self, resource_type: &ResourceType) -> Vec<AdvancedLockInfo> {
         let locks = self.locks.read().unwrap();
         locks.get(resource_type).cloned().unwrap_or_default()
     }
 
-    /// Получает список заблокированных ресурсов транзакции
+    /// Gets list of locked resources for transaction
     pub fn get_transaction_locks(&self, transaction_id: TransactionId) -> Vec<ResourceType> {
         let transaction_locks = self.transaction_locks.read().unwrap();
         transaction_locks
@@ -820,7 +820,7 @@ impl AdvancedLockManager {
             .collect()
     }
 
-    /// Получает количество транзакций в очереди ожидания
+    /// Gets number of transactions in waiting queue
     pub fn get_waiting_count(&self) -> usize {
         let queues = self.waiting_queues.read().unwrap();
         queues.values().map(|q| q.len()).sum()

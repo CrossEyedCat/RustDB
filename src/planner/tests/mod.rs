@@ -1,4 +1,4 @@
-//! Тесты для планировщика запросов rustdb
+//! Query planner tests for rustdb
 
 pub mod advanced_optimizer_tests;
 pub mod optimizer_tests;

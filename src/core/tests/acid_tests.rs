@@ -1,4 +1,4 @@
-//! Тесты для ACID системы rustdb
+//! Tests for the rustdb ACID system
 
 use crate::core::acid_manager::{AcidConfig, AcidManager, AcidStatistics};
 use crate::core::advanced_lock_manager::{
@@ -11,7 +11,7 @@ use crate::storage::page_manager::PageManager;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Обертка для тестов с ограничением времени в 1 секунду
+/// Utility to run tests with a 1-second timeout
 async fn run_test_with_timeout<F, Fut>(test_fn: F)
 where
     F: FnOnce() -> Fut,
@@ -19,17 +19,17 @@ where
 {
     tokio::time::timeout(Duration::from_secs(1), test_fn())
         .await
-        .expect("Тест превысил лимит времени в 1 секунду");
+        .expect("Test exceeded the 1-second time limit");
 }
 
-/// Создает тестовый ACID менеджер
+/// Creates a test ACID manager
 async fn create_test_acid_manager() -> AcidManager {
     let config = AcidConfig::default();
     let lock_manager = Arc::new(LockManager::new().unwrap());
     let wal_config = crate::logging::wal::WalConfig::default();
     let wal = Arc::new(WriteAheadLog::new(wal_config).await.unwrap());
 
-    // Создаем уникальную временную директорию для каждого теста
+    // Create a unique temporary directory per test
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -40,7 +40,7 @@ async fn create_test_acid_manager() -> AcidManager {
     let unique_id = format!("{}_{}", test_id, counter);
     let temp_dir = std::env::temp_dir().join(format!("rustdb_test_{}", unique_id));
 
-    // Создаем уникальное имя таблицы для каждого теста
+    // Create a unique table name per test
     let table_name = format!("test_table_{}", unique_id);
 
     let page_manager_config = crate::storage::page_manager::PageManagerConfig::default();
@@ -50,7 +50,7 @@ async fn create_test_acid_manager() -> AcidManager {
     AcidManager::new(config, lock_manager, wal, page_manager).unwrap()
 }
 
-/// Создает тестовый расширенный менеджер блокировок
+/// Creates a test advanced lock manager
 fn create_test_advanced_lock_manager() -> AdvancedLockManager {
     let config = AdvancedLockConfig::default();
     AdvancedLockManager::new(config)
@@ -71,19 +71,19 @@ async fn test_acid_manager_transaction_lifecycle() {
         let acid_manager = create_test_acid_manager().await;
         let transaction_id = TransactionId::new(1);
 
-        // Начинаем транзакцию
+        // Begin transaction
         assert!(acid_manager
             .begin_transaction(transaction_id, IsolationLevel::ReadCommitted, false)
             .is_ok());
 
-        // Проверяем, что транзакция активна
+        // Ensure transaction is active
         let stats = acid_manager.get_statistics().unwrap();
         assert_eq!(stats.active_transactions, 1);
 
-        // Завершаем транзакцию
+        // Commit transaction
         assert!(acid_manager.commit_transaction(transaction_id).is_ok());
 
-        // Проверяем, что транзакция завершена
+        // Ensure transaction finished
         let stats = acid_manager.get_statistics().unwrap();
         assert_eq!(stats.active_transactions, 0);
     })
@@ -96,15 +96,15 @@ async fn test_acid_manager_transaction_abort() {
         let acid_manager = create_test_acid_manager().await;
         let transaction_id = TransactionId::new(2);
 
-        // Начинаем транзакцию
+        // Begin transaction
         assert!(acid_manager
             .begin_transaction(transaction_id, IsolationLevel::ReadCommitted, false)
             .is_ok());
 
-        // Откатываем транзакцию
+        // Abort transaction
         assert!(acid_manager.abort_transaction(transaction_id).is_ok());
 
-        // Проверяем, что транзакция завершена
+        // Ensure transaction finished
         let stats = acid_manager.get_statistics().unwrap();
         assert_eq!(stats.active_transactions, 0);
     })
@@ -117,16 +117,16 @@ async fn test_acid_manager_read_only_transaction() {
         let acid_manager = create_test_acid_manager().await;
         let transaction_id = TransactionId::new(3);
 
-        // Начинаем транзакцию только для чтения
+        // Begin read-only transaction
         assert!(acid_manager
             .begin_transaction(transaction_id, IsolationLevel::ReadCommitted, true)
             .is_ok());
 
-        // Пытаемся записать данные (должно быть заблокировано)
+        // Attempt to write data (should fail)
         let result = acid_manager.write_record(transaction_id, 1, 1, b"test data");
-        assert!(result.is_err()); // Должно быть ошибкой для транзакции только для чтения
+        assert!(result.is_err()); // Should error for read-only transaction
 
-        // Завершаем транзакцию
+        // Commit transaction
         assert!(acid_manager.commit_transaction(transaction_id).is_ok());
     })
     .await;
@@ -142,12 +142,12 @@ async fn test_acid_manager_isolation_levels() {
         for (i, level) in levels.iter().enumerate() {
             let transaction_id = TransactionId::new(10 + i as u64);
 
-            // Начинаем транзакцию с разными уровнями изоляции
+            // Begin transaction with each isolation level
             assert!(acid_manager
                 .begin_transaction(transaction_id, level.clone(), true)
                 .is_ok());
 
-            // Завершаем транзакцию
+            // Commit transaction
             assert!(acid_manager.commit_transaction(transaction_id).is_ok());
         }
     })
@@ -172,7 +172,7 @@ async fn test_advanced_lock_manager_basic_operations() {
         let transaction_id = TransactionId::new(1);
         let resource = ResourceType::Record(1, 1);
 
-        // Получаем блокировку
+        // Acquire lock
         assert!(lock_manager
             .acquire_lock(
                 transaction_id,
@@ -183,17 +183,17 @@ async fn test_advanced_lock_manager_basic_operations() {
             .await
             .is_ok());
 
-        // Проверяем, что блокировка получена
+        // Verify lock acquired
         let locks = lock_manager.get_resource_locks(&resource);
         assert_eq!(locks.len(), 1);
         assert_eq!(locks[0].transaction_id, transaction_id);
 
-        // Освобождаем блокировку
+        // Release lock
         assert!(lock_manager
             .release_lock(transaction_id, resource.clone())
             .is_ok());
 
-        // Проверяем, что блокировка освобождена
+        // Verify lock released
         let locks = lock_manager.get_resource_locks(&resource);
         assert_eq!(locks.len(), 0);
     })
@@ -208,7 +208,7 @@ async fn test_advanced_lock_manager_lock_compatibility() {
         let transaction_id_2 = TransactionId::new(2);
         let resource = ResourceType::Record(1, 1);
 
-        // Транзакция 1 получает Shared блокировку
+        // Transaction 1 acquires Shared lock
         assert!(lock_manager
             .acquire_lock(
                 transaction_id_1,
@@ -219,7 +219,7 @@ async fn test_advanced_lock_manager_lock_compatibility() {
             .await
             .is_ok());
 
-        // Транзакция 2 получает Shared блокировку (совместимо)
+        // Transaction 2 acquires Shared lock (compatible)
         assert!(lock_manager
             .acquire_lock(
                 transaction_id_2,
@@ -230,11 +230,11 @@ async fn test_advanced_lock_manager_lock_compatibility() {
             .await
             .is_ok());
 
-        // Проверяем, что обе блокировки активны
+        // Ensure both locks are active
         let locks = lock_manager.get_resource_locks(&resource);
         assert_eq!(locks.len(), 2);
 
-        // Освобождаем блокировки
+        // Release locks
         assert!(lock_manager
             .release_lock(transaction_id_1, resource.clone())
             .is_ok());
@@ -253,7 +253,7 @@ async fn test_advanced_lock_manager_lock_conflict() {
         let transaction_id_2 = TransactionId::new(2);
         let resource = ResourceType::Record(1, 1);
 
-        // Транзакция 1 получает Exclusive блокировку
+        // Transaction 1 acquires Exclusive lock
         assert!(lock_manager
             .acquire_lock(
                 transaction_id_1,
@@ -264,17 +264,17 @@ async fn test_advanced_lock_manager_lock_conflict() {
             .await
             .is_ok());
 
-        // Проверяем, что блокировка получена
+        // Verify lock acquired
         let locks = lock_manager.get_resource_locks(&resource);
         assert_eq!(locks.len(), 1);
         assert_eq!(locks[0].transaction_id, transaction_id_1);
 
-        // Освобождаем блокировку транзакции 1 сразу, чтобы избежать зависания
+        // Immediately release lock for transaction 1 to avoid blocking
         assert!(lock_manager
             .release_lock(transaction_id_1, resource.clone())
             .is_ok());
 
-        // Теперь транзакция 2 может получить блокировку
+        // Now transaction 2 should acquire the lock
         assert!(lock_manager
             .acquire_lock(
                 transaction_id_2,
@@ -285,7 +285,7 @@ async fn test_advanced_lock_manager_lock_conflict() {
             .await
             .is_ok());
 
-        // Освобождаем блокировку транзакции 2
+        // Release lock for transaction 2
         assert!(lock_manager
             .release_lock(transaction_id_2, resource)
             .is_ok());
@@ -300,7 +300,7 @@ async fn test_advanced_lock_manager_lock_upgrade() {
         let transaction_id = TransactionId::new(1);
         let resource = ResourceType::Record(1, 1);
 
-        // Получаем Shared блокировку
+        // Acquire Shared lock
         assert!(lock_manager
             .acquire_lock(
                 transaction_id,
@@ -311,18 +311,17 @@ async fn test_advanced_lock_manager_lock_upgrade() {
             .await
             .is_ok());
 
-        // Проверяем, что Shared блокировка получена
+        // Verify Shared lock acquired
         let locks = lock_manager.get_resource_locks(&resource);
         assert_eq!(locks.len(), 1);
         assert_eq!(locks[0].lock_mode, AdvancedLockMode::Shared);
 
-        // Для тестов не выполняем upgrade, чтобы избежать зависания
-        // Просто проверяем, что Shared блокировка активна
+        // Skip upgrade in tests to avoid deadlock; just ensure Shared lock active
         let locks = lock_manager.get_resource_locks(&resource);
         assert_eq!(locks.len(), 1);
         assert_eq!(locks[0].lock_mode, AdvancedLockMode::Shared);
 
-        // Освобождаем блокировку
+        // Release lock
         assert!(lock_manager.release_lock(transaction_id, resource).is_ok());
     })
     .await;
@@ -330,8 +329,8 @@ async fn test_advanced_lock_manager_lock_upgrade() {
 
 #[tokio::test]
 async fn test_advanced_lock_manager_deadlock_detection() {
-    // Тест проверяет базовую функциональность блокировок
-    // (реальное обнаружение deadlock требует более сложной реализации)
+    // This test checks basic locking functionality
+    // (full deadlock detection requires more complex logic)
     run_test_with_timeout(|| async {
         let lock_manager = create_test_advanced_lock_manager();
         let transaction_id_1 = TransactionId::new(1);
@@ -339,7 +338,7 @@ async fn test_advanced_lock_manager_deadlock_detection() {
         let resource_a = ResourceType::Record(1, 1);
         let resource_b = ResourceType::Record(1, 2);
 
-        // Транзакция 1 получает блокировку на ресурс A
+        // Transaction 1 acquires lock on resource A
         let result1 = lock_manager
             .acquire_lock(
                 transaction_id_1,
@@ -349,7 +348,7 @@ async fn test_advanced_lock_manager_deadlock_detection() {
             )
             .await;
 
-        // Транзакция 2 получает блокировку на ресурс B
+        // Transaction 2 acquires lock on resource B
         let result2 = lock_manager
             .acquire_lock(
                 transaction_id_2,
@@ -359,20 +358,13 @@ async fn test_advanced_lock_manager_deadlock_detection() {
             )
             .await;
 
-        // Проверяем, что обе блокировки получены (на разные ресурсы должно работать)
-        assert!(
-            result1.is_ok(),
-            "Транзакция 1 должна получить блокировку на ресурс A"
-        );
-        assert!(
-            result2.is_ok(),
-            "Транзакция 2 должна получить блокировку на ресурс B"
-        );
+        // Ensure both locks succeed (different resources should work)
+        assert!(result1.is_ok(), "Transaction 1 should lock resource A");
+        assert!(result2.is_ok(), "Transaction 2 should lock resource B");
 
-        // Освобождаем блокировки сразу, чтобы избежать зависания
-        // Вместо тестирования конфликта, просто проверяем, что блокировки работают
+        // Release locks immediately to avoid blocking; we're only verifying basics
 
-        // Освобождаем все блокировки
+        // Release all locks
         assert!(lock_manager.release_all_locks(transaction_id_1).is_ok());
         assert!(lock_manager.release_all_locks(transaction_id_2).is_ok());
     })
@@ -386,7 +378,7 @@ async fn test_advanced_lock_manager_statistics() {
         let transaction_id = TransactionId::new(1);
         let resource = ResourceType::Record(1, 1);
 
-        // Получаем блокировку
+        // Acquire lock
         assert!(lock_manager
             .acquire_lock(
                 transaction_id,
@@ -397,15 +389,15 @@ async fn test_advanced_lock_manager_statistics() {
             .await
             .is_ok());
 
-        // Проверяем статистику
+        // Check statistics
         let stats = lock_manager.get_statistics();
         assert_eq!(stats.total_locks, 1);
         assert_eq!(stats.waiting_transactions, 0);
 
-        // Освобождаем блокировку
+        // Release lock
         assert!(lock_manager.release_lock(transaction_id, resource).is_ok());
 
-        // Проверяем обновленную статистику
+        // Check updated statistics
         let stats = lock_manager.get_statistics();
         assert_eq!(stats.total_locks, 0);
     })
@@ -425,7 +417,7 @@ async fn test_advanced_lock_manager_resource_types() {
         ];
 
         for resource in resource_types.iter() {
-            // Получаем блокировку
+            // Acquire lock
             assert!(lock_manager
                 .acquire_lock(
                     transaction_id,
@@ -436,7 +428,7 @@ async fn test_advanced_lock_manager_resource_types() {
                 .await
                 .is_ok());
 
-            // Освобождаем блокировку
+            // Release lock
             assert!(lock_manager
                 .release_lock(transaction_id, resource.clone())
                 .is_ok());
@@ -455,7 +447,7 @@ async fn test_advanced_lock_manager_lock_modes() {
         let lock_modes = [AdvancedLockMode::Shared, AdvancedLockMode::Exclusive];
 
         for mode in lock_modes.iter() {
-            // Получаем блокировку
+            // Acquire lock
             assert!(lock_manager
                 .acquire_lock(
                     transaction_id,
@@ -466,7 +458,7 @@ async fn test_advanced_lock_manager_lock_modes() {
                 .await
                 .is_ok());
 
-            // Освобождаем блокировку
+            // Release lock
             assert!(lock_manager
                 .release_lock(transaction_id, resource.clone())
                 .is_ok());
@@ -480,30 +472,30 @@ async fn test_acid_manager_concurrent_transactions() {
     run_test_with_timeout(|| async {
         let acid_manager = create_test_acid_manager().await;
 
-        // Создаем несколько транзакций
+        // Create several transactions
         let transaction_ids = vec![
             TransactionId::new(100),
             TransactionId::new(101),
             TransactionId::new(102),
         ];
 
-        // Начинаем все транзакции
+        // Begin all transactions
         for &id in &transaction_ids {
             assert!(acid_manager
                 .begin_transaction(id, IsolationLevel::ReadCommitted, false)
                 .is_ok());
         }
 
-        // Проверяем, что все транзакции активны
+        // Ensure all transactions active
         let stats = acid_manager.get_statistics().unwrap();
         assert_eq!(stats.active_transactions, 3);
 
-        // Завершаем все транзакции
+        // Commit all transactions
         for &id in &transaction_ids {
             assert!(acid_manager.commit_transaction(id).is_ok());
         }
 
-        // Проверяем, что все транзакции завершены
+        // Confirm all transactions finished
         let stats = acid_manager.get_statistics().unwrap();
         assert_eq!(stats.active_transactions, 0);
     })
@@ -515,22 +507,22 @@ async fn test_acid_manager_error_handling() {
     run_test_with_timeout(|| async {
         let acid_manager = create_test_acid_manager().await;
 
-        // Пытаемся завершить несуществующую транзакцию
+        // Attempt to commit a non-existent transaction
         let result = acid_manager.commit_transaction(TransactionId::new(999));
         assert!(result.is_err());
 
-        // Пытаемся откатить несуществующую транзакцию
+        // Attempt to abort a non-existent transaction
         let result = acid_manager.abort_transaction(TransactionId::new(999));
         assert!(result.is_err());
 
-        // Пытаемся получить блокировку для несуществующей транзакции
-        // Текущая реализация не проверяет существование транзакции, поэтому это должно работать
+        // Attempt to acquire a lock for a non-existent transaction
+        // Current implementation does not validate existence, so this should succeed
         let result = acid_manager.acquire_lock(
             TransactionId::new(999),
             crate::core::lock::LockType::Record(1, 1),
             LockMode::Exclusive,
         );
-        assert!(result.is_ok()); // Изменено с is_err() на is_ok()
+        assert!(result.is_ok()); // Previously expected is_err(); current behavior is ok
     })
     .await;
 }
@@ -540,7 +532,7 @@ async fn test_acid_manager_configuration() {
     run_test_with_timeout(|| async {
         let config = AcidConfig::default();
 
-        // Проверяем значения по умолчанию
+        // Check default values
         assert_eq!(config.lock_timeout, Duration::from_secs(30));
         assert_eq!(config.deadlock_check_interval, Duration::from_millis(100));
         assert_eq!(config.max_lock_retries, 3);
@@ -557,7 +549,7 @@ async fn test_advanced_lock_manager_configuration() {
     run_test_with_timeout(|| async {
         let config = AdvancedLockConfig::default();
 
-        // Проверяем значения по умолчанию
+        // Check default values
         assert_eq!(config.lock_timeout, Duration::from_secs(30));
         assert_eq!(config.deadlock_check_interval, Duration::from_millis(100));
         assert_eq!(config.max_lock_retries, 3);

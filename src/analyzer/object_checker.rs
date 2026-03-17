@@ -1,20 +1,20 @@
-//! Модуль для проверки существования объектов базы данных
+//! Module for checking database object existence
 
 use crate::common::Result;
 use std::collections::HashMap;
 
-/// Результат проверки существования объекта
+/// Object existence check result
 #[derive(Debug, Clone)]
 pub struct ObjectCheckResult {
-    /// Существует ли объект
+    /// Whether object exists
     pub exists: bool,
-    /// Тип объекта
+    /// Object type
     pub object_type: ObjectType,
-    /// Дополнительная информация об объекте
+    /// Additional object information
     pub metadata: ObjectMetadata,
 }
 
-/// Тип объекта базы данных
+/// Database object type
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjectType {
     Table,
@@ -26,14 +26,14 @@ pub enum ObjectType {
     Trigger,
 }
 
-/// Метаданные объекта
+/// Object metadata
 #[derive(Debug, Clone)]
 pub struct ObjectMetadata {
-    /// Имя объекта
+    /// Object name
     pub name: String,
-    /// Схема, к которой принадлежит объект
+    /// Schema to which object belongs
     pub schema_name: Option<String>,
-    /// Дополнительные свойства
+    /// Additional properties
     pub properties: HashMap<String, String>,
 }
 
@@ -57,16 +57,16 @@ impl ObjectMetadata {
     }
 }
 
-/// Проверщик существования объектов
+/// Object existence checker
 pub struct ObjectChecker {
-    /// Кэш результатов проверки
+    /// Check results cache
     cache: HashMap<String, ObjectCheckResult>,
-    /// Включено ли кэширование
+    /// Whether caching is enabled
     cache_enabled: bool,
 }
 
 impl ObjectChecker {
-    /// Создает новый проверщик объектов
+    /// Create new object checker
     pub fn new() -> Self {
         Self {
             cache: HashMap::new(),
@@ -74,7 +74,7 @@ impl ObjectChecker {
         }
     }
 
-    /// Создает проверщик с отключенным кэшированием
+    /// Create checker with caching disabled
     pub fn without_cache() -> Self {
         Self {
             cache: HashMap::new(),
@@ -82,7 +82,7 @@ impl ObjectChecker {
         }
     }
 
-    /// Проверяет существование таблицы (упрощенная версия для тестирования)
+    /// Check table existence (simplified version for testing)
     pub fn check_table_exists(
         &mut self,
         table_name: &str,
@@ -90,14 +90,14 @@ impl ObjectChecker {
     ) -> Result<ObjectCheckResult> {
         let cache_key = format!("table:{}", table_name);
 
-        // Проверяем кэш
+        // Check cache
         if self.cache_enabled {
             if let Some(cached_result) = self.cache.get(&cache_key) {
                 return Ok(cached_result.clone());
             }
         }
 
-        // В тестовом режиме всегда возвращаем true
+        // In test mode always return true
         let result = ObjectCheckResult {
             exists: true,
             object_type: ObjectType::Table,
@@ -105,7 +105,7 @@ impl ObjectChecker {
                 .with_property("type".to_string(), "table".to_string()),
         };
 
-        // Кэшируем результат
+        // Cache result
         if self.cache_enabled {
             self.cache.insert(cache_key, result.clone());
         }
@@ -113,7 +113,7 @@ impl ObjectChecker {
         Ok(result)
     }
 
-    /// Проверяет существование колонки в таблице (упрощенная версия)
+    /// Check column existence in table (simplified version)
     pub fn check_column_exists(
         &mut self,
         table_name: &str,
@@ -122,14 +122,14 @@ impl ObjectChecker {
     ) -> Result<ObjectCheckResult> {
         let cache_key = format!("column:{}:{}", table_name, column_name);
 
-        // Проверяем кэш
+        // Check cache
         if self.cache_enabled {
             if let Some(cached_result) = self.cache.get(&cache_key) {
                 return Ok(cached_result.clone());
             }
         }
 
-        // В тестовом режиме всегда возвращаем true
+        // In test mode always return true
         let result = ObjectCheckResult {
             exists: true,
             object_type: ObjectType::Column,
@@ -138,7 +138,7 @@ impl ObjectChecker {
                 .with_property("type".to_string(), "column".to_string()),
         };
 
-        // Кэшируем результат
+        // Cache result
         if self.cache_enabled {
             self.cache.insert(cache_key, result.clone());
         }
@@ -146,7 +146,7 @@ impl ObjectChecker {
         Ok(result)
     }
 
-    /// Проверяет существование индекса (упрощенная версия)
+    /// Check index existence (simplified version)
     pub fn check_index_exists(
         &mut self,
         index_name: &str,
@@ -154,14 +154,14 @@ impl ObjectChecker {
     ) -> Result<ObjectCheckResult> {
         let cache_key = format!("index:{}", index_name);
 
-        // Проверяем кэш
+        // Check cache
         if self.cache_enabled {
             if let Some(cached_result) = self.cache.get(&cache_key) {
                 return Ok(cached_result.clone());
             }
         }
 
-        // В тестовом режиме всегда возвращаем false для индексов
+        // In test mode always return false for indexes
         let result = ObjectCheckResult {
             exists: false,
             object_type: ObjectType::Index,
@@ -169,7 +169,7 @@ impl ObjectChecker {
                 .with_property("type".to_string(), "index".to_string()),
         };
 
-        // Кэшируем результат
+        // Cache result
         if self.cache_enabled {
             self.cache.insert(cache_key, result.clone());
         }
@@ -177,12 +177,12 @@ impl ObjectChecker {
         Ok(result)
     }
 
-    /// Очищает кэш
+    /// Clear cache
     pub fn clear_cache(&mut self) {
         self.cache.clear();
     }
 
-    /// Включает или отключает кэширование
+    /// Enable or disable caching
     pub fn set_cache_enabled(&mut self, enabled: bool) {
         self.cache_enabled = enabled;
         if !enabled {
@@ -190,7 +190,7 @@ impl ObjectChecker {
         }
     }
 
-    /// Получает статистику кэша
+    /// Get cache statistics
     pub fn cache_statistics(&self) -> (usize, bool) {
         (self.cache.len(), self.cache_enabled)
     }
@@ -234,17 +234,17 @@ mod tests {
     fn test_cache_operations() {
         let mut checker = ObjectChecker::new();
 
-        // Изначально кэш пуст
+        // Initially cache is empty
         let (cache_size, cache_enabled) = checker.cache_statistics();
         assert_eq!(cache_size, 0);
         assert!(cache_enabled);
 
-        // Отключаем кэш
+        // Disable cache
         checker.set_cache_enabled(false);
         let (_, cache_enabled) = checker.cache_statistics();
         assert!(!cache_enabled);
 
-        // Включаем кэш обратно
+        // Enable cache again
         checker.set_cache_enabled(true);
         let (_, cache_enabled) = checker.cache_statistics();
         assert!(cache_enabled);
@@ -279,7 +279,7 @@ mod tests {
         let mut checker = ObjectChecker::new();
         let result = checker.check_index_exists("idx_users_email", &())?;
 
-        assert!(!result.exists); // В тестовом режиме индексы не существуют
+        assert!(!result.exists); // In test mode indexes do not exist
         assert_eq!(result.object_type, ObjectType::Index);
         assert_eq!(result.metadata.name, "idx_users_email");
 

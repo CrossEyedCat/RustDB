@@ -1,9 +1,9 @@
-//! Сетевой сервер для rustdb
+//! Network server for rustdb
 
 use crate::common::{Error, Result};
 use std::time::Duration;
 
-/// Конфигурация сервера
+/// Server configuration
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub host: String,
@@ -25,7 +25,7 @@ impl Default for ServerConfig {
     }
 }
 
-/// Сервер базы данных
+/// Database server
 pub struct Server {
     config: ServerConfig,
 }
@@ -43,20 +43,20 @@ impl Server {
     }
 }
 
-/// Статистика сервера
+/// Server statistics
 pub struct ServerStatistics {
     pub total_connections: u64,
     pub active_connections: u64,
 }
 
-// Старая структура для совместимости
+// Legacy structure for compatibility
 pub struct NetworkServer {
-    // TODO: Реализовать структуру
+    // TODO: Implement structure
 }
 
 impl NetworkServer {
     pub fn new() -> Result<Self> {
-        // TODO: Реализовать инициализацию
+        // TODO: Implement initialization
         Ok(Self {})
     }
 }

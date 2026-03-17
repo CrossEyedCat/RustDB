@@ -1,4 +1,4 @@
-//! Планировщик запросов для rustdb
+//! Query planner for rustdb
 
 use crate::analyzer::{AnalysisContext, SemanticAnalyzer};
 use crate::common::{Error, Result};
@@ -8,166 +8,166 @@ use crate::parser::ast::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// План выполнения запроса
+/// Query execution plan
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExecutionPlan {
-    /// Корневой оператор плана
+    /// Root operator of the plan
     pub root: PlanNode,
-    /// Метаданные плана
+    /// Plan metadata
     pub metadata: PlanMetadata,
 }
 
-/// Метаданные плана выполнения
+/// Execution plan metadata
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanMetadata {
-    /// Оценка стоимости выполнения
+    /// Estimated execution cost
     pub estimated_cost: f64,
-    /// Оценка количества строк результата
+    /// Estimated number of result rows
     pub estimated_rows: usize,
-    /// Время создания плана
+    /// Plan creation time
     pub created_at: std::time::SystemTime,
-    /// Статистика плана
+    /// Plan statistics
     pub statistics: PlanStatistics,
 }
 
-/// Статистика плана выполнения
+/// Execution plan statistics
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanStatistics {
-    /// Количество операторов в плане
+    /// Number of operators in the plan
     pub operator_count: usize,
-    /// Максимальная глубина плана
+    /// Maximum plan depth
     pub max_depth: usize,
-    /// Количество таблиц в запросе
+    /// Number of tables in the query
     pub table_count: usize,
-    /// Количество JOIN операций
+    /// Number of JOIN operations
     pub join_count: usize,
 }
 
-/// Узел плана выполнения
+/// Execution plan node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PlanNode {
-    /// Сканирование таблицы
+    /// Table scan
     TableScan(TableScanNode),
-    /// Сканирование по индексу
+    /// Index scan
     IndexScan(IndexScanNode),
-    /// Фильтрация
+    /// Filtering
     Filter(FilterNode),
-    /// Проекция (выбор колонок)
+    /// Projection (column selection)
     Projection(ProjectionNode),
-    /// Соединение таблиц
+    /// Table join
     Join(JoinNode),
-    /// Группировка
+    /// Grouping
     GroupBy(GroupByNode),
-    /// Сортировка
+    /// Sorting
     Sort(SortNode),
-    /// Ограничение количества строк
+    /// Row count limit
     Limit(LimitNode),
-    /// Смещение
+    /// Offset
     Offset(OffsetNode),
-    /// Агрегация
+    /// Aggregation
     Aggregate(AggregateNode),
-    /// Вставка данных
+    /// Data insertion
     Insert(InsertNode),
-    /// Обновление данных
+    /// Data update
     Update(UpdateNode),
-    /// Удаление данных
+    /// Data deletion
     Delete(DeleteNode),
 }
 
-/// Узел сканирования таблицы
+/// Table scan node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableScanNode {
-    /// Имя таблицы
+    /// Table name
     pub table_name: String,
-    /// Псевдоним таблицы
+    /// Table alias
     pub alias: Option<String>,
-    /// Список колонок для чтения
+    /// List of columns to read
     pub columns: Vec<String>,
-    /// Условие фильтрации (если есть)
+    /// Filter condition (if any)
     pub filter: Option<String>,
-    /// Оценка стоимости
+    /// Cost estimate
     pub cost: f64,
-    /// Оценка количества строк
+    /// Estimated number of rows
     pub estimated_rows: usize,
 }
 
-/// Узел сканирования по индексу
+/// Index scan node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IndexScanNode {
-    /// Имя таблицы
+    /// Table name
     pub table_name: String,
-    /// Имя индекса
+    /// Index name
     pub index_name: String,
-    /// Условия поиска по индексу
+    /// Index search conditions
     pub conditions: Vec<IndexCondition>,
-    /// Оценка стоимости
+    /// Cost estimate
     pub cost: f64,
-    /// Оценка количества строк
+    /// Estimated number of rows
     pub estimated_rows: usize,
 }
 
-/// Условие поиска по индексу
+/// Index search condition
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IndexCondition {
-    /// Имя колонки
+    /// Column name
     pub column: String,
-    /// Оператор сравнения
+    /// Comparison operator
     pub operator: String,
-    /// Значение для сравнения
+    /// Value for comparison
     pub value: String,
 }
 
-/// Узел фильтрации
+/// Filter node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FilterNode {
-    /// Условие фильтрации
+    /// Filter condition
     pub condition: String,
-    /// Входной узел
+    /// Input node
     pub input: Box<PlanNode>,
-    /// Оценка селективности
+    /// Selectivity estimate
     pub selectivity: f64,
-    /// Оценка стоимости
+    /// Cost estimate
     pub cost: f64,
 }
 
-/// Узел проекции
+/// Projection node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectionNode {
-    /// Список колонок для проекции
+    /// List of columns for projection
     pub columns: Vec<ProjectionColumn>,
-    /// Входной узел
+    /// Input node
     pub input: Box<PlanNode>,
-    /// Оценка стоимости
+    /// Cost estimate
     pub cost: f64,
 }
 
-/// Колонка проекции
+/// Projection column
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectionColumn {
-    /// Имя колонки
+    /// Column name
     pub name: String,
-    /// Выражение для вычисления
+    /// Expression to compute
     pub expression: Option<String>,
-    /// Псевдоним
+    /// Alias
     pub alias: Option<String>,
 }
 
-/// Узел соединения
+/// Join node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JoinNode {
-    /// Тип соединения
+    /// Join type
     pub join_type: JoinType,
-    /// Условие соединения
+    /// Join condition
     pub condition: String,
-    /// Левый входной узел
+    /// Left input node
     pub left: Box<PlanNode>,
-    /// Правый входной узел
+    /// Right input node
     pub right: Box<PlanNode>,
-    /// Оценка стоимости
+    /// Cost estimate
     pub cost: f64,
 }
 
-/// Тип соединения
+/// Join type
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum JoinType {
     Inner,
@@ -177,158 +177,158 @@ pub enum JoinType {
     Cross,
 }
 
-/// Узел группировки
+/// GroupBy node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GroupByNode {
-    /// Колонки для группировки
+    /// Columns for grouping
     pub group_columns: Vec<String>,
-    /// Агрегатные функции
+    /// Aggregate functions
     pub aggregates: Vec<AggregateFunction>,
-    /// Входной узел
+    /// Input node
     pub input: Box<PlanNode>,
-    /// Оценка стоимости
+    /// Cost estimate
     pub cost: f64,
 }
 
-/// Агрегатная функция
+/// Aggregate function
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AggregateFunction {
-    /// Имя функции
+    /// Function name
     pub name: String,
-    /// Аргумент функции
+    /// Function argument
     pub argument: String,
-    /// Псевдоним результата
+    /// Result alias
     pub alias: Option<String>,
 }
 
-/// Узел сортировки
+/// Sort node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SortNode {
-    /// Колонки для сортировки
+    /// Columns for sorting
     pub sort_columns: Vec<SortColumn>,
-    /// Входной узел
+    /// Input node
     pub input: Box<PlanNode>,
-    /// Оценка стоимости
+    /// Cost estimate
     pub cost: f64,
 }
 
-/// Колонка сортировки
+/// Sort column
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SortColumn {
-    /// Имя колонки
+    /// Column name
     pub column: String,
-    /// Направление сортировки
+    /// Sort direction
     pub direction: SortDirection,
 }
 
-/// Направление сортировки
+/// Sort direction
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SortDirection {
     Asc,
     Desc,
 }
 
-/// Узел ограничения
+/// Limit node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LimitNode {
-    /// Количество строк для ограничения
+    /// Number of rows to limit
     pub limit: usize,
-    /// Входной узел
+    /// Input node
     pub input: Box<PlanNode>,
-    /// Оценка стоимости
+    /// Cost estimate
     pub cost: f64,
 }
 
-/// Узел смещения
+/// Offset node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OffsetNode {
-    /// Количество строк для пропуска
+    /// Number of rows to skip
     pub offset: usize,
-    /// Входной узел
+    /// Input node
     pub input: Box<PlanNode>,
-    /// Оценка стоимости
+    /// Cost estimate
     pub cost: f64,
 }
 
-/// Узел агрегации
+/// Aggregate node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AggregateNode {
-    /// Агрегатные функции
+    /// Aggregate functions
     pub aggregates: Vec<AggregateFunction>,
-    /// Входной узел
+    /// Input node
     pub input: Box<PlanNode>,
-    /// Оценка стоимости
+    /// Cost estimate
     pub cost: f64,
 }
 
-/// Узел вставки
+/// Insert node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InsertNode {
-    /// Имя таблицы
+    /// Table name
     pub table_name: String,
-    /// Колонки для вставки
+    /// Columns for insertion
     pub columns: Vec<String>,
-    /// Значения для вставки
+    /// Values for insertion
     pub values: Vec<Vec<String>>,
-    /// Оценка стоимости
+    /// Cost estimate
     pub cost: f64,
 }
 
-/// Узел обновления
+/// Update node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UpdateNode {
-    /// Имя таблицы
+    /// Table name
     pub table_name: String,
-    /// Назначения (колонка = значение)
+    /// Assignments (column = value)
     pub assignments: Vec<Assignment>,
-    /// Условие WHERE
+    /// WHERE condition
     pub where_condition: Option<String>,
-    /// Оценка стоимости
+    /// Cost estimate
     pub cost: f64,
 }
 
-/// Назначение в UPDATE
+/// Assignment in UPDATE
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Assignment {
-    /// Имя колонки
+    /// Column name
     pub column: String,
-    /// Новое значение
+    /// New value
     pub value: String,
 }
 
-/// Узел удаления
+/// Delete node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeleteNode {
-    /// Имя таблицы
+    /// Table name
     pub table_name: String,
-    /// Условие WHERE
+    /// WHERE condition
     pub where_condition: Option<String>,
-    /// Оценка стоимости
+    /// Cost estimate
     pub cost: f64,
 }
 
-/// Планировщик запросов
+/// Query planner
 pub struct QueryPlanner {
-    /// Семантический анализатор
+    /// Semantic analyzer
     semantic_analyzer: SemanticAnalyzer,
-    /// Настройки планировщика
+    /// Planner settings
     settings: PlannerSettings,
-    /// Кэш планов
+    /// Plan cache
     plan_cache: HashMap<String, ExecutionPlan>,
 }
 
-/// Настройки планировщика
+/// Planner settings
 #[derive(Debug, Clone)]
 pub struct PlannerSettings {
-    /// Включить кэширование планов
+    /// Enable plan caching
     pub enable_plan_cache: bool,
-    /// Максимальный размер кэша планов
+    /// Maximum plan cache size
     pub max_cache_size: usize,
-    /// Включить оптимизацию
+    /// Enable optimization
     pub enable_optimization: bool,
-    /// Максимальная глубина рекурсии
+    /// Maximum recursion depth
     pub max_recursion_depth: usize,
-    /// Включить детальное логирование
+    /// Enable detailed logging
     pub enable_debug_logging: bool,
 }
 
@@ -345,7 +345,7 @@ impl Default for PlannerSettings {
 }
 
 impl QueryPlanner {
-    /// Создать новый планировщик запросов
+    /// Creates a new query planner
     pub fn new() -> Result<Self> {
         let semantic_analyzer = SemanticAnalyzer::default();
         Ok(Self {
@@ -355,7 +355,7 @@ impl QueryPlanner {
         })
     }
 
-    /// Создать планировщик с настройками
+    /// Creates planner with settings
     pub fn with_settings(settings: PlannerSettings) -> Result<Self> {
         let semantic_analyzer = SemanticAnalyzer::default();
         Ok(Self {
@@ -365,41 +365,41 @@ impl QueryPlanner {
         })
     }
 
-    /// Создать план выполнения для SQL запроса
+    /// Creates execution plan for SQL query
     pub fn create_plan(&mut self, sql_statement: &SqlStatement) -> Result<ExecutionPlan> {
-        // Сначала выполняем семантический анализ
+        // First perform semantic analysis
         let context = AnalysisContext::default();
         let analysis_result = self.semantic_analyzer.analyze(sql_statement, &context)?;
 
         if !analysis_result.errors.is_empty() {
             return Err(Error::semantic_analysis(format!(
-                "Семантические ошибки: {:?}",
+                "Semantic errors: {:?}",
                 analysis_result.errors
             )));
         }
 
-        // Создаем план в зависимости от типа запроса
+        // Create plan based on query type
         let root = match sql_statement {
             SqlStatement::Select(select) => self.create_select_plan(select)?,
             SqlStatement::Insert(insert) => self.create_insert_plan(insert)?,
             SqlStatement::Update(update) => self.create_update_plan(update)?,
             SqlStatement::Delete(delete) => self.create_delete_plan(delete)?,
-            _ => return Err(Error::semantic_analysis("Неподдерживаемый тип запроса")),
+            _ => return Err(Error::semantic_analysis("Unsupported query type")),
         };
 
-        // Создаем метаданные плана
+        // Create plan metadata
         let metadata = self.create_plan_metadata(&root)?;
 
         Ok(ExecutionPlan { root, metadata })
     }
 
-    /// Создать план для SELECT запроса
+    /// Creates plan for SELECT query
     fn create_select_plan(&self, select: &SelectStatement) -> Result<PlanNode> {
-        // Создаем базовый план сканирования таблицы
+        // Create base table scan plan
         let mut current_plan = if let Some(from) = &select.from {
             self.create_table_scan_plan(&from.table)?
         } else {
-            // Если нет FROM, создаем пустой план
+            // If no FROM, create empty plan
             PlanNode::TableScan(TableScanNode {
                 table_name: "".to_string(),
                 alias: None,
@@ -410,7 +410,7 @@ impl QueryPlanner {
             })
         };
 
-        // Добавляем JOIN операции
+        // Add JOIN operations
         if let Some(from) = &select.from {
             for join in &from.joins {
                 let join_plan = self.create_table_scan_plan(&join.table)?;
@@ -429,32 +429,32 @@ impl QueryPlanner {
                         .unwrap_or_default(),
                     left: Box::new(current_plan),
                     right: Box::new(join_plan),
-                    cost: 0.0, // TODO: Рассчитать стоимость
+                    cost: 0.0, // TODO: Calculate cost
                 });
             }
         }
 
-        // Добавляем WHERE условие
+        // Add WHERE condition
         if let Some(where_clause) = &select.where_clause {
             current_plan = PlanNode::Filter(FilterNode {
                 condition: format!("{:?}", where_clause),
                 input: Box::new(current_plan),
-                selectivity: 0.5, // TODO: Рассчитать селективность
+                selectivity: 0.5, // TODO: Calculate selectivity
                 cost: 0.0,
             });
         }
 
-        // Добавляем GROUP BY
+        // Add GROUP BY
         if !select.group_by.is_empty() {
             current_plan = PlanNode::GroupBy(GroupByNode {
                 group_columns: select.group_by.iter().map(|e| format!("{:?}", e)).collect(),
-                aggregates: vec![], // TODO: Извлечь агрегатные функции
+                aggregates: vec![], // TODO: Extract aggregate functions
                 input: Box::new(current_plan),
                 cost: 0.0,
             });
         }
 
-        // Добавляем HAVING
+        // Add HAVING
         if let Some(having) = &select.having {
             current_plan = PlanNode::Filter(FilterNode {
                 condition: format!("{:?}", having),
@@ -464,7 +464,7 @@ impl QueryPlanner {
             });
         }
 
-        // Добавляем ORDER BY
+        // Add ORDER BY
         if !select.order_by.is_empty() {
             current_plan = PlanNode::Sort(SortNode {
                 sort_columns: select
@@ -483,7 +483,7 @@ impl QueryPlanner {
             });
         }
 
-        // Добавляем LIMIT
+        // Add LIMIT
         if let Some(limit) = select.limit {
             current_plan = PlanNode::Limit(LimitNode {
                 limit: limit as usize,
@@ -492,7 +492,7 @@ impl QueryPlanner {
             });
         }
 
-        // Добавляем OFFSET
+        // Add OFFSET
         if let Some(offset) = select.offset {
             current_plan = PlanNode::Offset(OffsetNode {
                 offset: offset as usize,
@@ -501,7 +501,7 @@ impl QueryPlanner {
             });
         }
 
-        // Добавляем проекцию
+        // Add projection
         current_plan = PlanNode::Projection(ProjectionNode {
             columns: select
                 .select_list
@@ -528,7 +528,7 @@ impl QueryPlanner {
         Ok(current_plan)
     }
 
-    /// Создать план сканирования таблицы
+    /// Creates table scan plan
     fn create_table_scan_plan(
         &self,
         table_ref: &crate::parser::ast::TableReference,
@@ -538,14 +538,14 @@ impl QueryPlanner {
                 Ok(PlanNode::TableScan(TableScanNode {
                     table_name: name.clone(),
                     alias: alias.clone(),
-                    columns: vec!["*".to_string()], // TODO: Определить конкретные колонки
+                    columns: vec!["*".to_string()], // TODO: Determine specific columns
                     filter: None,
-                    cost: 1.0,            // Базовая стоимость сканирования
-                    estimated_rows: 1000, // TODO: Получить из статистики
+                    cost: 1.0,            // Base scan cost
+                    estimated_rows: 1000, // TODO: Get from statistics
                 }))
             }
             crate::parser::ast::TableReference::Subquery { query, alias } => {
-                // Рекурсивно создаем план для подзапроса
+                // Recursively create plan for subquery
                 let subquery_plan = self.create_select_plan(query)?;
                 Ok(PlanNode::Projection(ProjectionNode {
                     columns: vec![ProjectionColumn {
@@ -560,7 +560,7 @@ impl QueryPlanner {
         }
     }
 
-    /// Создать план для INSERT запроса
+    /// Creates plan for INSERT query
     fn create_insert_plan(&self, insert: &InsertStatement) -> Result<PlanNode> {
         Ok(PlanNode::Insert(InsertNode {
             table_name: insert.table.clone(),
@@ -571,14 +571,14 @@ impl QueryPlanner {
                     .map(|row| row.iter().map(|val| format!("{:?}", val)).collect())
                     .collect(),
                 crate::parser::ast::InsertValues::Select(_) => {
-                    vec![] // TODO: Обработать INSERT ... SELECT
+                    vec![] // TODO: Handle INSERT ... SELECT
                 }
             },
             cost: 1.0,
         }))
     }
 
-    /// Создать план для UPDATE запроса
+    /// Creates plan for UPDATE query
     fn create_update_plan(&self, update: &UpdateStatement) -> Result<PlanNode> {
         Ok(PlanNode::Update(UpdateNode {
             table_name: update.table.clone(),
@@ -595,7 +595,7 @@ impl QueryPlanner {
         }))
     }
 
-    /// Создать план для DELETE запроса
+    /// Creates plan for DELETE query
     fn create_delete_plan(&self, delete: &DeleteStatement) -> Result<PlanNode> {
         Ok(PlanNode::Delete(DeleteNode {
             table_name: delete.table.clone(),
@@ -604,7 +604,7 @@ impl QueryPlanner {
         }))
     }
 
-    /// Создать метаданные плана
+    /// Creates plan metadata
     fn create_plan_metadata(&self, root: &PlanNode) -> Result<PlanMetadata> {
         let (operator_count, max_depth, table_count, join_count) =
             self.analyze_plan_structure(root, 0);
@@ -622,7 +622,7 @@ impl QueryPlanner {
         })
     }
 
-    /// Анализировать структуру плана
+    /// Analyzes plan structure
     fn analyze_plan_structure(
         &self,
         node: &PlanNode,
@@ -633,14 +633,14 @@ impl QueryPlanner {
         let mut table_count = 0;
         let mut join_count = 0;
 
-        // Подсчитываем специфичные операторы
+        // Count specific operators
         match node {
             PlanNode::TableScan(_) => table_count += 1,
             PlanNode::Join(_) => join_count += 1,
             _ => {}
         }
 
-        // Рекурсивно анализируем дочерние узлы
+        // Recursively analyze child nodes
         let child_nodes = self.get_child_nodes(node);
         for child in child_nodes {
             let (child_ops, child_depth, child_tables, child_joins) =
@@ -654,7 +654,7 @@ impl QueryPlanner {
         (operator_count, max_depth, table_count, join_count)
     }
 
-    /// Получить дочерние узлы плана
+    /// Gets child nodes of the plan
     fn get_child_nodes<'a>(&self, node: &'a PlanNode) -> Vec<&'a PlanNode> {
         match node {
             PlanNode::Filter(node) => vec![&node.input],
@@ -669,7 +669,7 @@ impl QueryPlanner {
         }
     }
 
-    /// Оценить стоимость плана
+    /// Estimates plan cost
     fn estimate_plan_cost(&self, node: &PlanNode) -> f64 {
         match node {
             PlanNode::TableScan(node) => node.cost,
@@ -692,7 +692,7 @@ impl QueryPlanner {
         }
     }
 
-    /// Оценить количество строк в результате
+    /// Estimates number of rows in result
     fn estimate_plan_rows(&self, node: &PlanNode) -> usize {
         match node {
             PlanNode::TableScan(node) => node.estimated_rows,
@@ -704,9 +704,9 @@ impl QueryPlanner {
             PlanNode::Join(node) => {
                 let left_rows = self.estimate_plan_rows(&node.left);
                 let right_rows = self.estimate_plan_rows(&node.right);
-                left_rows * right_rows / 1000 // Упрощенная оценка
+                left_rows * right_rows / 1000 // Simplified estimate
             }
-            PlanNode::GroupBy(node) => self.estimate_plan_rows(&node.input) / 10, // Упрощенная оценка
+            PlanNode::GroupBy(node) => self.estimate_plan_rows(&node.input) / 10, // Simplified estimate
             PlanNode::Sort(node) => self.estimate_plan_rows(&node.input),
             PlanNode::Limit(node) => node.limit.min(self.estimate_plan_rows(&node.input)),
             PlanNode::Offset(node) => {
@@ -724,22 +724,22 @@ impl QueryPlanner {
         }
     }
 
-    /// Получить настройки планировщика
+    /// Gets planner settings
     pub fn settings(&self) -> &PlannerSettings {
         &self.settings
     }
 
-    /// Обновить настройки планировщика
+    /// Updates planner settings
     pub fn update_settings(&mut self, settings: PlannerSettings) {
         self.settings = settings;
     }
 
-    /// Очистить кэш планов
+    /// Clears plan cache
     pub fn clear_cache(&mut self) {
         self.plan_cache.clear();
     }
 
-    /// Получить статистику кэша
+    /// Gets cache statistics
     pub fn cache_stats(&self) -> CacheStats {
         CacheStats {
             size: self.plan_cache.len(),
@@ -748,11 +748,11 @@ impl QueryPlanner {
     }
 }
 
-/// Статистика кэша планов
+/// Plan cache statistics
 #[derive(Debug, Clone)]
 pub struct CacheStats {
-    /// Текущий размер кэша
+    /// Current cache size
     pub size: usize,
-    /// Максимальный размер кэша
+    /// Maximum cache size
     pub max_size: usize,
 }

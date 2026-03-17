@@ -1,10 +1,10 @@
-//! Система контрольных точек для rustdb
+//! Checkpoint system for rustdb
 //!
-//! Этот модуль реализует механизм контрольных точек для оптимизации восстановления:
-//! - Периодическое создание контрольных точек
-//! - Фиксация состояния активных транзакций
-//! - Сброс измененных страниц на диск
-//! - Управление размером логов
+//! This module implements the checkpoint mechanism to optimize recovery:
+//! - Periodic checkpoint creation
+//! - Capturing the state of active transactions
+//! - Flushing dirty pages to disk
+//! - Managing log size
 
 use crate::common::{Error, Result};
 use crate::logging::log_record::{LogRecord, LogSequenceNumber, TransactionId};
@@ -17,52 +17,52 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinHandle;
 
-/// Информация о контрольной точке
+/// Checkpoint information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointInfo {
-    /// ID контрольной точки
+    /// Checkpoint ID
     pub id: u64,
-    /// LSN контрольной точки
+    /// Checkpoint LSN
     pub lsn: LogSequenceNumber,
-    /// Время создания
+    /// Creation timestamp
     pub timestamp: u64,
-    /// Активные транзакции на момент создания
+    /// Active transactions at the creation moment
     pub active_transactions: Vec<TransactionId>,
-    /// Измененные страницы
+    /// Dirty pages
     pub dirty_pages: Vec<(u32, PageId)>,
-    /// Размер контрольной точки в байтах
+    /// Checkpoint size in bytes
     pub size_bytes: u64,
-    /// Время создания контрольной точки (мс)
+    /// Checkpoint creation time in milliseconds
     pub creation_time_ms: u64,
-    /// Количество сброшенных страниц
+    /// Number of flushed pages
     pub flushed_pages: u64,
 }
 
-/// Конфигурация системы контрольных точек
+/// Checkpoint system configuration
 #[derive(Debug, Clone)]
 pub struct CheckpointConfig {
-    /// Интервал создания контрольных точек
+    /// Interval between checkpoints
     pub checkpoint_interval: Duration,
-    /// Максимальное количество активных транзакций для создания контрольной точки
+    /// Maximum number of active transactions before triggering a checkpoint
     pub max_active_transactions: usize,
-    /// Максимальное количество измененных страниц для создания контрольной точки
+    /// Maximum number of dirty pages before triggering a checkpoint
     pub max_dirty_pages: usize,
-    /// Максимальный размер лога для создания контрольной точки
+    /// Maximum log size before triggering a checkpoint
     pub max_log_size: u64,
-    /// Включить автоматические контрольные точки
+    /// Enable automatic checkpoints
     pub enable_auto_checkpoint: bool,
-    /// Максимальное время создания контрольной точки
+    /// Maximum time allocated for checkpoint creation
     pub max_checkpoint_time: Duration,
-    /// Количество потоков для сброса страниц
+    /// Number of threads to flush pages
     pub flush_threads: usize,
-    /// Размер пакета для сброса страниц
+    /// Batch size for flushing pages
     pub flush_batch_size: usize,
 }
 
 impl Default for CheckpointConfig {
     fn default() -> Self {
         Self {
-            checkpoint_interval: Duration::from_secs(60), // 1 минута
+            checkpoint_interval: Duration::from_secs(60), // 1 minute
             max_active_transactions: 100,
             max_dirty_pages: 1000,
             max_log_size: 100 * 1024 * 1024, // 100 MB
@@ -74,88 +74,88 @@ impl Default for CheckpointConfig {
     }
 }
 
-/// Статистика контрольных точек
+/// Checkpoint statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CheckpointStatistics {
-    /// Общее количество созданных контрольных точек
+    /// Total number of checkpoints created
     pub total_checkpoints: u64,
-    /// Количество автоматических контрольных точек
+    /// Number of automatic checkpoints
     pub auto_checkpoints: u64,
-    /// Количество принудительных контрольных точек
+    /// Number of forced checkpoints
     pub forced_checkpoints: u64,
-    /// Среднее время создания контрольной точки (мс)
+    /// Average checkpoint creation time (ms)
     pub average_checkpoint_time_ms: u64,
-    /// Общее количество сброшенных страниц
+    /// Total number of flushed pages
     pub total_flushed_pages: u64,
-    /// Размер последней контрольной точки
+    /// Size of the last checkpoint
     pub last_checkpoint_size: u64,
-    /// LSN последней контрольной точки
+    /// LSN of the last checkpoint
     pub last_checkpoint_lsn: LogSequenceNumber,
-    /// Время последней контрольной точки
+    /// Timestamp of the last checkpoint
     pub last_checkpoint_time: u64,
-    /// Количество неудачных контрольных точек
+    /// Number of failed checkpoints
     pub failed_checkpoints: u64,
-    /// Общее время всех контрольных точек (мс)
+    /// Total time spent on checkpoints (ms)
     pub total_checkpoint_time_ms: u64,
 }
 
-/// Триггер создания контрольной точки
+/// Checkpoint trigger
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckpointTrigger {
-    /// По таймеру
+    /// Timer-based
     Timer,
-    /// По количеству транзакций
+    /// Triggered by transaction count
     TransactionCount,
-    /// По количеству измененных страниц
+    /// Triggered by number of dirty pages
     DirtyPageCount,
-    /// По размеру лога
+    /// Triggered by log size
     LogSize,
-    /// Принудительно (пользователем)
+    /// Manual trigger
     Manual,
-    /// При завершении работы
+    /// During shutdown
     Shutdown,
 }
 
-/// Команды управления контрольными точками
+/// Commands for checkpoint management
 #[derive(Debug)]
 enum CheckpointCommand {
-    /// Создать контрольную точку
+    /// Create checkpoint
     CreateCheckpoint {
         trigger: CheckpointTrigger,
         response_tx: Option<tokio::sync::oneshot::Sender<Result<CheckpointInfo>>>,
     },
-    /// Получить статистику
+    /// Get statistics
     GetStatistics {
         response_tx: tokio::sync::oneshot::Sender<CheckpointStatistics>,
     },
-    /// Остановить систему
+    /// Stop the system
     Shutdown,
 }
 
-/// Менеджер контрольных точек
+/// Checkpoint manager
 pub struct CheckpointManager {
-    /// Конфигурация
+    /// Configuration
     config: CheckpointConfig,
-    /// Система записи логов
+    /// Log writer
     log_writer: Arc<LogWriter>,
-    /// Статистика
+    /// Statistics
     statistics: Arc<RwLock<CheckpointStatistics>>,
-    /// Генератор ID контрольных точек
+    /// Checkpoint ID generator
     checkpoint_id_generator: Arc<Mutex<u64>>,
-    /// Канал команд
+    /// Command channel
     command_tx: mpsc::UnboundedSender<CheckpointCommand>,
-    /// Уведомления о завершении контрольных точек
+    /// Checkpoint completion notifications
     checkpoint_notify: Arc<Notify>,
-    /// Фоновая задача
+    /// Background task
     background_handle: Option<JoinHandle<()>>,
-    /// Активные транзакции (внешний источник)
+    /// Active transactions (external source)
     active_transactions: Arc<RwLock<HashSet<TransactionId>>>,
-    /// Измененные страницы (внешний источник)
+    /// Dirty pages (external source)
     dirty_pages: Arc<RwLock<HashSet<(u32, PageId)>>>,
 }
 
 impl CheckpointManager {
-    /// Создает новый менеджер контрольных точек
+    /// Creates a new checkpoint manager
     pub fn new(config: CheckpointConfig, log_writer: Arc<LogWriter>) -> Self {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
@@ -171,13 +171,13 @@ impl CheckpointManager {
             dirty_pages: Arc::new(RwLock::new(HashSet::new())),
         };
 
-        // Запускаем фоновую задачу
+        // Start background task
         manager.start_background_task(command_rx);
 
         manager
     }
 
-    /// Устанавливает источники данных для контрольных точек
+    /// Sets data sources for checkpoints
     pub fn set_data_sources(
         &mut self,
         active_transactions: Arc<RwLock<HashSet<TransactionId>>>,
@@ -187,7 +187,7 @@ impl CheckpointManager {
         self.dirty_pages = dirty_pages;
     }
 
-    /// Запускает фоновую задачу управления контрольными точками
+    /// Starts the background checkpoint management task
     fn start_background_task(
         &mut self,
         mut command_rx: mpsc::UnboundedReceiver<CheckpointCommand>,
@@ -212,7 +212,7 @@ impl CheckpointManager {
 
             loop {
                 tokio::select! {
-                    // Обработка команд
+                    // Process commands
                     Some(command) = command_rx.recv() => {
                         match command {
                             CheckpointCommand::CreateCheckpoint { trigger, response_tx } => {
@@ -242,7 +242,7 @@ impl CheckpointManager {
                         }
                     }
 
-                    // Автоматические контрольные точки по таймеру
+                    // Automatic timer-based checkpoints
                     _ = async {
                         match &mut timer_interval {
                             Some(interval) => interval.tick().await,
@@ -255,7 +255,7 @@ impl CheckpointManager {
                         });
                     }
 
-                    // Мониторинг условий для создания контрольных точек
+                    // Monitor conditions for checkpoint creation
                     _ = monitoring_interval.tick() => {
                         if config.enable_auto_checkpoint {
                             Self::check_checkpoint_conditions(
@@ -272,7 +272,7 @@ impl CheckpointManager {
         }));
     }
 
-    /// Проверяет условия для создания автоматических контрольных точек
+    /// Checks conditions for automatic checkpoint creation
     async fn check_checkpoint_conditions(
         config: &CheckpointConfig,
         command_sender: &mpsc::UnboundedSender<CheckpointCommand>,
@@ -284,7 +284,7 @@ impl CheckpointManager {
         let dirty_page_count = dirty_pages.read().unwrap().len();
         let log_size = log_writer.get_total_log_size();
 
-        // Проверяем условия
+        // Check conditions
         if active_tx_count >= config.max_active_transactions {
             let _ = command_sender.send(CheckpointCommand::CreateCheckpoint {
                 trigger: CheckpointTrigger::TransactionCount,
@@ -303,7 +303,7 @@ impl CheckpointManager {
         }
     }
 
-    /// Внутренняя реализация создания контрольной точки
+    /// Internal implementation of checkpoint creation
     async fn create_checkpoint_internal(
         config: &CheckpointConfig,
         log_writer: &Arc<LogWriter>,
@@ -315,7 +315,7 @@ impl CheckpointManager {
     ) -> Result<CheckpointInfo> {
         let start_time = Instant::now();
 
-        // Генерируем ID контрольной точки
+        // Generate checkpoint ID
         let checkpoint_id = {
             let mut generator = checkpoint_id_gen.lock().unwrap();
             let id = *generator;
@@ -324,11 +324,11 @@ impl CheckpointManager {
         };
 
         println!(
-            "📍 Создаем контрольную точку {} (триггер: {:?})",
+            "📍 Creating checkpoint {} (trigger: {:?})",
             checkpoint_id, trigger
         );
 
-        // Получаем снимок состояния
+        // Capture state snapshot
         let active_txs: Vec<TransactionId> = {
             let txs = active_transactions.read().unwrap();
             txs.iter().copied().collect()
@@ -339,14 +339,14 @@ impl CheckpointManager {
             pages.iter().copied().collect()
         };
 
-        println!("   📊 Активных транзакций: {}", active_txs.len());
-        println!("   📊 Измененных страниц: {}", dirty_page_list.len());
+        println!("   📊 Active transactions: {}", active_txs.len());
+        println!("   📊 Dirty pages: {}", dirty_page_list.len());
 
-        // Сбрасываем измененные страницы на диск
+        // Flush dirty pages to disk
         let flushed_pages = Self::flush_dirty_pages(config, &dirty_page_list).await?;
-        println!("   💾 Сброшено страниц на диск: {}", flushed_pages);
+        println!("   💾 Pages flushed to disk: {}", flushed_pages);
 
-        // Создаем лог-запись контрольной точки
+        // Create checkpoint log record
         let current_lsn = log_writer.current_lsn();
         let checkpoint_record = LogRecord::new_checkpoint(
             0,
@@ -358,7 +358,7 @@ impl CheckpointManager {
 
         let checkpoint_lsn = log_writer.write_log_sync(checkpoint_record).await?;
 
-        // Принудительно сбрасываем логи
+        // Force log flush
         log_writer.flush().await?;
 
         let creation_time = start_time.elapsed();
@@ -367,23 +367,23 @@ impl CheckpointManager {
             .unwrap_or_default()
             .as_secs();
 
-        // Вычисляем время создания в миллисекундах, гарантируя минимум 1 мс
-        // для случаев, когда операция выполняется очень быстро (< 1 мс)
+        // Compute creation time in milliseconds, guaranteeing at least 1 ms
+        // for cases when the operation completes faster than 1 ms
         let creation_time_ms = (creation_time.as_millis() as u64).max(1);
 
-        // Создаем информацию о контрольной точке
+        // Build checkpoint information
         let checkpoint_info = CheckpointInfo {
             id: checkpoint_id,
             lsn: checkpoint_lsn,
             timestamp,
             active_transactions: active_txs,
             dirty_pages: dirty_page_list,
-            size_bytes: 0, // Будет вычислено позже
+            size_bytes: 0, // Will be calculated later
             creation_time_ms,
             flushed_pages,
         };
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = statistics.write().unwrap();
             stats.total_checkpoints += 1;
@@ -406,7 +406,7 @@ impl CheckpointManager {
         }
 
         println!(
-            "   ✅ Контрольная точка {} создана за {} мс",
+            "   ✅ Checkpoint {} created in {} ms",
             checkpoint_id,
             creation_time_ms
         );
@@ -414,21 +414,21 @@ impl CheckpointManager {
         Ok(checkpoint_info)
     }
 
-    /// Сбрасывает измененные страницы на диск
+    /// Flushes dirty pages to disk
     async fn flush_dirty_pages(
         config: &CheckpointConfig,
         dirty_pages: &[(u32, PageId)],
     ) -> Result<u64> {
         let mut flushed_count = 0;
 
-        // Разбиваем на пакеты для параллельной обработки
+        // Split into batches for parallel processing
         let chunks: Vec<_> = dirty_pages.chunks(config.flush_batch_size).collect();
 
         for chunk in chunks {
-            // В реальной реализации здесь был бы параллельный сброс страниц
+            // In real implementation, pages would be flushed in parallel here
             let batch_size = chunk.len();
 
-            // Симулируем сброс страниц
+            // Simulate page flush
             tokio::time::sleep(Duration::from_micros(batch_size as u64 * 10)).await;
 
             flushed_count += batch_size as u64;
@@ -437,7 +437,7 @@ impl CheckpointManager {
         Ok(flushed_count)
     }
 
-    /// Создает контрольную точку вручную
+    /// Creates a manual checkpoint
     pub async fn create_checkpoint(&self) -> Result<CheckpointInfo> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
@@ -447,15 +447,15 @@ impl CheckpointManager {
                 response_tx: Some(response_tx),
             })
             .map_err(|_| {
-                Error::internal("Не удалось отправить команду создания контрольной точки")
+                Error::internal("Failed to send checkpoint creation command")
             })?;
 
         response_rx.await.map_err(|_| {
-            Error::internal("Не удалось получить результат создания контрольной точки")
+            Error::internal("Failed to receive checkpoint creation result")
         })?
     }
 
-    /// Создает контрольную точку при завершении работы
+    /// Creates a checkpoint during shutdown
     pub async fn create_shutdown_checkpoint(&self) -> Result<CheckpointInfo> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
@@ -465,15 +465,15 @@ impl CheckpointManager {
                 response_tx: Some(response_tx),
             })
             .map_err(|_| {
-                Error::internal("Не удалось отправить команду завершающей контрольной точки")
+                Error::internal("Failed to send shutdown checkpoint command")
             })?;
 
         response_rx.await.map_err(|_| {
-            Error::internal("Не удалось получить результат завершающей контрольной точки")
+            Error::internal("Failed to receive shutdown checkpoint result")
         })?
     }
 
-    /// Возвращает статистику контрольных точек
+    /// Returns checkpoint statistics
     pub async fn get_statistics(&self) -> CheckpointStatistics {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
@@ -488,24 +488,24 @@ impl CheckpointManager {
         }
     }
 
-    /// Ожидает завершения текущей контрольной точки
+    /// Waits for current checkpoint to finish
     pub async fn wait_for_checkpoint(&self, timeout: Duration) -> Result<()> {
         tokio::time::timeout(timeout, self.checkpoint_notify.notified())
             .await
-            .map_err(|_| Error::database("Таймаут ожидания завершения контрольной точки"))?;
+            .map_err(|_| Error::database("Timeout waiting for checkpoint completion"))?;
 
         Ok(())
     }
 
-    /// Останавливает менеджер контрольных точек
+    /// Shuts down the checkpoint manager
     pub async fn shutdown(&mut self) -> Result<()> {
-        // Создаем финальную контрольную точку
+        // Create final checkpoint
         let _ = self.create_shutdown_checkpoint().await;
 
-        // Отправляем команду остановки
+        // Send shutdown command
         let _ = self.command_tx.send(CheckpointCommand::Shutdown);
 
-        // Ждем завершения фоновой задачи
+        // Wait for background task to finish
         if let Some(handle) = self.background_handle.take() {
             let _ = handle.await;
         }
@@ -513,17 +513,17 @@ impl CheckpointManager {
         Ok(())
     }
 
-    /// Обновляет список активных транзакций
+    /// Updates the list of active transactions
     pub fn update_active_transactions(&self, transactions: HashSet<TransactionId>) {
         *self.active_transactions.write().unwrap() = transactions;
     }
 
-    /// Обновляет список измененных страниц
+    /// Updates the list of dirty pages
     pub fn update_dirty_pages(&self, pages: HashSet<(u32, PageId)>) {
         *self.dirty_pages.write().unwrap() = pages;
     }
 
-    /// Добавляет активную транзакцию
+    /// Adds an active transaction
     pub fn add_active_transaction(&self, transaction_id: TransactionId) {
         self.active_transactions
             .write()
@@ -531,7 +531,7 @@ impl CheckpointManager {
             .insert(transaction_id);
     }
 
-    /// Удаляет активную транзакцию
+    /// Removes an active transaction
     pub fn remove_active_transaction(&self, transaction_id: TransactionId) {
         self.active_transactions
             .write()
@@ -539,12 +539,12 @@ impl CheckpointManager {
             .remove(&transaction_id);
     }
 
-    /// Добавляет измененную страницу
+    /// Adds a dirty page
     pub fn add_dirty_page(&self, file_id: u32, page_id: PageId) {
         self.dirty_pages.write().unwrap().insert((file_id, page_id));
     }
 
-    /// Удаляет измененную страницу (после сброса)
+    /// Removes a dirty page (after flush)
     pub fn remove_dirty_page(&self, file_id: u32, page_id: PageId) {
         self.dirty_pages
             .write()
@@ -575,7 +575,7 @@ mod tests {
         let log_writer = Arc::new(LogWriter::new(log_config)?);
 
         let mut checkpoint_config = CheckpointConfig::default();
-        checkpoint_config.enable_auto_checkpoint = false; // Отключаем для тестов
+        checkpoint_config.enable_auto_checkpoint = false; // Disable for tests
 
         Ok(CheckpointManager::new(checkpoint_config, log_writer))
     }
@@ -603,12 +603,12 @@ mod tests {
     async fn test_checkpoint_with_transactions() -> Result<()> {
         let manager = create_test_checkpoint_manager().await?;
 
-        // Добавляем активные транзакции
+        // Add active transactions
         manager.add_active_transaction(100);
         manager.add_active_transaction(101);
         manager.add_active_transaction(102);
 
-        // Добавляем измененные страницы
+        // Add dirty pages
         manager.add_dirty_page(1, 10);
         manager.add_dirty_page(1, 11);
         manager.add_dirty_page(2, 20);
@@ -626,14 +626,14 @@ mod tests {
     async fn test_checkpoint_statistics() -> Result<()> {
         let manager = create_test_checkpoint_manager().await?;
 
-        // Создаем несколько контрольных точек
+        // Create several checkpoints
         manager.create_checkpoint().await?;
         manager.create_checkpoint().await?;
 
         let stats = manager.get_statistics().await;
 
         assert_eq!(stats.total_checkpoints, 2);
-        assert_eq!(stats.forced_checkpoints, 2); // Ручные контрольные точки
+        assert_eq!(stats.forced_checkpoints, 2); // Manual checkpoints
         assert!(stats.average_checkpoint_time_ms > 0);
 
         Ok(())
@@ -659,13 +659,13 @@ mod tests {
     async fn test_data_source_updates() -> Result<()> {
         let manager = create_test_checkpoint_manager().await?;
 
-        // Тестируем обновление активных транзакций
+        // Test updating active transactions
         let mut transactions = HashSet::new();
         transactions.insert(300);
         transactions.insert(301);
         manager.update_active_transactions(transactions);
 
-        // Тестируем обновление измененных страниц
+        // Test updating dirty pages
         let mut pages = HashSet::new();
         pages.insert((3, 30));
         pages.insert((3, 31));
@@ -683,14 +683,14 @@ mod tests {
     // async fn test_wait_for_checkpoint() -> Result<()> {
     //     let manager = create_test_checkpoint_manager().await?;
 
-    //     // Запускаем создание контрольной точки в фоне
+    //     // Start checkpoint creation in background
     //     let manager_clone = manager;
     //     let checkpoint_task = tokio::spawn(async move {
     //         tokio::time::sleep(Duration::from_millis(50)).await;
     //         manager_clone.create_checkpoint().await
     //     });
 
-    //     // Ждем завершения контрольной точки
+    //     // Wait for checkpoint completion
     //     let wait_result = manager.wait_for_checkpoint(Duration::from_secs(1)).await;
     //     assert!(wait_result.is_ok());
 

@@ -1,4 +1,4 @@
-//! Структуры данных для таблиц rustdb
+//! Data structures for rustdb tables
 
 use crate::common::{
     types::{Column, ColumnValue, DataType, Schema as BaseSchema},
@@ -7,29 +7,29 @@ use crate::common::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Кортеж (строка) таблицы
+/// Table tuple (row)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tuple {
-    /// ID кортежа
+    /// Tuple ID
     pub id: u64,
-    /// Значения колонок
+    /// Column values
     pub values: HashMap<String, ColumnValue>,
-    /// Версия кортежа (для MVCC)
+    /// Tuple version (for MVCC)
     pub version: u64,
-    /// Время создания
+    /// Creation time
     pub created_at: u64,
-    /// Время последнего обновления
+    /// Last update time
     pub updated_at: u64,
-    /// Флаг удаления
+    /// Deletion flag
     pub is_deleted: bool,
-    /// Указатель на следующую версию
+    /// Pointer to the next version
     pub next_version: Option<u64>,
-    /// Указатель на предыдущую версию
+    /// Pointer to the previous version
     pub prev_version: Option<u64>,
 }
 
 impl Tuple {
-    /// Создает новый кортеж
+    /// Creates a new tuple
     pub fn new(id: u64) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -48,7 +48,7 @@ impl Tuple {
         }
     }
 
-    /// Устанавливает значение колонки
+    /// Sets a column value
     pub fn set_value(&mut self, column: &str, value: ColumnValue) {
         self.values.insert(column.to_string(), value);
         self.updated_at = std::time::SystemTime::now()
@@ -57,17 +57,17 @@ impl Tuple {
             .as_secs();
     }
 
-    /// Получает значение колонки
+    /// Gets a column value
     pub fn get_value(&self, column: &str) -> Option<&ColumnValue> {
         self.values.get(column)
     }
 
-    /// Проверяет, содержит ли кортеж колонку
+    /// Checks if the tuple contains a column
     pub fn has_column(&self, column: &str) -> bool {
         self.values.contains_key(column)
     }
 
-    /// Помечает кортеж как удаленный
+    /// Marks the tuple as deleted
     pub fn mark_deleted(&mut self) {
         self.is_deleted = true;
         self.updated_at = std::time::SystemTime::now()
@@ -76,12 +76,12 @@ impl Tuple {
             .as_secs();
     }
 
-    /// Проверяет, удален ли кортеж
+    /// Checks if the tuple is deleted
     pub fn is_deleted(&self) -> bool {
         self.is_deleted
     }
 
-    /// Создает новую версию кортежа
+    /// Creates a new tuple version
     pub fn create_new_version(&mut self) -> Tuple {
         let mut new_tuple = self.clone();
         new_tuple.version += 1;
@@ -93,41 +93,41 @@ impl Tuple {
         new_tuple.prev_version = Some(self.version);
         new_tuple.next_version = None;
 
-        // Обновляем указатель на следующую версию
+        // Update pointer to next version
         self.next_version = Some(new_tuple.version);
 
         new_tuple
     }
 
-    /// Сериализует кортеж в байты
+    /// Serializes the tuple to bytes
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         bincode::serialize(self).map_err(Error::BincodeSerialization)
     }
 
-    /// Создает кортеж из байтов (десериализация)
+    /// Creates a tuple from bytes (deserialization)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         bincode::deserialize(bytes).map_err(Error::BincodeSerialization)
     }
 
-    /// Возвращает размер кортежа в байтах
+    /// Returns the tuple size in bytes
     pub fn size(&self) -> usize {
         self.to_bytes().unwrap_or_default().len()
     }
 
-    /// Проверяет, соответствует ли кортеж схеме
+    /// Checks if the tuple matches the schema
     pub fn validate_against_schema(&self, schema: &Schema) -> Result<()> {
         for column in &schema.base.columns {
             if column.not_null {
                 if let Some(value) = self.values.get(&column.name) {
                     if value.is_null() {
                         return Err(Error::validation(format!(
-                            "Колонка {} не может быть NULL",
+                            "Column {} cannot be NULL",
                             column.name
                         )));
                     }
                 } else {
                     return Err(Error::validation(format!(
-                        "Отсутствует обязательная колонка {}",
+                        "Missing required column {}",
                         column.name
                     )));
                 }
@@ -136,20 +136,20 @@ impl Tuple {
         Ok(())
     }
 
-    /// Проверяет, соответствует ли кортеж базовой схеме
+    /// Checks if the tuple matches the base schema
     pub fn validate_against_base_schema(&self, schema: &BaseSchema) -> Result<()> {
         for column in &schema.columns {
             if column.not_null {
                 if let Some(value) = self.values.get(&column.name) {
                     if value.is_null() {
                         return Err(Error::validation(format!(
-                            "Колонка {} не может быть NULL",
+                            "Column {} cannot be NULL",
                             column.name
                         )));
                     }
                 } else {
                     return Err(Error::validation(format!(
-                        "Отсутствует обязательная колонка {}",
+                        "Missing required column {}",
                         column.name
                     )));
                 }
@@ -159,21 +159,21 @@ impl Tuple {
     }
 }
 
-/// Расширенная схема таблицы с дополнительными возможностями
+/// Extended table schema with additional capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Schema {
-    /// Базовая схема
+    /// Base schema
     pub base: BaseSchema,
-    /// Дополнительные ограничения
+    /// Additional constraints
     pub constraints: Vec<Constraint>,
-    /// Триггеры
+    /// Triggers
     pub triggers: Vec<Trigger>,
-    /// Настройки таблицы
+    /// Table options
     pub table_options: TableOptions,
 }
 
 impl Schema {
-    /// Создает новую схему
+    /// Creates a new schema
     pub fn new(table_name: String) -> Self {
         Self {
             base: BaseSchema::new(table_name),
@@ -183,60 +183,60 @@ impl Schema {
         }
     }
 
-    /// Добавляет колонку в схему
+    /// Adds a column to the schema
     pub fn add_column(mut self, column: Column) -> Self {
         self.base = self.base.add_column(column);
         self
     }
 
-    /// Устанавливает первичный ключ
+    /// Sets the primary key
     pub fn primary_key(mut self, columns: Vec<String>) -> Self {
         self.base = self.base.primary_key(columns);
         self
     }
 
-    /// Добавляет уникальное ограничение
+    /// Adds a unique constraint
     pub fn unique(mut self, columns: Vec<String>) -> Self {
         self.base = self.base.unique(columns);
         self
     }
 
-    /// Добавляет внешний ключ
+    /// Adds a foreign key
     pub fn foreign_key(mut self, fk: crate::common::types::ForeignKey) -> Self {
         self.base = self.base.foreign_key(fk);
         self
     }
 
-    /// Добавляет индекс
+    /// Adds an index
     pub fn index(mut self, index: crate::common::types::Index) -> Self {
         self.base = self.base.index(index);
         self
     }
 
-    /// Добавляет ограничение
+    /// Adds a constraint
     pub fn add_constraint(mut self, constraint: Constraint) -> Self {
         self.constraints.push(constraint);
         self
     }
 
-    /// Добавляет триггер
+    /// Adds a trigger
     pub fn add_trigger(mut self, trigger: Trigger) -> Self {
         self.triggers.push(trigger);
         self
     }
 
-    /// Устанавливает опции таблицы
+    /// Sets table options
     pub fn with_options(mut self, options: TableOptions) -> Self {
         self.table_options = options;
         self
     }
 
-    /// Проверяет, соответствует ли кортеж схеме
+    /// Checks if the tuple matches the schema
     pub fn validate_tuple(&self, tuple: &Tuple) -> Result<()> {
-        // Проверяем базовую схему
+        // Check base schema
         tuple.validate_against_base_schema(&self.base)?;
 
-        // Проверяем дополнительные ограничения
+        // Check additional constraints
         for constraint in &self.constraints {
             constraint.validate(tuple)?;
         }
@@ -244,37 +244,37 @@ impl Schema {
         Ok(())
     }
 
-    /// Возвращает все колонки схемы
+    /// Returns all schema columns
     pub fn get_columns(&self) -> &[Column] {
         &self.base.columns
     }
 
-    /// Возвращает колонку по имени
+    /// Returns a column by name
     pub fn get_column(&self, name: &str) -> Option<&Column> {
         self.base.columns.iter().find(|c| c.name == name)
     }
 
-    /// Проверяет, содержит ли схема колонку
+    /// Checks if the schema contains a column
     pub fn has_column(&self, name: &str) -> bool {
         self.base.columns.iter().any(|c| c.name == name)
     }
 }
 
-/// Ограничение таблицы
+/// Table constraint
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Constraint {
-    /// Имя ограничения
+    /// Constraint name
     pub name: String,
-    /// Тип ограничения
+    /// Constraint type
     pub constraint_type: ConstraintType,
-    /// Выражение ограничения
+    /// Constraint expression
     pub expression: String,
-    /// Колонки, к которым применяется ограничение
+    /// Columns to which the constraint applies
     pub columns: Vec<String>,
 }
 
 impl Constraint {
-    /// Создает новое ограничение
+    /// Creates a new constraint
     pub fn new(
         name: String,
         constraint_type: ConstraintType,
@@ -289,43 +289,43 @@ impl Constraint {
         }
     }
 
-    /// Проверяет ограничение для кортежа
+    /// Validates the constraint for a tuple
     pub fn validate(&self, _tuple: &Tuple) -> Result<()> {
-        // TODO: Реализовать проверку ограничений
+        // TODO: Implement constraint validation
         Ok(())
     }
 }
 
-/// Тип ограничения
+/// Constraint type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ConstraintType {
-    /// Проверочное ограничение
+    /// Check constraint
     Check,
-    /// Ограничение по умолчанию
+    /// Default constraint
     Default,
-    /// Ограничение NOT NULL
+    /// NOT NULL constraint
     NotNull,
-    /// Пользовательское ограничение
+    /// Custom constraint
     Custom,
 }
 
-/// Триггер таблицы
+/// Table trigger
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trigger {
-    /// Имя триггера
+    /// Trigger name
     pub name: String,
-    /// Событие триггера
+    /// Trigger event
     pub event: TriggerEvent,
-    /// Время выполнения триггера
+    /// Trigger timing
     pub timing: TriggerTiming,
-    /// SQL код триггера
+    /// Trigger SQL code
     pub sql_code: String,
-    /// Условие выполнения триггера
+    /// Trigger execution condition
     pub condition: Option<String>,
 }
 
 impl Trigger {
-    /// Создает новый триггер
+    /// Creates a new trigger
     pub fn new(name: String, event: TriggerEvent, timing: TriggerTiming, sql_code: String) -> Self {
         Self {
             name,
@@ -336,51 +336,51 @@ impl Trigger {
         }
     }
 
-    /// Устанавливает условие выполнения
+    /// Sets the execution condition
     pub fn with_condition(mut self, condition: String) -> Self {
         self.condition = Some(condition);
         self
     }
 }
 
-/// Событие триггера
+/// Trigger event
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TriggerEvent {
-    /// Вставка
+    /// Insert
     Insert,
-    /// Обновление
+    /// Update
     Update,
-    /// Удаление
+    /// Delete
     Delete,
 }
 
-/// Время выполнения триггера
+/// Trigger timing
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TriggerTiming {
-    /// До выполнения операции
+    /// Before operation
     Before,
-    /// После выполнения операции
+    /// After operation
     After,
-    /// Вместо выполнения операции
+    /// Instead of operation
     InsteadOf,
 }
 
-/// Опции таблицы
+/// Table options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableOptions {
-    /// Движок таблицы
+    /// Table engine
     pub engine: String,
-    /// Кодировка
+    /// Character set
     pub charset: String,
-    /// Коллация
+    /// Collation
     pub collation: String,
-    /// Комментарий к таблице
+    /// Table comment
     pub comment: Option<String>,
-    /// Автоинкремент
+    /// Auto-increment
     pub auto_increment: Option<u64>,
-    /// Максимальное количество строк
+    /// Maximum number of rows
     pub max_rows: Option<u64>,
-    /// Минимальное количество строк
+    /// Minimum number of rows
     pub min_rows: Option<u64>,
 }
 

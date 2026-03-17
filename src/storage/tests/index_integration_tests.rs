@@ -1,7 +1,6 @@
-//! Интеграционные тесты для индексов с другими компонентами rustdb
+//! Integration tests for indexes working alongside other rustdb components
 //!
-//! Эти тесты проверяют, как индексы работают в связке с менеджером страниц,
-//! файловой системой и другими компонентами базы данных.
+//! Validates index interaction with the page manager, file subsystem, and additional database modules.
 
 use crate::common::Result;
 use crate::storage::advanced_file_manager::AdvancedFileManager;
@@ -10,7 +9,7 @@ use crate::storage::page_manager::PageManager;
 use std::collections::HashMap;
 use tempfile::TempDir;
 
-/// Структура, имитирующая запись в таблице базы данных
+/// Represents a mock database table record
 #[derive(Debug, Clone, PartialEq)]
 struct DatabaseRecord {
     id: u32,
@@ -19,15 +18,15 @@ struct DatabaseRecord {
     email: String,
 }
 
-/// Простая имитация таблицы с индексами
+/// Minimal table mock that maintains indexes
 struct IndexedTable {
-    // Основные данные хранятся по ID записи
+    // Primary data stored by record ID
     records: HashMap<u32, DatabaseRecord>,
-    // Индекс по ID (первичный ключ)
+    // Index by ID (primary key)
     id_index: SimpleHashIndex<u32, u32>, // key -> record_id
-    // Индекс по имени
+    // Index by name
     name_index: BPlusTree<String, Vec<u32>>, // name -> list of record_ids
-    // Индекс по возрасту (для диапазонных запросов)
+    // Index by age (for range queries)
     age_index: BPlusTree<u32, Vec<u32>>, // age -> list of record_ids
     next_id: u32,
 }
@@ -54,13 +53,13 @@ impl IndexedTable {
             email,
         };
 
-        // Вставляем запись
+        // Insert record
         self.records.insert(record_id, record);
 
-        // Обновляем индексы
+        // Update indexes
         self.id_index.insert(record_id, record_id)?;
 
-        // Индекс по имени (может быть несколько записей с одним именем)
+        // Name index (supports duplicate names)
         match self.name_index.search(&name)? {
             Some(mut ids) => {
                 ids.push(record_id);
@@ -71,7 +70,7 @@ impl IndexedTable {
             }
         }
 
-        // Индекс по возрасту
+        // Age index
         match self.age_index.search(&age)? {
             Some(mut ids) => {
                 ids.push(record_id);
@@ -122,21 +121,21 @@ impl IndexedTable {
 
     fn delete(&mut self, id: u32) -> Result<bool> {
         if let Some(record) = self.records.remove(&id) {
-            // Удаляем из индекса по ID
+            // Remove from ID index
             self.id_index.delete(&id)?;
 
-            // Обновляем индекс по имени
+            // Update name index
             if let Some(mut ids) = self.name_index.search(&record.name)? {
                 ids.retain(|&x| x != id);
                 if ids.is_empty() {
-                    // Если это был последний элемент с таким именем, удаляем запись
-                    // В реальной реализации нужно было бы удалить ключ из индекса
+                    // If this was the last record with that name we would drop the key
+                    // A production implementation would remove the index entry entirely
                 } else {
                     self.name_index.insert(record.name.clone(), ids)?;
                 }
             }
 
-            // Обновляем индекс по возрасту
+            // Update age index
             if let Some(mut ids) = self.age_index.search(&record.age)? {
                 ids.retain(|&x| x != id);
                 if !ids.is_empty() {
@@ -159,7 +158,7 @@ impl IndexedTable {
 fn test_indexed_table_basic_operations() {
     let mut table = IndexedTable::new();
 
-    // Вставляем тестовые данные
+    // Insert sample data
     let alice_id = table
         .insert("Alice".to_string(), 25, "alice@example.com".to_string())
         .unwrap();
@@ -172,21 +171,21 @@ fn test_indexed_table_basic_operations() {
 
     assert_eq!(table.size(), 3);
 
-    // Поиск по ID
+    // Query by ID
     let alice = table.find_by_id(alice_id).unwrap().unwrap();
     assert_eq!(alice.name, "Alice");
     assert_eq!(alice.age, 25);
 
-    // Поиск по имени
+    // Query by name
     let alices = table.find_by_name("Alice").unwrap();
     assert_eq!(alices.len(), 1);
     assert_eq!(alices[0].id, alice_id);
 
-    // Поиск по диапазону возраста
+    // Query by age range
     let young_people = table.find_by_age_range(20, 26).unwrap();
-    assert_eq!(young_people.len(), 2); // Alice и Charlie
+    assert_eq!(young_people.len(), 2); // Alice and Charlie
 
-    // Удаление записи
+    // Delete record
     assert!(table.delete(bob_id).unwrap());
     assert_eq!(table.size(), 2);
     assert!(table.find_by_id(bob_id).unwrap().is_none());
@@ -196,7 +195,7 @@ fn test_indexed_table_basic_operations() {
 fn test_indexed_table_with_duplicates() {
     let mut table = IndexedTable::new();
 
-    // Вставляем несколько записей с одинаковыми именами и возрастами
+    // Insert multiple records sharing names/ages
     let _john1 = table
         .insert("John".to_string(), 30, "john1@example.com".to_string())
         .unwrap();
@@ -207,15 +206,15 @@ fn test_indexed_table_with_duplicates() {
         .insert("John".to_string(), 25, "john3@example.com".to_string())
         .unwrap();
 
-    // Поиск по имени должен вернуть всех Johns
+    // Name lookup returns all Johns
     let johns = table.find_by_name("John").unwrap();
     assert_eq!(johns.len(), 3);
 
-    // Поиск по возрасту 30 должен вернуть двух Johns
+    // Age 30 lookup returns two Johns
     let thirty_year_olds = table.find_by_age_range(30, 30).unwrap();
     assert_eq!(thirty_year_olds.len(), 2);
 
-    // Поиск по диапазону возраста должен вернуть всех Johns
+    // Age range lookup returns all Johns
     let all_johns_by_age = table.find_by_age_range(25, 30).unwrap();
     assert_eq!(all_johns_by_age.len(), 3);
 }
@@ -224,13 +223,13 @@ fn test_indexed_table_with_duplicates() {
 fn test_index_consistency_after_operations() {
     let mut table = IndexedTable::new();
 
-    // Вставляем много записей
+    // Insert many records
     let mut inserted_ids = Vec::new();
     for i in 1..=100 {
         let id = table
             .insert(
                 format!("User{}", i),
-                20 + (i % 50) as u32, // Возраст от 20 до 69
+                20 + (i % 50) as u32, // Ages from 20 to 69
                 format!("user{}@example.com", i),
             )
             .unwrap();
@@ -239,24 +238,24 @@ fn test_index_consistency_after_operations() {
 
     assert_eq!(table.size(), 100);
 
-    // Проверяем, что все записи можно найти по ID
+    // Ensure every record remains accessible by ID
     for &id in &inserted_ids {
         assert!(table.find_by_id(id).unwrap().is_some());
     }
 
-    // Удаляем каждую вторую запись
+    // Delete every second record
     for i in (0..inserted_ids.len()).step_by(2) {
         assert!(table.delete(inserted_ids[i]).unwrap());
     }
 
     assert_eq!(table.size(), 50);
 
-    // Проверяем, что удаленные записи не найдены
+    // Deleted records should not be found
     for i in (0..inserted_ids.len()).step_by(2) {
         assert!(table.find_by_id(inserted_ids[i]).unwrap().is_none());
     }
 
-    // Проверяем, что оставшиеся записи все еще доступны
+    // Remaining records must still be accessible
     for i in (1..inserted_ids.len()).step_by(2) {
         assert!(table.find_by_id(inserted_ids[i]).unwrap().is_some());
     }
@@ -264,13 +263,13 @@ fn test_index_consistency_after_operations() {
 
 #[test]
 fn test_index_with_page_manager_simulation() {
-    // Симулируем интеграцию с менеджером страниц
+    // Simulate interaction with the page manager
     let _temp_dir = TempDir::new().unwrap();
 
-    // Создаем индекс, который будет хранить указатели на страницы
+    // Build an index storing page pointers
     let mut page_index: BPlusTree<String, u32> = BPlusTree::new_default(); // key -> page_id
 
-    // Симулируем вставку данных на разные страницы
+    // Simulate inserting data across multiple pages
     let test_data = [
         ("apple", 1),
         ("banana", 1),
@@ -283,11 +282,11 @@ fn test_index_with_page_manager_simulation() {
         page_index.insert(key.to_string(), page_id).unwrap();
     }
 
-    // Проверяем поиск
+    // Verify lookup behavior
     assert_eq!(page_index.search(&"apple".to_string()).unwrap(), Some(1));
     assert_eq!(page_index.search(&"cherry".to_string()).unwrap(), Some(2));
 
-    // Диапазонный поиск для определения, какие страницы нужно загрузить
+    // Range search to determine which pages to load
     let range_results = page_index
         .range_search(&"banana".to_string(), &"date".to_string())
         .unwrap();
@@ -296,7 +295,7 @@ fn test_index_with_page_manager_simulation() {
         .map(|(_, page_id)| page_id)
         .collect();
 
-    // Должны быть затронуты страницы 1 и 2
+    // Pages 1 and 2 should be touched
     assert!(affected_pages.contains(&1));
     assert!(affected_pages.contains(&2));
     assert_eq!(affected_pages.len(), 2);
@@ -307,29 +306,29 @@ fn test_index_statistics_integration() {
     let mut btree: BPlusTree<i32, String> = BPlusTree::new_default();
     let mut hash_index: SimpleHashIndex<i32, String> = SimpleHashIndex::new();
 
-    // Выполняем смешанные операции и отслеживаем статистику
+    // Perform mixed operations and collect stats
     for i in 1..=1000 {
         btree.insert(i, format!("btree_value_{}", i)).unwrap();
         hash_index.insert(i, format!("hash_value_{}", i)).unwrap();
     }
 
-    // Выполняем поиски
+    // Execute lookups
     for i in 1..=500 {
         let _ = btree.search(&i).unwrap();
         let _ = hash_index.search(&i).unwrap();
     }
 
-    // Удаляем из хеш-индекса
+    // Delete from hash index
     for i in 1..=100 {
         hash_index.delete(&i).unwrap();
     }
 
-    // Диапазонные запросы в B+ дереве
+    // Issue range queries against the B+ tree
     for start in (1..=900).step_by(100) {
         let _ = btree.range_search(&start, &(start + 50)).unwrap();
     }
 
-    // Проверяем статистику
+    // Inspect statistics
     let btree_stats = btree.get_statistics();
     let hash_stats = hash_index.get_statistics();
 
@@ -338,7 +337,7 @@ fn test_index_statistics_integration() {
     assert_eq!(hash_stats.delete_operations, 100);
 
     assert_eq!(btree_stats.total_elements, 1000);
-    assert_eq!(hash_stats.total_elements, 900); // 1000 - 100 удаленных
+    assert_eq!(hash_stats.total_elements, 900); // 1000 minus 100 deleted
 
     assert!(btree_stats.fill_factor > 0.0);
     assert!(hash_stats.fill_factor > 0.0);
@@ -349,11 +348,11 @@ fn test_concurrent_access_simulation() {
     use std::sync::{Arc, Mutex};
     use std::thread;
 
-    // Симулируем многопоточный доступ к индексированной таблице
+    // Simulate concurrent access to the indexed table
     let table = Arc::new(Mutex::new(IndexedTable::new()));
     let mut handles = vec![];
 
-    // Запускаем потоки для записи
+    // Start threads for writing
     for thread_id in 0..4 {
         let table_clone = Arc::clone(&table);
         let handle = thread::spawn(move || {
@@ -372,29 +371,29 @@ fn test_concurrent_access_simulation() {
         handles.push(handle);
     }
 
-    // Ждем завершения записи
+    // Wait for writing to complete
     for handle in handles {
         handle.join().unwrap();
     }
 
-    // Проверяем результаты
+    // Check results
     {
         let table_lock = table.lock().unwrap();
         assert_eq!(table_lock.size(), 100);
 
-        // Проверяем, что можем найти записи по разным критериям
+        // Check if we can find records by different criteria
         assert!(table_lock.find_by_name("User0").unwrap().len() > 0);
         assert!(table_lock.find_by_age_range(25, 35).unwrap().len() > 0);
     }
 
-    // Запускаем потоки для чтения
+    // Start threads for reading
     let mut read_handles = vec![];
     for _ in 0..4 {
         let table_clone = Arc::clone(&table);
         let handle = thread::spawn(move || {
             let table_lock = table_clone.lock().unwrap();
 
-            // Выполняем различные типы запросов
+            // Perform different types of queries
             for i in 1..=10 {
                 let _ = table_lock.find_by_id(i);
                 let _ = table_lock.find_by_name(&format!("User{}", i));
@@ -415,12 +414,12 @@ fn test_large_dataset_handling() {
 
     const LARGE_SIZE: usize = 10_000;
 
-    // Вставляем большой набор данных
+    // Insert a large dataset
     for i in 1..=LARGE_SIZE {
         table
             .insert(
                 format!("User{:05}", i),
-                20 + (i % 60) as u32, // Возраст от 20 до 79
+                20 + (i % 60) as u32, // Ages from 20 to 79
                 format!("user{:05}@example.com", i),
             )
             .unwrap();
@@ -428,36 +427,36 @@ fn test_large_dataset_handling() {
 
     assert_eq!(table.size(), LARGE_SIZE);
 
-    // Тестируем производительность различных типов запросов
+    // Test performance of different query types
     use std::time::Instant;
 
-    // Поиск по ID
+    // Search by ID
     let start = Instant::now();
     for i in 1..=1000 {
         let _ = table.find_by_id(i as u32).unwrap();
     }
     let id_search_time = start.elapsed();
 
-    // Поиск по имени
+    // Search by name
     let start = Instant::now();
     for i in 1..=100 {
         let _ = table.find_by_name(&format!("User{:05}", i)).unwrap();
     }
     let name_search_time = start.elapsed();
 
-    // Диапазонные запросы по возрасту
+    // Range queries by age
     let start = Instant::now();
     for age in 20..=30 {
         let _ = table.find_by_age_range(age, age + 5).unwrap();
     }
     let age_range_time = start.elapsed();
 
-    println!("Производительность на {} записях:", LARGE_SIZE);
-    println!("  Поиск по ID (1000 операций): {:?}", id_search_time);
-    println!("  Поиск по имени (100 операций): {:?}", name_search_time);
-    println!("  Диапазонные запросы (11 операций): {:?}", age_range_time);
+    println!("Performance on {} records:", LARGE_SIZE);
+    println!("  ID search (1000 operations): {:?}", id_search_time);
+    println!("  Name search (100 operations): {:?}", name_search_time);
+    println!("  Age range queries (11 operations): {:?}", age_range_time);
 
-    // Все операции должны выполняться за разумное время
+    // All operations should complete in a reasonable time
     assert!(id_search_time.as_millis() < 100);
     assert!(name_search_time.as_millis() < 100);
     assert!(age_range_time.as_millis() < 100);

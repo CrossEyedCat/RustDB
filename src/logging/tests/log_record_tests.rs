@@ -1,4 +1,4 @@
-//! Тесты для структур лог-записей
+//! Log record structure tests
 
 use crate::logging::log_record::*;
 use std::collections::HashMap;
@@ -221,7 +221,7 @@ fn test_log_record_checksum() {
         priority: LogPriority::Normal,
         timestamp: 1000,
         record_size: 100,
-        checksum: 22222, // Разная контрольная сумма
+        checksum: 22222, // Different checksum
         operation_data: LogOperationData::Empty,
         prev_lsn: None,
         metadata: HashMap::new(),

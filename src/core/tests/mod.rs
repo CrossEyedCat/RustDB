@@ -1,4 +1,4 @@
-//! Тесты для модулей ядра rustdb
+//! Core module tests for rustdb
 
 pub mod acid_tests;
 pub mod concurrency_tests;
@@ -6,5 +6,5 @@ pub mod lock_tests;
 pub mod recovery_tests;
 pub mod transaction_tests;
 
-// Интеграционные тесты
+// Integration tests
 pub mod integration_tests;

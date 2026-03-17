@@ -1,16 +1,16 @@
-//! Интеграционные тесты для индексов rustdb
+//! Integration tests for rustdb indexes
 //!
-//! Эти тесты проверяют интеграцию индексов с другими компонентами системы
-//! и их работу в реальных сценариях использования.
+//! These tests validate index integration with other storage components
+//! and their behavior in realistic scenarios.
 
 use crate::common::Result;
 use crate::storage::index::{BPlusTree, Index, SimpleHashIndex};
 
 #[test]
 fn test_btree_with_different_types() {
-    // Тестируем B+ дерево с разными типами данных
+    // Exercise B+ tree with multiple data types
 
-    // Строковые ключи
+    // String keys
     let mut string_btree: BPlusTree<String, i32> = BPlusTree::new_default();
     let words = ["apple", "banana", "cherry", "date", "elderberry"];
 
@@ -22,13 +22,13 @@ fn test_btree_with_different_types() {
     assert_eq!(string_btree.search(&"banana".to_string()).unwrap(), Some(1));
     assert_eq!(string_btree.search(&"fig".to_string()).unwrap(), None);
 
-    // Диапазонный поиск строк
+    // Range query over strings
     let range = string_btree
         .range_search(&"banana".to_string(), &"date".to_string())
         .unwrap();
     assert_eq!(range.len(), 3); // banana, cherry, date
 
-    // Числовые ключи с плавающей точкой
+    // Numeric keys with floating-point payloads
     let mut float_btree: BPlusTree<i32, f64> = BPlusTree::new_default();
     for i in 1..=10 {
         float_btree.insert(i, (i as f64) * 1.5).unwrap();
@@ -40,7 +40,7 @@ fn test_btree_with_different_types() {
 
 #[test]
 fn test_hash_index_with_complex_types() {
-    // Тестируем хеш-индекс со сложными типами данных
+    // Exercise hash index with complex value types
 
     #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
     struct UserId(u64);
@@ -87,12 +87,12 @@ fn test_hash_index_with_complex_types() {
 
     assert_eq!(user_index.size(), 3);
 
-    // Поиск пользователя
+    // Lookup user
     let alice = user_index.search(&UserId(1)).unwrap().unwrap();
     assert_eq!(alice.name, "Alice");
     assert_eq!(alice.age, 25);
 
-    // Обновление информации
+    // Update record
     let updated_alice = UserInfo {
         name: "Alice Smith".to_string(),
         age: 26,
@@ -107,17 +107,17 @@ fn test_hash_index_with_complex_types() {
 
 #[test]
 fn test_index_performance_comparison() {
-    // Сравниваем производительность разных типов индексов
+    // Compare performance between index types
     use std::time::Instant;
 
     const TEST_SIZE: i32 = 1000;
 
-    // Подготавливаем данные
+    // Prepare data set
     let test_data: Vec<(i32, String)> = (1..=TEST_SIZE)
         .map(|i| (i, format!("value_{}", i)))
         .collect();
 
-    // Тестируем B+ дерево
+    // Benchmark B+ tree
     let mut btree: BPlusTree<i32, String> = BPlusTree::new_default();
     let btree_start = Instant::now();
 
@@ -127,14 +127,14 @@ fn test_index_performance_comparison() {
 
     let btree_insert_time = btree_start.elapsed();
 
-    // Поиск в B+ дереве
+    // Search via B+ tree
     let btree_search_start = Instant::now();
     for i in 1..=TEST_SIZE {
         let _ = btree.search(&i).unwrap();
     }
     let btree_search_time = btree_search_start.elapsed();
 
-    // Тестируем хеш-индекс
+    // Benchmark hash index
     let mut hash_index: SimpleHashIndex<i32, String> =
         SimpleHashIndex::with_capacity(TEST_SIZE as usize);
     let hash_start = Instant::now();
@@ -145,79 +145,79 @@ fn test_index_performance_comparison() {
 
     let hash_insert_time = hash_start.elapsed();
 
-    // Поиск в хеш-индексе
+    // Search via hash index
     let hash_search_start = Instant::now();
     for i in 1..=TEST_SIZE {
         let _ = hash_index.search(&i).unwrap();
     }
     let hash_search_time = hash_search_start.elapsed();
 
-    // Проверяем, что оба индекса работают корректно
+    // Ensure both indexes remain consistent
     assert_eq!(btree.size(), TEST_SIZE as usize);
     assert_eq!(hash_index.size(), TEST_SIZE as usize);
 
-    // Выводим результаты для анализа
-    println!("Производительность для {} элементов:", TEST_SIZE);
+    // Print metrics for manual inspection
+    println!("Performance for {} elements:", TEST_SIZE);
     println!(
-        "B+ дерево - вставка: {:?}, поиск: {:?}",
+        "B+ tree - insert: {:?}, search: {:?}",
         btree_insert_time, btree_search_time
     );
     println!(
-        "Хеш-индекс - вставка: {:?}, поиск: {:?}",
+        "Hash index - insert: {:?}, search: {:?}",
         hash_insert_time, hash_search_time
     );
 
-    // Оба индекса должны работать достаточно быстро
+    // Both indexes should be fast enough
     assert!(btree_insert_time.as_millis() < 100);
     assert!(hash_insert_time.as_millis() < 100);
 }
 
 #[test]
 fn test_btree_range_queries() {
-    // Детальное тестирование диапазонных запросов B+ дерева
+    // Detailed range-query testing of the B+ tree
     let mut btree: BPlusTree<i32, String> = BPlusTree::new_default();
 
-    // Вставляем данные не по порядку
+    // Insert data out of order
     let data = [10, 5, 15, 3, 7, 12, 18, 1, 6, 8, 11, 14, 16, 20];
     for &key in &data {
         btree.insert(key, format!("value_{}", key)).unwrap();
     }
 
-    // Тестируем различные диапазоны
+    // Test various ranges
 
-    // Полный диапазон
+    // Full range
     let full_range = btree.range_search(&1, &20).unwrap();
     assert_eq!(full_range.len(), data.len());
 
-    // Проверяем, что результаты отсортированы
+    // Ensure results are sorted
     for i in 1..full_range.len() {
         assert!(full_range[i - 1].0 <= full_range[i].0);
     }
 
-    // Частичные диапазоны
+    // Partial ranges
     let mid_range = btree.range_search(&5, &15).unwrap();
-    assert!(mid_range.len() >= 7); // Должно быть минимум 7 элементов
+    assert!(mid_range.len() >= 7); // Should include at least 7 elements
 
-    // Пустой диапазон
+    // Empty range
     let empty_range = btree.range_search(&25, &30).unwrap();
     assert!(empty_range.is_empty());
 
-    // Диапазон с одним элементом
+    // Single-element range
     let single_range = btree.range_search(&10, &10).unwrap();
     assert_eq!(single_range.len(), 1);
     assert_eq!(single_range[0].0, 10);
 
-    // Обратный диапазон (start > end)
+    // Reverse range (start > end)
     let reverse_range = btree.range_search(&15, &5).unwrap();
     assert!(reverse_range.is_empty());
 }
 
 #[test]
 fn test_hash_index_collision_handling() {
-    // Тестируем обработку коллизий в хеш-индексе
-    let mut hash_index: SimpleHashIndex<String, i32> = SimpleHashIndex::with_capacity(4); // Маленькая емкость для коллизий
+    // Test collision handling in the hash index
+    let mut hash_index: SimpleHashIndex<String, i32> = SimpleHashIndex::with_capacity(4); // Small capacity to force collisions
 
-    // Вставляем много элементов, чтобы вызвать коллизии
+    // Insert many elements to provoke collisions
     let test_keys: Vec<String> = (1..=20).map(|i| format!("key_{:03}", i)).collect();
 
     for (i, key) in test_keys.iter().enumerate() {
@@ -226,13 +226,13 @@ fn test_hash_index_collision_handling() {
 
     assert_eq!(hash_index.size(), 20);
 
-    // Проверяем, что все элементы можно найти
+    // Ensure every element can be retrieved
     for (i, key) in test_keys.iter().enumerate() {
         let value = hash_index.search(key).unwrap().unwrap();
         assert_eq!(value, i as i32);
     }
 
-    // Удаляем половину элементов
+    // Remove half the elements
     for i in (0..10).step_by(2) {
         let removed = hash_index.delete(&test_keys[i]).unwrap();
         assert!(removed);
@@ -240,12 +240,12 @@ fn test_hash_index_collision_handling() {
 
     assert_eq!(hash_index.size(), 15);
 
-    // Проверяем, что удаленные элементы не найдены
+    // Deleted elements should not be found
     for i in (0..10).step_by(2) {
         assert_eq!(hash_index.search(&test_keys[i]).unwrap(), None);
     }
 
-    // Проверяем, что оставшиеся элементы все еще доступны
+    // Remaining elements must still be accessible
     for i in (1..20).step_by(2) {
         let value = hash_index.search(&test_keys[i]).unwrap().unwrap();
         assert_eq!(value, i as i32);
@@ -254,23 +254,23 @@ fn test_hash_index_collision_handling() {
 
 #[test]
 fn test_index_statistics_accuracy() {
-    // Тестируем точность статистики индексов
+    // Validate index statistics accuracy
     let mut btree: BPlusTree<i32, String> = BPlusTree::new_default();
     let mut hash_index: SimpleHashIndex<i32, String> = SimpleHashIndex::new();
 
-    // Начальная статистика
+    // Initial statistics
     assert_eq!(btree.get_statistics().total_elements, 0);
     assert_eq!(btree.get_statistics().insert_operations, 0);
     assert_eq!(hash_index.get_statistics().total_elements, 0);
     assert_eq!(hash_index.get_statistics().insert_operations, 0);
 
-    // Вставляем элементы
+    // Insert elements
     for i in 1..=10 {
         btree.insert(i, format!("value_{}", i)).unwrap();
         hash_index.insert(i, format!("value_{}", i)).unwrap();
     }
 
-    // Проверяем статистику после вставки
+    // Check statistics after insertion
     let btree_stats = btree.get_statistics();
     assert_eq!(btree_stats.total_elements, 10);
     assert_eq!(btree_stats.insert_operations, 10);
@@ -281,7 +281,7 @@ fn test_index_statistics_accuracy() {
     assert_eq!(hash_stats.insert_operations, 10);
     assert!(hash_stats.fill_factor > 0.0);
 
-    // Удаляем элементы из хеш-индекса
+    // Remove elements from the hash index
     for i in 1..=5 {
         hash_index.delete(&i).unwrap();
     }
@@ -293,9 +293,9 @@ fn test_index_statistics_accuracy() {
 
 #[test]
 fn test_index_edge_cases() {
-    // Тестируем граничные случаи
+    // Exercise edge cases
 
-    // Пустые индексы
+    // Empty indexes
     let btree: BPlusTree<i32, String> = BPlusTree::new_default();
     let hash_index: SimpleHashIndex<i32, String> = SimpleHashIndex::new();
 
@@ -304,19 +304,19 @@ fn test_index_edge_cases() {
     assert_eq!(btree.search(&1).unwrap(), None);
     assert_eq!(hash_index.search(&1).unwrap(), None);
 
-    // Диапазонный поиск в пустом дереве
+    // Range search in an empty tree
     let empty_range = btree.range_search(&1, &10).unwrap();
     assert!(empty_range.is_empty());
 
-    // Диапазонный поиск в хеш-индексе (всегда пустой)
+    // Range search in a hash index (always empty)
     let hash_range = hash_index.range_search(&1, &10).unwrap();
     assert!(hash_range.is_empty());
 
-    // Удаление из пустого индекса
+    // Deleting from an empty index
     let mut empty_hash: SimpleHashIndex<i32, String> = SimpleHashIndex::new();
     assert!(!empty_hash.delete(&1).unwrap());
 
-    // Вставка одного элемента
+    // Insert a single element
     let mut single_btree: BPlusTree<i32, String> = BPlusTree::new_default();
     single_btree.insert(42, "answer".to_string()).unwrap();
 
@@ -333,22 +333,22 @@ fn test_index_edge_cases() {
 
 #[test]
 fn test_index_memory_efficiency() {
-    // Тестируем эффективность использования памяти
+    // Evaluate memory-efficiency helpers
     use std::mem;
 
     let btree: BPlusTree<i32, String> = BPlusTree::new_default();
     let hash_index: SimpleHashIndex<i32, String> = SimpleHashIndex::new();
 
-    // Проверяем, что пустые индексы не занимают много памяти
+    // Check that empty indexes don't take up much memory
     let btree_size = mem::size_of_val(&btree);
     let hash_size = mem::size_of_val(&hash_index);
 
-    println!("Размер пустого B+ дерева: {} байт", btree_size);
-    println!("Размер пустого хеш-индекса: {} байт", hash_size);
+    println!("Size of empty B+ tree: {} bytes", btree_size);
+    println!("Size of empty hash index: {} bytes", hash_size);
 
-    // Оба индекса должны быть достаточно компактными
-    assert!(btree_size < 1024); // Менее 1KB
-    assert!(hash_size < 1024); // Менее 1KB
+    // Both indexes should be sufficiently compact
+    assert!(btree_size < 1024); // Less than 1KB
+    assert!(hash_size < 1024); // Less than 1KB
 }
 
 #[cfg(test)]
@@ -359,15 +359,15 @@ mod concurrent_tests {
 
     #[test]
     fn test_index_thread_safety_simulation() {
-        // Симулируем многопоточное использование с помощью Mutex
-        // (В реальной системе нужна более сложная синхронизация)
+        // Simulate multi-threaded usage using Mutex
+        // (In a real system, more complex synchronization is needed)
 
         let btree = Arc::new(Mutex::new(BPlusTree::<i32, String>::new_default()));
         let hash_index = Arc::new(Mutex::new(SimpleHashIndex::<i32, String>::new()));
 
         let mut handles = vec![];
 
-        // Запускаем несколько потоков для записи
+        // Start multiple threads for writing
         for thread_id in 0..4 {
             let btree_clone = Arc::clone(&btree);
             let hash_clone = Arc::clone(&hash_index);
@@ -392,12 +392,12 @@ mod concurrent_tests {
             handles.push(handle);
         }
 
-        // Ждем завершения всех потоков
+        // Wait for all threads to complete
         for handle in handles {
             handle.join().unwrap();
         }
 
-        // Проверяем результаты
+        // Check results
         {
             let btree_lock = btree.lock().unwrap();
             let hash_lock = hash_index.lock().unwrap();
@@ -405,7 +405,7 @@ mod concurrent_tests {
             assert_eq!(btree_lock.size(), 400);
             assert_eq!(hash_lock.size(), 400);
 
-            // Проверяем несколько случайных элементов
+            // Check a few random elements
             for i in [0, 100, 200, 300, 399] {
                 assert!(btree_lock.search(&i).unwrap().is_some());
                 assert!(hash_lock.search(&i).unwrap().is_some());

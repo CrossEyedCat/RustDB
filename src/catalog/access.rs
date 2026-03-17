@@ -1,15 +1,15 @@
-//! Управление доступом для rustdb
+//! Access control for rustdb
 
 use crate::common::{Error, Result};
 
-// TODO: Реализовать управление доступом
+// TODO: Implement access control
 pub struct AccessControl {
-    // TODO: Реализовать структуру
+    // TODO: Implement structure
 }
 
 impl AccessControl {
     pub fn new() -> Result<Self> {
-        // TODO: Реализовать инициализацию
+        // TODO: Implement initialization
         Ok(Self {})
     }
 }

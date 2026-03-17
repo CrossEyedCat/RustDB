@@ -1,69 +1,69 @@
-//! Базовые типы данных для rustdb
+//! Basic data types for rustdb
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Идентификатор страницы
+/// Page identifier
 pub type PageId = u64;
 
-/// Идентификатор записи
+/// Record identifier
 pub type RecordId = u64;
 
-/// Идентификатор транзакции
+/// Transaction identifier
 pub type TransactionId = u64;
 
-/// Идентификатор сессии
+/// Session identifier
 pub type SessionId = u64;
 
-/// Идентификатор пользователя
+/// User identifier
 pub type UserId = u32;
 
-/// Размер страницы в байтах
+/// Page size in bytes
 pub const PAGE_SIZE: usize = 4096;
 
-/// Размер заголовка страницы в байтах
+/// Page header size in bytes
 pub const PAGE_HEADER_SIZE: usize = 64;
 
-/// Максимальный размер записи в странице
+/// Maximum record size in a page
 pub const MAX_RECORD_SIZE: usize = PAGE_SIZE - PAGE_HEADER_SIZE;
 
-/// Поддерживаемые типы данных
+/// Supported data types
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DataType {
-    /// NULL значение
+    /// NULL value
     Null,
-    /// Булево значение
+    /// Boolean value
     Boolean(bool),
-    /// 8-битное целое число
+    /// 8-bit integer
     TinyInt(i8),
-    /// 16-битное целое число
+    /// 16-bit integer
     SmallInt(i16),
-    /// 32-битное целое число
+    /// 32-bit integer
     Integer(i32),
-    /// 64-битное целое число
+    /// 64-bit integer
     BigInt(i64),
-    /// 32-битное число с плавающей точкой
+    /// 32-bit floating point number
     Float(f32),
-    /// 64-битное число с плавающей точкой
+    /// 64-bit floating point number
     Double(f64),
-    /// Строка фиксированной длины
+    /// Fixed-length string
     Char(String),
-    /// Строка переменной длины
+    /// Variable-length string
     Varchar(String),
-    /// Текст
+    /// Text
     Text(String),
-    /// Дата
+    /// Date
     Date(String),
-    /// Время
+    /// Time
     Time(String),
-    /// Дата и время
+    /// Date and time
     Timestamp(String),
-    /// Двоичные данные
+    /// Binary data
     Blob(Vec<u8>),
 }
 
 impl DataType {
-    /// Возвращает размер типа данных в байтах
+    /// Returns the size of the data type in bytes
     pub fn size(&self) -> usize {
         match self {
             DataType::Null => 0,
@@ -75,21 +75,21 @@ impl DataType {
             DataType::Float(_) => 4,
             DataType::Double(_) => 8,
             DataType::Char(s) => s.len(),
-            DataType::Varchar(s) => s.len() + 4, // +4 для длины
-            DataType::Text(s) => s.len() + 8,    // +8 для длины
+            DataType::Varchar(s) => s.len() + 4, // +4 for length
+            DataType::Text(s) => s.len() + 8,    // +8 for length
             DataType::Date(_) => 10,
             DataType::Time(_) => 8,
             DataType::Timestamp(_) => 19,
-            DataType::Blob(b) => b.len() + 8, // +8 для длины
+            DataType::Blob(b) => b.len() + 8, // +8 for length
         }
     }
 
-    /// Проверяет, является ли тип NULL
+    /// Checks if the type is NULL
     pub fn is_null(&self) -> bool {
         matches!(self, DataType::Null)
     }
 
-    /// Проверяет, является ли тип числовым
+    /// Checks if the type is numeric
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
@@ -102,7 +102,7 @@ impl DataType {
         )
     }
 
-    /// Проверяет, является ли тип строковым
+    /// Checks if the type is a string
     pub fn is_string(&self) -> bool {
         matches!(
             self,
@@ -111,23 +111,23 @@ impl DataType {
     }
 }
 
-/// Значение колонки
+/// Column value
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnValue {
-    /// Тип данных
+    /// Data type
     pub data_type: DataType,
-    /// Флаг NULL
+    /// NULL flag
     pub is_null: bool,
 }
 
 impl ColumnValue {
-    /// Создает новое значение колонки
+    /// Creates a new column value
     pub fn new(data_type: DataType) -> Self {
         let is_null = data_type.is_null();
         Self { data_type, is_null }
     }
 
-    /// Создает NULL значение
+    /// Creates a NULL value
     pub fn null() -> Self {
         Self {
             data_type: DataType::Null,
@@ -135,29 +135,29 @@ impl ColumnValue {
         }
     }
 
-    /// Проверяет, является ли значение NULL
+    /// Checks if the value is NULL
     pub fn is_null(&self) -> bool {
         self.is_null
     }
 }
 
-/// Определение колонки
+/// Column definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Column {
-    /// Имя колонки
+    /// Column name
     pub name: String,
-    /// Тип данных
+    /// Data type
     pub data_type: DataType,
-    /// Флаг NOT NULL
+    /// NOT NULL flag
     pub not_null: bool,
-    /// Значение по умолчанию
+    /// Default value
     pub default_value: Option<ColumnValue>,
-    /// Комментарий
+    /// Comment
     pub comment: Option<String>,
 }
 
 impl Column {
-    /// Создает новую колонку
+    /// Creates a new column
     pub fn new(name: String, data_type: DataType) -> Self {
         Self {
             name,
@@ -168,44 +168,44 @@ impl Column {
         }
     }
 
-    /// Устанавливает флаг NOT NULL
+    /// Sets the NOT NULL flag
     pub fn not_null(mut self) -> Self {
         self.not_null = true;
         self
     }
 
-    /// Устанавливает значение по умолчанию
+    /// Sets the default value
     pub fn default_value(mut self, value: ColumnValue) -> Self {
         self.default_value = Some(value);
         self
     }
 
-    /// Устанавливает комментарий
+    /// Sets a comment
     pub fn comment(mut self, comment: String) -> Self {
         self.comment = Some(comment);
         self
     }
 }
 
-/// Схема таблицы
+/// Table schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Schema {
-    /// Имя таблицы
+    /// Table name
     pub table_name: String,
-    /// Колонки таблицы
+    /// Table columns
     pub columns: Vec<Column>,
-    /// Первичный ключ
+    /// Primary key
     pub primary_key: Option<Vec<String>>,
-    /// Уникальные ограничения
+    /// Unique constraints
     pub unique_constraints: Vec<Vec<String>>,
-    /// Внешние ключи
+    /// Foreign keys
     pub foreign_keys: Vec<ForeignKey>,
-    /// Индексы
+    /// Indexes
     pub indexes: Vec<Index>,
 }
 
 impl Schema {
-    /// Создает новую схему таблицы
+    /// Creates a new table schema
     pub fn new(table_name: String) -> Self {
         Self {
             table_name,
@@ -217,108 +217,108 @@ impl Schema {
         }
     }
 
-    /// Добавляет колонку в схему
+    /// Adds a column to the schema
     pub fn add_column(mut self, column: Column) -> Self {
         self.columns.push(column);
         self
     }
 
-    /// Устанавливает первичный ключ
+    /// Sets the primary key
     pub fn primary_key(mut self, columns: Vec<String>) -> Self {
         self.primary_key = Some(columns);
         self
     }
 
-    /// Добавляет уникальное ограничение
+    /// Adds a unique constraint
     pub fn unique(mut self, columns: Vec<String>) -> Self {
         self.unique_constraints.push(columns);
         self
     }
 
-    /// Добавляет внешний ключ
+    /// Adds a foreign key
     pub fn foreign_key(mut self, fk: ForeignKey) -> Self {
         self.foreign_keys.push(fk);
         self
     }
 
-    /// Добавляет индекс
+    /// Adds an index
     pub fn index(mut self, index: Index) -> Self {
         self.indexes.push(index);
         self
     }
 }
 
-/// Внешний ключ
+/// Foreign key
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForeignKey {
-    /// Имя ограничения
+    /// Constraint name
     pub name: String,
-    /// Колонки в текущей таблице
+    /// Columns in the current table
     pub columns: Vec<String>,
-    /// Ссылающаяся таблица
+    /// Referenced table
     pub referenced_table: String,
-    /// Ссылающиеся колонки
+    /// Referenced columns
     pub referenced_columns: Vec<String>,
-    /// Действие при удалении
+    /// Action on delete
     pub on_delete: Option<ForeignKeyAction>,
-    /// Действие при обновлении
+    /// Action on update
     pub on_update: Option<ForeignKeyAction>,
 }
 
-/// Действие внешнего ключа
+/// Foreign key action
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ForeignKeyAction {
-    /// Каскадное удаление/обновление
+    /// Cascading delete/update
     Cascade,
-    /// Установка NULL
+    /// Set NULL
     SetNull,
-    /// Установка значения по умолчанию
+    /// Set default value
     SetDefault,
-    /// Ограничение
+    /// Restrict
     Restrict,
-    /// Ничего не делать
+    /// No action
     NoAction,
 }
 
-/// Индекс
+/// Index
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Index {
-    /// Имя индекса
+    /// Index name
     pub name: String,
-    /// Колонки индекса
+    /// Index columns
     pub columns: Vec<String>,
-    /// Тип индекса
+    /// Index type
     pub index_type: IndexType,
-    /// Уникальность индекса
+    /// Index uniqueness
     pub unique: bool,
 }
 
-/// Тип индекса
+/// Index type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IndexType {
-    /// B+ дерево
+    /// B+ tree
     BTree,
-    /// Хеш-индекс
+    /// Hash index
     Hash,
-    /// Полнотекстовый индекс
+    /// Full-text index
     FullText,
 }
 
-/// Запись в таблице
+/// Table row
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Row {
-    /// Значения колонок
+    /// Column values
     pub values: HashMap<String, ColumnValue>,
-    /// Версия записи (для MVCC)
+    /// Row version (for MVCC)
     pub version: u64,
-    /// Время создания
+    /// Creation time
     pub created_at: u64,
-    /// Время последнего обновления
+    /// Last update time
     pub updated_at: u64,
 }
 
 impl Row {
-    /// Создает новую запись
+    /// Creates a new row
     pub fn new() -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -333,7 +333,7 @@ impl Row {
         }
     }
 
-    /// Устанавливает значение колонки
+    /// Sets a column value
     pub fn set_value(&mut self, column: &str, value: ColumnValue) {
         self.values.insert(column.to_string(), value);
         self.updated_at = std::time::SystemTime::now()
@@ -342,12 +342,12 @@ impl Row {
             .as_secs();
     }
 
-    /// Получает значение колонки
+    /// Gets a column value
     pub fn get_value(&self, column: &str) -> Option<&ColumnValue> {
         self.values.get(column)
     }
 
-    /// Проверяет, содержит ли запись колонку
+    /// Checks if the row contains a column
     pub fn has_column(&self, column: &str) -> bool {
         self.values.contains_key(column)
     }

@@ -1,11 +1,11 @@
-//! Модуль отладки и профилирования для rustdb
+//! Debugging and profiling module for rustdb
 //!
-//! Этот модуль предоставляет инструменты для:
-//! - Детального логирования операций
-//! - Трассировки запросов
-//! - CPU и Memory профилирования
-//! - Анализа производительности
-//! - Отладки проблем
+//! This module provides tools for:
+//! - Detailed operation logging
+//! - Query tracing
+//! - CPU and Memory profiling
+//! - Performance analysis
+//! - Problem debugging
 
 pub mod debug_logger;
 pub mod performance_analyzer;
@@ -17,28 +17,28 @@ pub use performance_analyzer::PerformanceAnalyzer;
 pub use profiler::Profiler;
 pub use query_tracer::QueryTracer;
 
-/// Конфигурация отладки
+/// Debug configuration
 #[derive(Debug, Clone)]
 pub struct DebugConfig {
-    /// Включить детальное логирование
+    /// Enable detailed logging
     pub enable_debug_logging: bool,
-    /// Включить трассировку запросов
+    /// Enable query tracing
     pub enable_query_tracing: bool,
-    /// Включить CPU профилирование
+    /// Enable CPU profiling
     pub enable_cpu_profiling: bool,
-    /// Включить Memory профилирование
+    /// Enable Memory profiling
     pub enable_memory_profiling: bool,
-    /// Уровень детализации (0-5)
+    /// Detail level (0-5)
     pub detail_level: u8,
-    /// Максимальный размер лог-файла (МБ)
+    /// Maximum log file size (MB)
     pub max_log_file_size_mb: u64,
-    /// Количество ротируемых лог-файлов
+    /// Number of rotated log files
     pub max_log_files: u32,
-    /// Интервал сбора метрик (секунды)
+    /// Metrics collection interval (seconds)
     pub metrics_collection_interval: u64,
-    /// Включить экспорт в Prometheus
+    /// Enable Prometheus export
     pub enable_prometheus_export: bool,
-    /// Порт для Prometheus метрик
+    /// Port for Prometheus metrics
     pub prometheus_port: u16,
 }
 
@@ -59,7 +59,7 @@ impl Default for DebugConfig {
     }
 }
 
-/// Менеджер отладки
+/// Debug manager
 pub struct DebugManager {
     config: DebugConfig,
     debug_logger: Option<DebugLogger>,
@@ -69,7 +69,7 @@ pub struct DebugManager {
 }
 
 impl DebugManager {
-    /// Создает новый менеджер отладки
+    /// Creates a new debug manager
     pub fn new(config: DebugConfig) -> Self {
         let mut manager = Self {
             config: config.clone(),
@@ -79,7 +79,7 @@ impl DebugManager {
             performance_analyzer: None,
         };
 
-        // Инициализируем компоненты в зависимости от конфигурации
+        // Initialize components based on configuration
         if config.enable_debug_logging {
             manager.debug_logger = Some(DebugLogger::new(&config));
         }
@@ -97,36 +97,36 @@ impl DebugManager {
         manager
     }
 
-    /// Получает конфигурацию
+    /// Gets configuration
     pub fn config(&self) -> &DebugConfig {
         &self.config
     }
 
-    /// Получает логгер отладки
+    /// Gets debug logger
     pub fn debug_logger(&self) -> Option<&DebugLogger> {
         self.debug_logger.as_ref()
     }
 
-    /// Получает трассировщик запросов
+    /// Gets query tracer
     pub fn query_tracer(&self) -> Option<&QueryTracer> {
         self.query_tracer.as_ref()
     }
 
-    /// Получает профилировщик
+    /// Gets profiler
     pub fn profiler(&self) -> Option<&Profiler> {
         self.profiler.as_ref()
     }
 
-    /// Получает анализатор производительности
+    /// Gets performance analyzer
     pub fn performance_analyzer(&self) -> Option<&PerformanceAnalyzer> {
         self.performance_analyzer.as_ref()
     }
 
-    /// Обновляет конфигурацию
+    /// Updates configuration
     pub fn update_config(&mut self, new_config: DebugConfig) {
         self.config = new_config.clone();
 
-        // Пересоздаем компоненты при необходимости
+        // Recreate components if necessary
         if self.config.enable_debug_logging && self.debug_logger.is_none() {
             self.debug_logger = Some(DebugLogger::new(&self.config));
         }
@@ -142,40 +142,40 @@ impl DebugManager {
         }
     }
 
-    /// Создает отчет о состоянии отладки
+    /// Generates debug status report
     pub fn generate_debug_report(&self) -> String {
         let mut report = String::new();
 
-        report.push_str("=== Отчет о состоянии отладки rustdb ===\n\n");
+        report.push_str("=== rustdb Debug Status Report ===\n\n");
 
-        report.push_str("Конфигурация:\n");
+        report.push_str("Configuration:\n");
         report.push_str(&format!(
-            "  - Детальное логирование: {}\n",
+            "  - Detailed logging: {}\n",
             self.config.enable_debug_logging
         ));
         report.push_str(&format!(
-            "  - Трассировка запросов: {}\n",
+            "  - Query tracing: {}\n",
             self.config.enable_query_tracing
         ));
         report.push_str(&format!(
-            "  - CPU профилирование: {}\n",
+            "  - CPU profiling: {}\n",
             self.config.enable_cpu_profiling
         ));
         report.push_str(&format!(
-            "  - Memory профилирование: {}\n",
+            "  - Memory profiling: {}\n",
             self.config.enable_memory_profiling
         ));
         report.push_str(&format!(
-            "  - Уровень детализации: {}\n",
+            "  - Detail level: {}\n",
             self.config.detail_level
         ));
         report.push_str(&format!(
-            "  - Экспорт Prometheus: {}\n",
+            "  - Prometheus export: {}\n",
             self.config.enable_prometheus_export
         ));
         report.push_str("\n");
 
-        report.push_str("Активные компоненты:\n");
+        report.push_str("Active components:\n");
         report.push_str(&format!(
             "  - Debug Logger: {}\n",
             self.debug_logger.is_some()
@@ -191,7 +191,7 @@ impl DebugManager {
         ));
         report.push_str("\n");
 
-        // Добавляем отчеты от активных компонентов
+        // Add reports from active components
         if let Some(logger) = &self.debug_logger {
             report.push_str("=== Debug Logger ===\n");
             report.push_str(&logger.generate_status_report());
@@ -219,7 +219,7 @@ impl DebugManager {
         report
     }
 
-    /// Останавливает все компоненты отладки
+    /// Stops all debug components
     pub fn shutdown(&mut self) {
         if let Some(logger) = &mut self.debug_logger {
             logger.shutdown();

@@ -1,4 +1,4 @@
-//! Хранилище данных rustdb
+//! Data storage for rustdb
 
 pub mod advanced_file_manager;
 pub mod block;
@@ -16,4 +16,4 @@ pub mod tuple;
 #[cfg(test)]
 pub mod tests;
 
-// TODO: Реализовать компоненты хранения данных
+// TODO: Implement data storage components

@@ -1,20 +1,20 @@
-//! Модуль для проверки прав доступа к объектам базы данных
+//! Module for checking database object access rights
 
 use crate::common::Result;
 use crate::parser::ast::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-/// Результат проверки прав доступа
+/// Access rights check result
 #[derive(Debug, Clone)]
 pub struct AccessCheckResult {
-    /// Успешность проверки
+    /// Check success
     pub is_valid: bool,
-    /// Ошибки доступа
+    /// Access errors
     pub errors: Vec<AccessCheckError>,
-    /// Предупреждения
+    /// Warnings
     pub warnings: Vec<AccessCheckWarning>,
-    /// Количество выполненных проверок
+    /// Number of checks performed
     pub checks_performed: usize,
 }
 
@@ -38,7 +38,7 @@ impl AccessCheckResult {
     }
 }
 
-/// Ошибка проверки прав доступа
+/// Access rights check error
 #[derive(Debug, Clone)]
 pub struct AccessCheckError {
     pub message: String,
@@ -48,7 +48,7 @@ pub struct AccessCheckError {
     pub suggested_fix: Option<String>,
 }
 
-/// Предупреждение проверки прав доступа
+/// Access rights check warning
 #[derive(Debug, Clone)]
 pub struct AccessCheckWarning {
     pub message: String,
@@ -56,7 +56,7 @@ pub struct AccessCheckWarning {
     pub warning_type: AccessWarningType,
 }
 
-/// Тип предупреждения доступа
+/// Access warning type
 #[derive(Debug, Clone)]
 pub enum AccessWarningType {
     ElevatedPrivileges,
@@ -64,33 +64,33 @@ pub enum AccessWarningType {
     SecurityRisk,
 }
 
-/// Тип разрешения
+/// Permission type
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Permission {
-    /// Чтение данных
+    /// Read data
     Select,
-    /// Вставка данных
+    /// Insert data
     Insert,
-    /// Обновление данных
+    /// Update data
     Update,
-    /// Удаление данных
+    /// Delete data
     Delete,
-    /// Создание таблиц
+    /// Create tables
     CreateTable,
-    /// Изменение таблиц
+    /// Alter tables
     AlterTable,
-    /// Удаление таблиц
+    /// Drop tables
     DropTable,
-    /// Создание индексов
+    /// Create indexes
     CreateIndex,
-    /// Удаление индексов
+    /// Drop indexes
     DropIndex,
-    /// Администраторские права
+    /// Administrative rights
     Admin,
 }
 
 impl Permission {
-    /// Возвращает строковое представление разрешения
+    /// Return string representation of permission
     pub fn as_str(&self) -> &'static str {
         match self {
             Permission::Select => "SELECT",
@@ -107,7 +107,7 @@ impl Permission {
     }
 }
 
-/// Роль пользователя
+/// User role
 #[derive(Debug, Clone, PartialEq)]
 pub struct Role {
     pub name: String,
@@ -127,7 +127,7 @@ impl Role {
     pub fn admin(name: String) -> Self {
         let mut role = Self::new(name);
         role.is_admin = true;
-        // Админы имеют все разрешения
+        // Admins have all permissions
         role.permissions.insert(Permission::Select);
         role.permissions.insert(Permission::Insert);
         role.permissions.insert(Permission::Update);
@@ -151,7 +151,7 @@ impl Role {
     }
 }
 
-/// Пользователь системы
+/// System user
 #[derive(Debug, Clone)]
 pub struct User {
     pub username: String,
@@ -188,7 +188,7 @@ impl User {
     }
 }
 
-/// Правило доступа к объекту
+/// Object access rule
 #[derive(Debug, Clone)]
 pub struct AccessRule {
     pub object_name: String,
@@ -221,12 +221,12 @@ impl AccessRule {
     }
 
     pub fn check_permission(&self, username: &str, permission: &Permission) -> bool {
-        // Проверяем публичные разрешения
+        // Check public permissions
         if self.public_permissions.contains(permission) {
             return true;
         }
 
-        // Проверяем персональные разрешения
+        // Check personal permissions
         if let Some(user_permissions) = self.permissions.get(username) {
             return user_permissions.contains(permission);
         }
@@ -235,7 +235,7 @@ impl AccessRule {
     }
 }
 
-/// Тип объекта для контроля доступа
+/// Object type for access control
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjectAccessType {
     Table,
@@ -245,29 +245,29 @@ pub enum ObjectAccessType {
     Procedure,
 }
 
-/// Проверщик прав доступа
+/// Access rights checker
 pub struct AccessChecker {
-    /// Пользователи системы
+    /// System users
     users: HashMap<String, User>,
-    /// Правила доступа к объектам
+    /// Object access rules
     access_rules: HashMap<String, AccessRule>,
-    /// Включена ли проверка прав доступа
+    /// Whether access rights checking is enabled
     enabled: bool,
-    /// Режим по умолчанию (разрешить все или запретить все)
+    /// Default mode (allow all or deny all)
     default_allow: bool,
 }
 
 impl AccessChecker {
-    /// Создает новый проверщик прав доступа
+    /// Create new access rights checker
     pub fn new() -> Self {
         let mut checker = Self {
             users: HashMap::new(),
             access_rules: HashMap::new(),
             enabled: true,
-            default_allow: false, // По умолчанию запрещаем доступ
+            default_allow: false, // Deny access by default
         };
 
-        // Создаем пользователя-администратора по умолчанию
+        // Create default administrator user
         let admin_role = Role::admin("admin".to_string());
         let admin_user = User::new("admin".to_string()).with_role(admin_role);
         checker.add_user(admin_user);
@@ -275,21 +275,21 @@ impl AccessChecker {
         checker
     }
 
-    /// Создает проверщик с разрешающим режимом по умолчанию
+    /// Create checker with permissive default mode
     pub fn permissive() -> Self {
         let mut checker = Self::new();
         checker.default_allow = true;
         checker
     }
 
-    /// Создает проверщик с отключенной проверкой прав
+    /// Create checker with disabled access checking
     pub fn disabled() -> Self {
         let mut checker = Self::new();
         checker.enabled = false;
         checker
     }
 
-    /// Проверяет права доступа для SQL запроса
+    /// Check access rights for SQL query
     pub fn check_statement(
         &mut self,
         statement: &SqlStatement,
@@ -326,24 +326,24 @@ impl AccessChecker {
                 self.check_drop_table_access(drop, username, &mut result)?;
             }
             _ => {
-                // Транзакционные команды не требуют специальной проверки прав
+                // Transactional commands do not require special access checking
             }
         }
 
         Ok(result)
     }
 
-    /// Добавляет пользователя
+    /// Add user
     pub fn add_user(&mut self, user: User) {
         self.users.insert(user.username.clone(), user);
     }
 
-    /// Добавляет правило доступа
+    /// Add access rule
     pub fn add_access_rule(&mut self, rule: AccessRule) {
         self.access_rules.insert(rule.object_name.clone(), rule);
     }
 
-    /// Предоставляет разрешение пользователю на объект
+    /// Grant permission to user on object
     pub fn grant_permission(&mut self, object_name: &str, username: &str, permission: Permission) {
         if let Some(rule) = self.access_rules.get_mut(object_name) {
             rule.permissions
@@ -351,14 +351,14 @@ impl AccessChecker {
                 .or_insert_with(HashSet::new)
                 .insert(permission);
         } else {
-            // Создаем новое правило
+            // Create new rule
             let rule = AccessRule::new(object_name.to_string(), ObjectAccessType::Table)
                 .grant_to_user(username.to_string(), permission);
             self.add_access_rule(rule);
         }
     }
 
-    /// Отзывает разрешение у пользователя
+    /// Revoke permission from user
     pub fn revoke_permission(
         &mut self,
         object_name: &str,
@@ -375,43 +375,43 @@ impl AccessChecker {
         }
     }
 
-    /// Проверяет разрешение пользователя на объект
+    /// Check user permission on object
     pub fn check_permission(
         &self,
         object_name: &str,
         username: &str,
         permission: &Permission,
     ) -> bool {
-        // Если проверка отключена, разрешаем все
+        // If checking is disabled, allow all
         if !self.enabled {
             return true;
         }
 
-        // Проверяем права пользователя
+        // Check user rights
         if let Some(user) = self.users.get(username) {
-            // Администраторы имеют все права
+            // Administrators have all rights
             if user.is_admin() {
                 return true;
             }
 
-            // Проверяем роли пользователя
+            // Check user roles
             if user.has_permission(permission) {
                 return true;
             }
         }
 
-        // Проверяем правила доступа к объекту
+        // Check object access rules
         if let Some(rule) = self.access_rules.get(object_name) {
             if rule.check_permission(username, permission) {
                 return true;
             }
         }
 
-        // Возвращаем значение по умолчанию
+        // Return default value
         self.default_allow
     }
 
-    // Методы проверки для различных типов запросов
+    // Check methods for different query types
 
     fn check_select_access(
         &mut self,
@@ -421,22 +421,22 @@ impl AccessChecker {
     ) -> Result<()> {
         result.checks_performed += 1;
 
-        // Проверяем доступ к таблицам в FROM
+        // Check access to tables in FROM
         if let Some(from) = &select.from {
             let table_name = match &from.table {
                 TableReference::Table { name, .. } => name,
                 TableReference::Subquery { .. } => {
-                    // Подзапросы требуют отдельной обработки
+                    // Subqueries require separate processing
                     return Ok(());
                 }
             };
             self.check_table_access(table_name, username, &Permission::Select, result)?;
 
-            // Проверяем доступ к JOIN таблицам
+            // Check access to JOIN tables
             for join in &from.joins {
                 let join_table_name = match &join.table {
                     TableReference::Table { name, .. } => name,
-                    TableReference::Subquery { .. } => continue, // Пропускаем подзапросы
+                    TableReference::Subquery { .. } => continue, // Skip subqueries
                 };
                 self.check_table_access(join_table_name, username, &Permission::Select, result)?;
             }
@@ -545,37 +545,37 @@ impl AccessChecker {
         Ok(())
     }
 
-    /// Включает или отключает проверку прав доступа
+    /// Enable or disable access rights checking
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
 
-    /// Проверяет, включена ли проверка прав доступа
+    /// Check if access rights checking is enabled
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
-    /// Устанавливает режим по умолчанию
+    /// Set default mode
     pub fn set_default_allow(&mut self, allow: bool) {
         self.default_allow = allow;
     }
 
-    /// Получает список всех пользователей
+    /// Get list of all users
     pub fn get_users(&self) -> Vec<&User> {
         self.users.values().collect()
     }
 
-    /// Получает пользователя по имени
+    /// Get user by name
     pub fn get_user(&self, username: &str) -> Option<&User> {
         self.users.get(username)
     }
 
-    /// Получает список всех правил доступа
+    /// Get list of all access rules
     pub fn get_access_rules(&self) -> Vec<&AccessRule> {
         self.access_rules.values().collect()
     }
 
-    /// Получает правило доступа для объекта
+    /// Get access rule for object
     pub fn get_access_rule(&self, object_name: &str) -> Option<&AccessRule> {
         self.access_rules.get(object_name)
     }
@@ -632,7 +632,7 @@ mod tests {
             .grant_public(Permission::Select);
 
         assert!(rule.check_permission("alice", &Permission::Select));
-        assert!(rule.check_permission("bob", &Permission::Select)); // публичное разрешение
+        assert!(rule.check_permission("bob", &Permission::Select)); // public permission
         assert!(!rule.check_permission("alice", &Permission::Insert));
     }
 
@@ -649,11 +649,11 @@ mod tests {
     fn test_permission_grant_revoke() {
         let mut checker = AccessChecker::new();
 
-        // Предоставляем разрешение
+        // Grant permission
         checker.grant_permission("users", "alice", Permission::Select);
         assert!(checker.check_permission("users", "alice", &Permission::Select));
 
-        // Отзываем разрешение
+        // Revoke permission
         checker.revoke_permission("users", "alice", &Permission::Select);
         assert!(!checker.check_permission("users", "alice", &Permission::Select));
     }
@@ -662,7 +662,7 @@ mod tests {
     fn test_admin_permissions() {
         let checker = AccessChecker::new();
 
-        // Администратор должен иметь все права
+        // Administrator should have all rights
         assert!(checker.check_permission("any_table", "admin", &Permission::Select));
         assert!(checker.check_permission("any_table", "admin", &Permission::CreateTable));
         assert!(checker.check_permission("any_table", "admin", &Permission::DropTable));
@@ -673,7 +673,7 @@ mod tests {
         let checker = AccessChecker::disabled();
 
         assert!(!checker.enabled);
-        // Когда проверка отключена, все разрешения должны проходить
+        // When checking is disabled, all permissions should pass
         assert!(checker.check_permission("any_table", "anyone", &Permission::Select));
     }
 }

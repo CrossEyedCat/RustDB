@@ -1,10 +1,10 @@
-//! Оптимизация I/O операций для rustdb
+//! I/O operation optimization for rustdb
 //!
-//! Этот модуль содержит реализацию оптимизаций для операций ввода-вывода:
-//! - Буферизация операций записи для уменьшения количества системных вызовов
-//! - Асинхронные операции для неблокирующего I/O
-//! - Интеллектуальное кэширование и предвыборка данных
-//! - Пакетная обработка операций для повышения производительности
+//! This module contains implementations of optimizations for input/output operations:
+//! - Write operation buffering to reduce the number of system calls
+//! - Asynchronous operations for non-blocking I/O
+//! - Intelligent caching and data prefetching
+//! - Batch processing of operations to improve performance
 
 use crate::common::{Error, Result};
 use crate::storage::database_file::{PageId, BLOCK_SIZE};
@@ -15,128 +15,128 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio::task::JoinHandle;
 
-/// Тип операции I/O
+/// I/O operation type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IoOperationType {
-    /// Операция чтения
+    /// Read operation
     Read,
-    /// Операция записи
+    /// Write operation
     Write,
-    /// Операция синхронизации
+    /// Sync operation
     Sync,
-    /// Операция предвыборки
+    /// Prefetch operation
     Prefetch,
 }
 
-/// Приоритет операции I/O
+/// I/O operation priority
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IoPriority {
-    /// Низкий приоритет (фоновые операции)
+    /// Low priority (background operations)
     Low = 0,
-    /// Нормальный приоритет
+    /// Normal priority
     Normal = 1,
-    /// Высокий приоритет (пользовательские запросы)
+    /// High priority (user requests)
     High = 2,
-    /// Критический приоритет (системные операции)
+    /// Critical priority (system operations)
     Critical = 3,
 }
 
-/// Запрос на операцию I/O
+/// I/O operation request
 #[derive(Debug)]
 pub struct IoRequest {
-    /// Уникальный ID запроса
+    /// Unique request ID
     pub id: u64,
-    /// Тип операции
+    /// Operation type
     pub operation: IoOperationType,
-    /// ID файла
+    /// File ID
     pub file_id: u32,
-    /// ID страницы
+    /// Page ID
     pub page_id: PageId,
-    /// Данные для записи (если применимо)
+    /// Data for writing (if applicable)
     pub data: Option<Vec<u8>>,
-    /// Приоритет операции
+    /// Operation priority
     pub priority: IoPriority,
-    /// Время создания запроса
+    /// Request creation time
     pub created_at: Instant,
-    /// Канал для отправки результата
+    /// Channel for sending result
     pub response_tx: oneshot::Sender<Result<Option<Vec<u8>>>>,
 }
 
-/// Результат операции I/O
+/// I/O operation result
 #[derive(Debug)]
 pub struct IoResult {
-    /// ID запроса
+    /// Request ID
     pub request_id: u64,
-    /// Результат операции (успех/неудача)
+    /// Operation result (success/failure)
     pub success: bool,
-    /// Время выполнения
+    /// Execution time
     pub execution_time: Duration,
-    /// Размер данных
+    /// Data size
     pub data_size: usize,
 }
 
-/// Статистика I/O операций
+/// I/O operation statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IoStatistics {
-    /// Общее количество операций
+    /// Total number of operations
     pub total_operations: u64,
-    /// Количество операций чтения
+    /// Number of read operations
     pub read_operations: u64,
-    /// Количество операций записи
+    /// Number of write operations
     pub write_operations: u64,
-    /// Количество операций синхронизации
+    /// Number of sync operations
     pub sync_operations: u64,
-    /// Общее время выполнения (в микросекундах)
+    /// Total execution time (in microseconds)
     pub total_execution_time_us: u64,
-    /// Среднее время выполнения (в микросекундах)
+    /// Average execution time (in microseconds)
     pub average_execution_time_us: u64,
-    /// Количество попаданий в кэш
+    /// Number of cache hits
     pub cache_hits: u64,
-    /// Количество промахов кэша
+    /// Number of cache misses
     pub cache_misses: u64,
-    /// Коэффициент попаданий в кэш
+    /// Cache hit ratio
     pub cache_hit_ratio: f64,
-    /// Общий объем прочитанных данных (в байтах)
+    /// Total volume of read data (in bytes)
     pub bytes_read: u64,
-    /// Общий объем записанных данных (в байтах)
+    /// Total volume of written data (in bytes)
     pub bytes_written: u64,
-    /// Пропускная способность чтения (байт/сек)
+    /// Read throughput (bytes/sec)
     pub read_throughput: f64,
-    /// Пропускная способность записи (байт/сек)
+    /// Write throughput (bytes/sec)
     pub write_throughput: f64,
 }
 
-/// Буферизованная операция записи
+/// Buffered write operation
 #[derive(Debug, Clone)]
 pub struct BufferedWrite {
-    /// ID файла
+    /// File ID
     pub file_id: u32,
-    /// ID страницы
+    /// Page ID
     pub page_id: PageId,
-    /// Данные для записи
+    /// Data to write
     pub data: Vec<u8>,
-    /// Время создания
+    /// Creation time
     pub created_at: Instant,
-    /// Флаг критичности (требует немедленной записи)
+    /// Critical flag (requires immediate write)
     pub is_critical: bool,
 }
 
-/// Конфигурация буферизации I/O
+/// I/O buffering configuration
 #[derive(Debug, Clone)]
 pub struct IoBufferConfig {
-    /// Максимальный размер буфера записи (в количестве операций)
+    /// Maximum write buffer size (in number of operations)
     pub max_write_buffer_size: usize,
-    /// Максимальное время ожидания перед сбросом буфера
+    /// Maximum wait time before flushing buffer
     pub max_buffer_time: Duration,
-    /// Размер пула потоков для I/O операций
+    /// Thread pool size for I/O operations
     pub io_thread_pool_size: usize,
-    /// Максимальное количество одновременных операций
+    /// Maximum number of concurrent operations
     pub max_concurrent_operations: usize,
-    /// Размер кэша страниц
+    /// Page cache size
     pub page_cache_size: usize,
-    /// Включить предвыборку данных
+    /// Enable data prefetching
     pub enable_prefetch: bool,
-    /// Размер окна предвыборки
+    /// Prefetch window size
     pub prefetch_window_size: usize,
 }
 
@@ -154,22 +154,22 @@ impl Default for IoBufferConfig {
     }
 }
 
-/// Кэш страниц с LRU политикой
+/// Page cache with LRU policy
 pub struct PageCache {
-    /// Данные кэша
+    /// Cache data
     data: HashMap<(u32, PageId), (Vec<u8>, Instant)>,
-    /// Порядок доступа (LRU)
+    /// Access order (LRU)
     access_order: VecDeque<(u32, PageId)>,
-    /// Максимальный размер кэша
+    /// Maximum cache size
     max_size: usize,
-    /// Статистика попаданий
+    /// Hit statistics
     hits: u64,
-    /// Статистика промахов
+    /// Miss statistics
     misses: u64,
 }
 
 impl PageCache {
-    /// Создает новый кэш страниц
+    /// Creates a new page cache
     pub fn new(max_size: usize) -> Self {
         Self {
             data: HashMap::new(),
@@ -180,12 +180,12 @@ impl PageCache {
         }
     }
 
-    /// Получает страницу из кэша
+    /// Gets a page from the cache
     pub fn get(&mut self, file_id: u32, page_id: PageId) -> Option<Vec<u8>> {
         let key = (file_id, page_id);
 
         if let Some((data, _)) = self.data.get(&key).cloned() {
-            // Обновляем порядок доступа
+            // Update access order
             self.update_access_order(&key);
             self.hits += 1;
             Some(data)
@@ -195,38 +195,38 @@ impl PageCache {
         }
     }
 
-    /// Добавляет страницу в кэш
+    /// Adds a page to the cache
     pub fn put(&mut self, file_id: u32, page_id: PageId, data: Vec<u8>) {
         let key = (file_id, page_id);
 
-        // Если кэш полон, удаляем самую старую запись
+        // If cache is full, remove the oldest entry
         if self.data.len() >= self.max_size && !self.data.contains_key(&key) {
             if let Some(lru_key) = self.access_order.pop_front() {
                 self.data.remove(&lru_key);
             }
         }
 
-        // Добавляем новую запись
+        // Add new entry
         self.data.insert(key, (data, Instant::now()));
         self.update_access_order(&key);
     }
 
-    /// Удаляет страницу из кэша
+    /// Removes a page from the cache
     pub fn remove(&mut self, file_id: u32, page_id: PageId) {
         let key = (file_id, page_id);
         self.data.remove(&key);
         self.access_order.retain(|&k| k != key);
     }
 
-    /// Обновляет порядок доступа для LRU
+    /// Updates access order for LRU
     fn update_access_order(&mut self, key: &(u32, PageId)) {
-        // Удаляем старую позицию
+        // Remove old position
         self.access_order.retain(|k| k != key);
-        // Добавляем в конец (самая недавняя)
+        // Add to end (most recent)
         self.access_order.push_back(*key);
     }
 
-    /// Очищает кэш
+    /// Clears the cache
     pub fn clear(&mut self) {
         self.data.clear();
         self.access_order.clear();
@@ -234,7 +234,7 @@ impl PageCache {
         self.misses = 0;
     }
 
-    /// Возвращает статистику кэша
+    /// Returns cache statistics
     pub fn get_stats(&self) -> (u64, u64, f64) {
         let total = self.hits + self.misses;
         let hit_ratio = if total > 0 {
@@ -245,36 +245,36 @@ impl PageCache {
         (self.hits, self.misses, hit_ratio)
     }
 
-    /// Возвращает размер кэша
+    /// Returns cache size
     pub fn size(&self) -> usize {
         self.data.len()
     }
 }
 
-/// Буферизованный менеджер I/O операций
+/// Buffered I/O operation manager
 pub struct BufferedIoManager {
-    /// Конфигурация
+    /// Configuration
     config: IoBufferConfig,
-    /// Буфер операций записи
+    /// Write operation buffer
     write_buffer: Arc<Mutex<Vec<BufferedWrite>>>,
-    /// Кэш страниц
+    /// Page cache
     page_cache: Arc<RwLock<PageCache>>,
-    /// Статистика операций
+    /// Operation statistics
     statistics: Arc<RwLock<IoStatistics>>,
-    /// Канал для отправки запросов
+    /// Channel for sending requests
     request_tx: mpsc::UnboundedSender<IoRequest>,
-    /// Семафор для ограничения количества одновременных операций
+    /// Semaphore for limiting concurrent operations
     semaphore: Arc<Semaphore>,
-    /// Счетчик ID запросов
+    /// Request ID counter
     request_counter: Arc<Mutex<u64>>,
-    /// Обработчик фонового сброса буфера
+    /// Background buffer flush handler
     flush_handle: Option<JoinHandle<()>>,
-    /// Обработчик I/O операций
+    /// I/O operation handler
     io_handle: Option<JoinHandle<()>>,
 }
 
 impl BufferedIoManager {
-    /// Создает новый буферизованный менеджер I/O
+    /// Creates a new buffered I/O manager
     pub fn new(config: IoBufferConfig) -> Self {
         let (request_tx, request_rx) = mpsc::unbounded_channel();
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_operations));
@@ -296,7 +296,7 @@ impl BufferedIoManager {
             io_handle: None,
         };
 
-        // Запускаем фоновые задачи только если есть runtime
+        // Start background tasks only if runtime is available
         if tokio::runtime::Handle::try_current().is_ok() {
             manager.start_background_tasks(
                 request_rx,
@@ -310,7 +310,7 @@ impl BufferedIoManager {
         manager
     }
 
-    /// Запускает фоновые задачи
+    /// Starts background tasks
     fn start_background_tasks(
         &mut self,
         mut request_rx: mpsc::UnboundedReceiver<IoRequest>,
@@ -321,13 +321,13 @@ impl BufferedIoManager {
     ) {
         let config = self.config.clone();
 
-        // Задача обработки I/O запросов
+        // I/O request processing task
         let io_statistics = statistics.clone();
         let io_cache = page_cache.clone();
 
         self.io_handle = Some(tokio::spawn(async move {
             while let Some(request) = request_rx.recv().await {
-                // Упрощенная версия без семафора для устранения проблем с временем жизни
+                // Simplified version without semaphore to avoid lifetime issues
                 let stats = io_statistics.clone();
                 let cache = io_cache.clone();
 
@@ -337,7 +337,7 @@ impl BufferedIoManager {
             }
         }));
 
-        // Задача периодического сброса буфера записи
+        // Periodic write buffer flush task
         let flush_buffer = write_buffer.clone();
         let flush_config = config.clone();
 
@@ -351,9 +351,9 @@ impl BufferedIoManager {
         }));
     }
 
-    /// Асинхронно читает страницу
+    /// Asynchronously reads a page
     pub async fn read_page_async(&self, file_id: u32, page_id: PageId) -> Result<Vec<u8>> {
-        // Проверяем кэш
+        // Check cache
         if let Some(data) = {
             let mut cache = self.page_cache.write().unwrap();
             cache.get(file_id, page_id)
@@ -362,7 +362,7 @@ impl BufferedIoManager {
             return Ok(data);
         }
 
-        // Создаем запрос на чтение
+        // Create read request
         let (response_tx, response_rx) = oneshot::channel();
         let request_id = self.get_next_request_id().await;
 
@@ -377,25 +377,25 @@ impl BufferedIoManager {
             response_tx,
         };
 
-        // Отправляем запрос
+        // Send request
         self.request_tx
             .send(request)
-            .map_err(|_| Error::internal("Не удалось отправить запрос на чтение"))?;
+            .map_err(|_| Error::internal("Failed to send read request"))?;
 
-        // Ждем результат
+        // Wait for result
         let result = response_rx
             .await
-            .map_err(|_| Error::internal("Не удалось получить результат чтения"))??;
+            .map_err(|_| Error::internal("Failed to get read result"))??;
 
         match result {
             Some(data) => {
-                // Добавляем в кэш
+                // Add to cache
                 {
                     let mut cache = self.page_cache.write().unwrap();
                     cache.put(file_id, page_id, data.clone());
                 }
 
-                // Запускаем предвыборку если включена
+                // Trigger prefetch if enabled
                 if self.config.enable_prefetch {
                     self.trigger_prefetch(file_id, page_id).await;
                 }
@@ -404,11 +404,11 @@ impl BufferedIoManager {
                     .await;
                 Ok(data)
             }
-            None => Err(Error::internal("Не удалось прочитать страницу")),
+            None => Err(Error::internal("Failed to read page")),
         }
     }
 
-    /// Асинхронно записывает страницу
+    /// Asynchronously writes a page
     pub async fn write_page_async(
         &self,
         file_id: u32,
@@ -417,19 +417,19 @@ impl BufferedIoManager {
     ) -> Result<()> {
         if data.len() != BLOCK_SIZE {
             return Err(Error::validation(format!(
-                "Неверный размер данных: {} (ожидается {})",
+                "Invalid data size: {} (expected {})",
                 data.len(),
                 BLOCK_SIZE
             )));
         }
 
-        // Обновляем кэш
+        // Update cache
         {
             let mut cache = self.page_cache.write().unwrap();
             cache.put(file_id, page_id, data.clone());
         }
 
-        // Добавляем в буфер записи
+        // Add to write buffer
         let buffered_write = BufferedWrite {
             file_id,
             page_id,
@@ -442,7 +442,7 @@ impl BufferedIoManager {
             let mut buffer = self.write_buffer.lock().unwrap();
             buffer.push(buffered_write);
 
-            // Проверяем, нужно ли принудительно сбрасывать
+            // Check if forced flush is needed
             buffer.len() >= self.config.max_write_buffer_size
         };
 
@@ -455,7 +455,7 @@ impl BufferedIoManager {
         Ok(())
     }
 
-    /// Синхронная обёртка для записи страницы (для использования в бенчмарках)
+    /// Synchronous wrapper for writing a page (for use in benchmarks)
     pub fn write_page_sync(&self, file_id: u32, page_id: PageId, data: Vec<u8>) -> Result<()> {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.block_on(self.write_page_async(file_id, page_id, data))
@@ -465,7 +465,7 @@ impl BufferedIoManager {
         }
     }
 
-    /// Синхронная обёртка для чтения страницы (для использования в бенчмарках)
+    /// Synchronous wrapper for reading a page (for use in benchmarks)
     pub fn read_page_sync(&self, file_id: u32, page_id: PageId) -> Result<Vec<u8>> {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.block_on(self.read_page_async(file_id, page_id))
@@ -475,7 +475,7 @@ impl BufferedIoManager {
         }
     }
 
-    /// Синхронизирует все буферизованные операции записи
+    /// Synchronizes all buffered write operations
     pub async fn sync_all(&self) -> Result<()> {
         Self::flush_write_buffer(&self.write_buffer).await;
         self.update_statistics(IoOperationType::Sync, 0, false)
@@ -483,12 +483,12 @@ impl BufferedIoManager {
         Ok(())
     }
 
-    /// Запускает предвыборку данных
+    /// Triggers data prefetching
     async fn trigger_prefetch(&self, file_id: u32, base_page_id: PageId) {
         for i in 1..=self.config.prefetch_window_size {
             let prefetch_page_id = base_page_id + i as u64;
 
-            // Проверяем, есть ли уже в кэше
+            // Check if already in cache
             {
                 let cache = self.page_cache.read().unwrap();
                 if cache.data.contains_key(&(file_id, prefetch_page_id)) {
@@ -496,7 +496,7 @@ impl BufferedIoManager {
                 }
             }
 
-            // Создаем запрос на предвыборку
+            // Create prefetch request
             let (response_tx, _response_rx) = oneshot::channel();
             let request_id = self.get_next_request_id().await;
 
@@ -511,12 +511,12 @@ impl BufferedIoManager {
                 response_tx,
             };
 
-            // Отправляем запрос (игнорируем ошибки для предвыборки)
+            // Send request (ignore errors for prefetching)
             let _ = self.request_tx.send(request);
         }
     }
 
-    /// Обрабатывает I/O запрос
+    /// Handles I/O request
     async fn handle_io_request(
         request: IoRequest,
         statistics: Arc<RwLock<IoStatistics>>,
@@ -524,20 +524,20 @@ impl BufferedIoManager {
     ) {
         let start_time = Instant::now();
 
-        // Симуляция I/O операции (в реальной реализации здесь был бы вызов файлового менеджера)
+        // I/O operation simulation (in real implementation, there would be a file manager call here)
         let result = match request.operation {
             IoOperationType::Read | IoOperationType::Prefetch => {
-                // Симулируем чтение
+                // Simulate read
                 tokio::time::sleep(Duration::from_micros(100)).await;
                 Ok(Some(vec![0u8; BLOCK_SIZE]))
             }
             IoOperationType::Write => {
-                // Симулируем запись
+                // Simulate write
                 tokio::time::sleep(Duration::from_micros(150)).await;
                 Ok(None)
             }
             IoOperationType::Sync => {
-                // Симулируем синхронизацию
+                // Simulate sync
                 tokio::time::sleep(Duration::from_micros(500)).await;
                 Ok(None)
             }
@@ -545,7 +545,7 @@ impl BufferedIoManager {
 
         let execution_time = start_time.elapsed();
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = statistics.write().unwrap();
             stats.total_operations += 1;
@@ -570,12 +570,12 @@ impl BufferedIoManager {
                     stats.sync_operations += 1;
                 }
                 IoOperationType::Prefetch => {
-                    // Предвыборка считается как чтение
+                    // Prefetch counts as read
                     stats.read_operations += 1;
                     if let Ok(Some(ref data)) = result {
                         stats.bytes_read += data.len() as u64;
 
-                        // Добавляем в кэш результат предвыборки
+                        // Add prefetch result to cache
                         let mut cache = page_cache.write().unwrap();
                         cache.put(request.file_id, request.page_id, data.clone());
                     }
@@ -583,11 +583,11 @@ impl BufferedIoManager {
             }
         }
 
-        // Отправляем результат
+        // Send result
         let _ = request.response_tx.send(result);
     }
 
-    /// Сбрасывает буфер записи на диск
+    /// Flushes write buffer to disk
     async fn flush_write_buffer(write_buffer: &Arc<Mutex<Vec<BufferedWrite>>>) {
         let writes_to_flush = {
             let mut buffer = write_buffer.lock().unwrap();
@@ -600,30 +600,30 @@ impl BufferedIoManager {
             writes
         };
 
-        // Группируем записи по файлам для оптимизации
+        // Group writes by file for optimization
         let mut writes_by_file: HashMap<u32, Vec<BufferedWrite>> = HashMap::new();
         for write in writes_to_flush {
             writes_by_file.entry(write.file_id).or_default().push(write);
         }
 
-        // Обрабатываем записи по файлам
+        // Process writes by file
         for (_file_id, writes) in writes_by_file {
-            // В реальной реализации здесь был бы пакетный вызов файлового менеджера
+            // In real implementation, there would be a batch call to file manager here
             for _write in writes {
-                // Симулируем запись
+                // Simulate write
                 tokio::time::sleep(Duration::from_micros(50)).await;
             }
         }
     }
 
-    /// Получает следующий ID запроса
+    /// Gets next request ID
     async fn get_next_request_id(&self) -> u64 {
         let mut counter = self.request_counter.lock().unwrap();
         *counter += 1;
         *counter
     }
 
-    /// Обновляет статистику операций
+    /// Updates operation statistics
     async fn update_statistics(
         &self,
         operation: IoOperationType,
@@ -653,7 +653,7 @@ impl BufferedIoManager {
             _ => {}
         }
 
-        // Вычисляем пропускную способность (упрощенно)
+        // Calculate throughput (simplified)
         if stats.total_execution_time_us > 0 {
             let time_seconds = stats.total_execution_time_us as f64 / 1_000_000.0;
             stats.read_throughput = stats.bytes_read as f64 / time_seconds;
@@ -661,7 +661,7 @@ impl BufferedIoManager {
         }
     }
 
-    /// Возвращает текущую статистику
+    /// Returns current statistics
     pub fn get_statistics(&self) -> IoStatistics {
         let stats = self.statistics.read().unwrap();
         let cache_stats = self.page_cache.read().unwrap().get_stats();
@@ -674,7 +674,7 @@ impl BufferedIoManager {
         result
     }
 
-    /// Очищает кэш и сбрасывает статистику
+    /// Clears cache and resets statistics
     pub async fn clear_cache(&self) {
         let mut cache = self.page_cache.write().unwrap();
         cache.clear();
@@ -683,7 +683,7 @@ impl BufferedIoManager {
         *stats = IoStatistics::default();
     }
 
-    /// Получает информацию о состоянии буфера
+    /// Gets buffer state information
     pub fn get_buffer_info(&self) -> (usize, usize, usize) {
         let buffer = self.write_buffer.lock().unwrap();
         let cache = self.page_cache.read().unwrap();
@@ -698,7 +698,7 @@ impl BufferedIoManager {
 
 impl Drop for BufferedIoManager {
     fn drop(&mut self) {
-        // Останавливаем фоновые задачи
+        // Stop background tasks
         if let Some(handle) = self.flush_handle.take() {
             handle.abort();
         }
@@ -717,23 +717,23 @@ mod tests {
     async fn test_page_cache() {
         let mut cache = PageCache::new(3);
 
-        // Добавляем страницы
+        // Add pages
         cache.put(1, 10, vec![1; BLOCK_SIZE]);
         cache.put(1, 20, vec![2; BLOCK_SIZE]);
         cache.put(1, 30, vec![3; BLOCK_SIZE]);
 
         assert_eq!(cache.size(), 3);
 
-        // Проверяем получение
+        // Check retrieval
         assert!(cache.get(1, 10).is_some());
         assert!(cache.get(1, 20).is_some());
         assert!(cache.get(1, 30).is_some());
 
-        // Добавляем еще одну страницу (должна вытеснить самую старую)
+        // Add one more page (should evict the oldest)
         cache.put(1, 40, vec![4; BLOCK_SIZE]);
 
         assert_eq!(cache.size(), 3);
-        assert!(cache.get(1, 10).is_none()); // Должна быть вытеснена
+        assert!(cache.get(1, 10).is_none()); // Should be evicted
         assert!(cache.get(1, 40).is_some());
     }
 
@@ -742,20 +742,20 @@ mod tests {
         let config = IoBufferConfig::default();
         let manager = Arc::new(BufferedIoManager::new(config));
 
-        // Тестируем запись
+        // Test write
         let data = vec![42u8; BLOCK_SIZE];
         manager.write_page_async(1, 100, data.clone()).await?;
 
-        // Даем время на обработку асинхронных операций
+        // Give time for asynchronous operations to process
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // Тестируем чтение (должно попасть в кэш)
+        // Test read (should hit cache)
         let read_data = manager.read_page_async(1, 100).await?;
         assert_eq!(read_data.len(), BLOCK_SIZE);
 
-        // Проверяем статистику (может быть асинхронной)
+        // Check statistics (may be asynchronous)
         let stats = manager.get_statistics();
-        // Проверяем, что система работает (хотя бы одна операция должна быть)
+        // Check that system is working (at least one operation should be)
         assert!(stats.write_operations >= 0);
         assert!(stats.cache_hits >= 0);
 
@@ -767,7 +767,7 @@ mod tests {
         let config = IoBufferConfig::default();
         let manager = Arc::new(BufferedIoManager::new(config));
 
-        // Запускаем несколько операций параллельно
+        // Start several operations in parallel
         let mut handles = Vec::new();
 
         for i in 0..10 {
@@ -779,7 +779,7 @@ mod tests {
             handles.push(handle);
         }
 
-        // Ждем завершения всех операций
+        // Wait for all operations to complete
         for handle in handles {
             timeout(Duration::from_secs(5), handle)
                 .await
@@ -787,12 +787,12 @@ mod tests {
                 .unwrap()?;
         }
 
-        // Даем время на обработку асинхронных операций
+        // Give time for asynchronous operations to process
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        // Проверяем статистику (асинхронная обработка)
+        // Check statistics (asynchronous processing)
         let stats = manager.get_statistics();
-        // Проверяем, что система работает
+        // Check that system is working
         assert!(stats.write_operations >= 0);
 
         Ok(())
@@ -806,17 +806,17 @@ mod tests {
 
         let manager = BufferedIoManager::new(config);
 
-        // Записываем больше операций чем размер буфера
+        // Write more operations than buffer size
         for i in 0..10 {
             let data = vec![i as u8; BLOCK_SIZE];
             manager.write_page_async(1, i, data).await?;
         }
 
-        // Ждем автоматического сброса буфера
+        // Wait for automatic buffer flush
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let buffer_info = manager.get_buffer_info();
-        assert!(buffer_info.0 < 10); // Буфер должен быть сброшен
+        assert!(buffer_info.0 < 10); // Buffer should be flushed
 
         Ok(())
     }
@@ -826,11 +826,11 @@ mod tests {
         let config = IoBufferConfig::default();
         let manager = BufferedIoManager::new(config);
 
-        // Записываем данные
+        // Write data
         let data = vec![123u8; BLOCK_SIZE];
         manager.write_page_async(1, 50, data).await?;
 
-        // Читаем несколько раз (должны быть попадания в кэш)
+        // Read several times (should have cache hits)
         for _ in 0..5 {
             let _ = manager.read_page_async(1, 50).await?;
         }

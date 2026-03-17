@@ -1,184 +1,184 @@
-//! Структуры лог-записей для системы логирования rustdb
+//! Log record structures for rustdb logging system
 //!
-//! Этот модуль определяет различные типы лог-записей для отслеживания
-//! всех изменений в базе данных:
-//! - Операции с данными (INSERT, UPDATE, DELETE)
-//! - Транзакционные операции (BEGIN, COMMIT, ABORT)
-//! - Системные операции (CHECKPOINT, COMPACTION)
-//! - Метаданные и восстановление
+//! This module defines various types of log records for tracking
+//! all changes in the database:
+//! - Data operations (INSERT, UPDATE, DELETE)
+//! - Transaction operations (BEGIN, COMMIT, ABORT)
+//! - System operations (CHECKPOINT, COMPACTION)
+//! - Metadata and recovery
 
 use crate::common::{Error, Result};
 use crate::storage::database_file::PageId;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Уникальный идентификатор лог-записи (Log Sequence Number)
+/// Unique log record identifier (Log Sequence Number)
 pub type LogSequenceNumber = u64;
 
-/// Идентификатор транзакции
+/// Transaction identifier
 pub type TransactionId = u64;
 
-/// Тип лог-записи
+/// Log record type
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LogRecordType {
-    /// Начало транзакции
+    /// Transaction begin
     TransactionBegin,
-    /// Подтверждение транзакции
+    /// Transaction commit
     TransactionCommit,
-    /// Отмена транзакции
+    /// Transaction abort
     TransactionAbort,
-    /// Вставка данных
+    /// Data insert
     DataInsert,
-    /// Обновление данных
+    /// Data update
     DataUpdate,
-    /// Удаление данных
+    /// Data delete
     DataDelete,
-    /// Создание контрольной точки
+    /// Checkpoint creation
     Checkpoint,
-    /// Завершение контрольной точки
+    /// Checkpoint end
     CheckpointEnd,
-    /// Операция сжатия логов
+    /// Log compaction operation
     Compaction,
-    /// Создание файла
+    /// File creation
     FileCreate,
-    /// Удаление файла
+    /// File deletion
     FileDelete,
-    /// Расширение файла
+    /// File extension
     FileExtend,
-    /// Изменение метаданных
+    /// Metadata update
     MetadataUpdate,
 }
 
-/// Приоритет лог-записи
+/// Log record priority
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum LogPriority {
-    /// Низкий приоритет (фоновые операции)
+    /// Low priority (background operations)
     Low = 0,
-    /// Нормальный приоритет (обычные операции)
+    /// Normal priority (regular operations)
     Normal = 1,
-    /// Высокий приоритет (пользовательские транзакции)
+    /// High priority (user transactions)
     High = 2,
-    /// Критический приоритет (системные операции)
+    /// Critical priority (system operations)
     Critical = 3,
 }
 
-/// Данные операции с записью
+/// Record operation data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordOperation {
-    /// ID файла
+    /// File ID
     pub file_id: u32,
-    /// ID страницы
+    /// Page ID
     pub page_id: PageId,
-    /// Смещение записи на странице
+    /// Record offset on page
     pub record_offset: u16,
-    /// Размер записи
+    /// Record size
     pub record_size: u16,
-    /// Старые данные (для UNDO)
+    /// Old data (for UNDO)
     pub old_data: Option<Vec<u8>>,
-    /// Новые данные (для REDO)
+    /// New data (for REDO)
     pub new_data: Option<Vec<u8>>,
 }
 
-/// Данные транзакционной операции
+/// Transaction operation data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionOperation {
-    /// Список измененных страниц
+    /// List of modified pages
     pub dirty_pages: Vec<(u32, PageId)>,
-    /// Список заблокированных ресурсов
+    /// List of locked resources
     pub locked_resources: Vec<String>,
-    /// Время начала транзакции
+    /// Transaction start time
     pub start_time: u64,
-    /// Уровень изоляции
+    /// Isolation level
     pub isolation_level: IsolationLevel,
 }
 
-/// Уровень изоляции транзакции
+/// Transaction isolation level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum IsolationLevel {
-    /// Чтение незафиксированных данных
+    /// Read uncommitted data
     ReadUncommitted,
-    /// Чтение зафиксированных данных
+    /// Read committed data
     ReadCommitted,
-    /// Повторяемое чтение
+    /// Repeatable read
     RepeatableRead,
-    /// Сериализуемость
+    /// Serializable
     Serializable,
 }
 
-/// Данные операции с файлом
+/// File operation data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileOperation {
-    /// ID файла
+    /// File ID
     pub file_id: u32,
-    /// Имя файла
+    /// Filename
     pub filename: String,
-    /// Тип файла
+    /// File type
     pub file_type: crate::storage::database_file::DatabaseFileType,
-    /// Размер файла (в страницах)
+    /// File size (in pages)
     pub file_size: u64,
-    /// Дополнительные параметры
+    /// Additional parameters
     pub parameters: std::collections::HashMap<String, String>,
 }
 
-/// Данные операции контрольной точки
+/// Checkpoint operation data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointOperation {
-    /// ID контрольной точки
+    /// Checkpoint ID
     pub checkpoint_id: u64,
-    /// Список активных транзакций
+    /// List of active transactions
     pub active_transactions: Vec<TransactionId>,
-    /// Список измененных страниц
+    /// List of modified pages
     pub dirty_pages: Vec<(u32, PageId)>,
-    /// LSN последней записи
+    /// Last record LSN
     pub last_lsn: LogSequenceNumber,
-    /// Время создания
+    /// Creation time
     pub timestamp: u64,
 }
 
-/// Основная структура лог-записи
+/// Main log record structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogRecord {
-    /// Уникальный номер лог-записи (LSN)
+    /// Unique log record number (LSN)
     pub lsn: LogSequenceNumber,
-    /// ID транзакции (если применимо)
+    /// Transaction ID (if applicable)
     pub transaction_id: Option<TransactionId>,
-    /// Тип операции
+    /// Operation type
     pub record_type: LogRecordType,
-    /// Приоритет записи
+    /// Record priority
     pub priority: LogPriority,
-    /// Время создания записи
+    /// Record creation time
     pub timestamp: u64,
-    /// Размер записи в байтах
+    /// Record size in bytes
     pub record_size: u32,
-    /// Контрольная сумма записи
+    /// Record checksum
     pub checksum: u32,
-    /// Данные операции (в зависимости от типа)
+    /// Operation data (depending on type)
     pub operation_data: LogOperationData,
-    /// LSN предыдущей записи той же транзакции
+    /// LSN of previous record in the same transaction
     pub prev_lsn: Option<LogSequenceNumber>,
-    /// Дополнительные метаданные
+    /// Additional metadata
     pub metadata: std::collections::HashMap<String, String>,
 }
 
-/// Данные операции в лог-записи
+/// Operation data in log record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LogOperationData {
-    /// Операция с записью
+    /// Record operation
     Record(RecordOperation),
-    /// Транзакционная операция
+    /// Transaction operation
     Transaction(TransactionOperation),
-    /// Операция с файлом
+    /// File operation
     File(FileOperation),
-    /// Операция контрольной точки
+    /// Checkpoint operation
     Checkpoint(CheckpointOperation),
-    /// Пустые данные (для простых операций)
+    /// Empty data (for simple operations)
     Empty,
-    /// Произвольные данные
+    /// Raw data
     Raw(Vec<u8>),
 }
 
 impl LogRecord {
-    /// Создает новую лог-запись
+    /// Creates a new log record
     pub fn new(
         lsn: LogSequenceNumber,
         record_type: LogRecordType,
@@ -202,12 +202,12 @@ impl LogRecord {
             metadata: std::collections::HashMap::new(),
         };
 
-        // Вычисляем размер и контрольную сумму
+        // Calculate size and checksum
         record.update_size_and_checksum();
         record
     }
 
-    /// Создает лог-запись для начала транзакции
+    /// Creates log record for transaction begin
     pub fn new_transaction_begin(
         lsn: LogSequenceNumber,
         transaction_id: TransactionId,
@@ -234,7 +234,7 @@ impl LogRecord {
         record
     }
 
-    /// Создает лог-запись для подтверждения транзакции
+    /// Creates log record for transaction commit
     pub fn new_transaction_commit(
         lsn: LogSequenceNumber,
         transaction_id: TransactionId,
@@ -259,7 +259,7 @@ impl LogRecord {
         record
     }
 
-    /// Создает лог-запись для отмены транзакции
+    /// Creates log record for transaction abort
     pub fn new_transaction_abort(
         lsn: LogSequenceNumber,
         transaction_id: TransactionId,
@@ -276,7 +276,7 @@ impl LogRecord {
         record
     }
 
-    /// Создает лог-запись для вставки данных
+    /// Creates log record for data insert
     pub fn new_data_insert(
         lsn: LogSequenceNumber,
         transaction_id: TransactionId,
@@ -306,7 +306,7 @@ impl LogRecord {
         record
     }
 
-    /// Создает лог-запись для обновления данных
+    /// Creates log record for data update
     pub fn new_data_update(
         lsn: LogSequenceNumber,
         transaction_id: TransactionId,
@@ -337,7 +337,7 @@ impl LogRecord {
         record
     }
 
-    /// Создает лог-запись для удаления данных
+    /// Creates log record for data delete
     pub fn new_data_delete(
         lsn: LogSequenceNumber,
         transaction_id: TransactionId,
@@ -367,7 +367,7 @@ impl LogRecord {
         record
     }
 
-    /// Создает лог-запись для контрольной точки
+    /// Creates log record for checkpoint
     pub fn new_checkpoint(
         lsn: LogSequenceNumber,
         checkpoint_id: u64,
@@ -395,12 +395,12 @@ impl LogRecord {
         record
     }
 
-    /// Возвращает размер записи в байтах
+    /// Returns record size in bytes
     pub fn size(&self) -> u32 {
         self.record_size
     }
 
-    /// Проверяет, является ли запись транзакционной
+    /// Checks if record is transactional
     pub fn is_transactional(&self) -> bool {
         matches!(
             self.record_type,
@@ -413,7 +413,7 @@ impl LogRecord {
         )
     }
 
-    /// Проверяет, требует ли запись немедленной записи на диск
+    /// Checks if record requires immediate flush to disk
     pub fn requires_immediate_flush(&self) -> bool {
         matches!(
             self.record_type,
@@ -424,30 +424,30 @@ impl LogRecord {
         ) || self.priority >= LogPriority::Critical
     }
 
-    /// Добавляет метаданные к записи
+    /// Adds metadata to record
     pub fn add_metadata(&mut self, key: String, value: String) {
         self.metadata.insert(key, value);
         self.update_size_and_checksum();
     }
 
-    /// Получает метаданные записи
+    /// Gets record metadata
     pub fn get_metadata(&self, key: &str) -> Option<&String> {
         self.metadata.get(key)
     }
 
-    /// Сериализует запись в байты
+    /// Serializes record to bytes
     pub fn serialize(&self) -> Result<Vec<u8>> {
         bincode::serialize(self)
-            .map_err(|e| Error::internal(&format!("Ошибка сериализации лог-записи: {}", e)))
+            .map_err(|e| Error::internal(&format!("Log record serialization error: {}", e)))
     }
 
-    /// Десериализует запись из байтов
+    /// Deserializes record from bytes
     pub fn deserialize(data: &[u8]) -> Result<Self> {
         bincode::deserialize(data)
-            .map_err(|e| Error::internal(&format!("Ошибка десериализации лог-записи: {}", e)))
+            .map_err(|e| Error::internal(&format!("Log record deserialization error: {}", e)))
     }
 
-    /// Возвращает читаемое описание записи
+    /// Returns human-readable record description
     pub fn description(&self) -> String {
         match &self.record_type {
             LogRecordType::TransactionBegin => {
@@ -492,7 +492,7 @@ impl LogRecord {
             LogRecordType::Checkpoint => {
                 if let LogOperationData::Checkpoint(op) = &self.operation_data {
                     format!(
-                        "CHECKPOINT {} (активных транзакций: {})",
+                        "CHECKPOINT {} (active transactions: {})",
                         op.checkpoint_id,
                         op.active_transactions.len()
                     )
@@ -509,7 +509,7 @@ impl LogRecord {
         }
     }
 
-    /// Вычисляет размер записи в байтах
+    /// Calculates record size in bytes
     fn calculate_size(&self) -> u32 {
         use std::mem::size_of;
 
@@ -526,7 +526,7 @@ impl LogRecord {
             LogOperationData::Transaction(op) => {
                 size_of::<TransactionOperation>()
                     + op.dirty_pages.len() * size_of::<(u32, PageId)>()
-                    + op.locked_resources.len() * 64 // примерный размер строки
+                    + op.locked_resources.len() * 64 // approximate string size
             }
             LogOperationData::Record(op) => {
                 size_of::<RecordOperation>()
@@ -540,25 +540,25 @@ impl LogRecord {
             }
             LogOperationData::File(op) => {
                 size_of::<FileOperation>() + op.filename.len() + op.parameters.len() * 64
-                // примерный размер
+                // approximate size
             }
             LogOperationData::Empty => 0,
             LogOperationData::Raw(data) => data.len(),
         };
 
-        let metadata_size = self.metadata.len() * 64; // примерный размер
+        let metadata_size = self.metadata.len() * 64; // approximate size
 
         (base_size + data_size + metadata_size) as u32
     }
 
-    /// Вычисляет контрольную сумму записи
+    /// Calculates record checksum
     fn calculate_checksum(&self) -> u32 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
 
-        // Хешируем все поля кроме checksum
+        // Hash all fields except checksum
         self.lsn.hash(&mut hasher);
         self.transaction_id.hash(&mut hasher);
         self.record_type.hash(&mut hasher);
@@ -567,7 +567,7 @@ impl LogRecord {
         self.record_size.hash(&mut hasher);
         self.prev_lsn.hash(&mut hasher);
 
-        // Хешируем данные операции (упрощенно)
+        // Hash operation data (simplified)
         match &self.operation_data {
             LogOperationData::Transaction(op) => {
                 op.dirty_pages.hash(&mut hasher);
@@ -594,7 +594,7 @@ impl LogRecord {
                 op.file_id.hash(&mut hasher);
                 op.filename.hash(&mut hasher);
                 op.file_size.hash(&mut hasher);
-                // Хешируем параметры как строки
+                // Hash parameters as strings
                 for (key, value) in &op.parameters {
                     key.hash(&mut hasher);
                     value.hash(&mut hasher);
@@ -607,13 +607,13 @@ impl LogRecord {
         hasher.finish() as u32
     }
 
-    /// Обновляет размер и контрольную сумму записи
+    /// Updates record size and checksum
     fn update_size_and_checksum(&mut self) {
         self.record_size = self.calculate_size();
         self.checksum = self.calculate_checksum();
     }
 
-    /// Проверяет корректность контрольной суммы
+    /// Verifies checksum correctness
     pub fn verify_checksum(&self) -> bool {
         let current_checksum = self.checksum;
         let calculated_checksum = self.calculate_checksum();
@@ -638,14 +638,14 @@ impl Default for LogRecord {
     }
 }
 
-/// Итератор по лог-записям
+/// Iterator over log records
 pub struct LogRecordIterator {
     records: Vec<LogRecord>,
     position: usize,
 }
 
 impl LogRecordIterator {
-    /// Создает новый итератор
+    /// Creates a new iterator
     pub fn new(records: Vec<LogRecord>) -> Self {
         Self {
             records,
@@ -653,34 +653,34 @@ impl LogRecordIterator {
         }
     }
 
-    /// Фильтрует записи по типу
+    /// Filters records by type
     pub fn filter_by_type(mut self, record_type: LogRecordType) -> Self {
         self.records
             .retain(|record| record.record_type == record_type);
         self
     }
 
-    /// Фильтрует записи по транзакции
+    /// Filters records by transaction
     pub fn filter_by_transaction(mut self, transaction_id: TransactionId) -> Self {
         self.records
             .retain(|record| record.transaction_id == Some(transaction_id));
         self
     }
 
-    /// Фильтрует записи по временному диапазону
+    /// Filters records by time range
     pub fn filter_by_time_range(mut self, start_time: u64, end_time: u64) -> Self {
         self.records
             .retain(|record| record.timestamp >= start_time && record.timestamp <= end_time);
         self
     }
 
-    /// Сортирует записи по LSN
+    /// Sorts records by LSN
     pub fn sort_by_lsn(mut self) -> Self {
         self.records.sort_by_key(|record| record.lsn);
         self
     }
 
-    /// Возвращает количество записей
+    /// Returns number of records
     pub fn count(&self) -> usize {
         self.records.len()
     }
@@ -757,10 +757,10 @@ mod tests {
     fn test_checksum_verification() {
         let mut record = LogRecord::new_transaction_begin(1, 100, IsolationLevel::Serializable);
 
-        // Проверяем, что контрольная сумма корректна
+        // Check that checksum is correct
         assert!(record.verify_checksum());
 
-        // Изменяем данные и проверяем, что контрольная сумма становится некорректной
+        // Modify data and check that checksum becomes incorrect
         record.timestamp += 1;
         assert!(!record.verify_checksum());
     }
@@ -791,7 +791,7 @@ mod tests {
 
         let iterator = LogRecordIterator::new(records);
 
-        // Фильтруем по транзакции 100
+        // Filter by transaction 100
         let tx100_records: Vec<_> = iterator.filter_by_transaction(100).collect();
 
         assert_eq!(tx100_records.len(), 3);
@@ -814,7 +814,7 @@ mod tests {
         let checkpoint = LogRecord::new_checkpoint(3, 1, vec![100], vec![], 2);
         assert_eq!(
             checkpoint.description(),
-            "CHECKPOINT 1 (активных транзакций: 1)"
+            "CHECKPOINT 1 (active transactions: 1)"
         );
     }
 }

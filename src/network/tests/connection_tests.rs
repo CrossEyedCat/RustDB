@@ -1,4 +1,4 @@
-//! Тесты для сетевых соединений
+//! Network connection tests
 
 use crate::network::connection::{Connection, ConnectionConfig, ConnectionState};
 use std::time::Duration;
@@ -97,7 +97,7 @@ fn test_connection_keepalive_disabled() {
 
 #[test]
 fn test_connection_state_transitions() {
-    // Проверяем логику переходов состояний
+    // Validate state transition logic
     let initial = ConnectionState::New;
     let connected = ConnectionState::Connected;
     let authenticated = ConnectionState::Authenticated;
@@ -110,7 +110,7 @@ fn test_connection_state_transitions() {
 
 #[test]
 fn test_connection_id_generation() {
-    // Тестируем, что ID соединений уникальны
+    // Ensure connection IDs remain unique
     let ids: Vec<u64> = (1..=100).collect();
     let unique_ids: std::collections::HashSet<_> = ids.iter().collect();
 
@@ -121,6 +121,6 @@ fn test_connection_id_generation() {
 fn test_connection_statistics() {
     let config = ConnectionConfig::default();
 
-    // Статистика должна быть доступна
+    // Statistics should be available
     assert!(config.buffer_size > 0);
 }

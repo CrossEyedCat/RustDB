@@ -1,10 +1,10 @@
-//! Менеджер восстановления для rustdb
+//! Recovery manager for rustdb
 //!
-//! Этот модуль реализует полную систему восстановления для обеспечения ACID свойств:
-//! - Анализ логов для определения состояния системы
-//! - Redo операции для повторения зафиксированных изменений
-//! - Undo операции для отката незавершенных транзакций
-//! - Восстановление после сбоев и контрольных точек
+//! This module implements a complete recovery system to ensure ACID properties:
+//! - Log analysis to determine system state
+//! - Redo operations to replay committed changes
+//! - Undo operations to rollback uncommitted transactions
+//! - Recovery after failures and checkpoints
 
 use crate::common::{Error, Result};
 use crate::core::acid_manager::{AcidConfig, AcidManager};
@@ -17,103 +17,103 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 
-/// Ошибки восстановления
+/// Recovery errors
 #[derive(Debug, thiserror::Error)]
 pub enum RecoveryError {
-    #[error("Ошибка чтения лога: {0}")]
+    #[error("Log read error: {0}")]
     LogReadError(String),
 
-    #[error("Ошибка анализа лога: {0}")]
+    #[error("Log analysis error: {0}")]
     LogAnalysisError(String),
 
-    #[error("Ошибка восстановления страницы: {0}")]
+    #[error("Page recovery error: {0}")]
     PageRecoveryError(String),
 
-    #[error("Ошибка отката транзакции: {0}")]
+    #[error("Transaction rollback error: {0}")]
     TransactionRollbackError(String),
 
-    #[error("Ошибка контрольной точки: {0}")]
+    #[error("Checkpoint error: {0}")]
     CheckpointError(String),
 
-    #[error("Несовместимость версий: {0}")]
+    #[error("Version mismatch: {0}")]
     VersionMismatch(String),
 }
 
-/// Состояние восстановления
+/// Recovery state
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecoveryState {
-    /// Восстановление не начато
+    /// Recovery not started
     NotStarted,
-    /// Анализ логов
+    /// Analyzing logs
     Analyzing,
-    /// Выполнение Redo операций
+    /// Executing Redo operations
     RedoPhase,
-    /// Выполнение Undo операций
+    /// Executing Undo operations
     UndoPhase,
-    /// Восстановление завершено
+    /// Recovery completed
     Completed,
-    /// Ошибка восстановления
+    /// Recovery failed
     Failed(String),
 }
 
-/// Информация о транзакции для восстановления
+/// Transaction information for recovery
 #[derive(Debug, Clone)]
 pub struct RecoveryTransactionInfo {
-    /// ID транзакции
+    /// Transaction ID
     pub id: TransactionId,
-    /// Состояние транзакции
+    /// Transaction state
     pub state: TransactionState,
-    /// Уровень изоляции
+    /// Isolation level
     pub isolation_level: IsolationLevel,
-    /// LSN первой записи
+    /// First record LSN
     pub first_lsn: LogSequenceNumber,
-    /// LSN последней записи
+    /// Last record LSN
     pub last_lsn: LogSequenceNumber,
-    /// Список измененных страниц
+    /// List of modified pages
     pub dirty_pages: HashSet<(u32, u64)>, // (file_id, page_id)
-    /// Время начала транзакции
+    /// Transaction start time
     pub start_time: SystemTime,
-    /// Время последней активности
+    /// Last activity time
     pub last_activity: SystemTime,
 }
 
-/// Информация о странице для восстановления
+/// Page information for recovery
 #[derive(Debug, Clone)]
 pub struct RecoveryPageInfo {
-    /// ID файла
+    /// File ID
     pub file_id: u32,
-    /// ID страницы
+    /// Page ID
     pub page_id: u64,
-    /// LSN последнего изменения
+    /// Last modification LSN
     pub last_lsn: LogSequenceNumber,
-    /// ID транзакции, изменившей страницу
+    /// Transaction ID that modified the page
     pub transaction_id: TransactionId,
-    /// Тип операции
+    /// Operation type
     pub operation_type: LogRecordType,
-    /// Данные для восстановления
+    /// Recovery data
     pub recovery_data: Vec<u8>,
 }
 
-/// Менеджер восстановления
+/// Recovery manager
 pub struct RecoveryManager {
-    /// ACID менеджер
+    /// ACID manager
     acid_manager: Arc<AcidManager>,
     /// Write-Ahead Log
     wal: Arc<WriteAheadLog>,
-    /// Менеджер страниц
+    /// Page manager
     page_manager: Arc<PageManager>,
-    /// Текущее состояние восстановления
+    /// Current recovery state
     state: Arc<Mutex<RecoveryState>>,
-    /// Активные транзакции для восстановления
+    /// Active transactions for recovery
     active_transactions: Arc<RwLock<HashMap<TransactionId, RecoveryTransactionInfo>>>,
-    /// Страницы для восстановления
+    /// Pages to recover
     pages_to_recover: Arc<RwLock<HashMap<(u32, u64), RecoveryPageInfo>>>,
-    /// Статистика восстановления
+    /// Recovery statistics
     statistics: Arc<Mutex<RecoveryStatistics>>,
 }
 
 impl RecoveryManager {
-    /// Создает новый менеджер восстановления
+    /// Creates a new recovery manager
     pub fn new(
         acid_manager: Arc<AcidManager>,
         wal: Arc<WriteAheadLog>,
@@ -130,13 +130,13 @@ impl RecoveryManager {
         })
     }
 
-    /// Выполняет полное восстановление системы
+    /// Performs full system recovery
     pub fn perform_recovery(&self) -> Result<()> {
         let mut state = self.state.lock().unwrap();
         *state = RecoveryState::Analyzing;
         drop(state);
 
-        // Анализируем логи
+        // Analyze logs
         self.analyze_logs()?;
 
         {
@@ -144,7 +144,7 @@ impl RecoveryManager {
             *state = RecoveryState::RedoPhase;
         }
 
-        // Выполняем Redo операции
+        // Perform Redo operations
         self.perform_redo_operations()?;
 
         {
@@ -152,7 +152,7 @@ impl RecoveryManager {
             *state = RecoveryState::UndoPhase;
         }
 
-        // Выполняем Undo операции
+        // Perform Undo operations
         self.perform_undo_operations()?;
 
         {
@@ -160,22 +160,22 @@ impl RecoveryManager {
             *state = RecoveryState::Completed;
         }
 
-        // Обновляем статистику
+        // Update statistics
         self.update_recovery_statistics()?;
 
         Ok(())
     }
 
-    /// Анализирует логи для определения состояния системы
+    /// Analyzes logs to determine system state
     fn analyze_logs(&self) -> Result<()> {
         let transactions = HashMap::new();
         let pages = HashMap::new();
 
-        // TODO: Реализовать чтение логов из WAL
-        // В текущей реализации WAL не имеет метода read_record
-        // Нужно добавить этот метод или использовать другой подход
+        // TODO: Implement reading logs from WAL
+        // Current WAL implementation does not have read_record method
+        // Need to add this method or use a different approach
 
-        // Временно создаем пустые результаты
+        // Temporarily create empty results
         {
             let mut active_transactions = self.active_transactions.write().unwrap();
             active_transactions.clear();
@@ -191,23 +191,23 @@ impl RecoveryManager {
         Ok(())
     }
 
-    /// Выполняет Redo операции для зафиксированных транзакций
+    /// Performs Redo operations for committed transactions
     fn perform_redo_operations(&self) -> Result<()> {
         let transactions = self.active_transactions.read().unwrap();
         let pages = self.pages_to_recover.read().unwrap();
 
-        // Сортируем страницы по LSN для правильного порядка восстановления
+        // Sort pages by LSN for correct recovery order
         let mut sorted_pages: Vec<_> = pages.values().collect();
         sorted_pages.sort_by_key(|page| page.last_lsn);
 
         for page_info in sorted_pages {
-            // Проверяем, что транзакция зафиксирована
+            // Check that transaction is committed
             if let Some(transaction) = transactions.get(&page_info.transaction_id) {
                 if transaction.state == TransactionState::Committed {
-                    // Выполняем Redo операцию
+                    // Perform Redo operation
                     self.redo_page_operation(page_info)?;
 
-                    // Обновляем статистику
+                    // Update statistics
                     {
                         let mut stats = self.statistics.lock().unwrap();
                         stats.redo_operations += 1;
@@ -219,24 +219,24 @@ impl RecoveryManager {
         Ok(())
     }
 
-    /// Выполняет Undo операции для незавершенных транзакций
+    /// Performs Undo operations for uncommitted transactions
     fn perform_undo_operations(&self) -> Result<()> {
         let transactions = self.active_transactions.read().unwrap();
         let pages = self.pages_to_recover.read().unwrap();
 
-        // Сортируем страницы по LSN в обратном порядке для правильного отката
+        // Sort pages by LSN in reverse order for correct rollback
         let mut sorted_pages: Vec<_> = pages.values().collect();
         sorted_pages.sort_by_key(|page| page.last_lsn);
         sorted_pages.reverse();
 
         for page_info in sorted_pages {
-            // Проверяем, что транзакция не завершена
+            // Check that transaction is not completed
             if let Some(transaction) = transactions.get(&page_info.transaction_id) {
                 if transaction.state != TransactionState::Committed {
-                    // Выполняем Undo операцию
+                    // Perform Undo operation
                     self.undo_page_operation(page_info)?;
 
-                    // Обновляем статистику
+                    // Update statistics
                     {
                         let mut stats = self.statistics.lock().unwrap();
                         stats.undo_operations += 1;
@@ -248,91 +248,91 @@ impl RecoveryManager {
         Ok(())
     }
 
-    /// Выполняет Redo операцию для страницы
+    /// Performs Redo operation for page
     fn redo_page_operation(&self, page_info: &RecoveryPageInfo) -> Result<()> {
         match page_info.operation_type {
             LogRecordType::DataInsert => {
-                // Восстанавливаем вставку
+                // Restore insert
                 if let Ok((_, _, _, _new_data)) =
                     serde_json::from_slice::<(u32, u64, Vec<u8>, Vec<u8>)>(&page_info.recovery_data)
                 {
-                    // TODO: Восстановить вставку записи
+                    // TODO: Restore record insert
                 }
             }
 
             LogRecordType::DataUpdate => {
-                // Восстанавливаем обновление
+                // Restore update
                 if let Ok((_, _, _, _new_data)) =
                     serde_json::from_slice::<(u32, u64, Vec<u8>, Vec<u8>)>(&page_info.recovery_data)
                 {
-                    // TODO: Восстановить обновление записи
+                    // TODO: Restore record update
                 }
             }
 
             LogRecordType::DataDelete => {
-                // Восстанавливаем удаление
-                // TODO: Восстановить удаление записи
+                // Restore delete
+                // TODO: Restore record delete
             }
 
             _ => {
-                // Игнорируем другие типы операций
+                // Ignore other operation types
             }
         }
 
         Ok(())
     }
 
-    /// Выполняет Undo операцию для страницы
+    /// Performs Undo operation for page
     fn undo_page_operation(&self, page_info: &RecoveryPageInfo) -> Result<()> {
         match page_info.operation_type {
             LogRecordType::DataInsert => {
-                // Откатываем вставку - удаляем запись
-                // TODO: Удалить запись
+                // Rollback insert - delete record
+                // TODO: Delete record
             }
 
             LogRecordType::DataUpdate => {
-                // Откатываем обновление - восстанавливаем старые данные
+                // Rollback update - restore old data
                 if let Ok((_, _, _old_data, _)) =
                     serde_json::from_slice::<(u32, u64, Vec<u8>, Vec<u8>)>(&page_info.recovery_data)
                 {
-                    // TODO: Восстановить старые данные
+                    // TODO: Restore old data
                 }
             }
 
             LogRecordType::DataDelete => {
-                // Откатываем удаление - восстанавливаем запись
+                // Rollback delete - restore record
                 if let Ok((_, _, _old_data, _)) =
                     serde_json::from_slice::<(u32, u64, Vec<u8>, Vec<u8>)>(&page_info.recovery_data)
                 {
-                    // TODO: Восстановить удаленную запись
+                    // TODO: Restore deleted record
                 }
             }
 
             _ => {
-                // Игнорируем другие типы операций
+                // Ignore other operation types
             }
         }
 
         Ok(())
     }
 
-    /// Создает контрольную точку
+    /// Creates checkpoint
     pub fn create_checkpoint(&self) -> Result<()> {
-        // TODO: Реализовать создание контрольной точки
-        // В текущей реализации WAL не имеет необходимых методов
-        // Нужно добавить методы write_record и truncate_logs_before
+        // TODO: Implement checkpoint creation
+        // Current WAL implementation does not have necessary methods
+        // Need to add write_record and truncate_logs_before methods
 
-        // Временно просто возвращаем успех
+        // Temporarily just return success
         Ok(())
     }
 
-    /// Восстанавливает систему с контрольной точки
+    /// Recovers system from checkpoint
     pub fn recover_from_checkpoint(&self, _checkpoint_lsn: LogSequenceNumber) -> Result<()> {
-        // TODO: Реализовать восстановление с контрольной точки
+        // TODO: Implement recovery from checkpoint
         Ok(())
     }
 
-    /// Получает данные для контрольной точки
+    /// Gets checkpoint data
     fn get_checkpoint_data(&self) -> Result<CheckpointData> {
         let transactions = self.active_transactions.read().unwrap();
         let pages = self.pages_to_recover.read().unwrap();
@@ -341,20 +341,20 @@ impl RecoveryManager {
             timestamp: SystemTime::now(),
             active_transactions: transactions.len(),
             dirty_pages: pages.len(),
-            last_lsn: 0, // TODO: Реализовать получение реального LSN
+            last_lsn: 0, // TODO: Implement getting real LSN
         })
     }
 
-    /// Получает следующий LSN
+    /// Gets next LSN
     fn get_next_lsn(&self) -> Result<LogSequenceNumber> {
-        // TODO: Реализовать получение следующего LSN
+        // TODO: Implement getting next LSN
         Ok(SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64)
     }
 
-    /// Обновляет статистику восстановления
+    /// Updates recovery statistics
     fn update_recovery_statistics(&self) -> Result<()> {
         let transactions = self.active_transactions.read().unwrap();
         let pages = self.pages_to_recover.read().unwrap();
@@ -368,17 +368,17 @@ impl RecoveryManager {
         Ok(())
     }
 
-    /// Получает текущее состояние восстановления
+    /// Gets current recovery state
     pub fn get_state(&self) -> RecoveryState {
         self.state.lock().unwrap().clone()
     }
 
-    /// Получает статистику восстановления
+    /// Gets recovery statistics
     pub fn get_statistics(&self) -> RecoveryStatistics {
         self.statistics.lock().unwrap().clone()
     }
 
-    /// Получает список активных транзакций
+    /// Gets list of active transactions
     pub fn get_active_transactions(&self) -> Vec<RecoveryTransactionInfo> {
         self.active_transactions
             .read()
@@ -388,7 +388,7 @@ impl RecoveryManager {
             .collect()
     }
 
-    /// Получает список страниц для восстановления
+    /// Gets list of pages to recover
     pub fn get_pages_to_recover(&self) -> Vec<RecoveryPageInfo> {
         self.pages_to_recover
             .read()
@@ -399,33 +399,33 @@ impl RecoveryManager {
     }
 }
 
-/// Данные контрольной точки
+/// Checkpoint data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointData {
-    /// Время создания контрольной точки
+    /// Checkpoint creation time
     pub timestamp: SystemTime,
-    /// Количество активных транзакций
+    /// Number of active transactions
     pub active_transactions: usize,
-    /// Количество измененных страниц
+    /// Number of modified pages
     pub dirty_pages: usize,
-    /// Последний LSN
+    /// Last LSN
     pub last_lsn: LogSequenceNumber,
 }
 
-/// Статистика восстановления
+/// Recovery statistics
 #[derive(Debug, Clone)]
 pub struct RecoveryStatistics {
-    /// Общее количество транзакций
+    /// Total number of transactions
     pub total_transactions: usize,
-    /// Общее количество страниц
+    /// Total number of pages
     pub total_pages: usize,
-    /// Количество Redo операций
+    /// Number of Redo operations
     pub redo_operations: u64,
-    /// Количество Undo операций
+    /// Number of Undo operations
     pub undo_operations: u64,
-    /// Время последнего восстановления
+    /// Last recovery time
     pub last_recovery_time: SystemTime,
-    /// Восстановление завершено
+    /// Recovery completed
     pub recovery_completed: bool,
 }
 

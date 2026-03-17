@@ -1,163 +1,163 @@
-//! Константы для rustdb
+//! Constants for rustdb
 
-/// Магическое число для файлов базы данных
-pub const DB_MAGIC: u32 = 0x52535442; // "RSTB" в hex
+/// Magic number for database files
+pub const DB_MAGIC: u32 = 0x52535442; // "RSTB" in hex
 
-/// Версия формата файла
+/// File format version
 pub const DB_VERSION: u32 = 1;
 
-/// Размер заголовка файла БД в байтах
+/// Database file header size in bytes
 pub const DB_HEADER_SIZE: usize = 128;
 
-/// Максимальное количество таблиц в базе данных
+/// Maximum number of tables in the database
 pub const MAX_TABLES: usize = 1000;
 
-/// Максимальное количество колонок в таблице
+/// Maximum number of columns in a table
 pub const MAX_COLUMNS: usize = 100;
 
-/// Максимальная длина имени таблицы
+/// Maximum table name length
 pub const MAX_TABLE_NAME_LENGTH: usize = 64;
 
-/// Максимальная длина имени колонки
+/// Maximum column name length
 pub const MAX_COLUMN_NAME_LENGTH: usize = 64;
 
-/// Максимальная длина имени индекса
+/// Maximum index name length
 pub const MAX_INDEX_NAME_LENGTH: usize = 64;
 
-/// Максимальный размер строки VARCHAR
+/// Maximum VARCHAR string size
 pub const MAX_VARCHAR_LENGTH: usize = 65535;
 
-/// Максимальный размер TEXT поля
+/// Maximum TEXT field size
 pub const MAX_TEXT_LENGTH: usize = 4294967295; // 2^32 - 1
 
-/// Максимальный размер BLOB поля
+/// Maximum BLOB field size
 pub const MAX_BLOB_LENGTH: usize = 4294967295; // 2^32 - 1
 
-/// Размер буфера по умолчанию
+/// Default buffer size
 pub const DEFAULT_BUFFER_SIZE: usize = 8192;
 
-/// Максимальный размер буфера
+/// Maximum buffer size
 pub const MAX_BUFFER_SIZE: usize = 1048576; // 1MB
 
-/// Таймаут блокировки по умолчанию (в секундах)
+/// Default lock timeout (in seconds)
 pub const DEFAULT_LOCK_TIMEOUT: u64 = 30;
 
-/// Максимальный таймаут блокировки (в секундах)
+/// Maximum lock timeout (in seconds)
 pub const MAX_LOCK_TIMEOUT: u64 = 300;
 
-/// Таймаут транзакции по умолчанию (в секундах)
+/// Default transaction timeout (in seconds)
 pub const DEFAULT_TRANSACTION_TIMEOUT: u64 = 60;
 
-/// Максимальный таймаут транзакции (в секундах)
+/// Maximum transaction timeout (in seconds)
 pub const MAX_TRANSACTION_TIMEOUT: u64 = 3600;
 
-/// Размер лог-файла по умолчанию (в байтах)
+/// Default log file size (in bytes)
 pub const DEFAULT_LOG_FILE_SIZE: usize = 16777216; // 16MB
 
-/// Максимальный размер лог-файла (в байтах)
+/// Maximum log file size (in bytes)
 pub const MAX_LOG_FILE_SIZE: usize = 1073741824; // 1GB
 
-/// Количество лог-файлов по умолчанию
+/// Default number of log files
 pub const DEFAULT_LOG_FILES_COUNT: usize = 10;
 
-/// Максимальное количество лог-файлов
+/// Maximum number of log files
 pub const MAX_LOG_FILES_COUNT: usize = 100;
 
-/// Размер страницы по умолчанию
+/// Default page size
 pub const DEFAULT_PAGE_SIZE: usize = 4096;
 
-/// Поддерживаемые размеры страниц
+/// Supported page sizes
 pub const SUPPORTED_PAGE_SIZES: &[usize] = &[1024, 2048, 4096, 8192, 16384, 32768, 65536];
 
-/// Минимальный размер страницы
+/// Minimum page size
 pub const MIN_PAGE_SIZE: usize = 1024;
 
-/// Максимальный размер страницы
+/// Maximum page size
 pub const MAX_PAGE_SIZE: usize = 65536;
 
-/// Размер заголовка страницы (в процентах от размера страницы)
+/// Page header size (as percentage of page size)
 pub const PAGE_HEADER_PERCENTAGE: f64 = 0.1;
 
-/// Минимальное количество записей на странице
+/// Minimum number of records per page
 pub const MIN_RECORDS_PER_PAGE: usize = 2;
 
-/// Максимальное количество записей на странице
+/// Maximum number of records per page
 pub const MAX_RECORDS_PER_PAGE: usize = 1000;
 
-/// Порог заполнения страницы для разделения (в процентах)
+/// Page fill threshold for splitting (as percentage)
 pub const PAGE_SPLIT_THRESHOLD: f64 = 0.9;
 
-/// Порог заполнения страницы для объединения (в процентах)
+/// Page fill threshold for merging (as percentage)
 pub const PAGE_MERGE_THRESHOLD: f64 = 0.3;
 
-/// Размер ключа B+ дерева по умолчанию
+/// Default B+ tree key size
 pub const DEFAULT_BTREE_KEY_SIZE: usize = 256;
 
-/// Максимальный размер ключа B+ дерева
+/// Maximum B+ tree key size
 pub const MAX_BTREE_KEY_SIZE: usize = 1024;
 
-/// Порядок B+ дерева по умолчанию
+/// Default B+ tree order
 pub const DEFAULT_BTREE_ORDER: usize = 50;
 
-/// Минимальный порядок B+ дерева
+/// Minimum B+ tree order
 pub const MIN_BTREE_ORDER: usize = 3;
 
-/// Максимальный порядок B+ дерева
+/// Maximum B+ tree order
 pub const MAX_BTREE_ORDER: usize = 1000;
 
-/// Размер хеш-таблицы по умолчанию
+/// Default hash table size
 pub const DEFAULT_HASH_TABLE_SIZE: usize = 1024;
 
-/// Максимальный размер хеш-таблицы
+/// Maximum hash table size
 pub const MAX_HASH_TABLE_SIZE: usize = 1048576; // 1M
 
-/// Коэффициент загрузки хеш-таблицы по умолчанию
+/// Default hash table load factor
 pub const DEFAULT_HASH_LOAD_FACTOR: f64 = 0.75;
 
-/// Максимальный коэффициент загрузки хеш-таблицы
+/// Maximum hash table load factor
 pub const MAX_HASH_LOAD_FACTOR: f64 = 0.95;
 
-/// Минимальный коэффициент загрузки хеш-таблицы
+/// Minimum hash table load factor
 pub const MIN_HASH_LOAD_FACTOR: f64 = 0.25;
 
-/// Размер пула соединений по умолчанию
+/// Default connection pool size
 pub const DEFAULT_CONNECTION_POOL_SIZE: usize = 10;
 
-/// Максимальный размер пула соединений
+/// Maximum connection pool size
 pub const MAX_CONNECTION_POOL_SIZE: usize = 1000;
 
-/// Таймаут соединения по умолчанию (в секундах)
+/// Default connection timeout (in seconds)
 pub const DEFAULT_CONNECTION_TIMEOUT: u64 = 30;
 
-/// Максимальный таймаут соединения (в секундах)
+/// Maximum connection timeout (in seconds)
 pub const MAX_CONNECTION_TIMEOUT: u64 = 300;
 
-/// Размер буфера сетевого I/O по умолчанию
+/// Default network I/O buffer size
 pub const DEFAULT_NETWORK_BUFFER_SIZE: usize = 8192;
 
-/// Максимальный размер буфера сетевого I/O
+/// Maximum network I/O buffer size
 pub const MAX_NETWORK_BUFFER_SIZE: usize = 1048576; // 1MB
 
-/// Количество рабочих потоков по умолчанию
+/// Default number of worker threads
 pub const DEFAULT_WORKER_THREADS: usize = 4;
 
-/// Максимальное количество рабочих потоков
+/// Maximum number of worker threads
 pub const MAX_WORKER_THREADS: usize = 64;
 
-/// Размер стека потока по умолчанию (в байтах)
+/// Default thread stack size (in bytes)
 pub const DEFAULT_THREAD_STACK_SIZE: usize = 2097152; // 2MB
 
-/// Максимальный размер стека потока (в байтах)
+/// Maximum thread stack size (in bytes)
 pub const MAX_THREAD_STACK_SIZE: usize = 67108864; // 64MB
 
-/// Таймаут очистки по умолчанию (в секундах)
-pub const DEFAULT_CLEANUP_TIMEOUT: u64 = 300; // 5 минут
+/// Default cleanup timeout (in seconds)
+pub const DEFAULT_CLEANUP_TIMEOUT: u64 = 300; // 5 minutes
 
-/// Максимальный таймаут очистки (в секундах)
-pub const MAX_CLEANUP_TIMEOUT: u64 = 3600; // 1 час
+/// Maximum cleanup timeout (in seconds)
+pub const MAX_CLEANUP_TIMEOUT: u64 = 3600; // 1 hour
 
-/// Интервал очистки по умолчанию (в секундах)
-pub const DEFAULT_CLEANUP_INTERVAL: u64 = 60; // 1 минута
+/// Default cleanup interval (in seconds)
+pub const DEFAULT_CLEANUP_INTERVAL: u64 = 60; // 1 minute
 
-/// Максимальный интервал очистки (в секундах)
-pub const MAX_CLEANUP_INTERVAL: u64 = 3600; // 1 час
+/// Maximum cleanup interval (in seconds)
+pub const MAX_CLEANUP_INTERVAL: u64 = 3600; // 1 hour

@@ -1,4 +1,4 @@
-//! Тесты для менеджера транзакций rustdb
+//! Tests for the RustDB transaction manager
 
 use crate::common::Result;
 use crate::core::{
@@ -27,30 +27,30 @@ fn test_transaction_manager_creation() {
 fn test_transaction_lifecycle() {
     let tm = TransactionManager::new().unwrap();
 
-    // Начинаем транзакцию
+    // Start a transaction
     let txn_id = tm
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
 
-    // Проверяем, что транзакция создалась
+    // Verify the transaction was created
     let info = tm.get_transaction_info(txn_id).unwrap().unwrap();
     assert_eq!(info.id, txn_id);
     assert_eq!(info.state, TransactionState::Active);
     assert_eq!(info.isolation_level, IsolationLevel::ReadCommitted);
     assert!(!info.read_only);
 
-    // Проверяем статистику
+    // Check statistics
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.total_transactions, 1);
     assert_eq!(stats.active_transactions, 1);
 
-    // Фиксируем транзакцию
+    // Commit the transaction
     tm.commit_transaction(txn_id).unwrap();
 
-    // Проверяем, что транзакция удалена из активных
+    // Ensure the transaction is removed from the active set
     assert!(tm.get_transaction_info(txn_id).unwrap().is_none());
 
-    // Проверяем статистику
+    // Check statistics
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.total_transactions, 1);
     assert_eq!(stats.active_transactions, 0);
@@ -65,10 +65,10 @@ fn test_transaction_abort() {
         .begin_transaction(IsolationLevel::Serializable, true)
         .unwrap();
 
-    // Отменяем транзакцию
+    // Abort the transaction
     tm.abort_transaction(txn_id).unwrap();
 
-    // Проверяем статистику
+    // Check statistics
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.total_transactions, 1);
     assert_eq!(stats.active_transactions, 0);
@@ -80,7 +80,7 @@ fn test_multiple_transactions() {
     let tm = TransactionManager::new().unwrap();
     let mut txn_ids = Vec::new();
 
-    // Создаем несколько транзакций
+    // Create multiple transactions
     for i in 0..5 {
         let read_only = i % 2 == 0;
         let isolation = if i % 2 == 0 {
@@ -92,11 +92,11 @@ fn test_multiple_transactions() {
         txn_ids.push(txn_id);
     }
 
-    // Проверяем, что все активны
+    // Ensure they are all active
     let active_txns = tm.get_active_transactions().unwrap();
     assert_eq!(active_txns.len(), 5);
 
-    // Фиксируем четные, отменяем нечетные
+    // Commit even-indexed transactions and abort odd ones
     for (i, &txn_id) in txn_ids.iter().enumerate() {
         if i % 2 == 0 {
             tm.commit_transaction(txn_id).unwrap();
@@ -105,7 +105,7 @@ fn test_multiple_transactions() {
         }
     }
 
-    // Проверяем статистику
+    // Check statistics
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.total_transactions, 5);
     assert_eq!(stats.active_transactions, 0);
@@ -121,7 +121,7 @@ fn test_transaction_limit() {
     };
     let tm = TransactionManager::with_config(config).unwrap();
 
-    // Создаем максимальное количество транзакций
+    // Create the maximum number of transactions
     let txn1 = tm
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
@@ -129,19 +129,19 @@ fn test_transaction_limit() {
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
 
-    // Попытка создать третью должна провалиться
+    // Attempting to create a third should fail
     let result = tm.begin_transaction(IsolationLevel::ReadCommitted, false);
     assert!(result.is_err());
 
-    // Освобождаем одну транзакцию
+    // Release one transaction
     tm.commit_transaction(txn1).unwrap();
 
-    // Теперь можем создать новую
+    // Now we can create a new one
     let txn3 = tm
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
 
-    // Очищаем
+    // Clean up
     tm.abort_transaction(txn2).unwrap();
     tm.commit_transaction(txn3).unwrap();
 }
@@ -153,7 +153,7 @@ fn test_lock_operations() {
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
 
-    // Получаем разделяемую блокировку
+    // Acquire a shared lock
     let resource = "table_users".to_string();
     tm.acquire_lock(
         txn_id,
@@ -163,14 +163,14 @@ fn test_lock_operations() {
     )
     .unwrap();
 
-    // Проверяем, что ресурс заблокирован
+    // Ensure the resource is locked
     let info = tm.get_transaction_info(txn_id).unwrap().unwrap();
     assert!(info.locked_resources.contains(&resource));
 
-    // Освобождаем блокировку
+    // Release the lock
     tm.release_lock(txn_id, resource.clone()).unwrap();
 
-    // Проверяем, что ресурс освобожден
+    // Ensure the resource is released
     let info = tm.get_transaction_info(txn_id).unwrap().unwrap();
     assert!(!info.locked_resources.contains(&resource));
 
@@ -190,7 +190,7 @@ fn test_multiple_locks() {
         "index_user_email".to_string(),
     ];
 
-    // Получаем блокировки на все ресурсы
+    // Acquire locks on all resources
     for resource in &resources {
         tm.acquire_lock(
             txn_id,
@@ -201,17 +201,17 @@ fn test_multiple_locks() {
         .unwrap();
     }
 
-    // Проверяем, что все ресурсы заблокированы
+    // Ensure all resources are locked
     let info = tm.get_transaction_info(txn_id).unwrap().unwrap();
     assert_eq!(info.locked_resources.len(), 3);
     for resource in &resources {
         assert!(info.locked_resources.contains(resource));
     }
 
-    // При фиксации все блокировки должны освободиться автоматически
+    // Committing should automatically release all locks
     tm.commit_transaction(txn_id).unwrap();
 
-    // Проверяем статистику блокировок
+    // Check lock statistics
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.lock_operations, 3);
     assert_eq!(stats.unlock_operations, 3);
@@ -224,12 +224,12 @@ fn test_transaction_states() {
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
 
-    // Изначально активна
+    // Initially active
     let info = tm.get_transaction_info(txn_id).unwrap().unwrap();
     assert_eq!(info.state, TransactionState::Active);
 
-    // Попытка зафиксировать неактивную транзакцию должна провалиться
-    // (но у нас нет способа перевести в другое состояние извне)
+    // Attempting to commit an inactive transaction should fail
+    // (though we have no way to change the state externally)
 
     tm.commit_transaction(txn_id).unwrap();
 }
@@ -239,12 +239,12 @@ fn test_invalid_operations() {
     let tm = TransactionManager::new().unwrap();
     let invalid_txn_id = TransactionId::new(999999);
 
-    // Операции с несуществующей транзакцией
+    // Operations with a nonexistent transaction
     assert!(tm.commit_transaction(invalid_txn_id).is_err());
     assert!(tm.abort_transaction(invalid_txn_id).is_err());
     assert!(tm.get_transaction_info(invalid_txn_id).unwrap().is_none());
 
-    // Попытка получить блокировку для несуществующей транзакции
+    // Attempt to acquire a lock for a nonexistent transaction
     let result = tm.acquire_lock(
         invalid_txn_id,
         "resource".to_string(),
@@ -261,12 +261,12 @@ fn test_transaction_duration() {
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
 
-    // Небольшая задержка
+    // Small delay
     thread::sleep(Duration::from_millis(20));
 
     let info = tm.get_transaction_info(txn_id).unwrap().unwrap();
     let duration = info.duration().unwrap();
-    assert!(duration.as_millis() >= 1); // Минимальное требование - просто проверяем, что время идет
+    assert!(duration.as_millis() >= 1); // Minimal requirement: just confirm time advances
 
     tm.commit_transaction(txn_id).unwrap();
 }
@@ -276,7 +276,7 @@ fn test_concurrent_transactions() {
     let tm = Arc::new(TransactionManager::new().unwrap());
     let mut handles = vec![];
 
-    // Запускаем несколько потоков с транзакциями
+    // Spawn several threads with transactions
     for i in 0..4 {
         let tm_clone = Arc::clone(&tm);
         let handle = thread::spawn(move || {
@@ -284,7 +284,7 @@ fn test_concurrent_transactions() {
                 .begin_transaction(IsolationLevel::ReadCommitted, false)
                 .unwrap();
 
-            // Получаем блокировку на уникальный ресурс
+            // Acquire a lock on a unique resource
             let resource = format!("resource_{}", i);
             tm_clone
                 .acquire_lock(
@@ -295,7 +295,7 @@ fn test_concurrent_transactions() {
                 )
                 .unwrap();
 
-            // Небольшая задержка
+            // Small delay
             thread::sleep(Duration::from_millis(50));
 
             tm_clone.commit_transaction(txn_id).unwrap();
@@ -303,12 +303,12 @@ fn test_concurrent_transactions() {
         handles.push(handle);
     }
 
-    // Ждем завершения всех потоков
+    // Wait for all threads to finish
     for handle in handles {
         handle.join().unwrap();
     }
 
-    // Проверяем финальную статистику
+    // Check final statistics
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.total_transactions, 4);
     assert_eq!(stats.active_transactions, 0);
@@ -340,7 +340,7 @@ fn test_isolation_levels() {
 fn test_read_only_transactions() {
     let tm = TransactionManager::new().unwrap();
 
-    // Транзакция только для чтения
+    // Read-only transaction
     let txn_id = tm
         .begin_transaction(IsolationLevel::ReadCommitted, true)
         .unwrap();
@@ -349,7 +349,7 @@ fn test_read_only_transactions() {
 
     tm.commit_transaction(txn_id).unwrap();
 
-    // Обычная транзакция
+    // Regular transaction
     let txn_id = tm
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
@@ -363,7 +363,7 @@ fn test_read_only_transactions() {
 fn test_transaction_manager_statistics() {
     let tm = TransactionManager::new().unwrap();
 
-    // Начальная статистика
+    // Initial statistics
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.total_transactions, 0);
     assert_eq!(stats.active_transactions, 0);
@@ -372,7 +372,7 @@ fn test_transaction_manager_statistics() {
     assert_eq!(stats.lock_operations, 0);
     assert_eq!(stats.unlock_operations, 0);
 
-    // Выполняем операции
+    // Execute operations
     let txn1 = tm
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
@@ -398,7 +398,7 @@ fn test_transaction_manager_statistics() {
     tm.commit_transaction(txn1).unwrap();
     tm.abort_transaction(txn2).unwrap();
 
-    // Проверяем финальную статистику
+    // Check final statistics
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.total_transactions, 2);
     assert_eq!(stats.active_transactions, 0);

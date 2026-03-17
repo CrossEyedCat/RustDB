@@ -1,4 +1,4 @@
-//! Ядро базы данных rustdb
+//! Database core for rustdb
 
 pub mod acid_manager;
 pub mod advanced_lock_manager;
@@ -10,7 +10,7 @@ pub mod recovery;
 pub mod recovery_manager;
 pub mod transaction;
 
-// Переэкспортируем основные типы
+// Re-export main types
 pub use acid_manager::{AcidConfig, AcidManager, AcidStatistics, VersionInfo};
 pub use advanced_lock_manager::{
     AdvancedLockConfig, AdvancedLockInfo, AdvancedLockManager, AdvancedLockStatistics,

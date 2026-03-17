@@ -1,4 +1,4 @@
-//! Тесты для основного семантического анализатора
+//! Tests for the primary semantic analyzer
 
 #![allow(clippy::absurd_extreme_comparisons)]
 
@@ -14,7 +14,7 @@ fn test_semantic_analyzer_creation() -> Result<()> {
 
     assert!(settings.check_object_existence);
     assert!(settings.check_types);
-    assert!(!settings.check_access_rights); // По умолчанию отключено
+    assert!(!settings.check_access_rights); // Disabled by default
     assert!(settings.enable_metadata_cache);
 
     Ok(())
@@ -54,8 +54,8 @@ fn test_analyze_simple_select() -> Result<()> {
 
     let result = analyzer.analyze(&statement, &context)?;
 
-    // В тестовом режиме без реальной схемы, результат должен быть успешным
-    // так как проверщик объектов возвращает заглушки
+    // In test mode without a real schema the analysis should succeed
+    // because the object checker returns placeholders
     assert!(result.is_valid);
     assert!(result.statistics.objects_checked > 0);
 
@@ -107,8 +107,8 @@ fn test_analyze_update_statement() -> Result<()> {
 
     let result = analyzer.analyze(&statement, &context)?;
 
-    // В упрощенной реализации семантический анализатор может не проверять существование таблиц
-    // поэтому результат может быть невалидным, но это нормально для тестов
+    // Simplified analyzer may skip table existence checks,
+    // so results may be marked invalid—acceptable for tests
     assert!(result.statistics.objects_checked >= 0);
     assert!(result.statistics.type_checks >= 0);
 
@@ -125,8 +125,8 @@ fn test_analyze_delete_statement() -> Result<()> {
 
     let result = analyzer.analyze(&statement, &context)?;
 
-    // В упрощенной реализации семантический анализатор может не проверять существование таблиц
-    // поэтому результат может быть невалидным, но это нормально для тестов
+    // Simplified analyzer may skip table existence checks,
+    // so results may be marked invalid—acceptable for tests
     assert!(result.statistics.objects_checked >= 0);
     assert!(result.statistics.type_checks >= 0);
 
@@ -172,8 +172,8 @@ fn test_analyze_multiple_statements() -> Result<()> {
 
     assert_eq!(results.len(), 3);
     for result in results {
-        // В упрощенной реализации семантический анализатор может не проверять существование таблиц
-        // поэтому результат может быть невалидным, но это нормально для тестов
+        // Simplified analyzer may skip table existence checks,
+        // so results may be marked invalid—acceptable for tests
         assert!(result.statistics.objects_checked >= 0);
     }
 
@@ -199,7 +199,7 @@ fn test_analyzer_with_disabled_checks() -> Result<()> {
 
     let result = analyzer.analyze(&statement, &context)?;
 
-    // Когда все проверки отключены, результат должен быть успешным
+    // When all validations are disabled the analysis must succeed
     assert!(result.is_valid);
     assert_eq!(result.errors.len(), 0);
 
@@ -210,12 +210,12 @@ fn test_analyzer_with_disabled_checks() -> Result<()> {
 fn test_analyzer_cache_statistics() -> Result<()> {
     let mut analyzer = SemanticAnalyzer::default();
 
-    // Изначально кэш пуст
+    // Cache is empty initially
     let (hits, misses) = analyzer.cache_statistics();
     assert_eq!(hits, 0);
     assert_eq!(misses, 0);
 
-    // Выполняем несколько анализов
+    // Perform repeated analyses
     let mut parser = SqlParser::new("SELECT * FROM users")?;
     let statement = parser.parse()?;
     let context = AnalysisContext::default();
@@ -224,9 +224,9 @@ fn test_analyzer_cache_statistics() -> Result<()> {
         let _result = analyzer.analyze(&statement, &context)?;
     }
 
-    // Проверяем, что статистика обновилась
+    // Ensure cache statistics changed
     let (hits_after, misses_after) = analyzer.cache_statistics();
-    // В зависимости от реализации кэширования, могут быть попадания или промахи
+    // Hits/misses may vary depending on cache implementation
     assert!(hits_after >= 0);
     assert!(misses_after >= 0);
 
@@ -237,10 +237,10 @@ fn test_analyzer_cache_statistics() -> Result<()> {
 fn test_analyzer_settings_update() -> Result<()> {
     let mut analyzer = SemanticAnalyzer::default();
 
-    // Изначальные настройки
+    // Initial settings
     assert!(analyzer.settings().check_object_existence);
 
-    // Обновляем настройки
+    // Update settings
     let new_settings = SemanticAnalyzerSettings {
         check_object_existence: false,
         check_types: true,
@@ -252,7 +252,7 @@ fn test_analyzer_settings_update() -> Result<()> {
 
     analyzer.update_settings(new_settings);
 
-    // Проверяем обновленные настройки
+    // Verify updated settings
     let updated_settings = analyzer.settings();
     assert!(!updated_settings.check_object_existence);
     assert!(updated_settings.check_access_rights);
@@ -266,20 +266,19 @@ fn test_analyzer_settings_update() -> Result<()> {
 fn test_analyzer_clear_cache() -> Result<()> {
     let mut analyzer = SemanticAnalyzer::default();
 
-    // Выполняем анализ для заполнения кэша
+    // Run an analysis to populate cache
     let mut parser = SqlParser::new("SELECT * FROM users")?;
     let statement = parser.parse()?;
     let context = AnalysisContext::default();
 
     let _result = analyzer.analyze(&statement, &context)?;
 
-    // Очищаем кэш
+    // Clear cache
     analyzer.clear_cache();
 
-    // Проверяем, что кэш очищен
+    // Confirm cache cleared
     let (hits, misses) = analyzer.cache_statistics();
-    // После очистки статистика может быть сброшена или сохранена - зависит от реализации
-    // Главное, что операция не вызывает ошибок
+    // Stats may be reset or retained after clearing—implementation-dependent but must not error
     assert!(hits >= 0);
     assert!(misses >= 0);
 
@@ -317,7 +316,7 @@ fn test_transaction_statements_analysis() -> Result<()> {
 
         let result = analyzer.analyze(&statement, &context)?;
 
-        // Транзакционные команды не требуют семантической проверки
+        // Transactional commands do not require semantic validation
         assert!(result.statistics.objects_checked >= 0);
         assert!(result.statistics.type_checks >= 0);
     }
@@ -345,7 +344,7 @@ fn test_complex_select_analysis() -> Result<()> {
 
     let result = analyzer.analyze(&statement, &context)?;
 
-    // Сложный запрос должен проходить базовую семантическую проверку
+    // Complex query should pass basic semantic checks
     assert!(result.is_valid);
     assert!(result.statistics.objects_checked > 0);
     assert!(result.statistics.type_checks > 0);

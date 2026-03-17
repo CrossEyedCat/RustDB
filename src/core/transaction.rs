@@ -1,8 +1,8 @@
-//! Менеджер транзакций для rustdb
+//! Transaction manager for rustdb
 //!
-//! Этот модуль реализует полноценную систему управления транзакциями
-//! с поддержкой ACID свойств, двухфазного блокирования (2PL) и
-//! обнаружения дедлоков.
+//! This module implements a full transaction management system
+//! with ACID properties support, two-phase locking (2PL) and
+//! deadlock detection.
 
 use crate::common::{Error, Result};
 use crate::core::lock::{LockManager, LockMode, LockType};
@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{atomic::AtomicU64, Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
-/// Уникальный идентификатор транзакции
+/// Unique transaction identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TransactionId(pub u64);
 
@@ -32,52 +32,52 @@ impl std::fmt::Display for TransactionId {
     }
 }
 
-/// Состояния транзакции в соответствии с моделью состояний СУБД
+/// Transaction states according to DBMS state model
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransactionState {
-    /// Транзакция активна и выполняет операции
+    /// Transaction is active and performing operations
     Active,
-    /// Транзакция завершила все операции, но еще не зафиксирована
+    /// Transaction completed all operations but not yet committed
     PartiallyCommitted,
-    /// Транзакция успешно зафиксирована
+    /// Transaction successfully committed
     Committed,
-    /// Транзакция была отменена
+    /// Transaction was aborted
     Aborted,
-    /// Транзакция находится в процессе отката
+    /// Transaction is in rollback process
     Aborting,
 }
 
-/// Режим изоляции транзакции
+/// Transaction isolation level
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IsolationLevel {
-    /// Чтение незафиксированных данных
+    /// Read uncommitted data
     ReadUncommitted,
-    /// Чтение зафиксированных данных
+    /// Read committed data
     ReadCommitted,
-    /// Повторяемое чтение
+    /// Repeatable read
     RepeatableRead,
-    /// Сериализуемость
+    /// Serializable
     Serializable,
 }
 
-/// Информация о транзакции
+/// Transaction information
 #[derive(Debug, Clone)]
 pub struct TransactionInfo {
-    /// Идентификатор транзакции
+    /// Transaction identifier
     pub id: TransactionId,
-    /// Текущее состояние
+    /// Current state
     pub state: TransactionState,
-    /// Время начала транзакции
+    /// Transaction start time
     pub start_time: SystemTime,
-    /// Время последней активности
+    /// Last activity time
     pub last_activity: SystemTime,
-    /// Уровень изоляции
+    /// Isolation level
     pub isolation_level: IsolationLevel,
-    /// Список заблокированных ресурсов
+    /// List of locked resources
     pub locked_resources: HashSet<String>,
-    /// Список ожидаемых блокировок
+    /// List of waiting locks
     pub waiting_for: Option<String>,
-    /// Флаг только для чтения
+    /// Read-only flag
     pub read_only: bool,
 }
 
@@ -107,39 +107,39 @@ impl TransactionInfo {
     }
 }
 
-/// Статистика менеджера транзакций
+/// Transaction manager statistics
 #[derive(Debug, Clone, Default)]
 pub struct TransactionManagerStats {
-    /// Общее количество запущенных транзакций
+    /// Total number of started transactions
     pub total_transactions: u64,
-    /// Количество активных транзакций
+    /// Number of active transactions
     pub active_transactions: u64,
-    /// Количество зафиксированных транзакций
+    /// Number of committed transactions
     pub committed_transactions: u64,
-    /// Количество отмененных транзакций
+    /// Number of aborted transactions
     pub aborted_transactions: u64,
-    /// Количество обнаруженных дедлоков
+    /// Number of detected deadlocks
     pub deadlocks_detected: u64,
-    /// Среднее время выполнения транзакции (в миллисекундах)
+    /// Average transaction execution time (in milliseconds)
     pub average_transaction_time: f64,
-    /// Количество операций блокирования
+    /// Number of lock operations
     pub lock_operations: u64,
-    /// Количество операций разблокирования
+    /// Number of unlock operations
     pub unlock_operations: u64,
 }
 
-/// Конфигурация менеджера транзакций
+/// Transaction manager configuration
 #[derive(Debug, Clone)]
 pub struct TransactionManagerConfig {
-    /// Максимальное количество одновременных транзакций
+    /// Maximum number of concurrent transactions
     pub max_concurrent_transactions: usize,
-    /// Таймаут ожидания блокировки (в миллисекундах)
+    /// Lock timeout (in milliseconds)
     pub lock_timeout_ms: u64,
-    /// Интервал проверки дедлоков (в миллисекундах)
+    /// Deadlock detection interval (in milliseconds)
     pub deadlock_detection_interval_ms: u64,
-    /// Максимальное время жизни неактивной транзакции (в секундах)
+    /// Maximum idle transaction lifetime (in seconds)
     pub max_idle_time_seconds: u64,
-    /// Включить автоматическое обнаружение дедлоков
+    /// Enable automatic deadlock detection
     pub enable_deadlock_detection: bool,
 }
 
@@ -147,40 +147,40 @@ impl Default for TransactionManagerConfig {
     fn default() -> Self {
         Self {
             max_concurrent_transactions: 1000,
-            lock_timeout_ms: 30000,               // 30 секунд
-            deadlock_detection_interval_ms: 1000, // 1 секунда
-            max_idle_time_seconds: 3600,          // 1 час
+            lock_timeout_ms: 30000,               // 30 seconds
+            deadlock_detection_interval_ms: 1000, // 1 second
+            max_idle_time_seconds: 3600,          // 1 hour
             enable_deadlock_detection: true,
         }
     }
 }
 
-/// Менеджер транзакций
+/// Transaction manager
 ///
-/// Отвечает за управление жизненным циклом транзакций, координацию
-/// с менеджером блокировок и обеспечение ACID свойств.
+/// Responsible for managing transaction lifecycle, coordination
+/// with lock manager and ensuring ACID properties.
 pub struct TransactionManager {
-    /// Конфигурация менеджера
+    /// Manager configuration
     config: TransactionManagerConfig,
-    /// Счетчик для генерации уникальных ID транзакций
+    /// Counter for generating unique transaction IDs
     next_transaction_id: AtomicU64,
-    /// Активные транзакции
+    /// Active transactions
     active_transactions: Arc<RwLock<HashMap<TransactionId, TransactionInfo>>>,
-    /// Менеджер блокировок
+    /// Lock manager
     lock_manager: Arc<LockManager>,
-    /// Write-Ahead Log для логирования операций
+    /// Write-Ahead Log for operation logging
     wal: Option<Arc<Mutex<WriteAheadLog>>>,
-    /// Статистика
+    /// Statistics
     stats: Arc<Mutex<TransactionManagerStats>>,
 }
 
 impl TransactionManager {
-    /// Создает новый менеджер транзакций с конфигурацией по умолчанию
+    /// Creates a new transaction manager with default configuration
     pub fn new() -> Result<Self> {
         Self::with_config(TransactionManagerConfig::default())
     }
 
-    /// Создает новый менеджер транзакций с заданной конфигурацией
+    /// Creates a new transaction manager with specified configuration
     pub fn with_config(config: TransactionManagerConfig) -> Result<Self> {
         let lock_manager = Arc::new(LockManager::new()?);
 
@@ -194,17 +194,17 @@ impl TransactionManager {
         })
     }
 
-    /// Устанавливает Write-Ahead Log
+    /// Sets Write-Ahead Log
     pub fn set_wal(&mut self, wal: Arc<Mutex<WriteAheadLog>>) {
         self.wal = Some(wal);
     }
 
-    /// Получает конфигурацию менеджера
+    /// Gets manager configuration
     pub fn get_config(&self) -> &TransactionManagerConfig {
         &self.config
     }
 
-    /// Получает статистику менеджера транзакций
+    /// Gets transaction manager statistics
     pub fn get_statistics(&self) -> Result<TransactionManagerStats> {
         let stats = self
             .stats
@@ -213,13 +213,13 @@ impl TransactionManager {
         Ok(stats.clone())
     }
 
-    /// Начинает новую транзакцию
+    /// Begins a new transaction
     pub fn begin_transaction(
         &self,
         isolation_level: IsolationLevel,
         read_only: bool,
     ) -> Result<TransactionId> {
-        // Проверяем лимит одновременных транзакций
+        // Check concurrent transaction limit
         {
             let active = self.active_transactions.read().map_err(|_| {
                 Error::internal("Failed to acquire read lock on active transactions".to_string())
@@ -232,16 +232,16 @@ impl TransactionManager {
             }
         }
 
-        // Генерируем новый ID
+        // Generate new ID
         let transaction_id = TransactionId(
             self.next_transaction_id
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst),
         );
 
-        // Создаем информацию о транзакции
+        // Create transaction information
         let transaction_info = TransactionInfo::new(transaction_id, isolation_level, read_only);
 
-        // Добавляем в активные транзакции
+        // Add to active transactions
         {
             let mut active = self.active_transactions.write().map_err(|_| {
                 Error::internal("Failed to acquire write lock on active transactions".to_string())
@@ -249,7 +249,7 @@ impl TransactionManager {
             active.insert(transaction_id, transaction_info);
         }
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self
                 .stats
@@ -262,9 +262,9 @@ impl TransactionManager {
         Ok(transaction_id)
     }
 
-    /// Фиксирует транзакцию
+    /// Commits transaction
     pub fn commit_transaction(&self, transaction_id: TransactionId) -> Result<()> {
-        // Получаем информацию о транзакции
+        // Get transaction information
         let transaction_info = {
             let active = self.active_transactions.read().map_err(|_| {
                 Error::internal("Failed to acquire read lock on active transactions".to_string())
@@ -275,7 +275,7 @@ impl TransactionManager {
             })?
         };
 
-        // Проверяем состояние транзакции
+        // Check transaction state
         if transaction_info.state != TransactionState::Active {
             return Err(Error::TransactionError(format!(
                 "Cannot commit transaction {} in state {:?}",
@@ -283,13 +283,13 @@ impl TransactionManager {
             )));
         }
 
-        // Переводим в состояние PartiallyCommitted
+        // Transition to PartiallyCommitted state
         self.update_transaction_state(transaction_id, TransactionState::PartiallyCommitted)?;
 
-        // Освобождаем все блокировки (фаза сокращения в 2PL)
+        // Release all locks (shrinking phase in 2PL)
         self.release_all_locks(transaction_id)?;
 
-        // Переводим в состояние Committed и удаляем из активных
+        // Transition to Committed state and remove from active
         {
             let mut active = self.active_transactions.write().map_err(|_| {
                 Error::internal("Failed to acquire write lock on active transactions".to_string())
@@ -301,7 +301,7 @@ impl TransactionManager {
             }
         }
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self
                 .stats
@@ -314,9 +314,9 @@ impl TransactionManager {
         Ok(())
     }
 
-    /// Отменяет транзакцию
+    /// Aborts transaction
     pub fn abort_transaction(&self, transaction_id: TransactionId) -> Result<()> {
-        // Получаем информацию о транзакции
+        // Get transaction information
         let _transaction_info = {
             let active = self.active_transactions.read().map_err(|_| {
                 Error::internal("Failed to acquire read lock on active transactions".to_string())
@@ -327,13 +327,13 @@ impl TransactionManager {
             })?
         };
 
-        // Переводим в состояние Aborting
+        // Transition to Aborting state
         self.update_transaction_state(transaction_id, TransactionState::Aborting)?;
 
-        // Освобождаем все блокировки
+        // Release all locks
         self.release_all_locks(transaction_id)?;
 
-        // Переводим в состояние Aborted и удаляем из активных
+        // Transition to Aborted state and remove from active
         {
             let mut active = self.active_transactions.write().map_err(|_| {
                 Error::internal("Failed to acquire write lock on active transactions".to_string())
@@ -345,7 +345,7 @@ impl TransactionManager {
             }
         }
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self
                 .stats
@@ -358,7 +358,7 @@ impl TransactionManager {
         Ok(())
     }
 
-    /// Получает информацию о транзакции
+    /// Gets transaction information
     pub fn get_transaction_info(
         &self,
         transaction_id: TransactionId,
@@ -370,7 +370,7 @@ impl TransactionManager {
         Ok(active.get(&transaction_id).cloned())
     }
 
-    /// Получает список всех активных транзакций
+    /// Gets list of all active transactions
     pub fn get_active_transactions(&self) -> Result<Vec<TransactionInfo>> {
         let active = self.active_transactions.read().map_err(|_| {
             Error::internal("Failed to acquire read lock on active transactions".to_string())
@@ -379,7 +379,7 @@ impl TransactionManager {
         Ok(active.values().cloned().collect())
     }
 
-    /// Запрашивает блокировку для транзакции
+    /// Acquires lock for transaction
     pub fn acquire_lock(
         &self,
         transaction_id: TransactionId,
@@ -387,10 +387,10 @@ impl TransactionManager {
         lock_type: LockType,
         lock_mode: LockMode,
     ) -> Result<()> {
-        // Проверяем, что транзакция активна
+        // Check that transaction is active
         self.ensure_transaction_active(transaction_id)?;
 
-        // Пытаемся получить блокировку
+        // Try to acquire lock
         let acquired = self.lock_manager.acquire_lock(
             transaction_id,
             resource.clone(),
@@ -399,7 +399,7 @@ impl TransactionManager {
         )?;
 
         if acquired {
-            // Добавляем ресурс в список заблокированных
+            // Add resource to locked resources list
             let mut active = self.active_transactions.write().map_err(|_| {
                 Error::internal("Failed to acquire write lock on active transactions".to_string())
             })?;
@@ -409,14 +409,14 @@ impl TransactionManager {
                 info.update_activity();
             }
 
-            // Обновляем статистику
+            // Update statistics
             let mut stats = self
                 .stats
                 .lock()
                 .map_err(|_| Error::internal("Failed to acquire stats lock".to_string()))?;
             stats.lock_operations += 1;
         } else {
-            // Блокировка не получена - возможно дедлок или таймаут
+            // Lock not acquired - possible deadlock or timeout
             return Err(Error::TransactionError(format!(
                 "Failed to acquire lock on resource {} for transaction {}",
                 resource, transaction_id
@@ -426,13 +426,13 @@ impl TransactionManager {
         Ok(())
     }
 
-    /// Освобождает блокировку
+    /// Releases lock
     pub fn release_lock(&self, transaction_id: TransactionId, resource: String) -> Result<()> {
-        // Освобождаем блокировку
+        // Release lock
         self.lock_manager
             .release_lock(transaction_id, resource.clone())?;
 
-        // Удаляем ресурс из списка заблокированных
+        // Remove resource from locked resources list
         let mut active = self.active_transactions.write().map_err(|_| {
             Error::internal("Failed to acquire write lock on active transactions".to_string())
         })?;
@@ -442,7 +442,7 @@ impl TransactionManager {
             info.update_activity();
         }
 
-        // Обновляем статистику
+        // Update statistics
         let mut stats = self
             .stats
             .lock()
@@ -452,9 +452,9 @@ impl TransactionManager {
         Ok(())
     }
 
-    /// Освобождает все блокировки транзакции
+    /// Releases all transaction locks
     fn release_all_locks(&self, transaction_id: TransactionId) -> Result<()> {
-        // Получаем список заблокированных ресурсов
+        // Get list of locked resources
         let locked_resources = {
             let active = self.active_transactions.read().map_err(|_| {
                 Error::internal("Failed to acquire read lock on active transactions".to_string())
@@ -466,12 +466,12 @@ impl TransactionManager {
                 .unwrap_or_default()
         };
 
-        // Освобождаем все блокировки
+        // Release all locks
         for resource in locked_resources {
             self.lock_manager.release_lock(transaction_id, resource)?;
         }
 
-        // Очищаем список заблокированных ресурсов
+        // Clear locked resources list
         let mut active = self.active_transactions.write().map_err(|_| {
             Error::internal("Failed to acquire write lock on active transactions".to_string())
         })?;
@@ -481,7 +481,7 @@ impl TransactionManager {
             info.locked_resources.clear();
             info.update_activity();
 
-            // Обновляем статистику
+            // Update statistics
             let mut stats = self
                 .stats
                 .lock()
@@ -492,7 +492,7 @@ impl TransactionManager {
         Ok(())
     }
 
-    /// Обновляет состояние транзакции
+    /// Updates transaction state
     fn update_transaction_state(
         &self,
         transaction_id: TransactionId,
@@ -510,7 +510,7 @@ impl TransactionManager {
         Ok(())
     }
 
-    /// Проверяет, что транзакция активна
+    /// Checks that transaction is active
     fn ensure_transaction_active(&self, transaction_id: TransactionId) -> Result<()> {
         let active = self.active_transactions.read().map_err(|_| {
             Error::internal("Failed to acquire read lock on active transactions".to_string())

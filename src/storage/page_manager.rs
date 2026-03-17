@@ -1,7 +1,7 @@
-//! Менеджер страниц для rustdb
+//! Page manager for rustdb
 //!
-//! Этот модуль предоставляет высокоуровневый интерфейс для управления страницами данных,
-//! включая CRUD операции, разделение/объединение страниц и оптимизации.
+//! This module provides a high-level interface for managing data pages,
+//! including CRUD operations, page splitting/merging, and optimizations.
 
 use crate::common::{
     types::{PageId, RecordId},
@@ -15,18 +15,18 @@ use crate::storage::{
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Конфигурация менеджера страниц
+/// Page manager configuration
 #[derive(Debug, Clone)]
 pub struct PageManagerConfig {
-    /// Максимальный коэффициент заполнения страницы (0.0 - 1.0)
+    /// Maximum page fill factor (0.0 - 1.0)
     pub max_fill_factor: f64,
-    /// Минимальный коэффициент заполнения для объединения страниц
+    /// Minimum fill factor for page merging
     pub min_fill_factor: f64,
-    /// Размер буфера для предвыделения страниц
+    /// Buffer size for page preallocation
     pub preallocation_buffer_size: u32,
-    /// Включить ли компрессию данных
+    /// Enable data compression
     pub enable_compression: bool,
-    /// Размер batch для операций
+    /// Batch size for operations
     pub batch_size: u32,
 }
 
@@ -42,89 +42,89 @@ impl Default for PageManagerConfig {
     }
 }
 
-/// Результат операции вставки
+/// Insert operation result
 #[derive(Debug, Clone)]
 pub struct InsertResult {
-    /// ID записи
+    /// Record ID
     pub record_id: RecordId,
-    /// ID страницы, куда была вставлена запись
+    /// ID of the page where the record was inserted
     pub page_id: PageId,
-    /// Было ли выполнено разделение страницы
+    /// Whether page split was performed
     pub page_split: bool,
 }
 
-/// Результат операции обновления
+/// Update operation result
 #[derive(Debug, Clone)]
 pub struct UpdateResult {
-    /// Было ли обновление выполнено in-place
+    /// Whether the update was performed in-place
     pub in_place: bool,
-    /// ID новой страницы (если запись была перемещена)
+    /// ID of the new page (if the record was moved)
     pub new_page_id: Option<PageId>,
-    /// Было ли выполнено разделение страницы
+    /// Whether page split was performed
     pub page_split: bool,
 }
 
-/// Результат операции удаления
+/// Delete operation result
 #[derive(Debug, Clone)]
 pub struct DeleteResult {
-    /// Было ли удаление физическим (true) или логическим (false)
+    /// Whether the deletion was physical (true) or logical (false)
     pub physical_delete: bool,
-    /// Было ли выполнено объединение страниц
+    /// Whether page merge was performed
     pub page_merge: bool,
 }
 
-/// Статистика операций менеджера страниц
+/// Page manager operation statistics
 #[derive(Debug, Default, Clone)]
 pub struct PageManagerStatistics {
-    /// Количество операций вставки
+    /// Number of insert operations
     pub insert_operations: u64,
-    /// Количество операций выборки
+    /// Number of select operations
     pub select_operations: u64,
-    /// Количество операций обновления
+    /// Number of update operations
     pub update_operations: u64,
-    /// Количество операций удаления
+    /// Number of delete operations
     pub delete_operations: u64,
-    /// Количество разделений страниц
+    /// Number of page splits
     pub page_splits: u64,
-    /// Количество объединений страниц
+    /// Number of page merges
     pub page_merges: u64,
-    /// Количество операций дефрагментации
+    /// Number of defragmentation operations
     pub defragmentation_operations: u64,
 }
 
-/// Информация о странице для менеджера
+/// Page information for the manager
 #[derive(Debug, Clone)]
 pub struct PageInfo {
-    /// ID страницы
+    /// Page ID
     pub page_id: PageId,
-    /// Коэффициент заполнения (0.0 - 1.0)
+    /// Fill factor (0.0 - 1.0)
     pub fill_factor: f64,
-    /// Количество записей на странице
+    /// Number of records on the page
     pub record_count: u32,
-    /// Размер свободного пространства в байтах
+    /// Free space size in bytes
     pub free_space: u32,
-    /// Требует ли страница дефрагментации
+    /// Whether the page needs defragmentation
     pub needs_defragmentation: bool,
 }
 
-/// Менеджер страниц
+/// Page manager
 pub struct PageManager {
-    /// Файловый менеджер
+    /// File manager
     file_manager: AdvancedFileManager,
-    /// ID файла данных
+    /// Data file ID
     file_id: AdvancedFileId,
-    /// Конфигурация
+    /// Configuration
     config: PageManagerConfig,
-    /// Кеш информации о страницах
+    /// Page information cache
     page_cache: HashMap<PageId, PageInfo>,
-    /// Пул предвыделенных страниц
+    /// Pool of preallocated pages
     preallocated_pages: Vec<PageId>,
-    /// Статистика операций
+    /// Operation statistics
     statistics: PageManagerStatistics,
 }
 
 impl PageManager {
-    /// Создает новый менеджер страниц
+    /// Creates a new page manager
     pub fn new(data_dir: PathBuf, table_name: &str, config: PageManagerConfig) -> Result<Self> {
         let mut file_manager = AdvancedFileManager::new(data_dir)?;
 
@@ -145,13 +145,13 @@ impl PageManager {
             statistics: PageManagerStatistics::default(),
         };
 
-        // Предвыделяем начальные страницы
+        // Preallocate initial pages
         manager.preallocate_pages()?;
 
         Ok(manager)
     }
 
-    /// Открывает существующий менеджер страниц
+    /// Opens an existing page manager
     pub fn open(data_dir: PathBuf, table_name: &str, config: PageManagerConfig) -> Result<Self> {
         let mut file_manager = AdvancedFileManager::new(data_dir)?;
 
@@ -167,38 +167,38 @@ impl PageManager {
             statistics: PageManagerStatistics::default(),
         };
 
-        // Загружаем информацию о существующих страницах
+        // Load information about existing pages
         manager.load_existing_pages()?;
 
         Ok(manager)
     }
 
-    /// Вставляет новую запись
+    /// Inserts a new record
     pub fn insert(&mut self, data: &[u8]) -> Result<InsertResult> {
         self.statistics.insert_operations += 1;
 
-        // Ищем страницу с достаточным свободным местом
+        // Find a page with sufficient free space
         let page_id = self.find_page_with_space(data.len())?;
 
-        // Загружаем страницу
+        // Load the page
         let page_data = self.file_manager.read_page(self.file_id, page_id)?;
         let mut page = Page::from_bytes(&page_data)?;
 
-        // Генерируем record_id заранее
-        let record_id = self.generate_record_id(page_id, 0); // Временный offset, будет обновлен
+        // Generate record_id in advance
+        let record_id = self.generate_record_id(page_id, 0); // Temporary offset, will be updated
 
-        // Пытаемся вставить запись
+        // Try to insert the record
         match page.add_record(data, record_id) {
             Ok(offset) => {
-                // Запись успешно вставлена
+                // Record successfully inserted
                 let final_record_id = self.generate_record_id(page_id, offset);
 
-                // Сохраняем страницу
+                // Save the page
                 let serialized = page.to_bytes()?;
                 self.file_manager
                     .write_page(self.file_id, page_id, &serialized)?;
 
-                // Обновляем кеш
+                // Update cache
                 self.update_page_cache(page_id, &page);
 
                 Ok(InsertResult {
@@ -208,13 +208,13 @@ impl PageManager {
                 })
             }
             Err(e) => {
-                // Страница переполнена, нужно разделение
+                // Page is full, need to split
                 self.split_page_and_insert(page_id, data)
             }
         }
     }
 
-    /// Выбирает записи по условию
+    /// Selects records by condition
     pub fn select(
         &mut self,
         condition: Option<Box<dyn Fn(&[u8]) -> bool>>,
@@ -223,20 +223,20 @@ impl PageManager {
 
         let mut results = Vec::new();
 
-        // Сканируем все страницы
+        // Scan all pages
         let page_ids = self.get_all_page_ids()?;
 
         for page_id in page_ids {
             let page_data = self.file_manager.read_page(self.file_id, page_id)?;
             let page = Page::from_bytes(&page_data)?;
 
-            // Сканируем записи на странице
+            // Scan records on the page
             let records = page.scan_records()?;
 
             for (offset, record_data) in records {
                 let record_id = self.generate_record_id(page_id, offset);
 
-                // Применяем условие фильтрации
+                // Apply filter condition
                 if let Some(ref cond) = condition {
                     if cond(&record_data) {
                         results.push((record_id, record_data));
@@ -251,20 +251,20 @@ impl PageManager {
         Ok(results)
     }
 
-    /// Обновляет запись
+    /// Updates a record
     pub fn update(&mut self, record_id: RecordId, new_data: &[u8]) -> Result<UpdateResult> {
         self.statistics.update_operations += 1;
 
         let (page_id, offset) = self.parse_record_id(record_id);
 
-        // Загружаем страницу
+        // Load the page
         let page_data = self.file_manager.read_page(self.file_id, page_id)?;
         let mut page = Page::from_bytes(&page_data)?;
 
-        // Пытаемся обновить запись in-place
+        // Try to update the record in-place
         match page.update_record_by_offset(offset, new_data) {
             Ok(_) => {
-                // Обновление in-place успешно
+                // In-place update successful
                 let serialized = page.to_bytes()?;
                 self.file_manager
                     .write_page(self.file_id, page_id, &serialized)?;
@@ -278,7 +278,7 @@ impl PageManager {
                 })
             }
             Err(_) => {
-                // Нужно удалить старую запись и вставить новую
+                // Need to delete old record and insert new one
                 self.delete_record_internal(page_id, offset)?;
                 let insert_result = self.insert(new_data)?;
 
@@ -291,7 +291,7 @@ impl PageManager {
         }
     }
 
-    /// Удаляет запись
+    /// Deletes a record
     pub fn delete(&mut self, record_id: RecordId) -> Result<DeleteResult> {
         self.statistics.delete_operations += 1;
 
@@ -299,18 +299,18 @@ impl PageManager {
         self.delete_record_internal(page_id, offset)
     }
 
-    /// Получает статистику операций
+    /// Gets operation statistics
     pub fn get_statistics(&self) -> &PageManagerStatistics {
         &self.statistics
     }
 
-    /// Выполняет дефрагментацию страниц
+    /// Performs page defragmentation
     pub fn defragment(&mut self) -> Result<u32> {
         self.statistics.defragmentation_operations += 1;
 
         let mut defragmented_count = 0;
 
-        // Собираем ID страниц, которые нуждаются в дефрагментации
+        // Collect page IDs that need defragmentation
         let pages_to_defrag: Vec<PageId> = self
             .page_cache
             .iter()
@@ -323,7 +323,7 @@ impl PageManager {
             })
             .collect();
 
-        // Дефрагментируем собранные страницы
+        // Defragment collected pages
         for page_id in pages_to_defrag {
             self.defragment_page(page_id)?;
             defragmented_count += 1;
@@ -332,7 +332,7 @@ impl PageManager {
         Ok(defragmented_count)
     }
 
-    /// Выполняет batch операции вставки
+    /// Performs batch insert operations
     pub fn batch_insert(&mut self, records: Vec<Vec<u8>>) -> Result<Vec<InsertResult>> {
         let mut results = Vec::with_capacity(records.len());
 
@@ -345,14 +345,14 @@ impl PageManager {
         Ok(results)
     }
 
-    // Приватные методы
+    // Private methods
 
-    /// Предвыделяет страницы
+    /// Preallocates pages
     fn preallocate_pages(&mut self) -> Result<()> {
         for _ in 0..self.config.preallocation_buffer_size {
             let page_id = self.file_manager.allocate_pages(self.file_id, 1)?;
 
-            // Инициализируем пустую страницу
+            // Initialize empty page
             let page = Page::new(page_id);
             let serialized = page.to_bytes()?;
             self.file_manager
@@ -364,12 +364,12 @@ impl PageManager {
         Ok(())
     }
 
-    /// Загружает информацию о существующих страницах
+    /// Loads information about existing pages
     fn load_existing_pages(&mut self) -> Result<()> {
         let page_ids = self.get_all_page_ids()?;
 
         for page_id in page_ids {
-            // Загружаем страницу и добавляем её информацию в кеш
+            // Load page and add its information to cache
             let page_data = self.file_manager.read_page(self.file_id, page_id)?;
             let page = Page::from_bytes(&page_data)?;
             self.update_page_cache(page_id, &page);
@@ -378,21 +378,21 @@ impl PageManager {
         Ok(())
     }
 
-    /// Ищет страницу с достаточным свободным местом
+    /// Finds a page with sufficient free space
     fn find_page_with_space(&mut self, required_size: usize) -> Result<PageId> {
-        // Сначала проверяем кеш
+        // First check cache
         for (&page_id, page_info) in &self.page_cache {
             if page_info.free_space as usize >= required_size {
                 return Ok(page_id);
             }
         }
 
-        // Используем предвыделенную страницу
+        // Use preallocated page
         if let Some(page_id) = self.preallocated_pages.pop() {
             return Ok(page_id);
         }
 
-        // Выделяем новую страницу
+        // Allocate new page
         let page_id = self.file_manager.allocate_pages(self.file_id, 1)?;
         let page = Page::new(page_id);
         let serialized = page.to_bytes()?;
@@ -402,35 +402,35 @@ impl PageManager {
         Ok(page_id)
     }
 
-    /// Разделяет страницу и вставляет запись
+    /// Splits a page and inserts a record
     fn split_page_and_insert(&mut self, page_id: PageId, data: &[u8]) -> Result<InsertResult> {
         self.statistics.page_splits += 1;
 
-        // Загружаем переполненную страницу
+        // Load the overflowed page
         let page_data = self.file_manager.read_page(self.file_id, page_id)?;
         let mut old_page = Page::from_bytes(&page_data)?;
 
-        // Создаем новую страницу
+        // Create a new page
         let new_page_id = self.file_manager.allocate_pages(self.file_id, 1)?;
         let mut new_page = Page::new(new_page_id);
 
-        // Перераспределяем записи между страницами
+        // Redistribute records between pages
         let records = old_page.get_all_records()?;
         old_page.clear()?;
 
         let mid_point = records.len() / 2;
 
-        // Записи для старой страницы
+        // Records for the old page
         for (i, record_data) in records.iter().enumerate().take(mid_point) {
             old_page.add_record(record_data, i as u64)?;
         }
 
-        // Записи для новой страницы
+        // Records for the new page
         for (i, record_data) in records.iter().enumerate().skip(mid_point) {
             new_page.add_record(record_data, i as u64)?;
         }
 
-        // Пытаемся вставить новую запись
+        // Try to insert the new record
         let insert_page_id = if old_page.get_free_space() >= data.len() as u32 {
             old_page.add_record(data, 0u64)?;
             page_id
@@ -439,7 +439,7 @@ impl PageManager {
             new_page_id
         };
 
-        // Сохраняем страницы
+        // Save pages
         let old_serialized = old_page.to_bytes()?;
         self.file_manager
             .write_page(self.file_id, page_id, &old_serialized)?;
@@ -448,7 +448,7 @@ impl PageManager {
         self.file_manager
             .write_page(self.file_id, new_page_id, &new_serialized)?;
 
-        // Обновляем кеш
+        // Update cache
         self.update_page_cache(page_id, &old_page);
         self.update_page_cache(new_page_id, &new_page);
 
@@ -461,23 +461,23 @@ impl PageManager {
         })
     }
 
-    /// Удаляет запись (внутренний метод)
+    /// Deletes a record (internal method)
     fn delete_record_internal(&mut self, page_id: PageId, offset: u32) -> Result<DeleteResult> {
         let page_data = self.file_manager.read_page(self.file_id, page_id)?;
         let mut page = Page::from_bytes(&page_data)?;
 
-        // Удаляем запись
+        // Delete the record
         page.delete_record_by_offset(offset)?;
 
-        // Сохраняем страницу
+        // Save the page
         let serialized = page.to_bytes()?;
         self.file_manager
             .write_page(self.file_id, page_id, &serialized)?;
 
-        // Обновляем кеш
+        // Update cache
         self.update_page_cache(page_id, &page);
 
-        // Проверяем, нужно ли объединение страниц
+        // Check if page merging is needed
         let needs_merge = if let Some(page_info) = self.page_cache.get(&page_id) {
             page_info.fill_factor < self.config.min_fill_factor
         } else {
@@ -485,7 +485,7 @@ impl PageManager {
         };
 
         if needs_merge {
-            // Пытаемся объединить страницу с соседней
+            // Try to merge the page with a neighbor
             if let Ok(merged) = self.try_merge_page(page_id) {
                 if merged {
                     self.statistics.page_merges += 1;
@@ -499,26 +499,26 @@ impl PageManager {
         })
     }
 
-    /// Дефрагментирует страницу
+    /// Defragments a page
     fn defragment_page(&mut self, page_id: PageId) -> Result<()> {
         let page_data = self.file_manager.read_page(self.file_id, page_id)?;
         let mut page = Page::from_bytes(&page_data)?;
 
-        // Выполняем дефрагментацию
+        // Perform defragmentation
         page.defragment()?;
 
-        // Сохраняем страницу
+        // Save the page
         let serialized = page.to_bytes()?;
         self.file_manager
             .write_page(self.file_id, page_id, &serialized)?;
 
-        // Обновляем кеш
+        // Update cache
         self.update_page_cache(page_id, &page);
 
         Ok(())
     }
 
-    /// Обновляет кеш информации о странице
+    /// Updates page information cache
     fn update_page_cache(&mut self, page_id: PageId, page: &Page) {
         let page_info = PageInfo {
             page_id,
@@ -531,22 +531,22 @@ impl PageManager {
         self.page_cache.insert(page_id, page_info);
     }
 
-    /// Генерирует ID записи
+    /// Generates a record ID
     fn generate_record_id(&self, page_id: PageId, offset: u32) -> RecordId {
-        // Комбинируем page_id и offset в один ID
+        // Combine page_id and offset into one ID
         ((page_id as u64) << 32) | (offset as u64)
     }
 
-    /// Парсит ID записи
+    /// Parses a record ID
     fn parse_record_id(&self, record_id: RecordId) -> (PageId, u32) {
         let page_id = (record_id >> 32) as PageId;
         let offset = (record_id & 0xFFFFFFFF) as u32;
         (page_id, offset)
     }
 
-    /// Получает все ID страниц
+    /// Gets all page IDs
     fn get_all_page_ids(&mut self) -> Result<Vec<PageId>> {
-        // Получаем информацию о файле и подсчитываем количество страниц
+        // Get file information and count pages
         let file_info = self
             .file_manager
             .get_file_info(self.file_id)
@@ -554,21 +554,21 @@ impl PageManager {
         let total_pages = file_info.total_pages;
 
         let mut page_ids = Vec::new();
-        // Страницы начинаются с 1, а не с 0
+        // Pages start from 1, not 0
         for page_id in 1..=total_pages as PageId {
-            // Проверяем, что страница существует и содержит данные
+            // Check that the page exists and contains data
             if let Ok(page_data) = self.file_manager.read_page(self.file_id, page_id) {
                 if !page_data.iter().all(|&b| b == 0) {
-                    // Не пустая страница
+                    // Not an empty page
                     page_ids.push(page_id);
                 }
             }
         }
 
-        // Также проверяем страницы в кеше, которые могли быть созданы недавно
+        // Also check pages in cache that might have been created recently
         for cached_page_id in self.page_cache.keys() {
             if !page_ids.contains(cached_page_id) {
-                // Проверяем, что страница действительно существует
+                // Check that the page actually exists
                 if let Ok(page_data) = self.file_manager.read_page(self.file_id, *cached_page_id) {
                     if !page_data.iter().all(|&b| b == 0) {
                         page_ids.push(*cached_page_id);
@@ -580,9 +580,9 @@ impl PageManager {
         Ok(page_ids)
     }
 
-    /// Пытается объединить страницу с соседней
+    /// Tries to merge a page with a neighbor
     fn try_merge_page(&mut self, page_id: PageId) -> Result<bool> {
-        // Ищем соседнюю страницу для объединения
+        // Find a neighbor page for merging
         let neighbor_id = self.find_merge_candidate(page_id)?;
 
         if let Some(neighbor_page_id) = neighbor_id {
@@ -593,9 +593,9 @@ impl PageManager {
         }
     }
 
-    /// Находит кандидата для объединения страниц
+    /// Finds a candidate for page merging
     fn find_merge_candidate(&self, page_id: PageId) -> Result<Option<PageId>> {
-        // Проверяем соседние страницы (предыдущую и следующую)
+        // Check neighbor pages (previous and next)
         let candidates = vec![
             if page_id > 0 { Some(page_id - 1) } else { None },
             Some(page_id + 1),
@@ -603,10 +603,10 @@ impl PageManager {
 
         for candidate in candidates.into_iter().flatten() {
             if let Some(candidate_info) = self.page_cache.get(&candidate) {
-                // Проверяем, что объединенные страницы поместятся в одну
+                // Check that merged pages fit into one
                 if let Some(current_info) = self.page_cache.get(&page_id) {
                     let combined_records = current_info.record_count + candidate_info.record_count;
-                    let page_capacity = 4096 / 64; // Примерная оценка вместимости страницы
+                    let page_capacity = 4096 / 64; // Rough estimate of page capacity
 
                     if combined_records <= page_capacity
                         && candidate_info.fill_factor < self.config.max_fill_factor
@@ -620,66 +620,66 @@ impl PageManager {
         Ok(None)
     }
 
-    /// Объединяет две страницы
+    /// Merges two pages
     fn merge_pages(&mut self, page_id1: PageId, page_id2: PageId) -> Result<()> {
-        // Загружаем обе страницы
+        // Load both pages
         let page1_data = self.file_manager.read_page(self.file_id, page_id1)?;
         let page2_data = self.file_manager.read_page(self.file_id, page_id2)?;
 
         let mut page1 = Page::from_bytes(&page1_data)?;
         let page2 = Page::from_bytes(&page2_data)?;
 
-        // Получаем все записи из второй страницы
+        // Get all records from the second page
         let page2_records = page2.get_all_records()?;
 
-        // Перемещаем записи из второй страницы в первую
+        // Move records from the second page to the first
         for (i, record_data) in page2_records.iter().enumerate() {
             page1.add_record(record_data, i as u64)?;
         }
 
-        // Сохраняем обновленную первую страницу
+        // Save the updated first page
         let serialized = page1.to_bytes()?;
         self.file_manager
             .write_page(self.file_id, page_id1, &serialized)?;
 
-        // Очищаем вторую страницу
+        // Clear the second page
         let empty_page = Page::new(page_id2);
         let empty_serialized = empty_page.to_bytes()?;
         self.file_manager
             .write_page(self.file_id, page_id2, &empty_serialized)?;
 
-        // Обновляем кеш
+        // Update cache
         self.update_page_cache(page_id1, &page1);
         self.update_page_cache(page_id2, &empty_page);
 
         Ok(())
     }
 
-    /// Сжимает данные страницы, если включена компрессия
+    /// Compresses page data if compression is enabled
     fn compress_page_data(&self, data: &[u8]) -> Result<Vec<u8>> {
         if self.config.enable_compression {
             match lz4_flex::compress_prepend_size(data) {
                 compressed if compressed.len() < data.len() => Ok(compressed),
-                _ => Ok(data.to_vec()), // Если сжатие не эффективно, возвращаем оригинал
+                _ => Ok(data.to_vec()), // If compression is not effective, return original
             }
         } else {
             Ok(data.to_vec())
         }
     }
 
-    /// Распаковывает данные страницы, если они были сжаты
+    /// Decompresses page data if it was compressed
     fn decompress_page_data(&self, data: &[u8]) -> Result<Vec<u8>> {
         if self.config.enable_compression && data.len() >= 4 {
-            // Проверяем, начинаются ли данные с размера (признак LZ4)
+            // Check if data starts with size (LZ4 signature)
             let size_bytes = [data[0], data[1], data[2], data[3]];
             let expected_size = u32::from_le_bytes(size_bytes) as usize;
 
-            // Если размер разумный, пытаемся распаковать
+            // If size is reasonable, try to decompress
             if expected_size > 0 && expected_size < 1024 * 1024 {
-                // Максимум 1MB
+                // Maximum 1MB
                 match lz4_flex::decompress_size_prepended(data) {
                     Ok(decompressed) => Ok(decompressed),
-                    Err(_) => Ok(data.to_vec()), // Если не удалось распаковать, возвращаем как есть
+                    Err(_) => Ok(data.to_vec()), // If decompression failed, return as is
                 }
             } else {
                 Ok(data.to_vec())
@@ -689,13 +689,13 @@ impl PageManager {
         }
     }
 
-    /// Читает страницу с автоматической распаковкой
+    /// Reads a page with automatic decompression
     fn read_page_with_decompression(&mut self, page_id: PageId) -> Result<Vec<u8>> {
         let raw_data = self.file_manager.read_page(self.file_id, page_id)?;
         self.decompress_page_data(&raw_data)
     }
 
-    /// Записывает страницу с автоматическим сжатием
+    /// Writes a page with automatic compression
     fn write_page_with_compression(&mut self, page_id: PageId, data: &[u8]) -> Result<()> {
         let compressed_data = self.compress_page_data(data)?;
         self.file_manager
@@ -705,7 +705,7 @@ impl PageManager {
 
 impl Drop for PageManager {
     fn drop(&mut self) {
-        // Синхронизируем и закрываем файл при уничтожении менеджера
+        // Synchronize and close file when manager is destroyed
         let _ = self.file_manager.sync_file(self.file_id);
         let _ = self.file_manager.close_file(self.file_id);
     }

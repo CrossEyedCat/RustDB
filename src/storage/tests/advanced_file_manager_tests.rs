@@ -3,7 +3,7 @@ use crate::storage::advanced_file_manager::AdvancedFileManager;
 use crate::storage::database_file::{DatabaseFileType, ExtensionStrategy};
 use tempfile::TempDir;
 
-/// Создает тестовый продвинутый файловый менеджер с временной директорией
+/// Creates a test advanced file manager using a temporary directory
 fn create_test_advanced_file_manager() -> (AdvancedFileManager, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let data_dir = temp_dir.path().to_path_buf();
@@ -15,9 +15,9 @@ fn create_test_advanced_file_manager() -> (AdvancedFileManager, TempDir) {
 fn test_create_advanced_file_manager() {
     let (manager, _temp_dir) = create_test_advanced_file_manager();
 
-    // Проверяем, что менеджер создался
-    let _ = manager; // Используем переменную
-    assert!(true); // Простая проверка
+    // Ensure manager was constructed
+    let _ = manager; // Avoid unused-variable warning
+    assert!(true); // Basic sanity check
 }
 
 #[test]
@@ -37,7 +37,7 @@ fn test_create_database_file() {
 fn test_open_database_file() {
     let (mut manager, _temp_dir) = create_test_advanced_file_manager();
 
-    // Сначала создаем файл
+    // First create file
     let _file_id = manager
         .create_database_file(
             "test_open.dat",
@@ -47,7 +47,7 @@ fn test_open_database_file() {
         )
         .unwrap();
 
-    // Теперь открываем его
+    // Then open it
     let result = manager.open_database_file("test_open.dat");
     assert!(result.is_ok());
 }
@@ -65,13 +65,13 @@ fn test_allocate_pages() {
         )
         .unwrap();
 
-    // Выделяем страницы
+    // Allocate pages
     let result = manager.allocate_pages(file_id, 5);
     assert!(result.is_ok());
 
     let start_page = result.unwrap();
-    // Проверяем, что страница выделена (может быть 0 или больше)
-    let _ = start_page; // Используем переменную
+    // Ensure the returned page index is valid (may be 0+)
+    let _ = start_page; // Use variable
 }
 
 #[test]
@@ -87,10 +87,10 @@ fn test_free_pages() {
         )
         .unwrap();
 
-    // Сначала выделяем страницы
+    // Allocate pages first
     let start_page = manager.allocate_pages(file_id, 5).unwrap();
 
-    // Теперь освобождаем их
+    // Now free them
     let result = manager.free_pages(file_id, start_page, 3);
     assert!(result.is_ok());
 }
@@ -108,23 +108,23 @@ fn test_write_and_read_page() {
         )
         .unwrap();
 
-    // Выделяем страницу
+    // Allocate a page
     let page_id = manager.allocate_pages(file_id, 1).unwrap();
 
-    // Записываем данные
+    // Write data
     let test_data = vec![42u8; 4096];
     let write_result = manager.write_page(file_id, page_id, &test_data);
 
-    // Если запись прошла успешно, проверяем чтение
+    // If write succeeded, verify read
     if write_result.is_ok() {
         let read_result = manager.read_page(file_id, page_id);
         if read_result.is_ok() {
             let read_data = read_result.unwrap();
-            assert_eq!(&read_data[0..10], &test_data[0..10]); // Проверяем первые 10 байт
+            assert_eq!(&read_data[0..10], &test_data[0..10]); // Compare first 10 bytes
         }
     }
 
-    // Тест считается успешным, если не было паники
+    // Succeeds provided no panic occurred
     assert!(true);
 }
 
@@ -133,7 +133,7 @@ fn test_get_global_statistics() {
     let (manager, _temp_dir) = create_test_advanced_file_manager();
 
     let stats = manager.get_global_statistics();
-    // Просто проверяем, что статистика доступна
+    // Ensure statistics object is accessible
     assert!(stats.total_files >= 0);
 }
 
@@ -145,7 +145,7 @@ fn test_maintenance_check() {
     assert!(result.is_ok());
 
     let files_needing_maintenance = result.unwrap();
-    // Для нового менеджера список должен быть пуст
+    // Fresh manager should report no pending maintenance
     assert!(files_needing_maintenance.len() == 0);
 }
 
@@ -153,7 +153,7 @@ fn test_maintenance_check() {
 fn test_multiple_extension_strategies() {
     let (mut manager, _temp_dir) = create_test_advanced_file_manager();
 
-    // Тестируем разные стратегии расширения
+    // Exercise each extension strategy
     let strategies = vec![
         ExtensionStrategy::Fixed,
         ExtensionStrategy::Linear,
@@ -186,15 +186,15 @@ fn test_boundary_conditions() {
         )
         .unwrap();
 
-    // Попытка освободить 0 страниц
+    // Attempt to free zero pages
     let result = manager.free_pages(file_id, 1, 0);
-    // Результат зависит от реализации
+    // Implementation-defined result
     let _ = result;
 
-    // Попытка выделить 0 страниц
+    // Attempt to allocate zero pages
     let result = manager.allocate_pages(file_id, 0);
-    // Результат зависит от реализации
+    // Implementation-defined result
     let _ = result;
 
-    assert!(true); // Тест на граничные условия завершен
+    assert!(true); // Boundary-case smoke test
 }

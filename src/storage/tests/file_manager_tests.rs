@@ -2,7 +2,7 @@ use crate::storage::block::BlockId;
 use crate::storage::file_manager::{FileId, FileManager, BLOCK_SIZE};
 use tempfile::TempDir;
 
-/// Создает тестовый файловый менеджер с временной директорией
+/// Creates a test file manager backed by a temporary directory
 fn create_test_file_manager() -> (FileManager, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let data_dir = temp_dir.path().to_path_buf();
@@ -14,9 +14,9 @@ fn create_test_file_manager() -> (FileManager, TempDir) {
 fn test_create_file_manager() {
     let (file_manager, _temp_dir) = create_test_file_manager();
 
-    // Проверяем, что файловый менеджер создался
-    let _ = file_manager; // Используем переменную
-    assert!(true); // Простая проверка
+    // Ensure file manager was created
+    let _ = file_manager; // Use variable to avoid warnings
+    assert!(true); // Basic sanity check
 }
 
 #[test]
@@ -31,10 +31,10 @@ fn test_create_file() {
 fn test_open_file() {
     let (mut file_manager, _temp_dir) = create_test_file_manager();
 
-    // Сначала создаем файл
+    // First create a file
     let _file_id = file_manager.create_file("existing.dat").unwrap();
 
-    // Затем открываем его
+    // Then open it
     let result = file_manager.open_file("existing.dat", false);
     assert!(result.is_ok());
 }
@@ -55,11 +55,11 @@ fn test_write_and_read_block() {
     let mut test_data = vec![0u8; BLOCK_SIZE];
     test_data[0..29].copy_from_slice(b"Test data for write operation");
 
-    // Записываем блок в файл
+    // Write block to file
     let write_result = file_manager.write_block(file_id, 1, &test_data);
     assert!(write_result.is_ok());
 
-    // Читаем блок из файла
+    // Read block from file
     let read_result = file_manager.read_block(file_id, 1);
     assert!(read_result.is_ok());
 
@@ -95,16 +95,15 @@ fn test_sync_file() {
 fn test_boundary_conditions() {
     let (mut file_manager, _temp_dir) = create_test_file_manager();
 
-    // Тестируем граничные условия
+    // Exercise boundary conditions
     let _file_id = file_manager.create_file("boundary.dat").unwrap();
 
-    // Блок с максимальным ID - должен вызвать ошибку переполнения
+    // Writing block with maximum ID should overflow or fail
     let mut test_data = vec![0u8; BLOCK_SIZE];
     test_data[0..4].copy_from_slice(b"test");
-    // Ожидаем панику или ошибку при попытке записи блока с максимальным ID
-    // Это нормальное поведение для граничного случая
+    // Expect panic/error when attempting to write a block at the max ID; this is acceptable for the edge case
 
-    // Попытка записи в несуществующий файл
+    // Attempt to write to a non-existent file
     let result = file_manager.write_block(999, 1, &test_data);
     assert!(result.is_err());
 }

@@ -1,31 +1,31 @@
-//! Лексический анализатор SQL для rustdb
+//! SQL lexical analyzer for rustdb
 //!
-//! Преобразует входной SQL текст в последовательность токенов для дальнейшего парсинга.
-//! Поддерживает все основные конструкции SQL, включая ключевые слова, идентификаторы,
-//! литералы, операторы и комментарии.
+//! Converts input SQL text into a sequence of tokens for further parsing.
+//! Supports all major SQL constructs, including keywords, identifiers,
+//! literals, operators and comments.
 
 use crate::common::{Error, Result};
 use crate::parser::token::{keyword_map, Position, Token, TokenType};
 use std::collections::HashMap;
 
-/// Лексический анализатор SQL
+/// SQL lexical analyzer
 pub struct Lexer {
-    /// Исходный текст
+    /// Source text
     input: Vec<char>,
-    /// Текущая позиция в тексте
+    /// Current position in text
     position: usize,
-    /// Текущая позиция для отображения ошибок
+    /// Current position for error display
     current_position: Position,
-    /// Карта ключевых слов
+    /// Keywords map
     keywords: HashMap<&'static str, TokenType>,
-    /// Буфер токенов для lookahead
+    /// Token buffer for lookahead
     token_buffer: Vec<Token>,
-    /// Позиция в буфере токенов
+    /// Position in token buffer
     buffer_position: usize,
 }
 
 impl Lexer {
-    /// Создает новый лексический анализатор
+    /// Creates a new lexical analyzer
     pub fn new(input: &str) -> Result<Self> {
         Ok(Self {
             input: input.chars().collect(),
@@ -38,6 +38,6 @@ impl Lexer {
     }
 }
 
-// Подключаем методы из отдельных файлов
+// Include methods from separate files
 include!("lexer_methods.rs");
 include!("lexer_readers.rs");

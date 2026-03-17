@@ -1,9 +1,9 @@
-//! Управление соединениями для rustdb
+//! Connection management for rustdb
 
 use crate::common::{Error, Result};
 use std::time::Duration;
 
-/// Состояние соединения
+/// Connection state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionState {
     New,
@@ -12,7 +12,7 @@ pub enum ConnectionState {
     Closed,
 }
 
-/// Конфигурация соединения
+/// Connection configuration
 #[derive(Debug, Clone)]
 pub struct ConnectionConfig {
     pub read_timeout: Duration,
@@ -34,7 +34,7 @@ impl Default for ConnectionConfig {
     }
 }
 
-/// Соединение с клиентом
+/// Client connection
 pub struct Connection {
     config: ConnectionConfig,
     state: ConnectionState,
@@ -53,14 +53,14 @@ impl Connection {
     }
 }
 
-// Старая структура для совместимости
+// Legacy structure for compatibility
 pub struct ConnectionPool {
-    // TODO: Реализовать структуру
+    // TODO: Implement structure
 }
 
 impl ConnectionPool {
     pub fn new() -> Result<Self> {
-        // TODO: Реализовать инициализацию
+        // TODO: Implement initialization
         Ok(Self {})
     }
 }

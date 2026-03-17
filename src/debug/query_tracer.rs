@@ -1,7 +1,6 @@
-//! Трассировщик запросов для rustdb
+//! Query tracer for rustdb
 //!
-//! Предоставляет детальную трассировку выполнения SQL запросов
-//! с отслеживанием времени выполнения каждого этапа
+//! Provides detailed tracing of SQL query execution with timing data for each stage
 
 use crate::debug::DebugConfig;
 use serde::{Deserialize, Serialize};
@@ -11,28 +10,28 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-/// Этап выполнения запроса
+/// Query execution stage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QueryStage {
-    /// Получение запроса
+    /// Query received
     Received,
-    /// Лексический анализ
+    /// Lexical analysis
     Lexing,
-    /// Синтаксический анализ
+    /// Parsing
     Parsing,
-    /// Семантический анализ
+    /// Semantic analysis
     SemanticAnalysis,
-    /// Планирование запроса
+    /// Query planning
     Planning,
-    /// Оптимизация запроса
+    /// Query optimization
     Optimization,
-    /// Выполнение запроса
+    /// Query execution
     Execution,
-    /// Возврат результата
+    /// Result return
     ResultReturn,
-    /// Завершение
+    /// Completed
     Completed,
-    /// Ошибка
+    /// Error
     Error,
 }
 
@@ -53,64 +52,64 @@ impl std::fmt::Display for QueryStage {
     }
 }
 
-/// Событие в трассировке запроса
+/// Query trace event
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryTraceEvent {
-    /// Временная метка (микросекунды)
+    /// Timestamp (microseconds)
     pub timestamp: u64,
-    /// Этап выполнения
+    /// Execution stage
     pub stage: QueryStage,
-    /// Сообщение
+    /// Message
     pub message: String,
-    /// Дополнительные данные
+    /// Additional data
     pub data: Option<serde_json::Value>,
-    /// Время выполнения этапа (микросекунды)
+    /// Stage duration (microseconds)
     pub duration_us: Option<u64>,
-    /// Использование памяти (байты)
+    /// Memory usage (bytes)
     pub memory_usage: Option<u64>,
-    /// Количество обработанных строк
+    /// Rows processed
     pub rows_processed: Option<u64>,
 }
 
-/// Трассировка запроса
+/// Query trace
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryTrace {
-    /// Уникальный ID запроса
+    /// Query unique ID
     pub query_id: String,
-    /// SQL запрос
+    /// SQL query text
     pub sql_query: String,
-    /// Время начала выполнения
+    /// Start timestamp
     pub start_time: u64,
-    /// Время завершения выполнения
+    /// End timestamp
     pub end_time: Option<u64>,
-    /// Общее время выполнения (микросекунды)
+    /// Total execution time (microseconds)
     pub total_duration_us: Option<u64>,
-    /// События трассировки
+    /// Trace events
     pub events: Vec<QueryTraceEvent>,
-    /// Текущий этап
+    /// Current stage
     pub current_stage: QueryStage,
-    /// Статус выполнения
+    /// Execution status
     pub status: QueryStatus,
-    /// Количество возвращенных строк
+    /// Rows returned
     pub rows_returned: Option<u64>,
-    /// Размер результата (байты)
+    /// Result size (bytes)
     pub result_size: Option<u64>,
-    /// Ошибка (если есть)
+    /// Error message (if any)
     pub error: Option<String>,
-    /// Метаданные запроса
+    /// Query metadata
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-/// Статус выполнения запроса
+/// Query execution status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QueryStatus {
-    /// Выполняется
+    /// Running
     Running,
-    /// Завершен успешно
+    /// Completed successfully
     Completed,
-    /// Завершен с ошибкой
+    /// Failed with error
     Failed,
-    /// Отменен
+    /// Cancelled
     Cancelled,
 }
 
@@ -125,32 +124,32 @@ impl std::fmt::Display for QueryStatus {
     }
 }
 
-/// Статистика трассировки запросов
+/// Query tracing statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QueryTracingStats {
-    /// Общее количество трассированных запросов
+    /// Total traced queries
     pub total_queries: u64,
-    /// Успешно завершенные запросы
+    /// Successfully completed queries
     pub completed_queries: u64,
-    /// Запросы с ошибками
+    /// Failed queries
     pub failed_queries: u64,
-    /// Отмененные запросы
+    /// Cancelled queries
     pub cancelled_queries: u64,
-    /// Среднее время выполнения (микросекунды)
+    /// Average execution time (microseconds)
     pub avg_execution_time_us: u64,
-    /// Минимальное время выполнения
+    /// Minimum execution time
     pub min_execution_time_us: u64,
-    /// Максимальное время выполнения
+    /// Maximum execution time
     pub max_execution_time_us: u64,
-    /// Общее количество обработанных строк
+    /// Total rows processed
     pub total_rows_processed: u64,
-    /// Среднее количество строк на запрос
+    /// Average rows per query
     pub avg_rows_per_query: u64,
-    /// Время последнего запроса
+    /// Last query timestamp
     pub last_query_time: u64,
 }
 
-/// Трассировщик запросов
+/// Query tracer
 pub struct QueryTracer {
     config: DebugConfig,
     active_traces: Arc<RwLock<HashMap<String, QueryTrace>>>,
@@ -160,7 +159,7 @@ pub struct QueryTracer {
 }
 
 impl QueryTracer {
-    /// Создает новый трассировщик запросов
+    /// Creates a new query tracer
     pub fn new(config: &DebugConfig) -> Self {
         let mut tracer = Self {
             config: config.clone(),
@@ -170,13 +169,13 @@ impl QueryTracer {
             background_handle: None,
         };
 
-        // Запускаем фоновую задачу для очистки старых трассировок
+        // Start background cleanup task
         tracer.start_background_cleanup();
 
         tracer
     }
 
-    /// Запускает фоновую задачу очистки
+    /// Starts background cleanup job
     fn start_background_cleanup(&mut self) {
         let active_traces = self.active_traces.clone();
         let completed_traces = self.completed_traces.clone();
@@ -188,7 +187,7 @@ impl QueryTracer {
             loop {
                 interval.tick().await;
 
-                // Перемещаем завершенные трассировки
+                // Move finished traces
                 {
                     let mut active = active_traces.write().unwrap();
                     let mut completed = completed_traces.write().unwrap();
@@ -202,7 +201,7 @@ impl QueryTracer {
 
                     for (query_id, trace) in active.iter() {
                         if let Some(end_time) = trace.end_time {
-                            // Перемещаем трассировки старше 1 часа
+                            // Move traces older than 1 hour
                             if now - (end_time / 1_000_000) > 3600 {
                                 to_move.push(query_id.clone());
                             }
@@ -215,7 +214,7 @@ impl QueryTracer {
                         }
                     }
 
-                    // Ограничиваем количество завершенных трассировок
+                    // Limit number of completed traces
                     let len = completed.len();
                     if len > 1000 {
                         completed.drain(0..len - 1000);
@@ -225,7 +224,7 @@ impl QueryTracer {
         }));
     }
 
-    /// Начинает трассировку нового запроса
+    /// Starts tracing a new query
     pub fn start_trace(&self, sql_query: &str) -> String {
         let query_id = Uuid::new_v4().to_string();
         let start_time = SystemTime::now()
@@ -248,7 +247,7 @@ impl QueryTracer {
             metadata: HashMap::new(),
         };
 
-        // Добавляем начальное событие
+        // Add initial event
         let initial_event = QueryTraceEvent {
             timestamp: start_time,
             stage: QueryStage::Received,
@@ -265,13 +264,13 @@ impl QueryTracer {
         let mut trace = trace;
         trace.events.push(initial_event);
 
-        // Сохраняем трассировку
+        // Store trace
         {
             let mut active_traces = self.active_traces.write().unwrap();
             active_traces.insert(query_id.clone(), trace);
         }
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self.stats.write().unwrap();
             stats.total_queries += 1;
@@ -281,7 +280,7 @@ impl QueryTracer {
         query_id
     }
 
-    /// Добавляет событие в трассировку
+    /// Adds an event to a trace
     pub fn add_event(
         &self,
         query_id: &str,
@@ -316,7 +315,7 @@ impl QueryTracer {
         }
     }
 
-    /// Завершает трассировку запроса
+    /// Finishes tracing a query
     pub fn finish_trace(
         &self,
         query_id: &str,
@@ -343,14 +342,14 @@ impl QueryTracer {
             trace.result_size = result_size;
             trace.error = error;
 
-            // Добавляем финальное событие
+            // Append final event
             let final_event = QueryTraceEvent {
                 timestamp: end_time,
                 stage: match status {
                     QueryStatus::Completed => QueryStage::Completed,
                     QueryStatus::Failed => QueryStage::Error,
                     QueryStatus::Cancelled => QueryStage::Error,
-                    QueryStatus::Running => QueryStage::Completed, // Не должно происходить
+                    QueryStatus::Running => QueryStage::Completed, // Should not happen
                 },
                 message: format!("Query {}", status),
                 data: Some(serde_json::json!({
@@ -365,70 +364,70 @@ impl QueryTracer {
 
             trace.events.push(final_event);
 
-            // Перемещаем в завершенные
+            // Move to completed list
             {
                 let mut completed_traces = self.completed_traces.write().unwrap();
                 completed_traces.push(trace);
             }
 
-            // Обновляем статистику
+            // Update statistics
             {
                 let mut stats = self.stats.write().unwrap();
                 match status {
                     QueryStatus::Completed => stats.completed_queries += 1,
                     QueryStatus::Failed => stats.failed_queries += 1,
                     QueryStatus::Cancelled => stats.cancelled_queries += 1,
-                    QueryStatus::Running => {} // Не должно происходить
+                    QueryStatus::Running => {} // Should not happen
                 }
             }
         }
     }
 
-    /// Получает активную трассировку
+    /// Returns active trace by ID
     pub fn get_active_trace(&self, query_id: &str) -> Option<QueryTrace> {
         let active_traces = self.active_traces.read().unwrap();
         active_traces.get(query_id).cloned()
     }
 
-    /// Получает все активные трассировки
+    /// Returns all active traces
     pub fn get_active_traces(&self) -> Vec<QueryTrace> {
         let active_traces = self.active_traces.read().unwrap();
         active_traces.values().cloned().collect()
     }
 
-    /// Получает завершенные трассировки
+    /// Returns recently completed traces
     pub fn get_completed_traces(&self, limit: usize) -> Vec<QueryTrace> {
         let completed_traces = self.completed_traces.read().unwrap();
         let start = completed_traces.len().saturating_sub(limit);
         completed_traces[start..].to_vec()
     }
 
-    /// Получает статистику трассировки
+    /// Returns tracing statistics
     pub fn get_stats(&self) -> QueryTracingStats {
         self.stats.read().unwrap().clone()
     }
 
-    /// Создает отчет о производительности запросов
+    /// Generates query performance report
     pub fn generate_performance_report(&self) -> String {
         let stats = self.get_stats();
         let completed_traces = self.get_completed_traces(100);
 
         let mut report = String::new();
 
-        report.push_str("=== Отчет о производительности запросов ===\n\n");
+        report.push_str("=== Query performance report ===\n\n");
 
-        // Общая статистика
-        report.push_str("Общая статистика:\n");
-        report.push_str(&format!("  Всего запросов: {}\n", stats.total_queries));
+        // General statistics
+        report.push_str("General statistics:\n");
+        report.push_str(&format!("  Total queries: {}\n", stats.total_queries));
         report.push_str(&format!(
-            "  Успешно завершенных: {}\n",
+            "  Completed successfully: {}\n",
             stats.completed_queries
         ));
-        report.push_str(&format!("  С ошибками: {}\n", stats.failed_queries));
-        report.push_str(&format!("  Отмененных: {}\n", stats.cancelled_queries));
+        report.push_str(&format!("  Failed: {}\n", stats.failed_queries));
+        report.push_str(&format!("  Cancelled: {}\n", stats.cancelled_queries));
         report.push_str("\n");
 
-        // Время выполнения
+        // Execution time
         if !completed_traces.is_empty() {
             let mut total_time = 0u64;
             let mut min_time = u64::MAX;
@@ -449,35 +448,35 @@ impl QueryTracer {
             let avg_time = total_time / completed_traces.len() as u64;
             let avg_rows = total_rows / completed_traces.len() as u64;
 
-            report.push_str("Время выполнения:\n");
-            report.push_str(&format!("  Среднее: {:.2} мс\n", avg_time as f64 / 1000.0));
+            report.push_str("Execution time:\n");
+            report.push_str(&format!("  Average: {:.2} ms\n", avg_time as f64 / 1000.0));
             report.push_str(&format!(
-                "  Минимальное: {:.2} мс\n",
+                "  Minimum: {:.2} ms\n",
                 min_time as f64 / 1000.0
             ));
             report.push_str(&format!(
-                "  Максимальное: {:.2} мс\n",
+                "  Maximum: {:.2} ms\n",
                 max_time as f64 / 1000.0
             ));
             report.push_str("\n");
 
-            report.push_str("Обработка данных:\n");
-            report.push_str(&format!("  Среднее количество строк: {}\n", avg_rows));
-            report.push_str(&format!("  Общее количество строк: {}\n", total_rows));
+            report.push_str("Data processing:\n");
+            report.push_str(&format!("  Average rows: {}\n", avg_rows));
+            report.push_str(&format!("  Total rows: {}\n", total_rows));
             report.push_str("\n");
 
-            // Топ медленных запросов
+            // Slowest queries
             let mut slow_queries: Vec<_> = completed_traces
                 .iter()
                 .filter(|t| t.total_duration_us.is_some())
                 .collect();
             slow_queries.sort_by(|a, b| b.total_duration_us.cmp(&a.total_duration_us));
 
-            report.push_str("Топ 5 медленных запросов:\n");
+            report.push_str("Top 5 slow queries:\n");
             for (i, trace) in slow_queries.iter().take(5).enumerate() {
                 if let Some(duration) = trace.total_duration_us {
                     report.push_str(&format!(
-                        "  {}. {} мс - {}\n",
+                        "  {}. {} ms - {}\n",
                         i + 1,
                         duration as f64 / 1000.0,
                         if trace.sql_query.len() > 50 {
@@ -493,7 +492,7 @@ impl QueryTracer {
         report
     }
 
-    /// Создает отчет о состоянии трассировщика
+    /// Generates tracer status report
     pub fn generate_status_report(&self) -> String {
         let stats = self.get_stats();
         let active_count = self.active_traces.read().unwrap().len();
@@ -501,11 +500,11 @@ impl QueryTracer {
 
         let mut report = String::new();
 
-        report.push_str(&format!("Активных трассировок: {}\n", active_count));
-        report.push_str(&format!("Завершенных трассировок: {}\n", completed_count));
-        report.push_str(&format!("Всего запросов: {}\n", stats.total_queries));
+        report.push_str(&format!("Active traces: {}\n", active_count));
+        report.push_str(&format!("Completed traces: {}\n", completed_count));
+        report.push_str(&format!("Total queries: {}\n", stats.total_queries));
         report.push_str(&format!(
-            "Успешных: {} ({:.1}%)\n",
+            "Succeeded: {} ({:.1}%)\n",
             stats.completed_queries,
             if stats.total_queries > 0 {
                 stats.completed_queries as f64 / stats.total_queries as f64 * 100.0
@@ -514,7 +513,7 @@ impl QueryTracer {
             }
         ));
         report.push_str(&format!(
-            "С ошибками: {} ({:.1}%)\n",
+            "Failed: {} ({:.1}%)\n",
             stats.failed_queries,
             if stats.total_queries > 0 {
                 stats.failed_queries as f64 / stats.total_queries as f64 * 100.0
@@ -526,7 +525,7 @@ impl QueryTracer {
         report
     }
 
-    /// Останавливает трассировщик
+    /// Stops tracer
     pub fn shutdown(&mut self) {
         if let Some(handle) = self.background_handle.take() {
             handle.abort();
@@ -554,10 +553,10 @@ mod tests {
 
         let tracer = QueryTracer::new(&config);
 
-        // Начинаем трассировку
+        // Start a trace
         let query_id = tracer.start_trace("SELECT * FROM users WHERE age > 18");
 
-        // Добавляем события
+        // Add events
         tracer.add_event(
             &query_id,
             QueryStage::Lexing,
@@ -588,7 +587,7 @@ mod tests {
             Some(100),
         );
 
-        // Завершаем трассировку
+        // Finish trace
         tracer.finish_trace(
             &query_id,
             QueryStatus::Completed,
@@ -597,13 +596,13 @@ mod tests {
             None,
         );
 
-        // Проверяем статистику
+        // Verify statistics
         let stats = tracer.get_stats();
         assert_eq!(stats.total_queries, 1);
         assert_eq!(stats.completed_queries, 1);
         assert_eq!(stats.failed_queries, 0);
 
-        // Проверяем завершенные трассировки
+        // Verify completed traces
         let completed = tracer.get_completed_traces(10);
         assert_eq!(completed.len(), 1);
 
@@ -613,13 +612,13 @@ mod tests {
         assert!(matches!(trace.status, QueryStatus::Completed));
         assert_eq!(trace.rows_returned, Some(100));
         assert_eq!(trace.result_size, Some(8192));
-        assert!(trace.events.len() >= 4); // Начальное + 3 добавленных + финальное
+        assert!(trace.events.len() >= 4); // Initial + 3 added + final
 
-        // Проверяем отчет
+        // Verify report contents
         let report = tracer.generate_performance_report();
-        assert!(report.contains("Отчет о производительности запросов"));
-        assert!(report.contains("Всего запросов: 1"));
-        assert!(report.contains("Успешно завершенных: 1"));
+        assert!(report.contains("Query performance report"));
+        assert!(report.contains("Total queries: 1"));
+        assert!(report.contains("Completed successfully: 1"));
     }
 
     #[tokio::test]

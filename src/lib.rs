@@ -1,7 +1,7 @@
-//! rustdb - Реализация реляционной базы данных на Rust
+//! rustdb - Relational database implementation in Rust
 //!
-//! Этот модуль предоставляет основную функциональность для работы с реляционной базой данных,
-//! включая управление данными, SQL парсинг, выполнение запросов и транзакции.
+//! This module provides core functionality for working with a relational database,
+//! including data management, SQL parsing, query execution, and transactions.
 
 #![allow(clippy::absurd_extreme_comparisons)]
 #![allow(clippy::assertions_on_constants)]
@@ -62,30 +62,30 @@ pub mod storage;
 pub use common::error::{Error, Result};
 pub use common::types::*;
 
-/// Версия библиотеки
+/// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Основная структура базы данных
+/// Main database structure
 pub struct Database {
-    // TODO: Реализовать основную структуру БД
+    // TODO: Implement main database structure
 }
 
 impl Database {
-    /// Создает новый экземпляр базы данных
+    /// Creates a new database instance
     pub fn new() -> Result<Self> {
-        // TODO: Инициализация БД
+        // TODO: Database initialization
         Ok(Self {})
     }
 
-    /// Открывает существующую базу данных
+    /// Opens an existing database
     pub fn open(_path: &str) -> Result<Self> {
-        // TODO: Открытие существующей БД
+        // TODO: Open existing database
         Ok(Self {})
     }
 
-    /// Закрывает базу данных
+    /// Closes the database
     pub fn close(&mut self) -> Result<()> {
-        // TODO: Корректное закрытие БД
+        // TODO: Proper database shutdown
         Ok(())
     }
 }

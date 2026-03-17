@@ -1,11 +1,11 @@
-//! Исполнитель запросов rustdb
+//! Query executor for rustdb
 
 pub mod executor;
 pub mod operators;
 pub mod result;
 
 pub use operators::{
-    // Новые операторы агрегации и сортировки
+    // New aggregation and sorting operators
     AggregateFunction,
     AggregateGroup,
     AggregationSortOperatorFactory,

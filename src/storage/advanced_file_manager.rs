@@ -1,10 +1,10 @@
-//! Продвинутый менеджер файлов базы данных rustdb
+//! Advanced database file manager for rustdb
 //!
-//! Этот модуль объединяет базовый менеджер файлов с расширенными структурами БД:
-//! - Интеграция с DatabaseFileHeader и FreePageMap
-//! - Автоматическое управление расширением файлов
-//! - Оптимизированное распределение страниц
-//! - Мониторинг и статистика использования
+//! This module combines the basic file manager with extended database structures:
+//! - Integration with DatabaseFileHeader and FreePageMap
+//! - Automatic file extension management
+//! - Optimized page allocation
+//! - Usage monitoring and statistics
 
 use crate::common::{Error, Result};
 use crate::storage::database_file::{
@@ -16,50 +16,50 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// ID расширенного файла БД
+/// Advanced database file ID
 pub type AdvancedFileId = u32;
 
-/// Расширенный файл базы данных
+/// Advanced database file
 pub struct AdvancedDatabaseFile {
-    /// Базовый файл
+    /// Base file
     pub base_file: DatabaseFile,
-    /// Расширенный заголовок
+    /// Extended header
     pub header: DatabaseFileHeader,
-    /// Карта свободных страниц
+    /// Free page map
     pub free_page_map: FreePageMap,
-    /// Менеджер расширения файлов
+    /// File extension manager
     pub extension_manager: FileExtensionManager,
-    /// Флаг изменения заголовка
+    /// Header modification flag
     pub header_dirty: bool,
-    /// Флаг изменения карты свободных страниц
+    /// Free page map modification flag
     pub free_map_dirty: bool,
-    /// Кэш статистики
+    /// Statistics cache
     pub statistics: FileStatistics,
 }
 
-/// Статистика файла
+/// File statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FileStatistics {
-    /// Количество операций чтения
+    /// Number of read operations
     pub read_operations: u64,
-    /// Количество операций записи
+    /// Number of write operations
     pub write_operations: u64,
-    /// Количество выделенных страниц
+    /// Number of allocated pages
     pub allocated_pages: u64,
-    /// Количество освобожденных страниц
+    /// Number of freed pages
     pub freed_pages: u64,
-    /// Количество расширений файла
+    /// Number of file extensions
     pub file_extensions: u64,
-    /// Средний размер расширения
+    /// Average extension size
     pub average_extension_size: f64,
-    /// Коэффициент фрагментации (0.0 - 1.0)
+    /// Fragmentation ratio (0.0 - 1.0)
     pub fragmentation_ratio: f64,
-    /// Коэффициент использования (0.0 - 1.0)
+    /// Utilization ratio (0.0 - 1.0)
     pub utilization_ratio: f64,
 }
 
 impl AdvancedDatabaseFile {
-    /// Создает новый расширенный файл БД
+    /// Creates a new advanced database file
     pub fn create(
         base_file: DatabaseFile,
         file_type: DatabaseFileType,
@@ -84,10 +84,10 @@ impl AdvancedDatabaseFile {
         })
     }
 
-    /// Открывает существующий расширенный файл БД
+    /// Opens an existing advanced database file
     pub fn open(base_file: DatabaseFile) -> Result<Self> {
-        // Читаем расширенный заголовок из файла
-        // В реальной реализации здесь был бы код для чтения заголовка
+        // Read extended header from file
+        // In a real implementation, there would be code here to read the header
         let header = DatabaseFileHeader::default();
         let free_page_map = FreePageMap::new();
         let extension_manager = FileExtensionManager::new(ExtensionStrategy::Adaptive);
@@ -103,9 +103,9 @@ impl AdvancedDatabaseFile {
         })
     }
 
-    /// Выделяет страницы в файле
+    /// Allocates pages in the file
     pub fn allocate_pages(&mut self, page_count: u32) -> Result<PageId> {
-        // Пытаемся найти свободные страницы в карте
+        // Try to find free pages in the map
         if let Some(start_page) = self.free_page_map.allocate_pages(page_count) {
             self.statistics.allocated_pages += page_count as u64;
             self.free_map_dirty = true;
@@ -113,29 +113,29 @@ impl AdvancedDatabaseFile {
             return Ok(start_page);
         }
 
-        // Если свободных страниц нет, расширяем файл
+        // If no free pages, extend the file
         let old_size = self.header.total_pages;
         let extension_size = self
             .extension_manager
             .calculate_extension_size(old_size, page_count);
         let new_size = old_size + extension_size as u64;
 
-        // Расширяем базовый файл
+        // Extend the base file
         self.base_file.extend_file(new_size as u32)?;
 
-        // Обновляем заголовок
+        // Update header
         self.header.total_pages = new_size;
         self.header.increment_write_count();
         self.header_dirty = true;
 
-        // Добавляем новые страницы в карту свободных страниц
+        // Add new pages to the free page map
         if extension_size > page_count {
             let remaining_pages = extension_size - page_count;
             self.free_page_map
                 .add_free_block(old_size + page_count as u64, remaining_pages)?;
         }
 
-        // Записываем расширение в историю
+        // Record extension in history
         self.extension_manager
             .record_extension(old_size, new_size, ExtensionReason::OutOfSpace);
 
@@ -144,11 +144,11 @@ impl AdvancedDatabaseFile {
         self.update_extension_statistics();
         self.free_map_dirty = true;
 
-        // Возвращаем ID первой страницы (начинаем с 1, а не с 0)
+        // Return ID of first page (start from 1, not 0)
         Ok(if old_size == 0 { 1 } else { old_size })
     }
 
-    /// Освобождает страницы в файле
+    /// Frees pages in the file
     pub fn free_pages(&mut self, start_page: PageId, page_count: u32) -> Result<()> {
         self.free_page_map.free_pages(start_page, page_count)?;
         self.statistics.freed_pages += page_count as u64;
@@ -158,7 +158,7 @@ impl AdvancedDatabaseFile {
         Ok(())
     }
 
-    /// Читает страницу из файла
+    /// Reads a page from the file
     pub fn read_page(&mut self, page_id: PageId) -> Result<Vec<u8>> {
         let data = self.base_file.read_block(page_id)?;
         self.header.increment_read_count();
@@ -167,7 +167,7 @@ impl AdvancedDatabaseFile {
         Ok(data)
     }
 
-    /// Записывает страницу в файл
+    /// Writes a page to the file
     pub fn write_page(&mut self, page_id: PageId, data: &[u8]) -> Result<()> {
         self.base_file.write_block(page_id, data)?;
         self.header.increment_write_count();
@@ -176,7 +176,7 @@ impl AdvancedDatabaseFile {
         Ok(())
     }
 
-    /// Проверяет, нужно ли предварительно расширить файл
+    /// Checks if file pre-extension is needed
     pub fn check_preextension(&mut self) -> Result<bool> {
         let should_extend = self.extension_manager.should_preextend(
             self.header.total_pages,
@@ -187,25 +187,25 @@ impl AdvancedDatabaseFile {
         if should_extend {
             let extension_size = self.extension_manager.calculate_extension_size(
                 self.header.total_pages,
-                0, // Предварительное расширение
+                0, // Pre-extension
             );
 
             let old_size = self.header.total_pages;
             let new_size = old_size + extension_size as u64;
 
-            // Расширяем файл
+            // Extend the file
             self.base_file.extend_file(new_size as u32)?;
 
-            // Обновляем заголовок
+            // Update header
             self.header.total_pages = new_size;
             self.header.increment_write_count();
             self.header_dirty = true;
 
-            // Добавляем новые страницы в карту свободных страниц
+            // Add new pages to the free page map
             self.free_page_map
                 .add_free_block(old_size, extension_size)?;
 
-            // Записываем расширение в историю
+            // Record extension in history
             self.extension_manager.record_extension(
                 old_size,
                 new_size,
@@ -222,39 +222,39 @@ impl AdvancedDatabaseFile {
         Ok(false)
     }
 
-    /// Дефрагментирует карту свободных страниц
+    /// Defragments the free page map
     pub fn defragment(&mut self) {
         self.free_page_map.defragment();
         self.update_fragmentation_ratio();
         self.free_map_dirty = true;
     }
 
-    /// Синхронизирует все данные на диск
+    /// Synchronizes all data to disk
     pub fn sync(&mut self) -> Result<()> {
-        // Записываем заголовок если он изменился
+        // Write header if it changed
         if self.header_dirty {
             self.write_header()?;
             self.header_dirty = false;
         }
 
-        // Записываем карту свободных страниц если она изменилась
+        // Write free page map if it changed
         if self.free_map_dirty {
             self.write_free_page_map()?;
             self.free_map_dirty = false;
         }
 
-        // Синхронизируем базовый файл
+        // Synchronize base file
         self.base_file.sync()?;
 
         Ok(())
     }
 
-    /// Возвращает статистику файла
+    /// Returns file statistics
     pub fn get_statistics(&self) -> &FileStatistics {
         &self.statistics
     }
 
-    /// Возвращает информацию о файле
+    /// Returns file information
     pub fn get_file_info(&self) -> FileInfo {
         FileInfo {
             file_id: self.base_file.file_id,
@@ -271,40 +271,40 @@ impl AdvancedDatabaseFile {
         }
     }
 
-    /// Проверяет целостность файла
+    /// Validates file integrity
     pub fn validate(&self) -> Result<()> {
-        // Проверяем заголовок
+        // Check header
         if !self.header.is_valid() {
-            return Err(Error::validation("Заголовок файла поврежден"));
+            return Err(Error::validation("File header is corrupted"));
         }
 
-        // Проверяем карту свободных страниц
+        // Check free page map
         self.free_page_map.validate()?;
 
-        // Проверяем соответствие размеров
+        // Check size consistency
         if self.header.total_pages != self.base_file.size_in_blocks() as u64 {
             return Err(Error::validation(
-                "Несоответствие размера файла в заголовке и на диске",
+                "File size mismatch between header and disk",
             ));
         }
 
         Ok(())
     }
 
-    /// Записывает заголовок в файл
+    /// Writes header to file
     fn write_header(&mut self) -> Result<()> {
-        // В реальной реализации здесь был бы код для записи расширенного заголовка
-        // Пока используем базовую функциональность
+        // In a real implementation, there would be code here to write the extended header
+        // For now, use basic functionality
         Ok(())
     }
 
-    /// Записывает карту свободных страниц в файл
+    /// Writes free page map to file
     fn write_free_page_map(&mut self) -> Result<()> {
-        // В реальной реализации здесь был бы код для записи карты в специальные страницы
+        // In a real implementation, there would be code here to write the map to special pages
         Ok(())
     }
 
-    /// Обновляет коэффициент использования
+    /// Updates utilization ratio
     fn update_utilization_ratio(&mut self) {
         if self.header.total_pages > 0 {
             let free_pages = self.free_page_map.total_free_pages();
@@ -317,7 +317,7 @@ impl AdvancedDatabaseFile {
         }
     }
 
-    /// Обновляет коэффициент фрагментации
+    /// Updates fragmentation ratio
     fn update_fragmentation_ratio(&mut self) {
         let total_free = self.free_page_map.total_free_pages();
         if total_free > 0 {
@@ -328,14 +328,14 @@ impl AdvancedDatabaseFile {
         }
     }
 
-    /// Обновляет статистику расширений
+    /// Updates extension statistics
     fn update_extension_statistics(&mut self) {
         let ext_stats = self.extension_manager.get_statistics();
         self.statistics.average_extension_size = ext_stats.average_extension_size;
     }
 }
 
-/// Информация о файле
+/// File information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileInfo {
     pub file_id: u32,
@@ -351,39 +351,39 @@ pub struct FileInfo {
     pub utilization_ratio: f64,
 }
 
-/// Продвинутый менеджер файлов базы данных
+/// Advanced database file manager
 pub struct AdvancedFileManager {
-    /// Базовый менеджер файлов
+    /// Base file manager
     base_manager: FileManager,
-    /// Открытые расширенные файлы
+    /// Open advanced files
     advanced_files: HashMap<AdvancedFileId, AdvancedDatabaseFile>,
-    /// Счетчик ID файлов
+    /// File ID counter
     next_file_id: AdvancedFileId,
-    /// Глобальная статистика
+    /// Global statistics
     global_statistics: GlobalStatistics,
 }
 
-/// Глобальная статистика менеджера
+/// Manager global statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GlobalStatistics {
-    /// Общее количество файлов
+    /// Total number of files
     pub total_files: u32,
-    /// Общее количество страниц
+    /// Total number of pages
     pub total_pages: u64,
-    /// Общее количество операций чтения
+    /// Total number of read operations
     pub total_reads: u64,
-    /// Общее количество операций записи
+    /// Total number of write operations
     pub total_writes: u64,
-    /// Общее количество расширений файлов
+    /// Total number of file extensions
     pub total_extensions: u64,
-    /// Средний коэффициент использования
+    /// Average utilization ratio
     pub average_utilization: f64,
-    /// Средний коэффициент фрагментации
+    /// Average fragmentation ratio
     pub average_fragmentation: f64,
 }
 
 impl AdvancedFileManager {
-    /// Создает новый продвинутый менеджер файлов
+    /// Creates a new advanced file manager
     pub fn new(root_dir: impl AsRef<std::path::Path>) -> Result<Self> {
         let base_manager = FileManager::new(root_dir)?;
 
@@ -395,7 +395,7 @@ impl AdvancedFileManager {
         })
     }
 
-    /// Создает новый файл базы данных
+    /// Creates a new database file
     pub fn create_database_file(
         &mut self,
         filename: &str,
@@ -403,14 +403,14 @@ impl AdvancedFileManager {
         database_id: u32,
         extension_strategy: ExtensionStrategy,
     ) -> Result<AdvancedFileId> {
-        // Создаем базовый файл
+        // Create base file
         let base_file_id = self.base_manager.create_file(filename)?;
         let base_file_info = self
             .base_manager
             .get_file_info(base_file_id)
-            .ok_or_else(|| Error::database("Не удалось получить информацию о созданном файле"))?;
+            .ok_or_else(|| Error::database("Failed to get information about created file"))?;
 
-        // Создаем базовый файл из информации
+        // Create base file from information
         let mut base_file = DatabaseFile {
             file_id: base_file_info.file_id,
             path: base_file_info.path.clone(),
@@ -419,16 +419,16 @@ impl AdvancedFileManager {
                 .write(true)
                 .create(true)
                 .truncate(false)
-                .open(&base_file_info.path)?, // Правильное открытие файла
+                .open(&base_file_info.path)?, // Correct file opening
             header: crate::storage::file_manager::FileHeader::new(),
             header_dirty: false,
             read_only: false,
         };
 
-        // Инициализируем файл с минимальным размером (10 блоков)
+        // Initialize file with minimum size (10 blocks)
         base_file.extend_file(10)?;
 
-        // Создаем расширенный файл
+        // Create advanced file
         let advanced_file =
             AdvancedDatabaseFile::create(base_file, file_type, database_id, extension_strategy)?;
 
@@ -441,34 +441,34 @@ impl AdvancedFileManager {
         Ok(advanced_file_id)
     }
 
-    /// Открывает существующий файл базы данных
+    /// Opens an existing database file
     pub fn open_database_file(&mut self, filename: &str) -> Result<AdvancedFileId> {
-        // Открываем базовый файл
+        // Open base file
         let base_file_id = self.base_manager.open_file(filename, false)?;
         let base_file_info = self
             .base_manager
             .get_file_info(base_file_id)
-            .ok_or_else(|| Error::database("Не удалось получить информацию об открытом файле"))?;
+            .ok_or_else(|| Error::database("Failed to get information about opened file"))?;
 
-        // Создаем базовый файл из информации
+        // Create base file from information
         let mut base_file = DatabaseFile {
             file_id: base_file_info.file_id,
             path: base_file_info.path.clone(),
             file: std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)
-                .open(&base_file_info.path)?, // Временное решение
+                .open(&base_file_info.path)?, // Temporary solution
             header: crate::storage::file_manager::FileHeader::new(),
             header_dirty: false,
             read_only: false,
         };
 
-        // Убеждаемся, что файл имеет минимальный размер
+        // Make sure file has minimum size
         if base_file.header.total_blocks < 10 {
             base_file.extend_file(10)?;
         }
 
-        // Открываем расширенный файл
+        // Open advanced file
         let advanced_file = AdvancedDatabaseFile::open(base_file)?;
 
         let advanced_file_id = self.next_file_id;
@@ -479,19 +479,19 @@ impl AdvancedFileManager {
         Ok(advanced_file_id)
     }
 
-    /// Выделяет страницы в файле
+    /// Allocates pages in the file
     pub fn allocate_pages(&mut self, file_id: AdvancedFileId, page_count: u32) -> Result<PageId> {
         let file = self
             .advanced_files
             .get_mut(&file_id)
-            .ok_or_else(|| Error::database(format!("Файл {} не найден", file_id)))?;
+            .ok_or_else(|| Error::database(format!("File {} not found", file_id)))?;
 
         let result = file.allocate_pages(page_count)?;
         self.update_global_statistics();
         Ok(result)
     }
 
-    /// Освобождает страницы в файле
+    /// Frees pages in the file
     pub fn free_pages(
         &mut self,
         file_id: AdvancedFileId,
@@ -501,26 +501,26 @@ impl AdvancedFileManager {
         let file = self
             .advanced_files
             .get_mut(&file_id)
-            .ok_or_else(|| Error::database(format!("Файл {} не найден", file_id)))?;
+            .ok_or_else(|| Error::database(format!("File {} not found", file_id)))?;
 
         file.free_pages(start_page, page_count)?;
         self.update_global_statistics();
         Ok(())
     }
 
-    /// Читает страницу из файла
+    /// Reads a page from the file
     pub fn read_page(&mut self, file_id: AdvancedFileId, page_id: PageId) -> Result<Vec<u8>> {
         let file = self
             .advanced_files
             .get_mut(&file_id)
-            .ok_or_else(|| Error::database(format!("Файл {} не найден", file_id)))?;
+            .ok_or_else(|| Error::database(format!("File {} not found", file_id)))?;
 
         let result = file.read_page(page_id)?;
         self.update_global_statistics();
         Ok(result)
     }
 
-    /// Записывает страницу в файл
+    /// Writes a page to the file
     pub fn write_page(
         &mut self,
         file_id: AdvancedFileId,
@@ -530,24 +530,24 @@ impl AdvancedFileManager {
         let file = self
             .advanced_files
             .get_mut(&file_id)
-            .ok_or_else(|| Error::database(format!("Файл {} не найден", file_id)))?;
+            .ok_or_else(|| Error::database(format!("File {} not found", file_id)))?;
 
         file.write_page(page_id, data)?;
         self.update_global_statistics();
         Ok(())
     }
 
-    /// Синхронизирует файл
+    /// Synchronizes a file
     pub fn sync_file(&mut self, file_id: AdvancedFileId) -> Result<()> {
         let file = self
             .advanced_files
             .get_mut(&file_id)
-            .ok_or_else(|| Error::database(format!("Файл {} не найден", file_id)))?;
+            .ok_or_else(|| Error::database(format!("File {} not found", file_id)))?;
 
         file.sync()
     }
 
-    /// Синхронизирует все файлы
+    /// Synchronizes all files
     pub fn sync_all(&mut self) -> Result<()> {
         for file in self.advanced_files.values_mut() {
             file.sync()?;
@@ -555,7 +555,7 @@ impl AdvancedFileManager {
         Ok(())
     }
 
-    /// Закрывает файл
+    /// Closes a file
     pub fn close_file(&mut self, file_id: AdvancedFileId) -> Result<()> {
         if let Some(mut file) = self.advanced_files.remove(&file_id) {
             file.sync()?;
@@ -565,19 +565,19 @@ impl AdvancedFileManager {
         Ok(())
     }
 
-    /// Возвращает информацию о файле
+    /// Returns file information
     pub fn get_file_info(&self, file_id: AdvancedFileId) -> Option<FileInfo> {
         self.advanced_files
             .get(&file_id)
             .map(|file| file.get_file_info())
     }
 
-    /// Возвращает глобальную статистику
+    /// Returns global statistics
     pub fn get_global_statistics(&self) -> &GlobalStatistics {
         &self.global_statistics
     }
 
-    /// Запускает проверку всех файлов на предмет предварительного расширения
+    /// Runs maintenance check on all files for pre-extension
     pub fn maintenance_check(&mut self) -> Result<Vec<AdvancedFileId>> {
         let mut extended_files = Vec::new();
 
@@ -591,7 +591,7 @@ impl AdvancedFileManager {
         Ok(extended_files)
     }
 
-    /// Дефрагментирует все файлы
+    /// Defragments all files
     pub fn defragment_all(&mut self) {
         for file in self.advanced_files.values_mut() {
             file.defragment();
@@ -599,7 +599,7 @@ impl AdvancedFileManager {
         self.update_global_statistics();
     }
 
-    /// Проверяет целостность всех файлов
+    /// Validates integrity of all files
     pub fn validate_all(&self) -> Result<Vec<(AdvancedFileId, Result<()>)>> {
         let mut results = Vec::new();
 
@@ -611,7 +611,7 @@ impl AdvancedFileManager {
         Ok(results)
     }
 
-    /// Обновляет глобальную статистику
+    /// Updates global statistics
     fn update_global_statistics(&mut self) {
         let mut total_pages = 0;
         let mut total_reads = 0;
@@ -653,7 +653,7 @@ impl AdvancedFileManager {
 
 impl Drop for AdvancedFileManager {
     fn drop(&mut self) {
-        // Закрываем все файлы при уничтожении менеджера
+        // Close all files when manager is destroyed
         let file_ids: Vec<AdvancedFileId> = self.advanced_files.keys().cloned().collect();
         for file_id in file_ids {
             let _ = self.close_file(file_id);
@@ -706,11 +706,11 @@ mod tests {
             ExtensionStrategy::Fixed,
         )?;
 
-        // Выделяем страницы
+        // Allocate pages
         let page_id = manager.allocate_pages(file_id, 10)?;
-        assert_eq!(page_id, 1); // Первые страницы (начинаем с 1, а не с 0)
+        assert_eq!(page_id, 1); // First pages (start from 1, not 0)
 
-        // Проверяем статистику
+        // Check statistics
         let stats = manager.get_global_statistics();
         assert!(stats.total_pages >= 10);
 
@@ -735,64 +735,63 @@ mod tests {
             )
             .map_err(|e| Error::database(format!("Failed to create database file: {}", e)))?;
 
-        // Выделяем страницу
+        // Allocate page
         let page_id = manager
             .allocate_pages(file_id, 1)
             .map_err(|e| Error::database(format!("Failed to allocate pages: {}", e)))?;
 
-        // Записываем данные
+        // Write data
         let test_data = vec![42u8; crate::storage::database_file::BLOCK_SIZE];
         manager
             .write_page(file_id, page_id, &test_data)
             .map_err(|e| Error::database(format!("Failed to write page: {}", e)))?;
 
-        // Синхронизируем файл
+        // Sync file
         manager
             .sync_file(file_id)
             .map_err(|e| Error::database(format!("Failed to sync file: {}", e)))?;
 
-        // Небольшая задержка для файловой системы
+        // Small delay for file system
         thread::sleep(Duration::from_millis(100));
 
-        // Проверяем, что файл все еще существует и доступен
+        // Check that file still exists and is accessible
         if let Some(file_info) = manager.get_file_info(file_id) {
-            println!("Файл существует: {:?}", file_info.path);
+            println!("File exists: {:?}", file_info.path);
         } else {
-            println!("Предупреждение: Файл не найден после записи");
+            println!("Warning: File not found after write");
         }
 
-        // Пытаемся прочитать данные с улучшенной обработкой ошибок
+        // Try to read data with improved error handling
         match manager.read_page(file_id, page_id) {
             Ok(read_data) => {
-                // Если удалось прочитать, проверяем корректность данных
+                // If read succeeded, check data correctness
                 assert_eq!(read_data, test_data);
-                println!("Тест чтения/записи страницы прошел успешно");
+                println!("Page read/write test passed successfully");
             }
             Err(e) => {
-                // Обрабатываем различные типы ошибок файловой системы
+                // Handle various types of file system errors
                 let error_msg = format!("{}", e);
                 if error_msg.contains("Bad file descriptor")
                     || error_msg.contains("Bad file descriptor")
-                    || error_msg.contains("Отказано в доступе")
                     || error_msg.contains("Access is denied")
                     || error_msg.contains("The process cannot access the file")
                     || error_msg.contains("Uncategorized")
                     || error_msg.contains("code: 9")
                 {
                     println!(
-                        "Предупреждение: Проблема с файловой системой в тестовой среде: {}",
+                        "Warning: File system issue in test environment: {}",
                         error_msg
                     );
-                    println!("Базовая функциональность записи работает, проблема в чтении из-за особенностей файловой системы");
-                    // Тест считается пройденным, так как проблема в файловой системе, а не в коде
+                    println!("Basic write functionality works, issue is in reading due to file system specifics");
+                    // Test is considered passed, as the issue is in file system, not in code
                 } else {
-                    // Если это другая ошибка, то тест должен упасть
+                    // If this is another error, the test should fail
                     return Err(e);
                 }
             }
         }
 
-        // Явно закрываем файл
+        // Explicitly close file
         let _ = manager.close_file(file_id);
 
         Ok(())
@@ -811,9 +810,9 @@ mod tests {
             ExtensionStrategy::Adaptive,
         )?;
 
-        // Запускаем проверку обслуживания
+        // Run maintenance check
         let extended_files = manager.maintenance_check()?;
-        // В зависимости от состояния файла, он может быть расширен или нет
+        // Depending on file state, it may be extended or not
         assert!(extended_files.len() <= 1);
 
         Ok(())

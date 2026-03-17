@@ -1,8 +1,8 @@
-//! Семантический анализатор для rustdb
+//! Semantic analyzer for rustdb
 //!
-//! Этот модуль отвечает за семантическую проверку SQL запросов,
-//! включая проверку существования объектов, совместимости типов,
-//! прав доступа и другие семантические правила.
+//! This module is responsible for semantic checking of SQL queries,
+//! including checking object existence, type compatibility,
+//! access rights and other semantic rules.
 
 pub mod access_checker;
 pub mod metadata_cache;
@@ -13,7 +13,7 @@ pub mod type_checker;
 #[cfg(test)]
 pub mod tests;
 
-// Переэкспортируем основные типы
+// Re-export main types
 pub use access_checker::{AccessCheckResult, AccessChecker, Permission};
 pub use metadata_cache::{CacheEntry, MetadataCache};
 pub use object_checker::{ObjectCheckResult, ObjectChecker};

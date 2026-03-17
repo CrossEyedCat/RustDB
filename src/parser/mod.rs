@@ -1,4 +1,4 @@
-//! Парсер SQL для rustdb
+//! SQL parser for rustdb
 
 pub mod ast;
 pub mod lexer;
@@ -8,7 +8,7 @@ pub mod token;
 #[cfg(test)]
 pub mod tests;
 
-// Переэкспортируем основные типы
+// Re-export main types
 pub use ast::*;
 pub use lexer::Lexer;
 pub use parser::{ParserSettings, SqlParser};

@@ -1,6 +1,6 @@
-//! Детальный логгер отладки для rustdb
+//! Detailed debug logger for rustdb
 //!
-//! Предоставляет расширенное логирование операций с различными уровнями детализации
+//! Provides advanced logging of operations with multiple verbosity levels
 
 use crate::debug::DebugConfig;
 use serde::{Deserialize, Serialize};
@@ -12,20 +12,20 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 
-/// Уровень детализации логирования
+/// Logging verbosity level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LogLevel {
-    /// Только критические ошибки
+    /// Critical errors only
     Critical = 0,
-    /// Ошибки
+    /// Errors
     Error = 1,
-    /// Предупреждения
+    /// Warnings
     Warning = 2,
-    /// Информационные сообщения
+    /// Informational messages
     Info = 3,
-    /// Отладочная информация
+    /// Debug information
     Debug = 4,
-    /// Максимальная детализация
+    /// Maximum detail
     Trace = 5,
 }
 
@@ -42,28 +42,28 @@ impl std::fmt::Display for LogLevel {
     }
 }
 
-/// Категория лог-записи
+/// Log entry category
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LogCategory {
-    /// Операции с транзакциями
+    /// Transaction operations
     Transaction,
-    /// Операции с данными
+    /// Data operations
     Data,
-    /// Операции с индексами
+    /// Index operations
     Index,
-    /// Операции с буферами
+    /// Buffer operations
     Buffer,
-    /// Операции с файлами
+    /// File operations
     File,
-    /// Операции с сетью
+    /// Network operations
     Network,
-    /// Парсинг и планирование
+    /// Query parsing/planning
     Query,
-    /// Системные операции
+    /// System operations
     System,
-    /// Операции восстановления
+    /// Recovery operations
     Recovery,
-    /// Операции логирования
+    /// Logging operations
     Logging,
 }
 
@@ -84,42 +84,42 @@ impl std::fmt::Display for LogCategory {
     }
 }
 
-/// Структура лог-записи
+/// Debug log entry structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugLogEntry {
-    /// Временная метка (микросекунды с эпохи Unix)
+    /// Timestamp (microseconds since Unix epoch)
     pub timestamp: u64,
-    /// Уровень логирования
+    /// Log level
     pub level: LogLevel,
-    /// Категория
+    /// Category
     pub category: LogCategory,
-    /// Компонент системы
+    /// System component
     pub component: String,
-    /// Сообщение
+    /// Message
     pub message: String,
-    /// Дополнительные данные (JSON)
+    /// Additional data (JSON)
     pub data: Option<serde_json::Value>,
-    /// ID потока
+    /// Thread ID
     pub thread_id: u64,
-    /// ID транзакции (если применимо)
+    /// Transaction ID (if applicable)
     pub transaction_id: Option<u64>,
-    /// ID запроса (если применимо)
+    /// Query ID (if applicable)
     pub query_id: Option<String>,
-    /// Время выполнения операции (микросекунды)
+    /// Operation duration (microseconds)
     pub duration_us: Option<u64>,
-    /// Размер данных (байты)
+    /// Data size (bytes)
     pub data_size: Option<u64>,
 }
 
 impl DebugLogEntry {
-    /// Создает новую лог-запись
+    /// Creates a new log entry
     pub fn new(level: LogLevel, category: LogCategory, component: &str, message: &str) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros() as u64;
 
-        let thread_id = 0; // Временное решение для совместимости
+        let thread_id = 0; // Temporary placeholder for compatibility
 
         Self {
             timestamp,
@@ -136,52 +136,52 @@ impl DebugLogEntry {
         }
     }
 
-    /// Добавляет дополнительные данные
+    /// Attaches structured data
     pub fn with_data(mut self, data: serde_json::Value) -> Self {
         self.data = Some(data);
         self
     }
 
-    /// Добавляет ID транзакции
+    /// Sets transaction ID
     pub fn with_transaction_id(mut self, tx_id: u64) -> Self {
         self.transaction_id = Some(tx_id);
         self
     }
 
-    /// Добавляет ID запроса
+    /// Sets query ID
     pub fn with_query_id(mut self, query_id: &str) -> Self {
         self.query_id = Some(query_id.to_string());
         self
     }
 
-    /// Добавляет время выполнения
+    /// Sets operation duration
     pub fn with_duration(mut self, duration: Duration) -> Self {
         self.duration_us = Some(duration.as_micros() as u64);
         self
     }
 
-    /// Добавляет размер данных
+    /// Sets associated data size
     pub fn with_data_size(mut self, size: u64) -> Self {
         self.data_size = Some(size);
         self
     }
 
-    /// Форматирует запись для вывода
+    /// Formats entry for output
     pub fn format(&self) -> String {
         let mut formatted = String::new();
 
-        // Временная метка
+        // Timestamp
         let datetime = SystemTime::UNIX_EPOCH + Duration::from_micros(self.timestamp);
         let datetime_str = format!("{:?}", datetime);
         formatted.push_str(&format!("[{}] ", datetime_str));
 
-        // Уровень и категория
+        // Level and category
         formatted.push_str(&format!("{}:{} ", self.level, self.category));
 
-        // Компонент
+        // Component
         formatted.push_str(&format!("[{}] ", self.component));
 
-        // ID транзакции и запроса
+        // Transaction and query identifiers
         if let Some(tx_id) = self.transaction_id {
             formatted.push_str(&format!("TX:{} ", tx_id));
         }
@@ -189,20 +189,20 @@ impl DebugLogEntry {
             formatted.push_str(&format!("Q:{} ", query_id));
         }
 
-        // Время выполнения
+        // Duration
         if let Some(duration) = self.duration_us {
             formatted.push_str(&format!("({}μs) ", duration));
         }
 
-        // Размер данных
+        // Data size
         if let Some(size) = self.data_size {
             formatted.push_str(&format!("[{}B] ", size));
         }
 
-        // Сообщение
+        // Message body
         formatted.push_str(&self.message);
 
-        // Дополнительные данные
+        // Additional payload
         if let Some(data) = &self.data {
             formatted.push_str(&format!(" | Data: {}", data));
         }
@@ -211,26 +211,26 @@ impl DebugLogEntry {
     }
 }
 
-/// Статистика логирования
+/// Logging statistics snapshot
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LoggingStats {
-    /// Общее количество записей
+    /// Total number of entries
     pub total_entries: u64,
-    /// Записи по уровням
+    /// Entries per level
     pub entries_by_level: HashMap<String, u64>,
-    /// Записи по категориям
+    /// Entries per category
     pub entries_by_category: HashMap<String, u64>,
-    /// Записи по компонентам
+    /// Entries per component
     pub entries_by_component: HashMap<String, u64>,
-    /// Время последней записи
+    /// Timestamp of last entry
     pub last_entry_time: u64,
-    /// Размер лог-файла (байты)
+    /// Log file size (bytes)
     pub log_file_size: u64,
-    /// Количество ошибок записи
+    /// Number of write errors
     pub write_errors: u64,
 }
 
-/// Детальный логгер отладки
+/// Debug logger implementation
 pub struct DebugLogger {
     config: DebugConfig,
     log_file: Arc<Mutex<Option<BufWriter<File>>>>,
@@ -241,7 +241,7 @@ pub struct DebugLogger {
 }
 
 impl DebugLogger {
-    /// Создает новый логгер отладки
+    /// Creates new debug logger
     pub fn new(config: &DebugConfig) -> Self {
         let mut logger = Self {
             config: config.clone(),
@@ -252,16 +252,16 @@ impl DebugLogger {
             buffer_size: 1000,
         };
 
-        // Инициализируем лог-файл
+        // Initialize log file
         logger.initialize_log_file();
 
-        // Запускаем фоновую задачу
+        // Start background task
         logger.start_background_task();
 
         logger
     }
 
-    /// Инициализирует лог-файл
+    /// Initializes the log file handle
     fn initialize_log_file(&mut self) {
         let log_path = Path::new("debug.log");
 
@@ -271,12 +271,12 @@ impl DebugLogger {
                 *self.log_file.lock().unwrap() = Some(writer);
             }
             Err(e) => {
-                eprintln!("Ошибка создания лог-файла: {}", e);
+                eprintln!("Failed to create log file: {}", e);
             }
         }
     }
 
-    /// Запускает фоновую задачу для записи логов
+    /// Launches background writer task
     fn start_background_task(&mut self) {
         let log_file = self.log_file.clone();
         let stats = self.stats.clone();
@@ -289,7 +289,7 @@ impl DebugLogger {
             loop {
                 interval.tick().await;
 
-                // Получаем записи из буфера
+                // Retrieve buffered entries
                 let entries = {
                     let mut buffer = log_buffer.lock().unwrap();
                     if buffer.len() >= buffer_size || !buffer.is_empty() {
@@ -300,38 +300,38 @@ impl DebugLogger {
                     }
                 };
 
-                // Записываем в файл
+                // Write to file
                 if let Some(writer) = log_file.lock().unwrap().as_mut() {
                     for entry in entries {
                         if let Err(e) = writeln!(writer, "{}", entry.format()) {
-                            eprintln!("Ошибка записи в лог: {}", e);
+                            eprintln!("Failed to write to log: {}", e);
                             let mut stats = stats.write().unwrap();
                             stats.write_errors += 1;
                         }
                     }
 
                     if let Err(e) = writer.flush() {
-                        eprintln!("Ошибка сброса буфера лога: {}", e);
+                        eprintln!("Failed to flush log buffer: {}", e);
                     }
                 }
             }
         }));
     }
 
-    /// Логирует запись
+    /// Writes a single entry
     pub fn log(&self, entry: DebugLogEntry) {
-        // Проверяем уровень детализации
+        // Respect configured detail level
         if entry.level as u8 > self.config.detail_level {
             return;
         }
 
-        // Добавляем в буфер
+        // Buffer entry
         {
             let mut buffer = self.log_buffer.lock().unwrap();
             buffer.push(entry.clone());
         }
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self.stats.write().unwrap();
             stats.total_entries += 1;
@@ -351,13 +351,13 @@ impl DebugLogger {
                 .or_default() += 1;
         }
 
-        // Выводим в консоль для критических ошибок
+        // Echo critical errors to stderr
         if entry.level == LogLevel::Critical || entry.level == LogLevel::Error {
             eprintln!("{}", entry.format());
         }
     }
 
-    /// Создает запись с указанными параметрами
+    /// Creates an entry with specified parameters
     pub fn create_entry(
         &self,
         level: LogLevel,
@@ -368,7 +368,7 @@ impl DebugLogger {
         DebugLogEntry::new(level, category, component, message)
     }
 
-    /// Логирует операцию с транзакцией
+    /// Logs transaction-related operation
     pub fn log_transaction_operation(
         &self,
         level: LogLevel,
@@ -397,7 +397,7 @@ impl DebugLogger {
         self.log(entry);
     }
 
-    /// Логирует операцию с данными
+    /// Logs data operation
     pub fn log_data_operation(
         &self,
         level: LogLevel,
@@ -424,7 +424,7 @@ impl DebugLogger {
         self.log(entry);
     }
 
-    /// Логирует операцию с запросом
+    /// Logs query operation
     pub fn log_query_operation(
         &self,
         level: LogLevel,
@@ -453,7 +453,7 @@ impl DebugLogger {
         self.log(entry);
     }
 
-    /// Логирует системную операцию
+    /// Logs system-level operation
     pub fn log_system_operation(
         &self,
         level: LogLevel,
@@ -470,32 +470,32 @@ impl DebugLogger {
         self.log(entry);
     }
 
-    /// Получает статистику логирования
+    /// Returns logging statistics
     pub fn get_stats(&self) -> LoggingStats {
         self.stats.read().unwrap().clone()
     }
 
-    /// Создает отчет о состоянии логгера
+    /// Generates logger status report
     pub fn generate_status_report(&self) -> String {
         let stats = self.get_stats();
         let mut report = String::new();
 
         report.push_str(&format!(
-            "Общее количество записей: {}\n",
+            "Total entries: {}\n",
             stats.total_entries
         ));
-        report.push_str(&format!("Размер лог-файла: {} байт\n", stats.log_file_size));
-        report.push_str(&format!("Ошибки записи: {}\n", stats.write_errors));
+        report.push_str(&format!("Log file size: {} bytes\n", stats.log_file_size));
+        report.push_str(&format!("Write errors: {}\n", stats.write_errors));
 
         if !stats.entries_by_level.is_empty() {
-            report.push_str("Записи по уровням:\n");
+            report.push_str("Entries by level:\n");
             for (level, count) in &stats.entries_by_level {
                 report.push_str(&format!("  {}: {}\n", level, count));
             }
         }
 
         if !stats.entries_by_category.is_empty() {
-            report.push_str("Записи по категориям:\n");
+            report.push_str("Entries by category:\n");
             for (category, count) in &stats.entries_by_category {
                 report.push_str(&format!("  {}: {}\n", category, count));
             }
@@ -504,13 +504,13 @@ impl DebugLogger {
         report
     }
 
-    /// Останавливает логгер
+    /// Shuts down logger
     pub fn shutdown(&mut self) {
         if let Some(handle) = self.background_handle.take() {
             handle.abort();
         }
 
-        // Сбрасываем оставшиеся записи
+        // Flush remaining entries
         if let Some(writer) = self.log_file.lock().unwrap().as_mut() {
             let _ = writer.flush();
         }
@@ -595,7 +595,7 @@ mod tests {
 
         let logger = DebugLogger::new(&config);
 
-        // Тестируем различные типы логирования
+        // Exercise various logging helpers
         logger.log_transaction_operation(
             LogLevel::Info,
             "BEGIN",
@@ -627,7 +627,7 @@ mod tests {
             Some(Duration::from_millis(1)),
         );
 
-        // Проверяем статистику
+        // Validate statistics
         let stats = logger.get_stats();
         assert!(stats.total_entries >= 4);
         assert!(stats.entries_by_level.contains_key("INFO"));
@@ -638,10 +638,10 @@ mod tests {
         assert!(stats.entries_by_category.contains_key("QUERY"));
         assert!(stats.entries_by_category.contains_key("SYSTEM"));
 
-        // Тестируем отчет
+        // Validate status report
         let report = logger.generate_status_report();
-        assert!(report.contains("Общее количество записей"));
-        assert!(report.contains("Записи по уровням"));
-        assert!(report.contains("Записи по категориям"));
+        assert!(report.contains("Total entries"));
+        assert!(report.contains("Entries by level"));
+        assert!(report.contains("Entries by category"));
     }
 }

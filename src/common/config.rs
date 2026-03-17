@@ -1,26 +1,26 @@
-//! Конфигурация для rustdb
+//! Configuration for rustdb
 //!
-//! Предоставляет структуры конфигурации для различных компонентов системы
+//! Provides configuration structures for various system components
 
 use crate::common::i18n::Language;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// Основная конфигурация базы данных
+/// Main database configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
-    /// Имя базы данных
+    /// Database name
     pub name: String,
-    /// Директория для хранения данных
+    /// Data storage directory
     pub data_directory: String,
-    /// Максимальное количество подключений
+    /// Maximum number of connections
     pub max_connections: usize,
-    /// Таймаут подключения (в секундах)
+    /// Connection timeout (in seconds)
     pub connection_timeout: u64,
-    /// Таймаут запроса (в секундах)
+    /// Query timeout (in seconds)
     pub query_timeout: u64,
-    /// Язык интерфейса
+    /// Interface language
     pub language: Language,
 }
 
@@ -37,18 +37,18 @@ impl Default for DatabaseConfig {
     }
 }
 
-/// Конфигурация хранения
+/// Storage configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
-    /// Размер страницы в байтах
+    /// Page size in bytes
     pub page_size: usize,
-    /// Размер пула буферов
+    /// Buffer pool size
     pub buffer_pool_size: usize,
-    /// Интервал создания контрольных точек
+    /// Checkpoint creation interval
     pub checkpoint_interval: Duration,
-    /// Включить WAL
+    /// Enable WAL
     pub wal_enabled: bool,
-    /// Включить сжатие
+    /// Enable compression
     pub compression_enabled: bool,
 }
 
@@ -64,16 +64,16 @@ impl Default for StorageConfig {
     }
 }
 
-/// Конфигурация логирования
+/// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
-    /// Уровень логирования
+    /// Logging level
     pub level: String,
-    /// Файл лога
+    /// Log file
     pub file: PathBuf,
-    /// Максимальный размер файла лога
+    /// Maximum log file size
     pub max_file_size: String,
-    /// Максимальное количество файлов логов
+    /// Maximum number of log files
     pub max_files: usize,
 }
 
@@ -88,14 +88,14 @@ impl Default for LoggingConfig {
     }
 }
 
-/// Конфигурация сети
+/// Network configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkConfig {
-    /// Хост для прослушивания
+    /// Host to listen on
     pub host: String,
-    /// Порт для прослушивания
+    /// Port to listen on
     pub port: u16,
-    /// Максимальное количество подключений
+    /// Maximum number of connections
     pub max_connections: usize,
 }
 
@@ -109,18 +109,18 @@ impl Default for NetworkConfig {
     }
 }
 
-/// Конфигурация производительности
+/// Performance configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceConfig {
-    /// Таймаут блокировки
+    /// Lock timeout
     pub lock_timeout: Duration,
-    /// Интервал обнаружения взаимоблокировок
+    /// Deadlock detection interval
     pub deadlock_detection_interval: Duration,
-    /// Максимальный размер кэша планов запросов
+    /// Maximum query plan cache size
     pub max_query_plan_cache_size: usize,
-    /// Включить оптимизацию запросов
+    /// Enable query optimization
     pub enable_query_optimization: bool,
-    /// Включить параллельное выполнение
+    /// Enable parallel execution
     pub enable_parallel_execution: bool,
 }
 
@@ -137,21 +137,21 @@ impl Default for PerformanceConfig {
 }
 
 impl DatabaseConfig {
-    /// Загружает конфигурацию из TOML файла
+    /// Loads configuration from a TOML file
     pub fn from_file(path: &PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
         let config: DatabaseConfig = toml::from_str(&content)?;
         Ok(config)
     }
 
-    /// Сохраняет конфигурацию в TOML файл
+    /// Saves configuration to a TOML file
     pub fn to_file(&self, path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         let content = toml::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
     }
 
-    /// Загружает конфигурацию из переменных окружения
+    /// Loads configuration from environment variables
     pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
         let mut config = DatabaseConfig::default();
 
@@ -186,7 +186,7 @@ impl DatabaseConfig {
         Ok(config)
     }
 
-    /// Объединяет конфигурацию с другой
+    /// Merges configuration with another
     pub fn merge(mut self, other: Self) -> Self {
         if other.name != "rustdb" {
             self.name = other.name;
@@ -216,7 +216,7 @@ impl DatabaseConfig {
         self
     }
 
-    /// Валидирует конфигурацию
+    /// Validates the configuration
     pub fn validate(&self) -> Result<(), String> {
         if self.name.is_empty() {
             return Err("Database name cannot be empty".to_string());
@@ -355,11 +355,11 @@ mod tests {
 
         config2.name = "testdb".to_string();
         config2.connection_timeout = 60;
-        config2.language = Language::Russian;
+        config2.language = Language::English;
 
         let merged = config1.merge(config2);
         assert_eq!(merged.name, "testdb");
         assert_eq!(merged.connection_timeout, 60);
-        assert_eq!(merged.language, Language::Russian);
+        assert_eq!(merged.language, Language::English);
     }
 }

@@ -1,8 +1,8 @@
-# Конфигурация RustDB
+# RustDB Configuration
 
 name = "rustdb"
 data_directory = "./data"
 max_connections = 100
 connection_timeout = 30
 query_timeout = 60
-language = "ru"  # Поддерживаемые языки: "en", "ru"
+language = "en"  # Supported languages: "en"

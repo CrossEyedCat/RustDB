@@ -1,4 +1,4 @@
-//! Расширенный оптимизатор запросов для rustdb
+//! Advanced query optimizer for rustdb
 
 use crate::catalog::statistics::{ColumnStatistics, StatisticsManager, TableStatistics};
 use crate::common::{Error, Result};
@@ -11,30 +11,30 @@ use crate::planner::planner::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Расширенный оптимизатор запросов
+/// Advanced query optimizer
 pub struct AdvancedQueryOptimizer {
-    /// Менеджер статистики
+    /// Statistics manager
     statistics_manager: StatisticsManager,
-    /// Настройки оптимизации
+    /// Optimization settings
     settings: AdvancedOptimizerSettings,
-    /// Статистика оптимизации
+    /// Optimization statistics
     statistics: AdvancedOptimizationStatistics,
 }
 
-/// Настройки расширенного оптимизатора
+/// Advanced optimizer configuration
 #[derive(Debug, Clone)]
 pub struct AdvancedOptimizerSettings {
-    /// Включить использование статистики
+    /// Enable statistics usage
     pub enable_statistics_usage: bool,
-    /// Включить перезапись запросов
+    /// Enable query rewriting
     pub enable_query_rewriting: bool,
-    /// Включить упрощение выражений
+    /// Enable expression simplification
     pub enable_expression_simplification: bool,
-    /// Включить вынесение подзапросов
+    /// Enable subquery extraction
     pub enable_subquery_extraction: bool,
-    /// Включить детальное логирование
+    /// Enable debug logging
     pub enable_debug_logging: bool,
-    /// Порог стоимости для применения оптимизации
+    /// Cost threshold for applying optimization
     pub cost_threshold: f64,
 }
 
@@ -51,40 +51,40 @@ impl Default for AdvancedOptimizerSettings {
     }
 }
 
-/// Статистика расширенной оптимизации
+/// Statistics collected during advanced optimization
 #[derive(Debug, Clone, Default)]
 pub struct AdvancedOptimizationStatistics {
-    /// Количество примененных оптимизаций
+    /// Number of optimizations applied
     pub optimizations_applied: usize,
-    /// Время оптимизации в миллисекундах
+    /// Optimization time in milliseconds
     pub optimization_time_ms: u64,
-    /// Улучшение стоимости (в процентах)
+    /// Cost improvement (percent)
     pub cost_improvement_percent: f64,
-    /// Количество перезаписей запросов
+    /// Query rewrites performed
     pub query_rewrites: usize,
-    /// Количество упрощений выражений
+    /// Expression simplifications executed
     pub expression_simplifications: usize,
-    /// Количество вынесений подзапросов
+    /// Subquery extractions executed
     pub subquery_extractions: usize,
-    /// Количество использований статистики
+    /// Statistics usage count
     pub statistics_usage_count: usize,
 }
 
-/// Результат расширенной оптимизации
+/// Advanced optimization result
 #[derive(Debug, Clone)]
 pub struct AdvancedOptimizationResult {
-    /// Оптимизированный план
+    /// Optimized plan
     pub optimized_plan: ExecutionPlan,
-    /// Статистика оптимизации
+    /// Optimization statistics
     pub statistics: AdvancedOptimizationStatistics,
-    /// Сообщения об оптимизациях
+    /// Optimization messages
     pub messages: Vec<String>,
-    /// Использованная статистика
+    /// Stats that were leveraged
     pub used_statistics: Vec<String>,
 }
 
 impl AdvancedQueryOptimizer {
-    /// Создать новый расширенный оптимизатор
+    /// Create a new optimizer with default settings
     pub fn new() -> Result<Self> {
         let statistics_manager = StatisticsManager::new()?;
         Ok(Self {
@@ -94,7 +94,7 @@ impl AdvancedQueryOptimizer {
         })
     }
 
-    /// Создать оптимизатор с настройками
+    /// Create optimizer with explicit settings
     pub fn with_settings(settings: AdvancedOptimizerSettings) -> Result<Self> {
         let statistics_manager = StatisticsManager::new()?;
         Ok(Self {
@@ -104,7 +104,7 @@ impl AdvancedQueryOptimizer {
         })
     }
 
-    /// Оптимизировать план выполнения с использованием статистики
+    /// Optimize execution plan using collected statistics
     pub fn optimize_with_statistics(
         &mut self,
         plan: ExecutionPlan,
@@ -116,13 +116,13 @@ impl AdvancedQueryOptimizer {
         let mut used_statistics = Vec::new();
         let mut optimizations_applied = 0;
 
-        // Собираем статистику для таблиц в плане
+        // Collect statistics for tables referenced in the plan
         if self.settings.enable_statistics_usage {
             self.collect_statistics_for_plan(&optimized_plan)?;
-            used_statistics.push("Собрана статистика для всех таблиц".to_string());
+            used_statistics.push("Collected statistics for all tables".to_string());
         }
 
-        // Применяем перезапись запросов
+        // Apply query rewriting
         if self.settings.enable_query_rewriting {
             if let Some((new_plan, msg)) = self.rewrite_query(&optimized_plan)? {
                 optimized_plan = new_plan;
@@ -131,7 +131,7 @@ impl AdvancedQueryOptimizer {
             }
         }
 
-        // Применяем упрощение выражений
+        // Apply expression simplification
         if self.settings.enable_expression_simplification {
             if let Some((new_plan, msg)) = self.simplify_expressions(&optimized_plan)? {
                 optimized_plan = new_plan;
@@ -140,7 +140,7 @@ impl AdvancedQueryOptimizer {
             }
         }
 
-        // Применяем вынесение подзапросов
+        // Apply subquery extraction
         if self.settings.enable_subquery_extraction {
             if let Some((new_plan, msg)) = self.extract_subqueries(&optimized_plan)? {
                 optimized_plan = new_plan;
@@ -149,7 +149,7 @@ impl AdvancedQueryOptimizer {
             }
         }
 
-        // Обновляем статистику
+        // Update optimization statistics
         let optimization_time = start_time.elapsed().as_millis() as u64;
         let cost_improvement = if original_cost > 0.0 {
             ((original_cost - optimized_plan.metadata.estimated_cost) / original_cost) * 100.0
@@ -191,7 +191,7 @@ impl AdvancedQueryOptimizer {
         })
     }
 
-    /// Собрать статистику для всех таблиц в плане
+    /// Collect statistics for every table in the plan
     fn collect_statistics_for_plan(&mut self, plan: &ExecutionPlan) -> Result<()> {
         let table_names = self.extract_table_names_from_plan(plan);
 
@@ -209,14 +209,14 @@ impl AdvancedQueryOptimizer {
         Ok(())
     }
 
-    /// Извлечь имена таблиц из плана
+    /// Extract table names from a plan
     pub fn extract_table_names_from_plan(&self, plan: &ExecutionPlan) -> Vec<String> {
         let mut table_names = Vec::new();
         self.extract_table_names_recursive(&plan.root, &mut table_names);
         table_names
     }
 
-    /// Рекурсивно извлечь имена таблиц из узла плана
+    /// Recursively extract table names from a plan node
     fn extract_table_names_recursive(&self, node: &PlanNode, table_names: &mut Vec<String>) {
         match node {
             PlanNode::TableScan(table_scan) => {
@@ -230,7 +230,7 @@ impl AdvancedQueryOptimizer {
                 }
             }
             _ => {
-                // Рекурсивно обрабатываем дочерние узлы
+                // Recurse into child nodes
                 let child_nodes = self.get_child_nodes(node);
                 for child in child_nodes {
                     self.extract_table_names_recursive(child, table_names);
@@ -239,12 +239,12 @@ impl AdvancedQueryOptimizer {
         }
     }
 
-    /// Переписать запрос для оптимизации
+    /// Rewrite the query plan to improve performance
     fn rewrite_query(&self, plan: &ExecutionPlan) -> Result<Option<(ExecutionPlan, String)>> {
         let mut new_plan = plan.clone();
         let mut rewritten = false;
 
-        // Применяем различные перезаписи
+        // Apply various rewrites
         new_plan.root = self.rewrite_node_recursive(&plan.root)?;
 
         if new_plan.root != plan.root {
@@ -252,17 +252,17 @@ impl AdvancedQueryOptimizer {
         }
 
         if rewritten {
-            Ok(Some((new_plan, "Применена перезапись запроса".to_string())))
+            Ok(Some((new_plan, "Applied query rewrite".to_string())))
         } else {
             Ok(None)
         }
     }
 
-    /// Рекурсивно переписываем узлы плана
+    /// Recursively rewrite plan nodes
     fn rewrite_node_recursive(&self, node: &PlanNode) -> Result<PlanNode> {
         match node {
             PlanNode::Filter(filter) => {
-                // Упрощаем условие фильтра
+                // Simplify filter predicate
                 let simplified_condition = self.simplify_condition(&filter.condition)?;
                 let optimized_input = self.rewrite_node_recursive(&filter.input)?;
 
@@ -277,43 +277,43 @@ impl AdvancedQueryOptimizer {
                 let left = self.rewrite_node_recursive(&join.left)?;
                 let right = self.rewrite_node_recursive(&join.right)?;
 
-                // Оптимизируем порядок JOIN на основе статистики
+                // Optimize join order using statistics
                 let optimized_join = self.optimize_join_order(join, &left, &right)?;
 
                 Ok(PlanNode::Join(optimized_join))
             }
             _ => {
-                // Для других узлов рекурсивно обрабатываем дочерние узлы
+                // For other nodes recursively process children
                 let child_nodes = self.get_child_nodes(node);
                 if child_nodes.is_empty() {
                     Ok(node.clone())
                 } else {
-                    // Упрощенная обработка - просто клонируем узел
+                    // Simplified handling—just clone node
                     Ok(node.clone())
                 }
             }
         }
     }
 
-    /// Упростить условие фильтра
+    /// Simplify a filter predicate
     pub fn simplify_condition(&self, condition: &str) -> Result<String> {
-        // Упрощенная реализация - в реальной системе здесь был бы парсинг и упрощение
-        // Например: "a > 5 AND a > 3" -> "a > 5"
+        // Simplified implementation—real system would parse and simplify
+        // e.g., "a > 5 AND a > 3" -> "a > 5"
         Ok(condition.to_string())
     }
 
-    /// Оптимизировать порядок JOIN на основе статистики
+    /// Optimize join order using collected statistics
     pub fn optimize_join_order(
         &self,
         join: &JoinNode,
         left: &PlanNode,
         right: &PlanNode,
     ) -> Result<JoinNode> {
-        // Оцениваем стоимость каждой ветки на основе статистики
+        // Estimate branch costs using statistics
         let left_cost = self.estimate_node_cost_with_statistics(left)?;
         let right_cost = self.estimate_node_cost_with_statistics(right)?;
 
-        // Если правая ветка дешевле, меняем местами
+        // Swap branches when the right side is cheaper
         if right_cost < left_cost {
             Ok(JoinNode {
                 join_type: join.join_type.clone(),
@@ -333,7 +333,7 @@ impl AdvancedQueryOptimizer {
         }
     }
 
-    /// Оценить стоимость узла с использованием статистики
+    /// Estimate node cost leveraging statistics
     fn estimate_node_cost_with_statistics(&self, node: &PlanNode) -> Result<f64> {
         match node {
             PlanNode::TableScan(table_scan) => {
@@ -341,8 +341,8 @@ impl AdvancedQueryOptimizer {
                     .statistics_manager
                     .get_table_statistics(&table_scan.table_name)
                 {
-                    // Используем статистику для более точной оценки
-                    Ok(table_stats.total_rows as f64 * 0.1) // Примерная стоимость чтения
+                    // Use statistics for more accurate estimation
+                    Ok(table_stats.total_rows as f64 * 0.1) // Example cost of reading
                 } else {
                     Ok(table_scan.cost)
                 }
@@ -351,7 +351,7 @@ impl AdvancedQueryOptimizer {
         }
     }
 
-    /// Упростить выражения в плане
+    /// Simplify expressions in the plan
     fn simplify_expressions(
         &self,
         plan: &ExecutionPlan,
@@ -368,20 +368,20 @@ impl AdvancedQueryOptimizer {
         if simplified {
             Ok(Some((
                 new_plan,
-                "Применено упрощение выражений".to_string(),
+                "Applied expression simplification".to_string(),
             )))
         } else {
             Ok(None)
         }
     }
 
-    /// Рекурсивно упрощаем выражения
+    /// Recursively simplify expressions
     fn simplify_expressions_recursive(&self, node: &PlanNode) -> Result<PlanNode> {
-        // Упрощенная реализация - в реальной системе здесь было бы упрощение выражений
+        // Simplified implementation—real system would simplify expressions
         Ok(node.clone())
     }
 
-    /// Вынести подзапросы
+    /// Extract subqueries
     fn extract_subqueries(&self, plan: &ExecutionPlan) -> Result<Option<(ExecutionPlan, String)>> {
         let mut new_plan = plan.clone();
         let mut extracted = false;
@@ -395,20 +395,20 @@ impl AdvancedQueryOptimizer {
         if extracted {
             Ok(Some((
                 new_plan,
-                "Применено вынесение подзапросов".to_string(),
+                "Applied subquery extraction".to_string(),
             )))
         } else {
             Ok(None)
         }
     }
 
-    /// Рекурсивно выносим подзапросы
+    /// Recursively extract subqueries
     fn extract_subqueries_recursive(&self, node: &PlanNode) -> Result<PlanNode> {
-        // Упрощенная реализация - в реальной системе здесь было бы вынесение подзапросов
+        // Simplified implementation—real system would extract subqueries
         Ok(node.clone())
     }
 
-    /// Получить дочерние узлы плана
+    /// Get child nodes of a plan
     pub fn get_child_nodes<'a>(&self, node: &'a PlanNode) -> Vec<&'a PlanNode> {
         match node {
             PlanNode::Filter(node) => vec![&node.input],
@@ -423,7 +423,7 @@ impl AdvancedQueryOptimizer {
         }
     }
 
-    /// Оценить стоимость узла
+    /// Estimate node cost
     pub fn estimate_node_cost(&self, node: &PlanNode) -> f64 {
         match node {
             PlanNode::TableScan(node) => node.cost,
@@ -442,32 +442,32 @@ impl AdvancedQueryOptimizer {
         }
     }
 
-    /// Получить настройки оптимизатора
+    /// Get optimizer settings
     pub fn settings(&self) -> &AdvancedOptimizerSettings {
         &self.settings
     }
 
-    /// Обновить настройки оптимизатора
+    /// Update optimizer settings
     pub fn update_settings(&mut self, settings: AdvancedOptimizerSettings) {
         self.settings = settings;
     }
 
-    /// Получить статистику оптимизации
+    /// Get optimization statistics
     pub fn statistics(&self) -> &AdvancedOptimizationStatistics {
         &self.statistics
     }
 
-    /// Сбросить статистику
+    /// Reset statistics
     pub fn reset_statistics(&mut self) {
         self.statistics = AdvancedOptimizationStatistics::default();
     }
 
-    /// Получить менеджер статистики
+    /// Get statistics manager
     pub fn statistics_manager(&self) -> &StatisticsManager {
         &self.statistics_manager
     }
 
-    /// Получить менеджер статистики для изменения
+    /// Get statistics manager for modification
     pub fn statistics_manager_mut(&mut self) -> &mut StatisticsManager {
         &mut self.statistics_manager
     }

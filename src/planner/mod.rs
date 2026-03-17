@@ -1,4 +1,4 @@
-//! Планировщик запросов rustdb
+//! Query planner for rustdb
 
 pub mod advanced_optimizer;
 pub mod optimizer;

@@ -1,12 +1,12 @@
-//! Система логирования rustdb
+//! Logging system for rustdb
 //!
-//! Этот модуль содержит полную систему логирования для базы данных:
-//! - Write-Ahead Logging (WAL) для обеспечения ACID свойств
-//! - Структурированные лог-записи с различными типами операций
-//! - Буферизованная запись логов с использованием оптимизированного I/O
-//! - Система восстановления данных из логов
-//! - Контрольные точки и сжатие логов
-//! - Мониторинг и метрики производительности
+//! This module contains a complete logging system for the database:
+//! - Write-Ahead Logging (WAL) to ensure ACID properties
+//! - Structured log entries with various operation types
+//! - Buffered log writing using optimized I/O
+//! - Data recovery system from logs
+//! - Checkpoints and log compression
+//! - Performance monitoring and metrics
 
 pub mod checkpoint;
 pub mod compaction;

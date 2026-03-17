@@ -1,4 +1,4 @@
-//! Основной семантический анализатор
+//! Main semantic analyzer
 
 use crate::common::Result;
 use crate::parser::ast::*;
@@ -9,20 +9,20 @@ use std::collections::HashMap;
 
 use super::{AccessChecker, MetadataCache, ObjectChecker, TypeChecker};
 
-/// Настройки семантического анализатора
+/// Semantic analyzer settings
 #[derive(Debug, Clone)]
 pub struct SemanticAnalyzerSettings {
-    /// Включить проверку существования объектов
+    /// Enable object existence checking
     pub check_object_existence: bool,
-    /// Включить проверку типов
+    /// Enable type checking
     pub check_types: bool,
-    /// Включить проверку прав доступа
+    /// Enable access rights checking
     pub check_access_rights: bool,
-    /// Включить кэширование метаданных
+    /// Enable metadata caching
     pub enable_metadata_cache: bool,
-    /// Строгая валидация (прерывать при первой ошибке)
+    /// Strict validation (stop on first error)
     pub strict_validation: bool,
-    /// Максимальное количество предупреждений
+    /// Maximum number of warnings
     pub max_warnings: usize,
 }
 
@@ -31,7 +31,7 @@ impl Default for SemanticAnalyzerSettings {
         Self {
             check_object_existence: true,
             check_types: true,
-            check_access_rights: false, // По умолчанию отключено для простоты
+            check_access_rights: false, // Disabled by default for simplicity
             enable_metadata_cache: true,
             strict_validation: false,
             max_warnings: 100,
@@ -39,16 +39,16 @@ impl Default for SemanticAnalyzerSettings {
     }
 }
 
-/// Контекст анализа
+/// Analysis context
 #[derive(Debug, Clone)]
 pub struct AnalysisContext {
-    /// Схема базы данных (упрощенная версия для тестирования)
+    /// Database schema (simplified version for testing)
     pub schema: Option<()>,
-    /// Текущий пользователь
+    /// Current user
     pub current_user: Option<String>,
-    /// Активная транзакция
+    /// Active transaction
     pub transaction_id: Option<u64>,
-    /// Дополнительные параметры
+    /// Additional parameters
     pub parameters: HashMap<String, String>,
 }
 
@@ -63,18 +63,18 @@ impl Default for AnalysisContext {
     }
 }
 
-/// Результат семантического анализа
+/// Semantic analysis result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalysisResult {
-    /// Успешность анализа
+    /// Analysis success
     pub is_valid: bool,
-    /// Ошибки
+    /// Errors
     pub errors: Vec<SemanticError>,
-    /// Предупреждения
+    /// Warnings
     pub warnings: Vec<SemanticWarning>,
-    /// Информация о типах
+    /// Type information
     pub type_info: TypeInformation,
-    /// Статистика анализа
+    /// Analysis statistics
     pub statistics: AnalysisStatistics,
 }
 
@@ -107,7 +107,7 @@ impl AnalysisResult {
     }
 }
 
-/// Семантическая ошибка
+/// Semantic error
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SemanticError {
     pub error_type: SemanticErrorType,
@@ -126,7 +126,7 @@ pub enum SemanticErrorType {
     ConstraintViolation,
 }
 
-/// Семантическое предупреждение
+/// Semantic warning
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SemanticWarning {
     pub warning_type: SemanticWarningType,
@@ -142,12 +142,12 @@ pub enum SemanticWarningType {
     PotentialIssue,
 }
 
-/// Информация о типах
+/// Type information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypeInformation {
-    /// Типы колонок в результате
+    /// Column types in result
     pub result_types: Vec<DataType>,
-    /// Информация о преобразованиях типов
+    /// Type conversion information
     pub type_conversions: Vec<TypeConversion>,
 }
 
@@ -160,7 +160,7 @@ impl TypeInformation {
     }
 }
 
-/// Информация о преобразовании типа
+/// Type conversion information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypeConversion {
     pub from_type: DataType,
@@ -169,20 +169,20 @@ pub struct TypeConversion {
     pub location: String,
 }
 
-/// Статистика анализа
+/// Analysis statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalysisStatistics {
-    /// Время анализа в миллисекундах
+    /// Analysis time in milliseconds
     pub analysis_time_ms: u64,
-    /// Количество проверенных объектов
+    /// Number of checked objects
     pub objects_checked: usize,
-    /// Количество проверок типов
+    /// Number of type checks
     pub type_checks: usize,
-    /// Количество проверок доступа
+    /// Number of access checks
     pub access_checks: usize,
-    /// Количество попаданий в кэш
+    /// Number of cache hits
     pub cache_hits: usize,
-    /// Количество промахов кэша
+    /// Number of cache misses
     pub cache_misses: usize,
 }
 
@@ -199,7 +199,7 @@ impl AnalysisStatistics {
     }
 }
 
-/// Основной семантический анализатор
+/// Main semantic analyzer
 pub struct SemanticAnalyzer {
     settings: SemanticAnalyzerSettings,
     object_checker: ObjectChecker,
@@ -210,7 +210,7 @@ pub struct SemanticAnalyzer {
 }
 
 impl SemanticAnalyzer {
-    /// Создает новый семантический анализатор
+    /// Create new semantic analyzer
     pub fn new(settings: SemanticAnalyzerSettings) -> Self {
         Self {
             object_checker: ObjectChecker::new(),
@@ -222,18 +222,18 @@ impl SemanticAnalyzer {
         }
     }
 
-    /// Создает анализатор с настройками по умолчанию
+    /// Create analyzer with default settings
     pub fn default() -> Self {
         Self::new(SemanticAnalyzerSettings::default())
     }
 
-    /// Устанавливает менеджер схем
+    /// Set schema manager
     pub fn with_schema_manager(mut self, schema_manager: SchemaManager) -> Self {
         self.schema_manager = Some(schema_manager);
         self
     }
 
-    /// Анализирует SQL запрос
+    /// Analyze SQL query
     pub fn analyze(
         &mut self,
         statement: &SqlStatement,
@@ -242,7 +242,7 @@ impl SemanticAnalyzer {
         let start_time = std::time::Instant::now();
         let mut result = AnalysisResult::new();
 
-        // Проверка существования объектов
+        // Object existence check
         if self.settings.check_object_existence {
             if let Err(e) = self.check_object_existence(statement, context, &mut result) {
                 if self.settings.strict_validation {
@@ -257,7 +257,7 @@ impl SemanticAnalyzer {
             }
         }
 
-        // Проверка типов
+        // Type check
         if self.settings.check_types {
             if let Err(e) = self.check_types(statement, context, &mut result) {
                 if self.settings.strict_validation {
@@ -272,7 +272,7 @@ impl SemanticAnalyzer {
             }
         }
 
-        // Проверка прав доступа
+        // Access rights check
         if self.settings.check_access_rights {
             if let Err(e) = self.check_access_rights(statement, context, &mut result) {
                 if self.settings.strict_validation {
@@ -287,13 +287,13 @@ impl SemanticAnalyzer {
             }
         }
 
-        // Обновляем статистику
+        // Update statistics
         result.statistics.analysis_time_ms = start_time.elapsed().as_millis() as u64;
 
         Ok(result)
     }
 
-    /// Анализирует множественные запросы
+    /// Analyze multiple queries
     pub fn analyze_multiple(
         &mut self,
         statements: &[SqlStatement],
@@ -305,7 +305,7 @@ impl SemanticAnalyzer {
             let result = self.analyze(statement, context)?;
             results.push(result);
 
-            // Если включена строгая валидация и есть ошибки, прерываем
+            // If strict validation is enabled and there are errors, stop
             if self.settings.strict_validation && results.last().unwrap().has_errors() {
                 break;
             }
@@ -314,7 +314,7 @@ impl SemanticAnalyzer {
         Ok(results)
     }
 
-    /// Проверяет существование объектов
+    /// Check object existence
     fn check_object_existence(
         &mut self,
         statement: &SqlStatement,
@@ -344,23 +344,23 @@ impl SemanticAnalyzer {
                 self.check_drop_table_objects(drop, context, result)?;
             }
             _ => {
-                // Транзакционные команды не требуют проверки объектов
+                // Transactional commands do not require object checking
             }
         }
         Ok(())
     }
 
-    /// Проверяет типы
+    /// Check types
     fn check_types(
         &mut self,
         statement: &SqlStatement,
         context: &AnalysisContext,
         result: &mut AnalysisResult,
     ) -> Result<()> {
-        // Делегируем проверку типов специализированному модулю
+        // Delegate type checking to specialized module
         let type_result = self.type_checker.check_statement(statement, context)?;
 
-        // Переносим результаты
+        // Transfer results
         for error in type_result.errors {
             result.add_error(SemanticError {
                 error_type: SemanticErrorType::TypeMismatch,
@@ -384,17 +384,17 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    /// Проверяет права доступа
+    /// Check access rights
     fn check_access_rights(
         &mut self,
         statement: &SqlStatement,
         context: &AnalysisContext,
         result: &mut AnalysisResult,
     ) -> Result<()> {
-        // Делегируем проверку прав доступа специализированному модулю
+        // Delegate access rights checking to specialized module
         let access_result = self.access_checker.check_statement(statement, context)?;
 
-        // Переносим результаты
+        // Transfer results
         for error in access_result.errors {
             result.add_error(SemanticError {
                 error_type: SemanticErrorType::AccessDenied,
@@ -409,7 +409,7 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    // Вспомогательные методы для проверки различных типов запросов
+    // Helper methods for checking different query types
     fn check_select_objects(
         &mut self,
         select: &SelectStatement,
@@ -418,12 +418,12 @@ impl SemanticAnalyzer {
     ) -> Result<()> {
         result.statistics.objects_checked += 1;
 
-        // Проверяем таблицы в FROM
+        // Check tables in FROM
         if let Some(from) = &select.from {
             self.check_from_clause_objects(from, context, result)?;
         }
 
-        // Проверяем колонки в SELECT
+        // Check columns in SELECT
         for item in &select.select_list {
             self.check_select_item_objects(item, context, result)?;
         }
@@ -437,11 +437,11 @@ impl SemanticAnalyzer {
         context: &AnalysisContext,
         result: &mut AnalysisResult,
     ) -> Result<()> {
-        // Проверяем основную таблицу
+        // Check main table
         let table_name = match &from.table {
             TableReference::Table { name, .. } => name,
             TableReference::Subquery { .. } => {
-                // Подзапросы требуют отдельной обработки
+                // Subqueries require separate processing
                 return Ok(());
             }
         };
@@ -460,11 +460,11 @@ impl SemanticAnalyzer {
             }
         }
 
-        // Проверяем JOIN таблицы
+        // Check JOIN tables
         for join in &from.joins {
             let join_table_name = match &join.table {
                 TableReference::Table { name, .. } => name,
-                TableReference::Subquery { .. } => continue, // Пропускаем подзапросы
+                TableReference::Subquery { .. } => continue, // Skip subqueries
             };
 
             if let Some(schema) = &context.schema {
@@ -498,7 +498,7 @@ impl SemanticAnalyzer {
                 self.check_expression_objects(expr, context, result)?;
             }
             SelectItem::Wildcard => {
-                // Wildcard не требует специальной проверки
+                // Wildcard does not require special checking
             }
         }
         Ok(())
@@ -512,7 +512,7 @@ impl SemanticAnalyzer {
     ) -> Result<()> {
         match expr {
             Expression::Identifier(_) | Expression::QualifiedIdentifier { .. } => {
-                // Проверяем существование колонки
+                // Check column existence
                 result.statistics.objects_checked += 1;
             }
             Expression::BinaryOp { left, right, .. } => {
@@ -528,7 +528,7 @@ impl SemanticAnalyzer {
                 }
             }
             _ => {
-                // Литералы и другие выражения не требуют проверки объектов
+                // Literals and other expressions do not require object checking
             }
         }
         Ok(())
@@ -542,7 +542,7 @@ impl SemanticAnalyzer {
     ) -> Result<()> {
         result.statistics.objects_checked += 1;
 
-        // Проверяем существование таблицы
+        // Check table existence
         if let Some(schema) = &context.schema {
             let object_result = self
                 .object_checker
@@ -568,7 +568,7 @@ impl SemanticAnalyzer {
     ) -> Result<()> {
         result.statistics.objects_checked += 1;
 
-        // Проверяем существование таблицы
+        // Check table existence
         if let Some(schema) = &context.schema {
             let object_result = self
                 .object_checker
@@ -594,7 +594,7 @@ impl SemanticAnalyzer {
     ) -> Result<()> {
         result.statistics.objects_checked += 1;
 
-        // Проверяем существование таблицы
+        // Check table existence
         if let Some(schema) = &context.schema {
             let object_result = self
                 .object_checker
@@ -620,7 +620,7 @@ impl SemanticAnalyzer {
     ) -> Result<()> {
         result.statistics.objects_checked += 1;
 
-        // Проверяем, что таблица еще не существует
+        // Check that table does not already exist
         if let Some(schema) = &context.schema {
             let object_result = self
                 .object_checker
@@ -648,7 +648,7 @@ impl SemanticAnalyzer {
     ) -> Result<()> {
         result.statistics.objects_checked += 1;
 
-        // Проверяем существование таблицы
+        // Check table existence
         if let Some(schema) = &context.schema {
             let object_result = self
                 .object_checker
@@ -674,7 +674,7 @@ impl SemanticAnalyzer {
     ) -> Result<()> {
         result.statistics.objects_checked += 1;
 
-        // Проверяем существование таблицы
+        // Check table existence
         if let Some(schema) = &context.schema {
             let object_result = self
                 .object_checker
@@ -692,22 +692,22 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    /// Получает настройки анализатора
+    /// Get analyzer settings
     pub fn settings(&self) -> &SemanticAnalyzerSettings {
         &self.settings
     }
 
-    /// Обновляет настройки анализатора
+    /// Update analyzer settings
     pub fn update_settings(&mut self, settings: SemanticAnalyzerSettings) {
         self.settings = settings;
     }
 
-    /// Очищает кэш метаданных
+    /// Clear metadata cache
     pub fn clear_cache(&mut self) {
         self.metadata_cache.clear();
     }
 
-    /// Получает статистику кэша
+    /// Get cache statistics
     pub fn cache_statistics(&self) -> (usize, usize) {
         self.metadata_cache.statistics()
     }

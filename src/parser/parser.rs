@@ -1,4 +1,4 @@
-//! Парсер SQL для RustDB
+//! SQL parser for RustDB
 
 use crate::common::{Error, Result};
 use crate::parser::ast::*;
@@ -6,25 +6,25 @@ use crate::parser::lexer::Lexer;
 use crate::parser::token::{Token, TokenType};
 use std::collections::HashMap;
 
-/// Рекурсивный парсер SQL с предиктивным анализом
+/// Recursive SQL parser with predictive analysis
 pub struct SqlParser {
     lexer: Lexer,
     current_token: Option<Token>,
     peek_token: Option<Token>,
-    /// Кэш для оптимизации парсинга
+    /// Cache for parsing optimization
     parse_cache: HashMap<String, SqlStatement>,
-    /// Настройки парсера
+    /// Parser settings
     settings: ParserSettings,
 }
 
-/// Настройки парсера
+/// Parser settings
 #[derive(Debug, Clone)]
 pub struct ParserSettings {
-    /// Максимальная глубина рекурсии
+    /// Maximum recursion depth
     pub max_recursion_depth: usize,
-    /// Включить кэширование результатов
+    /// Enable result caching
     pub enable_caching: bool,
-    /// Строгий режим валидации
+    /// Strict validation mode
     pub strict_validation: bool,
 }
 
@@ -39,7 +39,7 @@ impl Default for ParserSettings {
 }
 
 impl SqlParser {
-    /// Создает новый парсер SQL
+    /// Creates a new SQL parser
     pub fn new(input: &str) -> Result<Self> {
         let mut lexer = Lexer::new(input)?;
         let current_token = lexer.next_token().ok();
@@ -54,19 +54,19 @@ impl SqlParser {
         })
     }
 
-    /// Создает парсер с настройками
+    /// Creates parser with settings
     pub fn with_settings(input: &str, settings: ParserSettings) -> Result<Self> {
         let mut parser = Self::new(input)?;
         parser.settings = settings;
         Ok(parser)
     }
 
-    /// Парсит SQL запрос
+    /// Parses SQL query
     pub fn parse(&mut self) -> Result<SqlStatement> {
         self.parse_statement()
     }
 
-    /// Парсит несколько SQL запросов
+    /// Parses multiple SQL queries
     pub fn parse_multiple(&mut self) -> Result<Vec<SqlStatement>> {
         let mut statements = Vec::new();
 
@@ -74,12 +74,12 @@ impl SqlParser {
             let stmt = self.parse_statement()?;
             statements.push(stmt);
 
-            // Пропускаем точку с запятой если есть
+            // Skip semicolon if present
             if self.match_token(&TokenType::Semicolon) {
                 self.advance();
             }
 
-            // Если следующий токен EOF, выходим
+            // If next token is EOF, exit
             if self.match_token(&TokenType::Eof) {
                 break;
             }
@@ -88,7 +88,7 @@ impl SqlParser {
         Ok(statements)
     }
 
-    /// Парсит одно SQL выражение
+    /// Parses a single SQL statement
     fn parse_statement(&mut self) -> Result<SqlStatement> {
         match &self.current_token {
             Some(token) => match &token.token_type {
@@ -119,33 +119,33 @@ impl SqlParser {
                     Ok(SqlStatement::RollbackTransaction)
                 }
                 _ => Err(Error::parser(format!(
-                    "Неожиданный токен: {:?}",
+                    "Unexpected token: {:?}",
                     token.token_type
                 ))),
             },
-            None => Err(Error::parser("Неожиданный конец ввода".to_string())),
+            None => Err(Error::parser("Unexpected end of input".to_string())),
         }
     }
 
-    /// Получает настройки парсера
+    /// Gets parser settings
     pub fn settings(&self) -> &ParserSettings {
         &self.settings
     }
 
-    /// Очищает кэш парсера
+    /// Clears parser cache
     pub fn clear_cache(&mut self) {
         self.parse_cache.clear();
     }
 }
 
 impl SqlParser {
-    /// Переходит к следующему токену
+    /// Advances to next token
     fn advance(&mut self) {
         self.current_token = self.peek_token.take();
         self.peek_token = self.lexer.next_token().ok();
     }
 
-    /// Проверяет, соответствует ли текущий токен ожидаемому типу
+    /// Checks if current token matches expected type
     fn match_token(&self, token_type: &TokenType) -> bool {
         match &self.current_token {
             Some(token) => {
@@ -155,13 +155,13 @@ impl SqlParser {
         }
     }
 
-    /// Проверяет, является ли текущий токен ключевым словом
+    /// Checks if current token is a keyword
     fn match_keyword(&self, keyword: &str) -> bool {
         match &self.current_token {
             Some(token) => match &token.token_type {
                 TokenType::Identifier => token.value.to_uppercase() == keyword.to_uppercase(),
                 _ => {
-                    // Проверяем специальные ключевые слова
+                    // Check special keywords
                     match keyword.to_uppercase().as_str() {
                         "SELECT" => token.token_type == TokenType::Select,
                         "INSERT" => token.token_type == TokenType::Insert,
@@ -194,35 +194,35 @@ impl SqlParser {
         }
     }
 
-    /// Ожидает определенный токен и переходит к следующему
+    /// Expects a specific token and advances to next
     fn expect_token(&mut self, expected: &TokenType) -> Result<()> {
         if self.match_token(expected) {
             self.advance();
             Ok(())
         } else {
             Err(Error::parser(format!(
-                "Ожидался токен {:?}, получен {:?}",
+                "Expected token {:?}, got {:?}",
                 expected,
                 self.current_token.as_ref().map(|t| &t.token_type)
             )))
         }
     }
 
-    /// Ожидает ключевое слово
+    /// Expects a keyword
     fn expect_keyword(&mut self, keyword: &str) -> Result<()> {
         if self.match_keyword(keyword) {
             self.advance();
             Ok(())
         } else {
             Err(Error::parser(format!(
-                "Ожидалось ключевое слово '{}', получено {:?}",
+                "Expected keyword '{}', got {:?}",
                 keyword,
                 self.current_token.as_ref().map(|t| &t.token_type)
             )))
         }
     }
 
-    /// Парсит идентификатор
+    /// Parses identifier
     fn parse_identifier(&mut self) -> Result<String> {
         match &self.current_token {
             Some(token) => match &token.token_type {
@@ -231,13 +231,13 @@ impl SqlParser {
                     self.advance();
                     Ok(result)
                 }
-                _ => Err(Error::parser("Ожидался идентификатор".to_string())),
+                _ => Err(Error::parser("Expected identifier".to_string())),
             },
-            None => Err(Error::parser("Неожиданный конец ввода".to_string())),
+            None => Err(Error::parser("Unexpected end of input".to_string())),
         }
     }
 
-    /// Парсит список идентификаторов
+    /// Parses identifier list
     fn parse_identifier_list(&mut self) -> Result<Vec<String>> {
         let mut identifiers = Vec::new();
 
@@ -253,7 +253,7 @@ impl SqlParser {
         Ok(identifiers)
     }
 
-    /// Парсит целое число
+    /// Parses integer
     fn parse_integer(&mut self) -> Result<i64> {
         match &self.current_token {
             Some(token) => match &token.token_type {
@@ -261,17 +261,17 @@ impl SqlParser {
                     let result = token
                         .value
                         .parse::<i64>()
-                        .map_err(|e| Error::parser(format!("Неверное целое число: {}", e)))?;
+                        .map_err(|e| Error::parser(format!("Invalid integer: {}", e)))?;
                     self.advance();
                     Ok(result)
                 }
-                _ => Err(Error::parser("Ожидалось целое число".to_string())),
+                _ => Err(Error::parser("Expected integer".to_string())),
             },
-            None => Err(Error::parser("Неожиданный конец ввода".to_string())),
+            None => Err(Error::parser("Unexpected end of input".to_string())),
         }
     }
 
-    /// Парсит список выражений
+    /// Parses expression list
     fn parse_expression_list(&mut self) -> Result<Vec<Expression>> {
         let mut expressions = Vec::new();
 
@@ -287,7 +287,7 @@ impl SqlParser {
         Ok(expressions)
     }
 
-    /// Парсит простое выражение (литерал или идентификатор)
+    /// Parses simple expression (literal or identifier)
     fn parse_simple_expression(&mut self) -> Result<Expression> {
         match &self.current_token {
             Some(token) => match &token.token_type {
@@ -295,7 +295,7 @@ impl SqlParser {
                     let value = token
                         .value
                         .parse::<i64>()
-                        .map_err(|e| Error::parser(format!("Неверное целое число: {}", e)))?;
+                        .map_err(|e| Error::parser(format!("Invalid integer: {}", e)))?;
                     self.advance();
                     Ok(Expression::Literal(Literal::Integer(value)))
                 }
@@ -306,7 +306,7 @@ impl SqlParser {
                 }
                 TokenType::FloatLiteral => {
                     let value = token.value.parse::<f64>().map_err(|e| {
-                        Error::parser(format!("Неверное число с плавающей точкой: {}", e))
+                        Error::parser(format!("Invalid floating point number: {}", e))
                     })?;
                     self.advance();
                     Ok(Expression::Literal(Literal::Float(value)))
@@ -326,9 +326,9 @@ impl SqlParser {
                 TokenType::Identifier => {
                     let identifier = self.parse_identifier()?;
 
-                    // Проверяем, это функция или qualified identifier
+                    // Check if it's a function or qualified identifier
                     if self.match_token(&TokenType::LeftParen) {
-                        // Функция
+                        // Function
                         self.advance();
                         let mut args = Vec::new();
 
@@ -351,33 +351,33 @@ impl SqlParser {
                             column,
                         })
                     } else {
-                        // Простой идентификатор
+                        // Simple identifier
                         Ok(Expression::Identifier(identifier))
                     }
                 }
                 _ => Err(Error::parser(format!(
-                    "Неожиданный токен в выражении: {:?}",
+                    "Unexpected token in expression: {:?}",
                     token.token_type
                 ))),
             },
-            None => Err(Error::parser("Неожиданный конец ввода".to_string())),
+            None => Err(Error::parser("Unexpected end of input".to_string())),
         }
     }
 
-    // Основные методы парсинга
+    // Main parsing methods
     fn parse_select(&mut self) -> Result<SqlStatement> {
         self.expect_keyword("SELECT")?;
 
-        // Простая реализация SELECT
+        // Simple SELECT implementation
         let mut select_list = Vec::new();
 
-        // Парсим список колонок
+        // Parse column list
         loop {
             if self.match_token(&TokenType::Multiply) {
                 self.advance();
                 select_list.push(SelectItem::Wildcard);
             } else {
-                // Простое выражение - идентификатор или литерал
+                // Simple expression - identifier or literal
                 let expr = if self.match_token(&TokenType::IntegerLiteral) {
                     let value = self
                         .current_token
@@ -385,7 +385,7 @@ impl SqlParser {
                         .unwrap()
                         .value
                         .parse::<i64>()
-                        .map_err(|e| Error::parser(format!("Неверное целое число: {}", e)))?;
+                        .map_err(|e| Error::parser(format!("Invalid integer: {}", e)))?;
                     self.advance();
                     Expression::Literal(Literal::Integer(value))
                 } else if self.match_token(&TokenType::StringLiteral) {
@@ -405,7 +405,7 @@ impl SqlParser {
             self.advance();
         }
 
-        // Парсим FROM клаузулу (опционально)
+        // Parse FROM clause (optional)
         let from = if self.match_keyword("FROM") {
             self.advance();
             let table_name = self.parse_identifier()?;
@@ -438,7 +438,7 @@ impl SqlParser {
 
         let table = self.parse_identifier()?;
 
-        // Парсим список колонок (опционально)
+        // Parse column list (optional)
         let columns = if self.match_token(&TokenType::LeftParen) {
             self.advance();
             let cols = self.parse_identifier_list()?;
@@ -448,7 +448,7 @@ impl SqlParser {
             None
         };
 
-        // Парсим VALUES или SELECT
+        // Parse VALUES or SELECT
         let values = if self.match_keyword("VALUES") {
             self.advance();
             let mut rows = Vec::new();
@@ -469,11 +469,11 @@ impl SqlParser {
         } else if self.match_keyword("SELECT") {
             let select_stmt = match self.parse_select()? {
                 SqlStatement::Select(select) => select,
-                _ => return Err(Error::parser("Ожидался SELECT".to_string())),
+                _ => return Err(Error::parser("Expected SELECT".to_string())),
             };
             InsertValues::Select(Box::new(select_stmt))
         } else {
-            return Err(Error::parser("Ожидалось VALUES или SELECT".to_string()));
+            return Err(Error::parser("Expected VALUES or SELECT".to_string()));
         };
 
         Ok(SqlStatement::Insert(InsertStatement {
@@ -492,7 +492,7 @@ impl SqlParser {
 
         let mut assignments = Vec::new();
 
-        // Парсим список присваиваний
+        // Parse assignment list
         loop {
             let column = self.parse_identifier()?;
             self.expect_token(&TokenType::Equal)?;
@@ -506,7 +506,7 @@ impl SqlParser {
             self.advance();
         }
 
-        // Парсим WHERE клаузулу
+        // Parse WHERE clause
         let where_clause = if self.match_keyword("WHERE") {
             self.advance();
             Some(self.parse_simple_expression()?)
@@ -527,7 +527,7 @@ impl SqlParser {
 
         let table = self.parse_identifier()?;
 
-        // Парсим WHERE клаузулу
+        // Parse WHERE clause
         let where_clause = if self.match_keyword("WHERE") {
             self.advance();
             Some(self.parse_simple_expression()?)
@@ -549,7 +549,7 @@ impl SqlParser {
             self.parse_create_table()
         } else {
             Err(Error::parser(
-                "Поддерживается только CREATE TABLE".to_string(),
+                "Only CREATE TABLE is supported".to_string(),
             ))
         }
     }
@@ -600,7 +600,7 @@ impl SqlParser {
                 }
                 TokenType::Varchar => {
                     self.advance();
-                    // Проверяем, есть ли длина в скобках
+                    // Check if length is in parentheses
                     let length = if self.match_token(&TokenType::LeftParen) {
                         self.advance();
                         let len = self.parse_integer()?;
@@ -636,7 +636,7 @@ impl SqlParser {
                         "TEXT" => Ok(DataType::Text),
                         "REAL" | "FLOAT" => Ok(DataType::Real),
                         "VARCHAR" => {
-                            // Проверяем, есть ли длина в скобках
+                            // Check if length is in parentheses
                             let length = if self.match_token(&TokenType::LeftParen) {
                                 self.advance();
                                 let len = self.parse_integer()?;
@@ -652,24 +652,24 @@ impl SqlParser {
                         "TIME" => Ok(DataType::Time),
                         "TIMESTAMP" => Ok(DataType::Timestamp),
                         _ => Err(Error::parser(format!(
-                            "Неизвестный тип данных: {}",
+                            "Unknown data type: {}",
                             type_name
                         ))),
                     }
                 }
-                _ => Err(Error::parser("Ожидался тип данных".to_string())),
+                _ => Err(Error::parser("Expected data type".to_string())),
             },
-            None => Err(Error::parser("Неожиданный конец ввода".to_string())),
+            None => Err(Error::parser("Unexpected end of input".to_string())),
         }
     }
 
     fn parse_alter(&mut self) -> Result<SqlStatement> {
-        // TODO: Реализовать полный парсинг ALTER
-        Err(Error::parser("ALTER не реализован".to_string()))
+        // TODO: Implement full ALTER parsing
+        Err(Error::parser("ALTER not implemented".to_string()))
     }
 
     fn parse_drop(&mut self) -> Result<SqlStatement> {
-        // TODO: Реализовать полный парсинг DROP
-        Err(Error::parser("DROP не реализован".to_string()))
+        // TODO: Implement full DROP parsing
+        Err(Error::parser("DROP not implemented".to_string()))
     }
 }

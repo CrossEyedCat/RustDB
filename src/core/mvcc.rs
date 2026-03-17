@@ -1,6 +1,6 @@
-//! Multi-Version Concurrency Control (MVCC) система
+//! Multi-Version Concurrency Control (MVCC) system
 //!
-//! Обеспечивает изоляцию транзакций через версионирование данных
+//! Provides transaction isolation through data versioning
 
 use crate::common::{Error, Result};
 use crate::core::transaction::TransactionId;
@@ -8,15 +8,15 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-/// Идентификатор версии
+/// Version identifier
 pub type VersionId = u64;
 
-/// Метка времени для версии
+/// Timestamp for version
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Timestamp(u64);
 
 impl Timestamp {
-    /// Создаёт новую метку времени
+    /// Creates a new timestamp
     pub fn now() -> Self {
         let duration = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -24,48 +24,48 @@ impl Timestamp {
         Self(duration.as_secs() * 1_000_000 + duration.subsec_micros() as u64)
     }
 
-    /// Возвращает значение timestamp
+    /// Returns timestamp value
     pub fn value(&self) -> u64 {
         self.0
     }
 }
 
-/// Состояние версии
+/// Version state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionState {
-    /// Версия активна
+    /// Version is active
     Active,
-    /// Версия зафиксирована
+    /// Version is committed
     Committed,
-    /// Версия откачена
+    /// Version is aborted
     Aborted,
-    /// Версия помечена для удаления
+    /// Version is marked for deletion
     MarkedForDeletion,
 }
 
-/// Версия записи
+/// Row version
 #[derive(Debug, Clone)]
 pub struct RowVersion {
-    /// Идентификатор версии
+    /// Version identifier
     pub version_id: VersionId,
-    /// Транзакция, создавшая версию
+    /// Transaction that created the version
     pub created_by: TransactionId,
-    /// Транзакция, удалившая версию (если есть)
+    /// Transaction that deleted the version (if any)
     pub deleted_by: Option<TransactionId>,
-    /// Метка времени создания
+    /// Creation timestamp
     pub created_at: Timestamp,
-    /// Метка времени удаления (если есть)
+    /// Deletion timestamp (if any)
     pub deleted_at: Option<Timestamp>,
-    /// Состояние версии
+    /// Version state
     pub state: VersionState,
-    /// Данные версии
+    /// Version data
     pub data: Vec<u8>,
-    /// Ссылка на предыдущую версию
+    /// Reference to previous version
     pub prev_version: Option<VersionId>,
 }
 
 impl RowVersion {
-    /// Создаёт новую версию
+    /// Creates a new version
     pub fn new(
         version_id: VersionId,
         transaction_id: TransactionId,
@@ -84,22 +84,22 @@ impl RowVersion {
         }
     }
 
-    /// Проверяет видимость версии для транзакции
+    /// Checks version visibility for transaction
     pub fn is_visible(&self, transaction_id: TransactionId, snapshot_timestamp: Timestamp) -> bool {
-        // Версия видна, если:
-        // 1. Она создана до snapshot_timestamp
+        // Version is visible if:
+        // 1. It was created before snapshot_timestamp
         if self.created_at > snapshot_timestamp {
             return false;
         }
 
-        // 2. Она не удалена или удалена после snapshot_timestamp
+        // 2. It is not deleted or deleted after snapshot_timestamp
         if let Some(deleted_at) = self.deleted_at {
             if deleted_at <= snapshot_timestamp {
                 return false;
             }
         }
 
-        // 3. Версия зафиксирована или создана текущей транзакцией
+        // 3. Version is committed or created by current transaction
         match self.state {
             VersionState::Committed => true,
             VersionState::Active => self.created_by == transaction_id,
@@ -107,24 +107,24 @@ impl RowVersion {
         }
     }
 
-    /// Помечает версию как зафиксированную
+    /// Marks version as committed
     pub fn commit(&mut self) {
         self.state = VersionState::Committed;
     }
 
-    /// Помечает версию как откаченную
+    /// Marks version as aborted
     pub fn abort(&mut self) {
         self.state = VersionState::Aborted;
     }
 
-    /// Помечает версию как удалённую
+    /// Marks version as deleted
     pub fn mark_deleted(&mut self, transaction_id: TransactionId) {
         self.deleted_by = Some(transaction_id);
         self.deleted_at = Some(Timestamp::now());
     }
 }
 
-/// Ключ записи (таблица + ID записи)
+/// Row key (table + row ID)
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct RowKey {
     pub table_id: u32,
@@ -137,36 +137,36 @@ impl RowKey {
     }
 }
 
-/// Менеджер версий
+/// Version manager
 pub struct MVCCManager {
-    /// Хранилище версий (ключ записи -> список версий)
+    /// Version storage (row key -> list of versions)
     versions: Arc<RwLock<HashMap<RowKey, Vec<RowVersion>>>>,
-    /// Счётчик версий
+    /// Version counter
     version_counter: Arc<Mutex<VersionId>>,
-    /// Минимальная активная транзакция (для очистки старых версий)
+    /// Minimum active transaction (for cleaning old versions)
     min_active_transaction: Arc<RwLock<TransactionId>>,
-    /// Статистика MVCC
+    /// MVCC statistics
     statistics: Arc<Mutex<MVCCStatistics>>,
 }
 
-/// Статистика MVCC
+/// MVCC statistics
 #[derive(Debug, Clone)]
 pub struct MVCCStatistics {
-    /// Всего версий
+    /// Total versions
     pub total_versions: u64,
-    /// Активных версий
+    /// Active versions
     pub active_versions: u64,
-    /// Зафиксированных версий
+    /// Committed versions
     pub committed_versions: u64,
-    /// Откаченных версий
+    /// Aborted versions
     pub aborted_versions: u64,
-    /// Версий, помеченных для удаления
+    /// Versions marked for deletion
     pub marked_for_deletion: u64,
-    /// Операций VACUUM
+    /// VACUUM operations
     pub vacuum_operations: u64,
-    /// Удалено версий при VACUUM
+    /// Versions cleaned during VACUUM
     pub versions_cleaned: u64,
-    /// Последнее обновление
+    /// Last update
     pub last_updated: Instant,
 }
 
@@ -186,7 +186,7 @@ impl MVCCStatistics {
 }
 
 impl MVCCManager {
-    /// Создаёт новый менеджер MVCC
+    /// Creates a new MVCC manager
     pub fn new() -> Self {
         Self {
             versions: Arc::new(RwLock::new(HashMap::new())),
@@ -196,14 +196,14 @@ impl MVCCManager {
         }
     }
 
-    /// Создаёт новую версию записи
+    /// Creates a new row version
     pub fn create_version(
         &self,
         key: RowKey,
         transaction_id: TransactionId,
         data: Vec<u8>,
     ) -> Result<VersionId> {
-        // Генерируем ID версии
+        // Generate version ID
         let version_id = {
             let mut counter = self.version_counter.lock().unwrap();
             let id = *counter;
@@ -214,14 +214,14 @@ impl MVCCManager {
         let mut versions = self.versions.write().unwrap();
         let row_versions = versions.entry(key.clone()).or_insert_with(Vec::new);
 
-        // Находим предыдущую версию
+        // Find previous version
         let prev_version = row_versions.last().map(|v| v.version_id);
 
-        // Создаём новую версию
+        // Create new version
         let version = RowVersion::new(version_id, transaction_id, data, prev_version);
         row_versions.push(version);
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self.statistics.lock().unwrap();
             stats.total_versions += 1;
@@ -232,7 +232,7 @@ impl MVCCManager {
         Ok(version_id)
     }
 
-    /// Читает версию записи, видимую для транзакции
+    /// Reads row version visible for transaction
     pub fn read_version(
         &self,
         key: &RowKey,
@@ -242,7 +242,7 @@ impl MVCCManager {
         let versions = self.versions.read().unwrap();
 
         if let Some(row_versions) = versions.get(key) {
-            // Ищем последнюю видимую версию
+            // Find last visible version
             for version in row_versions.iter().rev() {
                 if version.is_visible(transaction_id, snapshot_timestamp) {
                     return Ok(Some(version.data.clone()));
@@ -253,7 +253,7 @@ impl MVCCManager {
         Ok(None)
     }
 
-    /// Удаляет запись (создаёт новую версию с пометкой удаления)
+    /// Deletes row (creates new version with deletion mark)
     pub fn delete_version(&self, key: &RowKey, transaction_id: TransactionId) -> Result<()> {
         let mut versions = self.versions.write().unwrap();
 
@@ -261,7 +261,7 @@ impl MVCCManager {
             if let Some(last_version) = row_versions.last_mut() {
                 last_version.mark_deleted(transaction_id);
 
-                // Обновляем статистику
+                // Update statistics
                 {
                     let mut stats = self.statistics.lock().unwrap();
                     stats.marked_for_deletion += 1;
@@ -272,10 +272,10 @@ impl MVCCManager {
             }
         }
 
-        Err(Error::database("Версия записи не найдена"))
+        Err(Error::database("Row version not found"))
     }
 
-    /// Фиксирует версии транзакции
+    /// Commits transaction versions
     pub fn commit_transaction(&self, transaction_id: TransactionId) -> Result<()> {
         let mut versions = self.versions.write().unwrap();
         let mut committed_count = 0;
@@ -289,7 +289,7 @@ impl MVCCManager {
             }
         }
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self.statistics.lock().unwrap();
             stats.active_versions = stats.active_versions.saturating_sub(committed_count);
@@ -300,7 +300,7 @@ impl MVCCManager {
         Ok(())
     }
 
-    /// Откатывает версии транзакции
+    /// Aborts transaction versions
     pub fn abort_transaction(&self, transaction_id: TransactionId) -> Result<()> {
         let mut versions = self.versions.write().unwrap();
         let mut aborted_count = 0;
@@ -314,7 +314,7 @@ impl MVCCManager {
             }
         }
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self.statistics.lock().unwrap();
             stats.active_versions = stats.active_versions.saturating_sub(aborted_count);
@@ -325,27 +325,27 @@ impl MVCCManager {
         Ok(())
     }
 
-    /// Очищает старые версии (VACUUM)
+    /// Cleans old versions (VACUUM)
     pub fn vacuum(&self) -> Result<u64> {
         let min_active = *self.min_active_transaction.read().unwrap();
         let mut versions = self.versions.write().unwrap();
         let mut cleaned_count = 0;
 
-        // Очищаем каждую цепочку версий
+        // Clean each version chain
         for row_versions in versions.values_mut() {
             row_versions.retain(|version| {
-                // Сохраняем версии, которые:
-                // 1. Активны
-                // 2. Созданы активными транзакциями
-                // 3. Зафиксированы и могут быть видимы
+                // Keep versions that:
+                // 1. Are active
+                // 2. Created by active transactions
+                // 3. Committed and can be visible
                 let should_keep = match version.state {
                     VersionState::Active => version.created_by >= min_active,
                     VersionState::Committed => {
-                        // Оставляем последнюю зафиксированную версию
+                        // Keep last committed version
                         true
                     }
                     VersionState::Aborted | VersionState::MarkedForDeletion => {
-                        // Удаляем откаченные и помеченные для удаления
+                        // Remove aborted and marked for deletion
                         false
                     }
                 };
@@ -358,10 +358,10 @@ impl MVCCManager {
             });
         }
 
-        // Удаляем пустые цепочки
+        // Remove empty chains
         versions.retain(|_, row_versions| !row_versions.is_empty());
 
-        // Обновляем статистику
+        // Update statistics
         {
             let mut stats = self.statistics.lock().unwrap();
             stats.vacuum_operations += 1;
@@ -373,18 +373,18 @@ impl MVCCManager {
         Ok(cleaned_count)
     }
 
-    /// Обновляет минимальную активную транзакцию
+    /// Updates minimum active transaction
     pub fn update_min_active_transaction(&self, transaction_id: TransactionId) {
         let mut min_active = self.min_active_transaction.write().unwrap();
         *min_active = transaction_id;
     }
 
-    /// Возвращает статистику
+    /// Returns statistics
     pub fn get_statistics(&self) -> MVCCStatistics {
         self.statistics.lock().unwrap().clone()
     }
 
-    /// Возвращает количество версий для записи
+    /// Returns version count for row
     pub fn get_version_count(&self, key: &RowKey) -> usize {
         let versions = self.versions.read().unwrap();
         versions.get(key).map(|v| v.len()).unwrap_or(0)
@@ -433,15 +433,15 @@ mod tests {
         let transaction_id = TransactionId::new(1);
         let data = vec![1, 2, 3, 4];
 
-        // Создаём версию
+        // Create version
         manager
             .create_version(key.clone(), transaction_id, data.clone())
             .unwrap();
 
-        // Фиксируем транзакцию
+        // Commit transaction
         manager.commit_transaction(transaction_id).unwrap();
 
-        // Читаем версию (snapshot после создания)
+        // Read version (snapshot after creation)
         let snapshot = Timestamp::now();
         let read_data = manager
             .read_version(&key, transaction_id, snapshot)
@@ -486,13 +486,13 @@ mod tests {
         let transaction_id = TransactionId::new(1);
         let data = vec![1, 2, 3, 4];
 
-        // Создаём и откатываем версию
+        // Create and abort version
         manager
             .create_version(key.clone(), transaction_id, data)
             .unwrap();
         manager.abort_transaction(transaction_id).unwrap();
 
-        // Очищаем
+        // Clean
         let cleaned = manager.vacuum().unwrap();
         assert_eq!(cleaned, 1);
 
@@ -508,22 +508,22 @@ mod tests {
         let data1 = vec![1, 2, 3];
         let data2 = vec![4, 5, 6];
 
-        // Создаём первую версию
+        // Create first version
         let tx1 = TransactionId::new(1);
         manager.create_version(key.clone(), tx1, data1).unwrap();
         manager.commit_transaction(tx1).unwrap();
 
-        // Создаём вторую версию
+        // Create second version
         let tx2 = TransactionId::new(2);
         manager
             .create_version(key.clone(), tx2, data2.clone())
             .unwrap();
         manager.commit_transaction(tx2).unwrap();
 
-        // Проверяем количество версий
+        // Check version count
         assert_eq!(manager.get_version_count(&key), 2);
 
-        // Читаем последнюю версию
+        // Read last version
         let snapshot = Timestamp::now();
         let read_data = manager.read_version(&key, tx2, snapshot).unwrap();
         assert_eq!(read_data, Some(data2));

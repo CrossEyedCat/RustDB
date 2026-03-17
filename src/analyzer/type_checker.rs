@@ -1,22 +1,22 @@
-//! Модуль для проверки совместимости типов данных
+//! Module for checking data type compatibility
 
 use crate::analyzer::semantic_analyzer::{TypeConversion, TypeInformation};
 use crate::common::Result;
 use crate::parser::ast::*;
 use std::collections::HashMap;
 
-/// Результат проверки типов
+/// Type check result
 #[derive(Debug, Clone)]
 pub struct TypeCheckResult {
-    /// Успешность проверки
+    /// Check success
     pub is_valid: bool,
-    /// Ошибки типов
+    /// Type errors
     pub errors: Vec<TypeCheckError>,
-    /// Предупреждения
+    /// Warnings
     pub warnings: Vec<TypeCheckWarning>,
-    /// Информация о типах
+    /// Type information
     pub type_info: TypeInformation,
-    /// Количество выполненных проверок
+    /// Number of checks performed
     pub checks_performed: usize,
 }
 
@@ -41,7 +41,7 @@ impl TypeCheckResult {
     }
 }
 
-/// Ошибка проверки типов
+/// Type check error
 #[derive(Debug, Clone)]
 pub struct TypeCheckError {
     pub message: String,
@@ -51,7 +51,7 @@ pub struct TypeCheckError {
     pub suggested_fix: Option<String>,
 }
 
-/// Предупреждение проверки типов
+/// Type check warning
 #[derive(Debug, Clone)]
 pub struct TypeCheckWarning {
     pub message: String,
@@ -59,7 +59,7 @@ pub struct TypeCheckWarning {
     pub warning_type: TypeWarningType,
 }
 
-/// Тип предупреждения
+/// Warning type
 #[derive(Debug, Clone)]
 pub enum TypeWarningType {
     ImplicitConversion,
@@ -67,31 +67,31 @@ pub enum TypeWarningType {
     PerformanceImpact,
 }
 
-/// Совместимость типов
+/// Type compatibility
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeCompatibility {
-    /// Типы полностью совместимы
+    /// Types are fully compatible
     Compatible,
-    /// Типы совместимы с неявным преобразованием
+    /// Types are compatible with implicit conversion
     CompatibleWithConversion,
-    /// Типы совместимы с потерей точности
+    /// Types are compatible with precision loss
     CompatibleWithLoss,
-    /// Типы несовместимы
+    /// Types are incompatible
     Incompatible,
 }
 
-/// Проверщик типов
+/// Type checker
 pub struct TypeChecker {
-    /// Правила совместимости типов
+    /// Type compatibility rules
     compatibility_rules: HashMap<(DataType, DataType), TypeCompatibility>,
-    /// Правила неявных преобразований
+    /// Implicit conversion rules
     conversion_rules: HashMap<DataType, Vec<DataType>>,
-    /// Включена ли строгая проверка типов
+    /// Whether strict type checking is enabled
     strict_mode: bool,
 }
 
 impl TypeChecker {
-    /// Создает новый проверщик типов
+    /// Create new type checker
     pub fn new() -> Self {
         let mut checker = Self {
             compatibility_rules: HashMap::new(),
@@ -103,14 +103,14 @@ impl TypeChecker {
         checker
     }
 
-    /// Создает проверщик типов в строгом режиме
+    /// Create type checker in strict mode
     pub fn strict() -> Self {
         let mut checker = Self::new();
         checker.strict_mode = true;
         checker
     }
 
-    /// Проверяет типы в SQL запросе
+    /// Check types in SQL query
     pub fn check_statement(
         &mut self,
         statement: &SqlStatement,
@@ -135,25 +135,25 @@ impl TypeChecker {
                 self.check_create_table_types(create, &mut result)?;
             }
             _ => {
-                // Другие типы запросов пока не требуют проверки типов
+                // Other query types do not require type checking yet
             }
         }
 
         Ok(result)
     }
 
-    /// Проверяет совместимость двух типов
+    /// Check compatibility of two types
     pub fn check_compatibility(
         &self,
         from_type: &DataType,
         to_type: &DataType,
     ) -> TypeCompatibility {
-        // Если типы одинаковые, они совместимы
+        // If types are the same, they are compatible
         if from_type == to_type {
             return TypeCompatibility::Compatible;
         }
 
-        // Проверяем правила совместимости
+        // Check compatibility rules
         if let Some(compatibility) = self
             .compatibility_rules
             .get(&(from_type.clone(), to_type.clone()))
@@ -161,18 +161,18 @@ impl TypeChecker {
             return compatibility.clone();
         }
 
-        // Проверяем возможность неявного преобразования
+        // Check possibility of implicit conversion
         if let Some(conversions) = self.conversion_rules.get(from_type) {
             if conversions.contains(to_type) {
                 return TypeCompatibility::CompatibleWithConversion;
             }
         }
 
-        // По умолчанию типы несовместимы
+        // By default types are incompatible
         TypeCompatibility::Incompatible
     }
 
-    /// Проверяет возможность неявного преобразования
+    /// Check possibility of implicit conversion
     pub fn can_convert_implicitly(&self, from_type: &DataType, to_type: &DataType) -> bool {
         let compatibility = self.check_compatibility(from_type, to_type);
         matches!(
@@ -181,7 +181,7 @@ impl TypeChecker {
         )
     }
 
-    /// Получает результирующий тип для бинарной операции
+    /// Get result type for binary operation
     pub fn get_binary_operation_result_type(
         &self,
         left_type: &DataType,
@@ -200,7 +200,7 @@ impl TypeChecker {
             | BinaryOperator::GreaterThan
             | BinaryOperator::GreaterThanOrEqual => Ok(DataType::Boolean),
             BinaryOperator::And | BinaryOperator::Or => {
-                // Логические операторы требуют булевых операндов
+                // Logical operators require boolean operands
                 if matches!(left_type, DataType::Boolean) && matches!(right_type, DataType::Boolean)
                 {
                     Ok(DataType::Boolean)
@@ -211,13 +211,13 @@ impl TypeChecker {
                 }
             }
             _ => {
-                // Для других операторов возвращаем булевый тип по умолчанию
+                // For other operators return boolean type by default
                 Ok(DataType::Boolean)
             }
         }
     }
 
-    /// Получает результирующий тип для унарной операции
+    /// Get result type for unary operation
     pub fn get_unary_operation_result_type(
         &self,
         operand_type: &DataType,
@@ -239,7 +239,7 @@ impl TypeChecker {
         }
     }
 
-    // Методы проверки для различных типов запросов
+    // Type checking methods for different query types
 
     fn check_select_types(
         &mut self,
@@ -248,12 +248,12 @@ impl TypeChecker {
     ) -> Result<()> {
         result.checks_performed += 1;
 
-        // Проверяем типы в SELECT списке
+        // Check types in SELECT list
         for item in &select.select_list {
             self.check_select_item_types(item, result)?;
         }
 
-        // Проверяем типы в WHERE условии
+        // Check types in WHERE clause
         if let Some(where_clause) = &select.where_clause {
             let where_type = self.check_expression_types(where_clause, result)?;
             if !matches!(where_type, DataType::Boolean) {
@@ -269,12 +269,12 @@ impl TypeChecker {
             }
         }
 
-        // Проверяем типы в GROUP BY
+        // Check types in GROUP BY
         for expr in &select.group_by {
             self.check_expression_types(expr, result)?;
         }
 
-        // Проверяем типы в HAVING
+        // Check types in HAVING
         if let Some(having) = &select.having {
             let having_type = self.check_expression_types(having, result)?;
             if !matches!(having_type, DataType::Boolean) {
@@ -290,7 +290,7 @@ impl TypeChecker {
             }
         }
 
-        // Проверяем типы в ORDER BY
+        // Check types in ORDER BY
         for order_item in &select.order_by {
             self.check_expression_types(&order_item.expr, result)?;
         }
@@ -305,21 +305,21 @@ impl TypeChecker {
     ) -> Result<()> {
         result.checks_performed += 1;
 
-        // Проверяем совместимость типов вставляемых значений с колонками таблицы
+        // Check compatibility of inserted value types with table columns
         match &insert.values {
             InsertValues::Values(rows) => {
                 for row in rows {
                     for expr in row {
                         let expr_type = self.check_expression_types(expr, result)?;
 
-                        // В реальной реализации здесь будет проверка против схемы таблицы
-                        // Пока добавляем информацию о типе в результат
+                        // In a real implementation, there would be a check against the table schema here
+                        // For now, add type information to the result
                         result.type_info.result_types.push(expr_type);
                     }
                 }
             }
             InsertValues::Select(select) => {
-                // Проверяем типы в подзапросе
+                // Check types in subquery
                 self.check_select_types(select, result)?;
             }
         }
@@ -334,15 +334,15 @@ impl TypeChecker {
     ) -> Result<()> {
         result.checks_performed += 1;
 
-        // Проверяем типы в присваиваниях
+        // Check types in assignments
         for assignment in &update.assignments {
             let value_type = self.check_expression_types(&assignment.value, result)?;
 
-            // В реальной реализации здесь будет проверка совместимости с типом колонки
+            // In a real implementation, there would be a compatibility check with the column type here
             result.type_info.result_types.push(value_type);
         }
 
-        // Проверяем типы в WHERE условии
+        // Check types in WHERE clause
         if let Some(where_clause) = &update.where_clause {
             let where_type = self.check_expression_types(where_clause, result)?;
             if !matches!(where_type, DataType::Boolean) {
@@ -366,7 +366,7 @@ impl TypeChecker {
     ) -> Result<()> {
         result.checks_performed += 1;
 
-        // Проверяем типы в WHERE условии
+        // Check types in WHERE clause
         if let Some(where_clause) = &delete.where_clause {
             let where_type = self.check_expression_types(where_clause, result)?;
             if !matches!(where_type, DataType::Boolean) {
@@ -390,9 +390,9 @@ impl TypeChecker {
     ) -> Result<()> {
         result.checks_performed += 1;
 
-        // Проверяем корректность типов колонок
+        // Check column type correctness
         for column in &create.columns {
-            // Проверяем валидность типа данных
+            // Check data type validity
             self.validate_data_type(&column.data_type, result)?;
         }
 
@@ -410,8 +410,8 @@ impl TypeChecker {
                 result.type_info.result_types.push(expr_type);
             }
             SelectItem::Wildcard => {
-                // Для * нужно получить все колонки из FROM таблиц
-                // Пока добавляем заглушку
+                // For * need to get all columns from FROM tables
+                // For now, add a placeholder
             }
         }
         Ok(())
@@ -427,14 +427,14 @@ impl TypeChecker {
         match expr {
             Expression::Literal(literal) => Ok(self.get_literal_type(literal)),
             Expression::Identifier(_) | Expression::QualifiedIdentifier { .. } => {
-                // В реальной реализации здесь будет получение типа колонки из схемы
-                Ok(DataType::Text) // Заглушка
+                // In a real implementation, column type would be retrieved from schema here
+                Ok(DataType::Text) // Placeholder
             }
             Expression::BinaryOp { left, op, right } => {
                 let left_type = self.check_expression_types(left, result)?;
                 let right_type = self.check_expression_types(right, result)?;
 
-                // Проверяем совместимость операндов
+                // Check operand compatibility
                 let compatibility = self.check_compatibility(&left_type, &right_type);
                 if matches!(compatibility, TypeCompatibility::Incompatible) {
                     result.add_error(TypeCheckError {
@@ -447,10 +447,10 @@ impl TypeChecker {
                         actual_type: Some(right_type.clone()),
                         suggested_fix: Some("Cast one operand to match the other type".to_string()),
                     });
-                    return Ok(DataType::Text); // Возвращаем заглушку для продолжения анализа
+                    return Ok(DataType::Text); // Return placeholder to continue analysis
                 }
 
-                // Добавляем предупреждение о неявном преобразовании
+                // Add warning about implicit conversion
                 if matches!(compatibility, TypeCompatibility::CompatibleWithConversion) {
                     result.add_warning(TypeCheckWarning {
                         message: format!(
@@ -469,24 +469,24 @@ impl TypeChecker {
                 self.get_unary_operation_result_type(&operand_type, op)
             }
             Expression::Function { name, args } => {
-                // Проверяем типы аргументов функции
+                // Check function argument types
                 let mut arg_types = Vec::new();
                 for arg in args {
                     let arg_type = self.check_expression_types(arg, result)?;
                     arg_types.push(arg_type);
                 }
 
-                // Определяем тип результата функции
+                // Determine function result type
                 self.get_function_result_type(name, &arg_types, result)
             }
             _ => {
-                // Упрощенная обработка других выражений
+                // Simplified handling of other expressions
                 Ok(DataType::Text)
             }
         }
     }
 
-    // Вспомогательные методы
+    // Helper methods
 
     pub fn get_literal_type(&self, literal: &Literal) -> DataType {
         match literal {
@@ -494,7 +494,7 @@ impl TypeChecker {
             Literal::Float(_) => DataType::Real,
             Literal::String(_) => DataType::Text,
             Literal::Boolean(_) => DataType::Boolean,
-            Literal::Null => DataType::Text, // NULL может быть любого типа
+            Literal::Null => DataType::Text, // NULL can be any type
         }
     }
 
@@ -549,7 +549,7 @@ impl TypeChecker {
                     location: Some("function call".to_string()),
                     warning_type: TypeWarningType::PerformanceImpact,
                 });
-                Ok(DataType::Text) // По умолчанию возвращаем текстовый тип
+                Ok(DataType::Text) // Return text type by default
             }
         }
     }
@@ -570,16 +570,16 @@ impl TypeChecker {
                 }
             }
             _ => {
-                // Другие типы пока не требуют специальной валидации
+                // Other types do not require special validation yet
             }
         }
         Ok(())
     }
 
     fn initialize_rules(&mut self) {
-        // Инициализируем правила совместимости типов
+        // Initialize type compatibility rules
 
-        // Числовые типы
+        // Numeric types
         self.compatibility_rules.insert(
             (DataType::Integer, DataType::Real),
             TypeCompatibility::CompatibleWithConversion,
@@ -589,7 +589,7 @@ impl TypeChecker {
             TypeCompatibility::CompatibleWithLoss,
         );
 
-        // Строковые типы
+        // String types
         self.compatibility_rules.insert(
             (DataType::Text, DataType::Varchar { length: Some(255) }),
             TypeCompatibility::CompatibleWithConversion,
@@ -599,7 +599,7 @@ impl TypeChecker {
             TypeCompatibility::Compatible,
         );
 
-        // Правила неявных преобразований
+        // Implicit conversion rules
         self.conversion_rules
             .insert(DataType::Integer, vec![DataType::Real, DataType::Text]);
         self.conversion_rules
@@ -608,12 +608,12 @@ impl TypeChecker {
             .insert(DataType::Boolean, vec![DataType::Text]);
     }
 
-    /// Включает или отключает строгий режим
+    /// Enable or disable strict mode
     pub fn set_strict_mode(&mut self, strict: bool) {
         self.strict_mode = strict;
     }
 
-    /// Проверяет, включен ли строгий режим
+    /// Check if strict mode is enabled
     pub fn is_strict_mode(&self) -> bool {
         self.strict_mode
     }

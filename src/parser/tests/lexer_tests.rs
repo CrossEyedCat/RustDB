@@ -1,11 +1,11 @@
-//! Тесты для лексического анализатора rustdb
+//! Lexer tests for rustdb
 
 use crate::parser::{Lexer, Position, TokenType};
 
 #[test]
 fn test_lexer_creation() {
     let lexer = Lexer::new("SELECT * FROM users").unwrap();
-    // Просто проверяем, что лексер создается без ошибок
+    // Ensure lexer creation succeeds without errors
     assert!(true);
 }
 
@@ -169,7 +169,7 @@ fn test_delimiters() {
 
 #[test]
 fn test_single_line_comments() {
-    let mut lexer = Lexer::new("SELECT -- это комментарий\nFROM").unwrap();
+    let mut lexer = Lexer::new("SELECT -- this is a comment\nFROM").unwrap();
     let mut all_tokens = Vec::new();
 
     loop {
@@ -181,19 +181,19 @@ fn test_single_line_comments() {
         }
     }
 
-    // Должны получить: SELECT, комментарий, FROM, EOF
+    // Expect: SELECT, comment, FROM, EOF
     assert_eq!(all_tokens.len(), 4);
     assert_eq!(all_tokens[0].token_type, TokenType::Select);
     assert_eq!(all_tokens[1].token_type, TokenType::Comment);
     assert_eq!(all_tokens[2].token_type, TokenType::From);
     assert_eq!(all_tokens[3].token_type, TokenType::Eof);
 
-    assert!(all_tokens[1].value.starts_with("-- это комментарий"));
+    assert!(all_tokens[1].value.starts_with("-- this is a comment"));
 }
 
 #[test]
 fn test_multi_line_comments() {
-    let mut lexer = Lexer::new("SELECT /* многострочный\nкомментарий */ FROM").unwrap();
+    let mut lexer = Lexer::new("SELECT /* multiline\ncomment */ FROM").unwrap();
     let mut all_tokens = Vec::new();
 
     loop {
@@ -205,15 +205,15 @@ fn test_multi_line_comments() {
         }
     }
 
-    // Должны получить: SELECT, комментарий, FROM, EOF
+    // Expect: SELECT, comment, FROM, EOF
     assert_eq!(all_tokens.len(), 4);
     assert_eq!(all_tokens[0].token_type, TokenType::Select);
     assert_eq!(all_tokens[1].token_type, TokenType::Comment);
     assert_eq!(all_tokens[2].token_type, TokenType::From);
     assert_eq!(all_tokens[3].token_type, TokenType::Eof);
 
-    assert!(all_tokens[1].value.contains("многострочный"));
-    assert!(all_tokens[1].value.contains("комментарий"));
+    assert!(all_tokens[1].value.contains("multiline"));
+    assert!(all_tokens[1].value.contains("comment"));
 }
 
 #[test]
@@ -271,41 +271,41 @@ fn test_complex_sql_query() {
     let mut lexer = Lexer::new(sql).unwrap();
     let tokens = lexer.tokenize().unwrap();
 
-    // Проверяем, что получили разумное количество токенов
+    // Ensure we produced a sensible number of tokens
     assert!(tokens.len() > 20);
 
-    // Проверяем некоторые ключевые токены
+    // Inspect key tokens
     assert_eq!(tokens[0].token_type, TokenType::Select);
 
-    // Находим FROM
+    // Locate FROM
     let from_pos = tokens
         .iter()
         .position(|t| t.token_type == TokenType::From)
         .unwrap();
     assert!(from_pos > 0);
 
-    // Находим LEFT JOIN
+    // Locate LEFT JOIN
     let left_join_pos = tokens
         .iter()
         .position(|t| t.token_type == TokenType::LeftJoin)
         .unwrap();
     assert!(left_join_pos > from_pos);
 
-    // Находим WHERE
+    // Locate WHERE
     let where_pos = tokens
         .iter()
         .position(|t| t.token_type == TokenType::Where)
         .unwrap();
     assert!(where_pos > left_join_pos);
 
-    // Находим GROUP BY
+    // Locate GROUP BY
     let group_by_pos = tokens
         .iter()
         .position(|t| t.token_type == TokenType::GroupBy)
         .unwrap();
     assert!(group_by_pos > where_pos);
 
-    // Последний токен должен быть EOF
+    // Final token should be EOF
     assert_eq!(tokens.last().unwrap().token_type, TokenType::Eof);
 }
 
@@ -317,15 +317,15 @@ fn test_position_tracking() {
 
     assert_eq!(tokens.len(), 4); // SELECT, FROM, WHERE, EOF
 
-    // SELECT на строке 1
+    // SELECT on line 1
     assert_eq!(tokens[0].position.line, 1);
     assert_eq!(tokens[0].position.column, 1);
 
-    // FROM на строке 2
+    // FROM on line 2
     assert_eq!(tokens[1].position.line, 2);
     assert_eq!(tokens[1].position.column, 1);
 
-    // WHERE на строке 3 (с отступом)
+    // WHERE on line 3 (indented)
     assert_eq!(tokens[2].position.line, 3);
     assert_eq!(tokens[2].position.column, 3);
 }
@@ -334,15 +334,15 @@ fn test_position_tracking() {
 fn test_peek_token() {
     let mut lexer = Lexer::new("SELECT FROM").unwrap();
 
-    // Заглядываем вперед
+    // Peek ahead
     let peeked = lexer.peek_token().unwrap();
     assert_eq!(peeked.token_type, TokenType::Select);
 
-    // Получаем тот же токен
+    // Fetch same token
     let actual = lexer.next_token().unwrap();
     assert_eq!(actual.token_type, TokenType::Select);
 
-    // Следующий токен
+    // Next token
     let next = lexer.next_token().unwrap();
     assert_eq!(next.token_type, TokenType::From);
 }

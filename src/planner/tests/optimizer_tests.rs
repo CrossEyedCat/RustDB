@@ -1,4 +1,4 @@
-//! Тесты для оптимизатора запросов
+//! Query optimizer tests
 
 use crate::common::Result;
 use crate::parser::{SqlParser, SqlStatement};
@@ -27,7 +27,7 @@ fn test_optimize_simple_plan() -> Result<()> {
     let plan = planner.create_plan(&statement)?;
     let result = optimizer.optimize(plan)?;
 
-    // Проверяем, что оптимизация прошла успешно
+    // Ensure optimization completed successfully
     assert!(result.statistics.optimization_time_ms >= 0);
     assert!(result.messages.len() >= 0);
 
@@ -44,7 +44,7 @@ fn test_optimize_plan_with_where() -> Result<()> {
     let plan = planner.create_plan(&statement)?;
     let result = optimizer.optimize(plan)?;
 
-    // Проверяем, что оптимизация прошла успешно
+    // Ensure optimization completed successfully
     assert!(result.statistics.optimization_time_ms >= 0);
 
     Ok(())
@@ -81,13 +81,13 @@ fn test_optimizer_statistics() -> Result<()> {
 fn test_reset_statistics() -> Result<()> {
     let mut optimizer = QueryOptimizer::new()?;
 
-    // Сначала получаем статистику
+    // Capture statistics before reset
     let _initial_stats = optimizer.statistics().clone();
 
-    // Сбрасываем статистику
+    // Reset statistics
     optimizer.reset_statistics();
 
-    // Проверяем, что статистика сброшена
+    // Confirm statistics were cleared
     let reset_stats = optimizer.statistics();
     assert_eq!(reset_stats.optimizations_applied, 0);
     assert_eq!(reset_stats.optimization_time_ms, 0);

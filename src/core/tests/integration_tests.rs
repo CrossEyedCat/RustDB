@@ -1,4 +1,4 @@
-//! Интеграционные тесты для менеджера транзакций и блокировок
+//! Integration tests for the transaction and lock managers
 
 #![allow(clippy::absurd_extreme_comparisons)]
 
@@ -14,7 +14,7 @@ use std::time::Duration;
 fn test_transaction_with_locks_integration() {
     let tm = TransactionManager::new().unwrap();
 
-    // Создаем транзакцию и получаем блокировки
+    // Begin a transaction and acquire locks
     let txn_id = tm
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
@@ -25,7 +25,7 @@ fn test_transaction_with_locks_integration() {
         ("index_user_email", LockMode::Exclusive),
     ];
 
-    // Получаем блокировки через менеджер транзакций
+    // Acquire locks via the transaction manager
     for (resource, mode) in &resources {
         tm.acquire_lock(
             txn_id,
@@ -36,14 +36,14 @@ fn test_transaction_with_locks_integration() {
         .unwrap();
     }
 
-    // Проверяем, что все блокировки зарегистрированы в транзакции
+    // Ensure all locks are registered with the transaction
     let info = tm.get_transaction_info(txn_id).unwrap().unwrap();
     assert_eq!(info.locked_resources.len(), 3);
 
-    // При фиксации транзакции все блокировки должны освободиться
+    // Committing should release every lock
     tm.commit_transaction(txn_id).unwrap();
 
-    // Проверяем статистику
+    // Verify statistics
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.lock_operations, 3);
     assert_eq!(stats.unlock_operations, 3);
@@ -54,7 +54,7 @@ fn test_concurrent_transactions_with_locks() {
     let tm = Arc::new(TransactionManager::new().unwrap());
     let mut handles = vec![];
 
-    // Сценарий: несколько транзакций работают с пересекающимися ресурсами
+    // Scenario: multiple transactions operate on overlapping resources
     for i in 0..3 {
         let tm_clone = Arc::clone(&tm);
         let handle = thread::spawn(move || {
@@ -62,11 +62,11 @@ fn test_concurrent_transactions_with_locks() {
                 .begin_transaction(IsolationLevel::ReadCommitted, false)
                 .unwrap();
 
-            // Каждая транзакция работает с общим ресурсом и своим уникальным
+            // Each transaction touches a shared resource plus a unique one
             let shared_resource = "shared_table".to_string();
             let unique_resource = format!("unique_resource_{}", i);
 
-            // Получаем разделяемую блокировку на общий ресурс
+            // Acquire shared lock on the shared resource
             tm_clone
                 .acquire_lock(
                     txn_id,
@@ -76,7 +76,7 @@ fn test_concurrent_transactions_with_locks() {
                 )
                 .unwrap();
 
-            // Получаем исключительную блокировку на уникальный ресурс
+            // Acquire exclusive lock on the unique resource
             tm_clone
                 .acquire_lock(
                     txn_id,
@@ -86,26 +86,26 @@ fn test_concurrent_transactions_with_locks() {
                 )
                 .unwrap();
 
-            // Имитируем работу
+            // Simulate some work
             thread::sleep(Duration::from_millis(50));
 
-            // Фиксируем транзакцию
+            // Commit the transaction
             tm_clone.commit_transaction(txn_id).unwrap();
         });
         handles.push(handle);
     }
 
-    // Ждем завершения всех транзакций
+    // Wait for all transactions to finish
     for handle in handles {
         handle.join().unwrap();
     }
 
-    // Проверяем финальную статистику
+    // Verify final statistics
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.total_transactions, 3);
     assert_eq!(stats.committed_transactions, 3);
     assert_eq!(stats.active_transactions, 0);
-    assert_eq!(stats.lock_operations, 6); // 2 блокировки на транзакцию
+    assert_eq!(stats.lock_operations, 6); // 2 locks per transaction
     assert_eq!(stats.unlock_operations, 6);
 }
 
@@ -116,7 +116,7 @@ fn test_transaction_abort_releases_locks() {
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
 
-    // Получаем несколько блокировок
+    // Acquire several locks
     let resources = vec!["resource1", "resource2", "resource3"];
     for resource in &resources {
         tm.acquire_lock(
@@ -128,14 +128,14 @@ fn test_transaction_abort_releases_locks() {
         .unwrap();
     }
 
-    // Проверяем, что блокировки получены
+    // Ensure locks were acquired
     let info = tm.get_transaction_info(txn_id).unwrap().unwrap();
     assert_eq!(info.locked_resources.len(), 3);
 
-    // Отменяем транзакцию
+    // Abort the transaction
     tm.abort_transaction(txn_id).unwrap();
 
-    // Проверяем, что все блокировки освобождены
+    // Ensure all locks were released
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.lock_operations, 3);
     assert_eq!(stats.unlock_operations, 3);
@@ -147,7 +147,7 @@ fn test_lock_contention_scenario() {
     let tm = Arc::new(TransactionManager::new().unwrap());
     let resource = "contended_resource".to_string();
 
-    // Первая транзакция получает исключительную блокировку
+    // First transaction acquires an exclusive lock
     let txn1 = tm
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
@@ -159,7 +159,7 @@ fn test_lock_contention_scenario() {
     )
     .unwrap();
 
-    // Запускаем вторую транзакцию в отдельном потоке
+    // Launch second transaction on another thread
     let tm_clone = Arc::clone(&tm);
     let resource_clone = resource.clone();
     let handle = thread::spawn(move || {
@@ -167,7 +167,7 @@ fn test_lock_contention_scenario() {
             .begin_transaction(IsolationLevel::ReadCommitted, false)
             .unwrap();
 
-        // Попытка получить блокировку должна заблокироваться или вызвать ошибку
+        // Attempting to acquire the lock should block or err
         let result = tm_clone.acquire_lock(
             txn2,
             resource_clone,
@@ -175,27 +175,27 @@ fn test_lock_contention_scenario() {
             LockMode::Shared,
         );
 
-        // В нашей реализации это вернет ошибку, если произойдет дедлок или таймаут
+        // Implementation returns an error if deadlock or timeout occurs
         match result {
             Ok(()) => {
-                // Блокировка получена (возможно, после освобождения первой)
+                // Lock acquired (perhaps after first transaction released it)
                 tm_clone.commit_transaction(txn2).unwrap();
             }
             Err(_) => {
-                // Возможна ошибка дедлока, таймаута или блокировка не получена
+                // Could be a deadlock/timeout error or lock denial
                 tm_clone.abort_transaction(txn2).unwrap();
             }
         }
     });
 
-    // Небольшая задержка, затем освобождаем первую транзакцию
+    // Wait briefly, then release the first transaction
     thread::sleep(Duration::from_millis(100));
     tm.commit_transaction(txn1).unwrap();
 
-    // Ждем завершения второго потока
+    // Wait for second thread to finish
     handle.join().unwrap();
 
-    // Проверяем, что система осталась в консистентном состоянии
+    // Verify system remains consistent
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.active_transactions, 0);
 }
@@ -204,12 +204,12 @@ fn test_lock_contention_scenario() {
 fn test_read_only_transaction_behavior() {
     let tm = TransactionManager::new().unwrap();
 
-    // Создаем транзакцию только для чтения
+    // Begin read-only transaction
     let txn_id = tm
         .begin_transaction(IsolationLevel::ReadCommitted, true)
         .unwrap();
 
-    // Транзакция только для чтения может получать разделяемые блокировки
+    // Read-only transactions may take shared locks
     tm.acquire_lock(
         txn_id,
         "read_resource".to_string(),
@@ -218,7 +218,7 @@ fn test_read_only_transaction_behavior() {
     )
     .unwrap();
 
-    // Проверяем информацию о транзакции
+    // Check transaction info
     let info = tm.get_transaction_info(txn_id).unwrap().unwrap();
     assert!(info.read_only);
     assert_eq!(info.locked_resources.len(), 1);
@@ -240,7 +240,7 @@ fn test_isolation_level_impact() {
     for level in isolation_levels {
         let txn_id = tm.begin_transaction(level.clone(), false).unwrap();
 
-        // Получаем блокировку (поведение может отличаться в зависимости от уровня изоляции)
+        // Acquire lock (behavior may vary by isolation level)
         tm.acquire_lock(
             txn_id,
             format!("resource_{:?}", level),
@@ -263,7 +263,7 @@ fn test_transaction_timeout_simulation() {
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
 
-    // Получаем блокировку
+    // Acquire lock
     tm.acquire_lock(
         txn_id,
         "timeout_resource".to_string(),
@@ -272,13 +272,12 @@ fn test_transaction_timeout_simulation() {
     )
     .unwrap();
 
-    // Имитируем длительную работу
+    // Simulate long-running work
     let info = tm.get_transaction_info(txn_id).unwrap().unwrap();
     let duration = info.duration().unwrap();
     assert!(duration.as_millis() >= 0);
 
-    // В реальной системе здесь был бы механизм таймаута
-    // Пока просто фиксируем транзакцию
+    // Real systems would enforce timeouts; here we simply commit
     tm.commit_transaction(txn_id).unwrap();
 }
 
@@ -287,7 +286,7 @@ fn test_system_recovery_simulation() {
     let tm = TransactionManager::new().unwrap();
     let mut active_transactions = Vec::new();
 
-    // Создаем несколько активных транзакций
+    // Create several active transactions
     for i in 0..5 {
         let txn_id = tm
             .begin_transaction(IsolationLevel::ReadCommitted, false)
@@ -302,16 +301,16 @@ fn test_system_recovery_simulation() {
         active_transactions.push(txn_id);
     }
 
-    // Проверяем состояние системы
+    // Inspect system state
     let active_txns = tm.get_active_transactions().unwrap();
     assert_eq!(active_txns.len(), 5);
 
-    // Имитируем "восстановление" - отменяем все активные транзакции
+    // Simulate "recovery" by aborting all active transactions
     for txn_id in active_transactions {
         tm.abort_transaction(txn_id).unwrap();
     }
 
-    // Проверяем, что система очищена
+    // Ensure system state is clean
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.active_transactions, 0);
     assert_eq!(stats.aborted_transactions, 5);
@@ -324,7 +323,7 @@ fn test_performance_under_load() {
 
     let start_time = std::time::Instant::now();
 
-    // Запускаем много коротких транзакций параллельно
+    // Launch many short-lived transactions concurrently
     for i in 0..20 {
         let tm_clone = Arc::clone(&tm);
         let handle = thread::spawn(move || {
@@ -333,7 +332,7 @@ fn test_performance_under_load() {
                     .begin_transaction(IsolationLevel::ReadCommitted, false)
                     .unwrap();
 
-                // Получаем блокировку на уникальный ресурс
+                // Acquire lock on unique resource
                 tm_clone
                     .acquire_lock(
                         txn_id,
@@ -343,7 +342,7 @@ fn test_performance_under_load() {
                     )
                     .unwrap();
 
-                // Небольшая работа
+                // Perform small amount of work
                 thread::sleep(Duration::from_millis(1));
 
                 tm_clone.commit_transaction(txn_id).unwrap();
@@ -352,20 +351,20 @@ fn test_performance_under_load() {
         handles.push(handle);
     }
 
-    // Ждем завершения всех потоков
+    // Wait for all threads to finish
     for handle in handles {
         handle.join().unwrap();
     }
 
     let elapsed = start_time.elapsed();
-    println!("Выполнено 200 транзакций за {:?}", elapsed);
+    println!("Executed 200 transactions in {:?}", elapsed);
 
-    // Проверяем финальную статистику
+    // Verify final statistics
     let stats = tm.get_statistics().unwrap();
     assert_eq!(stats.total_transactions, 200);
     assert_eq!(stats.committed_transactions, 200);
     assert_eq!(stats.active_transactions, 0);
 
-    // Все операции должны завершиться за разумное время
+    // Ensure total runtime stays reasonable
     assert!(elapsed.as_secs() < 10);
 }

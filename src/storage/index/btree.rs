@@ -1,35 +1,35 @@
-//! B+ дерево для rustdb
+//! B+ tree for rustdb
 //!
-//! Реализация B+ дерева для эффективного индексирования данных.
-//! B+ дерево поддерживает быстрый поиск, вставку, удаление и диапазонные запросы.
+//! B+ tree implementation for efficient data indexing.
+//! B+ tree supports fast search, insert, delete and range queries.
 
 use crate::common::{Error, Result};
 use crate::storage::index::{Index, IndexStatistics};
 use std::cmp::Ordering;
 use std::fmt::Debug;
 
-/// Максимальная степень B+ дерева по умолчанию
+/// Default maximum degree for B+ tree
 pub const DEFAULT_DEGREE: usize = 128;
 
-/// Минимальная степень B+ дерева
+/// Minimum degree for B+ tree
 pub const MIN_DEGREE: usize = 3;
 
-/// Узел B+ дерева
+/// B+ tree node
 #[derive(Debug, Clone)]
 pub struct BTreeNode<K, V>
 where
     K: Ord + Clone,
     V: Clone,
 {
-    /// Ключи в узле
+    /// Keys in node
     pub keys: Vec<K>,
-    /// Значения в узле (только для листовых узлов)
+    /// Values in node (only for leaf nodes)
     pub values: Vec<V>,
-    /// Дочерние узлы (только для внутренних узлов)
+    /// Child nodes (only for internal nodes)
     pub children: Vec<Box<BTreeNode<K, V>>>,
-    /// Является ли узел листовым
+    /// Whether node is a leaf
     pub is_leaf: bool,
-    /// Указатель на следующий листовой узел (только для листьев)
+    /// Pointer to next leaf node (only for leaves)
     pub next_leaf: Option<Box<BTreeNode<K, V>>>,
 }
 
@@ -38,7 +38,7 @@ where
     K: Ord + Clone,
     V: Clone,
 {
-    /// Создает новый листовой узел
+    /// Creates a new leaf node
     pub fn new_leaf() -> Self {
         Self {
             keys: Vec::new(),
@@ -49,7 +49,7 @@ where
         }
     }
 
-    /// Создает новый внутренний узел
+    /// Creates a new internal node
     pub fn new_internal() -> Self {
         Self {
             keys: Vec::new(),
@@ -60,39 +60,39 @@ where
         }
     }
 
-    /// Проверяет, полон ли узел
+    /// Checks if node is full
     pub fn is_full(&self, degree: usize) -> bool {
         self.keys.len() >= degree - 1
     }
 
-    /// Проверяет, недозаполнен ли узел
+    /// Checks if node is underfull
     pub fn is_underfull(&self, degree: usize) -> bool {
         self.keys.len() < (degree - 1) / 2
     }
 
-    /// Ищет позицию для вставки ключа
+    /// Finds position for key insertion
     pub fn find_key_position(&self, key: &K) -> usize {
         self.keys.binary_search(key).unwrap_or_else(|pos| pos)
     }
 
-    /// Ищет ключ в узле
+    /// Searches for key in node
     pub fn search_key(&self, key: &K) -> Option<usize> {
         self.keys.binary_search(key).ok()
     }
 }
 
-/// B+ дерево
+/// B+ tree
 #[derive(Debug, Clone)]
 pub struct BPlusTree<K, V>
 where
     K: Ord + Clone,
     V: Clone,
 {
-    /// Корневой узел
+    /// Root node
     root: Option<Box<BTreeNode<K, V>>>,
-    /// Степень дерева (максимальное количество детей)
+    /// Tree degree (maximum number of children)
     degree: usize,
-    /// Статистика операций
+    /// Operation statistics
     statistics: IndexStatistics,
 }
 
@@ -101,7 +101,7 @@ where
     K: Ord + Clone,
     V: Clone,
 {
-    /// Создает новое B+ дерево с заданной степенью
+    /// Creates a new B+ tree with given degree
     pub fn new(degree: usize) -> Self {
         let degree = if degree < MIN_DEGREE {
             MIN_DEGREE
@@ -116,17 +116,17 @@ where
         }
     }
 
-    /// Создает новое B+ дерево со степенью по умолчанию
+    /// Creates a new B+ tree with default degree
     pub fn new_default() -> Self {
         Self::new(DEFAULT_DEGREE)
     }
 
-    /// Возвращает статистику дерева
+    /// Returns tree statistics
     pub fn get_statistics(&self) -> &IndexStatistics {
         &self.statistics
     }
 
-    /// Вычисляет глубину дерева
+    /// Calculates tree depth
     pub fn calculate_depth(&self) -> u32 {
         self.calculate_node_depth(self.root.as_ref(), 0)
     }
@@ -149,13 +149,13 @@ where
         }
     }
 
-    /// Обновляет статистику дерева
+    /// Updates tree statistics
     fn update_statistics(&mut self) {
         self.statistics.depth = self.calculate_depth();
         self.statistics.fill_factor = self.calculate_fill_factor();
     }
 
-    /// Вычисляет коэффициент заполнения дерева
+    /// Calculates tree fill factor
     fn calculate_fill_factor(&self) -> f64 {
         if self.root.is_none() {
             return 0.0;
@@ -173,7 +173,7 @@ where
         match node {
             None => (0, 0),
             Some(node) => {
-                let mut total_slots = self.degree - 1; // Максимальное количество ключей
+                let mut total_slots = self.degree - 1; // Maximum number of keys
                 let mut used_slots = node.keys.len();
 
                 if !node.is_leaf {
@@ -189,7 +189,7 @@ where
         }
     }
 
-    /// Разделяет листовой узел
+    /// Splits leaf node
     fn split_leaf(&mut self, node: &mut BTreeNode<K, V>) -> Result<(K, Box<BTreeNode<K, V>>)> {
         let mid = node.keys.len() / 2;
 
@@ -197,7 +197,7 @@ where
         new_node.keys = node.keys.split_off(mid);
         new_node.values = node.values.split_off(mid);
 
-        // Связываем листовые узлы
+        // Link leaf nodes
         new_node.next_leaf = node.next_leaf.take();
         node.next_leaf = Some(Box::new(new_node.clone()));
 
@@ -206,24 +206,24 @@ where
         Ok((separator_key, Box::new(new_node)))
     }
 
-    /// Разделяет внутренний узел
+    /// Splits internal node
     fn split_internal(&mut self, node: &mut BTreeNode<K, V>) -> Result<(K, Box<BTreeNode<K, V>>)> {
         let mid = node.keys.len() / 2;
 
         let mut new_node = BTreeNode::new_internal();
 
-        // Разделяем ключи (средний ключ поднимается вверх)
+        // Split keys (middle key goes up)
         let separator_key = node.keys[mid].clone();
         new_node.keys = node.keys.split_off(mid + 1);
         node.keys.truncate(mid);
 
-        // Разделяем детей
+        // Split children
         new_node.children = node.children.split_off(mid + 1);
 
         Ok((separator_key, Box::new(new_node)))
     }
 
-    /// Вставляет ключ-значение в листовой узел
+    /// Inserts key-value into leaf node
     fn insert_into_leaf(
         &mut self,
         node: &mut BTreeNode<K, V>,
@@ -232,19 +232,19 @@ where
     ) -> Result<Option<(K, Box<BTreeNode<K, V>>)>> {
         let pos = node.find_key_position(&key);
 
-        // Проверяем, существует ли уже такой ключ
+        // Check if key already exists
         if pos < node.keys.len() && node.keys[pos] == key {
-            // Обновляем существующее значение
+            // Update existing value
             node.values[pos] = value;
             return Ok(None);
         }
 
-        // Вставляем новый ключ-значение
+        // Insert new key-value
         node.keys.insert(pos, key);
         node.values.insert(pos, value);
         self.statistics.total_elements += 1;
 
-        // Проверяем, нужно ли разделение
+        // Check if split is needed
         if node.is_full(self.degree) {
             let (separator_key, new_node) = self.split_leaf(node)?;
             Ok(Some((separator_key, new_node)))
@@ -253,7 +253,7 @@ where
         }
     }
 
-    /// Вставляет ключ во внутренний узел
+    /// Inserts key into internal node
     fn insert_into_internal(
         &mut self,
         node: &mut BTreeNode<K, V>,
@@ -262,19 +262,19 @@ where
     ) -> Result<Option<(K, Box<BTreeNode<K, V>>)>> {
         let pos = node.find_key_position(&key);
 
-        // Рекурсивно вставляем в соответствующего ребенка
+        // Recursively insert into appropriate child
         let split_result = if node.children[pos].is_leaf {
             self.insert_into_leaf(&mut node.children[pos], key, value)?
         } else {
             self.insert_into_internal(&mut node.children[pos], key, value)?
         };
 
-        // Если ребенок был разделен, нужно обновить текущий узел
+        // If child was split, need to update current node
         if let Some((separator_key, new_child)) = split_result {
             node.keys.insert(pos, separator_key);
             node.children.insert(pos + 1, new_child);
 
-            // Проверяем, нужно ли разделение текущего узла
+            // Check if current node needs splitting
             if node.is_full(self.degree) {
                 let (separator_key, new_node) = self.split_internal(node)?;
                 Ok(Some((separator_key, new_node)))
@@ -286,17 +286,17 @@ where
         }
     }
 
-    /// Ищет значение по ключу в узле
+    /// Searches for value by key in node
     fn search_in_node(&self, node: &BTreeNode<K, V>, key: &K) -> Option<V> {
         if node.is_leaf {
-            // Поиск в листовом узле
+            // Search in leaf node
             if let Some(pos) = node.search_key(key) {
                 Some(node.values[pos].clone())
             } else {
                 None
             }
         } else {
-            // Поиск во внутреннем узле
+            // Search in internal node
             let pos = node.find_key_position(key);
             if pos < node.children.len() {
                 self.search_in_node(&node.children[pos], key)
@@ -306,7 +306,7 @@ where
         }
     }
 
-    /// Собирает все ключи-значения в диапазоне из листовых узлов
+    /// Collects all key-values in range from leaf nodes
     fn collect_range_from_leaf(
         &self,
         node: &BTreeNode<K, V>,
@@ -326,7 +326,7 @@ where
             }
         }
 
-        // Переходим к следующему листовому узлу
+        // Move to next leaf node
         if let Some(ref next) = node.next_leaf {
             if !next.keys.is_empty() && next.keys[0] <= *end {
                 self.collect_range_from_leaf(next, start, end, result);
@@ -334,7 +334,7 @@ where
         }
     }
 
-    /// Собирает все ключи в диапазоне рекурсивно
+    /// Collects all keys in range recursively
     fn collect_range_recursive(
         &self,
         node: &BTreeNode<K, V>,
@@ -343,14 +343,14 @@ where
         result: &mut Vec<(K, V)>,
     ) {
         if node.is_leaf {
-            // Собираем ключи из листового узла
+            // Collect keys from leaf node
             for (i, key) in node.keys.iter().enumerate() {
                 if key >= start && key <= end {
                     result.push((key.clone(), node.values[i].clone()));
                 }
             }
         } else {
-            // Рекурсивно обходим всех детей
+            // Recursively traverse all children
             for child in &node.children {
                 self.collect_range_recursive(child, start, end, result);
             }
@@ -370,7 +370,7 @@ where
         self.statistics.insert_operations += 1;
 
         if self.root.is_none() {
-            // Создаем корневой листовой узел
+            // Create root leaf node
             let mut root = BTreeNode::new_leaf();
             root.keys.push(key);
             root.values.push(value);
@@ -380,23 +380,23 @@ where
             return Ok(());
         }
 
-        // Простая реализация без разделения узлов пока
+        // Simple implementation without node splitting for now
         let root = self.root.as_mut().unwrap();
         if root.is_leaf {
-            // Простая вставка в лист
+            // Simple insertion into leaf
             let pos = root.find_key_position(&key);
             if pos < root.keys.len() && root.keys[pos] == key {
-                // Обновляем существующий ключ
+                // Update existing key
                 root.values[pos] = value;
             } else {
-                // Вставляем новый ключ
+                // Insert new key
                 root.keys.insert(pos, key);
                 root.values.insert(pos, value);
                 self.statistics.total_elements += 1;
             }
         } else {
-            // Для внутренних узлов пока просто добавляем в первый листовой узел
-            // TODO: Реализовать полноценную вставку во внутренние узлы
+            // For internal nodes for now just add to first leaf node
+            // TODO: Implement full insertion into internal nodes
             return Err(Error::database(
                 "Internal node insertion not implemented yet",
             ));
@@ -404,7 +404,7 @@ where
 
         let split_result: Option<(K, Box<BTreeNode<K, V>>)> = None;
 
-        // Если корень был разделен, создаем новый корень
+        // If root was split, create new root
         if let Some((separator_key, new_node)) = split_result {
             let mut new_root = BTreeNode::new_internal();
             new_root.keys.push(separator_key);
@@ -418,7 +418,7 @@ where
     }
 
     fn search(&self, key: &Self::Key) -> Result<Option<Self::Value>> {
-        // self.statistics.search_operations += 1; // TODO: Сделать статистику мутабельной
+        // self.statistics.search_operations += 1; // TODO: Make statistics mutable
 
         match &self.root {
             None => Ok(None),
@@ -428,8 +428,8 @@ where
 
     fn delete(&mut self, _key: &Self::Key) -> Result<bool> {
         self.statistics.delete_operations += 1;
-        // TODO: Реализовать удаление
-        // Пока что возвращаем false (не найдено)
+        // TODO: Implement deletion
+        // For now return false (not found)
         Ok(false)
     }
 
@@ -438,7 +438,7 @@ where
         start: &Self::Key,
         end: &Self::Key,
     ) -> Result<Vec<(Self::Key, Self::Value)>> {
-        // self.statistics.range_search_operations += 1; // TODO: Сделать статистику мутабельной
+        // self.statistics.range_search_operations += 1; // TODO: Make statistics mutable
 
         if start > end {
             return Ok(Vec::new());
@@ -447,7 +447,7 @@ where
         let mut result = Vec::new();
 
         if let Some(ref root) = self.root {
-            // Упрощенный поиск диапазона - просто собираем все подходящие ключи
+            // Simplified range search - just collect all matching keys
             self.collect_range_recursive(root, start, end, &mut result);
         }
 
@@ -474,14 +474,14 @@ mod tests {
     fn test_btree_insert_and_search() {
         let mut btree = BPlusTree::new_default();
 
-        // Вставляем несколько элементов
+        // Insert several elements
         btree.insert(1, "one".to_string()).unwrap();
         btree.insert(3, "three".to_string()).unwrap();
         btree.insert(2, "two".to_string()).unwrap();
 
         assert_eq!(btree.size(), 3);
 
-        // Проверяем поиск
+        // Check search
         assert_eq!(btree.search(&1).unwrap(), Some("one".to_string()));
         assert_eq!(btree.search(&2).unwrap(), Some("two".to_string()));
         assert_eq!(btree.search(&3).unwrap(), Some("three".to_string()));
@@ -492,12 +492,12 @@ mod tests {
     fn test_btree_range_search() {
         let mut btree = BPlusTree::new_default();
 
-        // Вставляем элементы
+        // Insert elements
         for i in 1..=10 {
             btree.insert(i, format!("value_{}", i)).unwrap();
         }
 
-        // Тестируем диапазонный поиск
+        // Test range search
         let results = btree.range_search(&3, &7).unwrap();
         assert_eq!(results.len(), 5);
 
@@ -509,24 +509,24 @@ mod tests {
 
     #[test]
     fn test_btree_large_dataset() {
-        let mut btree = BPlusTree::new(4); // Маленькая степень для тестирования разделений
+        let mut btree = BPlusTree::new(4); // Small degree for testing splits
 
-        // Вставляем много элементов
+        // Insert many elements
         for i in 1..=1000 {
             btree.insert(i, format!("value_{}", i)).unwrap();
         }
 
         assert_eq!(btree.size(), 1000);
 
-        // Проверяем случайные элементы
+        // Check random elements
         assert_eq!(btree.search(&1).unwrap(), Some("value_1".to_string()));
         assert_eq!(btree.search(&500).unwrap(), Some("value_500".to_string()));
         assert_eq!(btree.search(&1000).unwrap(), Some("value_1000".to_string()));
         assert_eq!(btree.search(&1001).unwrap(), None);
 
-        // Проверяем глубину дерева (для упрощенной версии всегда 1)
+        // Check tree depth (for simplified version always 1)
         let depth = btree.calculate_depth();
-        assert!(depth >= 1); // Должно быть хотя бы одноуровневое дерево
-        assert!(depth < 20); // Но не слишком глубокое
+        assert!(depth >= 1); // Should be at least single-level tree
+        assert!(depth < 20); // But not too deep
     }
 }

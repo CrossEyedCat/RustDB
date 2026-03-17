@@ -1,4 +1,4 @@
-//! Тесты для сетевого сервера
+//! Network server tests
 
 use crate::network::server::{Server, ServerConfig};
 use std::time::Duration;
@@ -93,7 +93,7 @@ fn test_server_tls_enabled() {
     };
 
     let server = Server::new(config);
-    // Может не работать без сертификатов, но должен создаться
+    // May fail without certificates, but construction should not panic
     assert!(server.is_ok() || server.is_err());
 }
 
@@ -138,7 +138,7 @@ fn test_server_ipv6() {
     };
 
     let server = Server::new(config);
-    assert!(server.is_ok() || server.is_err()); // Может не поддерживаться
+    assert!(server.is_ok() || server.is_err()); // IPv6 may be unsupported
 }
 
 #[test]

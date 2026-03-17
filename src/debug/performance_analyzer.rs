@@ -1,7 +1,6 @@
-//! Анализатор производительности для rustdb
+//! Performance analyzer for rustdb
 //!
-//! Предоставляет инструменты для анализа производительности системы
-//! и выявления узких мест
+//! Provides tools for analyzing system performance and identifying bottlenecks
 
 use crate::debug::DebugConfig;
 use serde::{Deserialize, Serialize};
@@ -10,20 +9,20 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 
-/// Тип узкого места
+/// Bottleneck type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BottleneckType {
-    /// CPU узкое место
+    /// CPU bottleneck
     Cpu,
-    /// Memory узкое место
+    /// Memory bottleneck
     Memory,
-    /// I/O узкое место
+    /// I/O bottleneck
     Io,
-    /// Сетевое узкое место
+    /// Network bottleneck
     Network,
-    /// Блокировки
+    /// Lock contention
     Locking,
-    /// Кэш
+    /// Cache
     Cache,
 }
 
@@ -40,14 +39,14 @@ impl std::fmt::Display for BottleneckType {
     }
 }
 
-/// Уровень серьезности узкого места
+/// Severity level of a bottleneck
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SeverityLevel {
-    /// Информация
+    /// Informational
     Info,
-    /// Предупреждение
+    /// Warning
     Warning,
-    /// Критическое
+    /// Critical
     Critical,
 }
 
@@ -61,86 +60,86 @@ impl std::fmt::Display for SeverityLevel {
     }
 }
 
-/// Обнаруженное узкое место
+/// Detected bottleneck
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bottleneck {
-    /// Тип узкого места
+    /// Bottleneck type
     pub bottleneck_type: BottleneckType,
-    /// Уровень серьезности
+    /// Severity level
     pub severity: SeverityLevel,
-    /// Описание проблемы
+    /// Problem description
     pub description: String,
-    /// Рекомендации по устранению
+    /// Recommendations
     pub recommendations: Vec<String>,
-    /// Временная метка обнаружения
+    /// Detection timestamp
     pub detected_at: u64,
-    /// Компонент системы
+    /// System component
     pub component: String,
-    /// Дополнительные метрики
+    /// Additional metrics
     pub metrics: HashMap<String, f64>,
-    /// Влияние на производительность (%)
+    /// Performance impact (%)
     pub performance_impact: f64,
 }
 
-/// Метрика производительности
+/// Performance metric
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceMetric {
-    /// Название метрики
+    /// Metric name
     pub name: String,
-    /// Значение
+    /// Value
     pub value: f64,
-    /// Единица измерения
+    /// Unit of measure
     pub unit: String,
-    /// Временная метка
+    /// Timestamp
     pub timestamp: u64,
-    /// Компонент
+    /// Component name
     pub component: String,
-    /// Пороговые значения
+    /// Threshold values
     pub thresholds: Thresholds,
 }
 
-/// Пороговые значения для метрик
+/// Threshold configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Thresholds {
-    /// Предупреждение
+    /// Warning threshold
     pub warning: f64,
-    /// Критическое
+    /// Critical threshold
     pub critical: f64,
 }
 
-/// Анализ производительности
+/// Performance analysis report
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceAnalysis {
-    /// Временная метка анализа
+    /// Analysis timestamp
     pub timestamp: u64,
-    /// Общая оценка производительности (0-100)
+    /// Overall performance score (0-100)
     pub overall_score: f64,
-    /// Обнаруженные узкие места
+    /// Detected bottlenecks
     pub bottlenecks: Vec<Bottleneck>,
-    /// Метрики производительности
+    /// Performance metrics
     pub metrics: Vec<PerformanceMetric>,
-    /// Рекомендации
+    /// Recommendations
     pub recommendations: Vec<String>,
-    /// Тренды
+    /// Trends
     pub trends: HashMap<String, String>,
 }
 
-/// Статистика анализа
+/// Analysis statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AnalysisStats {
-    /// Общее количество анализов
+    /// Total analyses executed
     pub total_analyses: u64,
-    /// Количество обнаруженных узких мест
+    /// Total bottlenecks detected
     pub total_bottlenecks: u64,
-    /// Количество критических проблем
+    /// Critical issues found
     pub critical_issues: u64,
-    /// Средняя оценка производительности
+    /// Average performance score
     pub avg_performance_score: f64,
-    /// Время последнего анализа
+    /// Timestamp of last analysis
     pub last_analysis_time: u64,
 }
 
-/// Анализатор производительности
+/// Performance analyzer
 pub struct PerformanceAnalyzer {
     config: DebugConfig,
     analyses: Arc<RwLock<Vec<PerformanceAnalysis>>>,
@@ -150,7 +149,7 @@ pub struct PerformanceAnalyzer {
 }
 
 impl PerformanceAnalyzer {
-    /// Создает новый анализатор производительности
+    /// Creates a new performance analyzer
     pub fn new(config: &DebugConfig) -> Self {
         let mut analyzer = Self {
             config: config.clone(),
@@ -160,13 +159,13 @@ impl PerformanceAnalyzer {
             metrics_history: Arc::new(RwLock::new(Vec::new())),
         };
 
-        // Запускаем фоновую задачу анализа
+        // Start background analysis task
         analyzer.start_background_analysis();
 
         analyzer
     }
 
-    /// Запускает фоновую задачу анализа
+    /// Starts background analysis job
     fn start_background_analysis(&mut self) {
         let analyses = self.analyses.clone();
         let stats = self.stats.clone();
@@ -180,43 +179,43 @@ impl PerformanceAnalyzer {
             loop {
                 interval.tick().await;
 
-                // Собираем метрики
+                // Collect metrics
                 let metrics = Self::collect_performance_metrics();
 
-                // Добавляем в историю
+                // Append to history
                 {
                     let mut history = metrics_history.write().unwrap();
                     history.extend(metrics.clone());
 
-                    // Ограничиваем размер истории
+                    // Limit history size
                     let len = history.len();
                     if len > 10000 {
                         history.drain(0..len - 10000);
                     }
                 }
 
-                // Выполняем анализ
+                // Perform analysis
                 let analysis = Self::perform_analysis(&metrics);
 
-                // Сохраняем анализ
+                // Store analysis
                 {
                     let mut analyses = analyses.write().unwrap();
                     analyses.push(analysis.clone());
 
-                    // Ограничиваем количество анализов
+                    // Limit number of saved analyses
                     let len = analyses.len();
                     if len > 1000 {
                         analyses.drain(0..len - 1000);
                     }
                 }
 
-                // Обновляем статистику
+                // Update statistics snapshot
                 Self::update_analysis_stats(&stats, &analysis);
             }
         }));
     }
 
-    /// Собирает метрики производительности
+    /// Collects performance metrics
     fn collect_performance_metrics() -> Vec<PerformanceMetric> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -293,7 +292,7 @@ impl PerformanceAnalyzer {
         ]
     }
 
-    /// Выполняет анализ производительности
+    /// Performs performance analysis
     fn perform_analysis(metrics: &[PerformanceMetric]) -> PerformanceAnalysis {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -305,19 +304,19 @@ impl PerformanceAnalyzer {
         let mut trends = HashMap::new();
         let mut overall_score = 100.0;
 
-        // Анализируем каждую метрику
+        // Analyze each metric
         for metric in metrics {
             let mut metric_impact = 0.0;
             let mut metric_bottlenecks = Vec::new();
 
-            // Проверяем критические пороги
+            // Check critical thresholds
             if metric.value >= metric.thresholds.critical {
                 metric_impact = 30.0;
                 metric_bottlenecks.push(Bottleneck {
                     bottleneck_type: Self::get_bottleneck_type(&metric.name),
                     severity: SeverityLevel::Critical,
                     description: format!(
-                        "{} превышает критический порог: {:.1}{} (порог: {:.1}{})",
+                        "{} exceeds critical threshold: {:.1}{} (threshold: {:.1}{})",
                         metric.name,
                         metric.value,
                         metric.unit,
@@ -334,14 +333,14 @@ impl PerformanceAnalyzer {
                     performance_impact: metric_impact,
                 });
             }
-            // Проверяем предупреждающие пороги
+            // Check warning thresholds
             else if metric.value >= metric.thresholds.warning {
                 metric_impact = 15.0;
                 metric_bottlenecks.push(Bottleneck {
                     bottleneck_type: Self::get_bottleneck_type(&metric.name),
                     severity: SeverityLevel::Warning,
                     description: format!(
-                        "{} превышает предупреждающий порог: {:.1}{} (порог: {:.1}{})",
+                        "{} exceeds warning threshold: {:.1}{} (threshold: {:.1}{})",
                         metric.name,
                         metric.value,
                         metric.unit,
@@ -362,19 +361,19 @@ impl PerformanceAnalyzer {
             overall_score -= metric_impact;
             bottlenecks.extend(metric_bottlenecks);
 
-            // Анализируем тренды
+            // Analyze metric trend
             let trend = Self::analyze_metric_trend(metric);
             trends.insert(metric.name.clone(), trend);
         }
 
-        // Генерируем общие рекомендации
+        // Generate overall recommendations
         if overall_score < 70.0 {
             recommendations.push(
-                "Критическая производительность. Требуется немедленное вмешательство.".to_string(),
+                "Critical performance. Immediate action required.".to_string(),
             );
         } else if overall_score < 85.0 {
             recommendations.push(
-                "Производительность ниже оптимальной. Рекомендуется оптимизация.".to_string(),
+                "Performance below optimal. Optimization recommended.".to_string(),
             );
         }
 
@@ -383,7 +382,7 @@ impl PerformanceAnalyzer {
             .any(|b| matches!(b.bottleneck_type, BottleneckType::Cpu))
         {
             recommendations
-                .push("Оптимизируйте алгоритмы и рассмотрите масштабирование CPU.".to_string());
+                .push("Optimize algorithms and consider scaling CPU resources.".to_string());
         }
 
         if bottlenecks
@@ -391,7 +390,7 @@ impl PerformanceAnalyzer {
             .any(|b| matches!(b.bottleneck_type, BottleneckType::Memory))
         {
             recommendations
-                .push("Проверьте утечки памяти и оптимизируйте использование памяти.".to_string());
+                .push("Check for memory leaks and optimize memory usage.".to_string());
         }
 
         if bottlenecks
@@ -399,7 +398,7 @@ impl PerformanceAnalyzer {
             .any(|b| matches!(b.bottleneck_type, BottleneckType::Io))
         {
             recommendations
-                .push("Оптимизируйте I/O операции и рассмотрите использование SSD.".to_string());
+                .push("Optimize I/O operations and consider using SSDs.".to_string());
         }
 
         PerformanceAnalysis {
@@ -412,7 +411,7 @@ impl PerformanceAnalyzer {
         }
     }
 
-    /// Определяет тип узкого места по названию метрики
+    /// Maps metric name to bottleneck type
     fn get_bottleneck_type(metric_name: &str) -> BottleneckType {
         match metric_name {
             "cpu_usage" => BottleneckType::Cpu,
@@ -425,53 +424,52 @@ impl PerformanceAnalyzer {
         }
     }
 
-    /// Получает рекомендации по устранению проблем
+    /// Provides recommendations for a given metric and severity
     fn get_recommendations(metric_name: &str, severity: SeverityLevel) -> Vec<String> {
         match (metric_name, severity) {
             ("cpu_usage", SeverityLevel::Critical) => vec![
-                "Немедленно оптимизируйте алгоритмы".to_string(),
-                "Рассмотрите горизонтальное масштабирование".to_string(),
-                "Проверьте наличие бесконечных циклов".to_string(),
+                "Immediately optimize hot-path algorithms".to_string(),
+                "Consider horizontal scaling".to_string(),
+                "Inspect for runaway loops".to_string(),
             ],
             ("cpu_usage", SeverityLevel::Warning) => vec![
-                "Оптимизируйте наиболее ресурсоемкие операции".to_string(),
-                "Рассмотрите кэширование результатов".to_string(),
+                "Optimize the most resource-heavy operations".to_string(),
+                "Evaluate caching of repeated results".to_string(),
             ],
             ("memory_usage", SeverityLevel::Critical) => vec![
-                "Проверьте утечки памяти".to_string(),
-                "Увеличьте доступную память".to_string(),
-                "Оптимизируйте структуры данных".to_string(),
+                "Investigate potential memory leaks".to_string(),
+                "Increase available memory".to_string(),
+                "Optimize data structures".to_string(),
             ],
             ("memory_usage", SeverityLevel::Warning) => vec![
-                "Мониторьте использование памяти".to_string(),
-                "Рассмотрите пулы объектов".to_string(),
+                "Monitor memory usage closely".to_string(),
+                "Consider object pooling".to_string(),
             ],
             ("cache_hit_ratio", _) => vec![
-                "Увеличьте размер кэша".to_string(),
-                "Оптимизируйте алгоритм вытеснения".to_string(),
-                "Проверьте корректность кэширования".to_string(),
+                "Increase cache size".to_string(),
+                "Tune eviction strategy".to_string(),
+                "Verify cache correctness".to_string(),
             ],
             ("lock_contention", _) => vec![
-                "Оптимизируйте гранулярность блокировок".to_string(),
-                "Рассмотрите lock-free структуры данных".to_string(),
-                "Уменьшите время удержания блокировок".to_string(),
+                "Optimize lock granularity".to_string(),
+                "Consider lock-free data structures".to_string(),
+                "Reduce lock hold times".to_string(),
             ],
-            _ => vec!["Проверьте конфигурацию системы".to_string()],
+            _ => vec!["Check system configuration".to_string()],
         }
     }
 
-    /// Анализирует тренд метрики
+    /// Analyzes metric trend
     fn analyze_metric_trend(metric: &PerformanceMetric) -> String {
-        // В реальной реализации здесь был бы анализ исторических данных
-        // Для демонстрации возвращаем статический результат
+        // Real implementation would analyze history; for demo return static value
         if metric.value > metric.thresholds.warning {
-            "Растущий".to_string()
+            "Increasing".to_string()
         } else {
-            "Стабильный".to_string()
+            "Stable".to_string()
         }
     }
 
-    /// Обновляет статистику анализа
+    /// Updates analysis statistics
     fn update_analysis_stats(stats: &Arc<RwLock<AnalysisStats>>, analysis: &PerformanceAnalysis) {
         let mut stats = stats.write().unwrap();
         stats.total_analyses += 1;
@@ -489,9 +487,9 @@ impl PerformanceAnalyzer {
             / stats.total_analyses as f64;
     }
 
-    /// Получает использование CPU (симуляция)
+    /// Returns simulated CPU usage
     fn get_cpu_usage() -> f64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // In a real implementation, this would call system APIs
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -500,9 +498,9 @@ impl PerformanceAnalyzer {
         (hasher.finish() % 100) as f64
     }
 
-    /// Получает использование памяти (симуляция)
+    /// Returns simulated memory usage
     fn get_memory_usage() -> f64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // In a real implementation, this would call system APIs
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -511,9 +509,9 @@ impl PerformanceAnalyzer {
         (hasher.finish() % 100) as f64
     }
 
-    /// Получает I/O диска (симуляция)
+    /// Returns simulated disk I/O
     fn get_disk_io() -> f64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // In a real implementation, this would call system APIs
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -522,9 +520,9 @@ impl PerformanceAnalyzer {
         (hasher.finish() % 200) as f64
     }
 
-    /// Получает I/O сети (симуляция)
+    /// Returns simulated network I/O
     fn get_network_io() -> f64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // In a real implementation, this would call system APIs
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -533,9 +531,9 @@ impl PerformanceAnalyzer {
         (hasher.finish() % 100) as f64
     }
 
-    /// Получает коэффициент попаданий в кэш (симуляция)
+    /// Returns simulated cache hit ratio
     fn get_cache_hit_ratio() -> f64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // In a real implementation, this would call system APIs
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -544,9 +542,9 @@ impl PerformanceAnalyzer {
         60.0 + (hasher.finish() % 40) as f64
     }
 
-    /// Получает конфликт блокировок (симуляция)
+    /// Returns simulated lock contention
     fn get_lock_contention() -> f64 {
-        // В реальной реализации здесь был бы вызов системных API
+        // In a real implementation, this would call system APIs
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -555,66 +553,66 @@ impl PerformanceAnalyzer {
         (hasher.finish() % 50) as f64
     }
 
-    /// Получает последний анализ
+    /// Returns most recent analysis
     pub fn get_latest_analysis(&self) -> Option<PerformanceAnalysis> {
         let analyses = self.analyses.read().unwrap();
         analyses.last().cloned()
     }
 
-    /// Получает все анализы
+    /// Returns recent analyses
     pub fn get_analyses(&self, limit: usize) -> Vec<PerformanceAnalysis> {
         let analyses = self.analyses.read().unwrap();
         let start = analyses.len().saturating_sub(limit);
         analyses[start..].to_vec()
     }
 
-    /// Получает статистику анализа
+    /// Returns analysis statistics
     pub fn get_stats(&self) -> AnalysisStats {
         self.stats.read().unwrap().clone()
     }
 
-    /// Создает отчет о производительности
+    /// Generates performance analysis report
     pub fn generate_performance_report(&self) -> String {
         let stats = self.get_stats();
         let latest_analysis = self.get_latest_analysis();
 
         let mut report = String::new();
 
-        report.push_str("=== Отчет анализа производительности ===\n\n");
+        report.push_str("=== Performance analysis report ===\n\n");
 
-        // Общая статистика
-        report.push_str("Общая статистика:\n");
-        report.push_str(&format!("  Всего анализов: {}\n", stats.total_analyses));
+        // Overall statistics
+        report.push_str("Overall statistics:\n");
+        report.push_str(&format!("  Total analyses: {}\n", stats.total_analyses));
         report.push_str(&format!(
-            "  Обнаружено узких мест: {}\n",
+            "  Bottlenecks detected: {}\n",
             stats.total_bottlenecks
         ));
         report.push_str(&format!(
-            "  Критических проблем: {}\n",
+            "  Critical issues: {}\n",
             stats.critical_issues
         ));
         report.push_str(&format!(
-            "  Средняя оценка производительности: {:.1}/100\n",
+            "  Average performance score: {:.1}/100\n",
             stats.avg_performance_score
         ));
         report.push_str("\n");
 
-        // Последний анализ
+        // Latest analysis
         if let Some(analysis) = latest_analysis {
-            report.push_str("Последний анализ:\n");
+            report.push_str("Most recent analysis:\n");
             report.push_str(&format!(
-                "  Общая оценка: {:.1}/100\n",
+                "  Overall score: {:.1}/100\n",
                 analysis.overall_score
             ));
             report.push_str(&format!(
-                "  Обнаружено проблем: {}\n",
+                "  Issues detected: {}\n",
                 analysis.bottlenecks.len()
             ));
             report.push_str("\n");
 
-            // Узкие места
+            // Bottlenecks
             if !analysis.bottlenecks.is_empty() {
-                report.push_str("Обнаруженные узкие места:\n");
+                report.push_str("Identified bottlenecks:\n");
                 for (i, bottleneck) in analysis.bottlenecks.iter().enumerate() {
                     report.push_str(&format!(
                         "  {}. [{}] {}: {}\n",
@@ -625,7 +623,7 @@ impl PerformanceAnalyzer {
                     ));
 
                     if !bottleneck.recommendations.is_empty() {
-                        report.push_str("     Рекомендации:\n");
+                        report.push_str("     Recommendations:\n");
                         for rec in &bottleneck.recommendations {
                             report.push_str(&format!("       - {}\n", rec));
                         }
@@ -634,18 +632,18 @@ impl PerformanceAnalyzer {
                 report.push_str("\n");
             }
 
-            // Общие рекомендации
+            // Overall recommendations
             if !analysis.recommendations.is_empty() {
-                report.push_str("Общие рекомендации:\n");
+                report.push_str("General recommendations:\n");
                 for (i, rec) in analysis.recommendations.iter().enumerate() {
                     report.push_str(&format!("  {}. {}\n", i + 1, rec));
                 }
                 report.push_str("\n");
             }
 
-            // Тренды
+            // Trends
             if !analysis.trends.is_empty() {
-                report.push_str("Тренды метрик:\n");
+                report.push_str("Metric trends:\n");
                 for (metric, trend) in &analysis.trends {
                     report.push_str(&format!("  {}: {}\n", metric, trend));
                 }
@@ -653,22 +651,22 @@ impl PerformanceAnalyzer {
             }
         }
 
-        // Рекомендации по улучшению
-        report.push_str("Рекомендации по улучшению:\n");
+        // Improvement guidance
+        report.push_str("Improvement guidance:\n");
         if stats.avg_performance_score < 70.0 {
             report.push_str(
-                "  🔴 Критическая производительность. Требуется немедленное вмешательство.\n",
+                "  🔴 Critical performance degradation. Immediate action required.\n",
             );
         } else if stats.avg_performance_score < 85.0 {
             report
-                .push_str("  🟡 Производительность ниже оптимальной. Рекомендуется оптимизация.\n");
+                .push_str("  🟡 Performance below optimal. Optimization recommended.\n");
         } else {
-            report.push_str("  🟢 Производительность в пределах нормы.\n");
+            report.push_str("  🟢 Performance within normal range.\n");
         }
 
         if stats.critical_issues > 0 {
             report.push_str(&format!(
-                "  ⚠️  Обнаружено {} критических проблем.\n",
+                "  ⚠️  {} critical issues detected.\n",
                 stats.critical_issues
             ));
         }
@@ -676,7 +674,7 @@ impl PerformanceAnalyzer {
         report
     }
 
-    /// Создает отчет о состоянии анализатора
+    /// Generates analyzer status report
     pub fn generate_status_report(&self) -> String {
         let stats = self.get_stats();
         let analyses_count = self.analyses.read().unwrap().len();
@@ -684,27 +682,27 @@ impl PerformanceAnalyzer {
 
         let mut report = String::new();
 
-        report.push_str(&format!("Анализов в памяти: {}\n", analyses_count));
-        report.push_str(&format!("Метрик в истории: {}\n", metrics_count));
-        report.push_str(&format!("Всего анализов: {}\n", stats.total_analyses));
+        report.push_str(&format!("Analyses stored: {}\n", analyses_count));
+        report.push_str(&format!("Metrics tracked: {}\n", metrics_count));
+        report.push_str(&format!("Total analyses: {}\n", stats.total_analyses));
         report.push_str(&format!(
-            "Обнаружено узких мест: {}\n",
+            "Bottlenecks detected: {}\n",
             stats.total_bottlenecks
         ));
-        report.push_str(&format!("Критических проблем: {}\n", stats.critical_issues));
+        report.push_str(&format!("Critical issues: {}\n", stats.critical_issues));
         report.push_str(&format!(
-            "Средняя оценка: {:.1}/100\n",
+            "Average score: {:.1}/100\n",
             stats.avg_performance_score
         ));
         report.push_str(&format!(
-            "Интервал сбора метрик: {} сек\n",
+            "Metrics collection interval: {} sec\n",
             self.config.metrics_collection_interval
         ));
 
         report
     }
 
-    /// Останавливает анализатор
+    /// Stops analyzer
     pub fn shutdown(&mut self) {
         if let Some(handle) = self.background_handle.take() {
             handle.abort();
@@ -731,14 +729,14 @@ mod tests {
 
         let analyzer = PerformanceAnalyzer::new(&config);
 
-        // Ждем немного, чтобы накопились анализы
+        // Wait for analyses to accumulate
         tokio::time::sleep(Duration::from_millis(1500)).await;
 
-        // Проверяем статистику
+        // Validate statistics
         let stats = analyzer.get_stats();
         assert!(stats.total_analyses > 0);
 
-        // Проверяем последний анализ
+        // Validate latest analysis
         let latest_analysis = analyzer.get_latest_analysis();
         assert!(latest_analysis.is_some());
 
@@ -747,11 +745,11 @@ mod tests {
             assert!(!analysis.metrics.is_empty());
         }
 
-        // Проверяем отчет
+        // Validate report contents
         let report = analyzer.generate_performance_report();
-        assert!(report.contains("Отчет анализа производительности"));
-        assert!(report.contains("Общая статистика"));
-        assert!(report.contains("Рекомендации по улучшению"));
+        assert!(report.contains("Performance analysis report"));
+        assert!(report.contains("Overall statistics"));
+        assert!(report.contains("Improvement guidance"));
     }
 
     #[test]
@@ -759,7 +757,7 @@ mod tests {
         let metrics = vec![
             PerformanceMetric {
                 name: "cpu_usage".to_string(),
-                value: 95.0, // Критическое значение
+                value: 95.0, // Critical value
                 unit: "%".to_string(),
                 timestamp: 1000,
                 component: "System".to_string(),
@@ -770,7 +768,7 @@ mod tests {
             },
             PerformanceMetric {
                 name: "memory_usage".to_string(),
-                value: 75.0, // Предупреждающее значение
+                value: 75.0, // Warning value
                 unit: "%".to_string(),
                 timestamp: 1000,
                 component: "System".to_string(),
@@ -805,14 +803,14 @@ mod tests {
         assert!(!cpu_recommendations.is_empty());
         assert!(cpu_recommendations
             .iter()
-            .any(|r| r.contains("оптимизируйте")));
+            .any(|r| r.to_lowercase().contains("optimize")));
 
         let memory_recommendations =
             PerformanceAnalyzer::get_recommendations("memory_usage", SeverityLevel::Warning);
         assert!(!memory_recommendations.is_empty());
-        // Проверяем, что рекомендации содержат ключевые слова
+        // Ensure recommendations contain relevant keywords
         assert!(memory_recommendations
             .iter()
-            .any(|r| r.contains("память") || r.contains("объектов")));
+            .any(|r| r.to_lowercase().contains("memory") || r.to_lowercase().contains("object")));
     }
 }

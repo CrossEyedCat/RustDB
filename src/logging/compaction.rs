@@ -1,10 +1,10 @@
-//! Система сжатия и очистки логов для rustdb
+//! Log compaction and cleanup for rustdb
 //!
-//! Этот модуль реализует сжатие и архивацию старых лог-файлов:
-//! - Автоматическое сжатие неактивных логов
-//! - Удаление устаревших лог-файлов
-//! - Архивация важных логов
-//! - Оптимизация дискового пространства
+//! This module implements compression and archiving of old log files:
+//! - Automatic compression of inactive logs
+//! - Removal of outdated log files
+//! - Archiving of important logs
+//! - Disk space optimization
 
 use crate::common::{Error, Result};
 use crate::logging::log_writer::LogFileInfo;
@@ -14,35 +14,35 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 
-/// Конфигурация сжатия логов
+/// Log compaction configuration
 #[derive(Debug, Clone)]
 pub struct CompactionConfig {
-    /// Максимальный возраст файла для сжатия (дни)
+    /// Maximum file age for compression (days)
     pub max_age_for_compression: u32,
-    /// Максимальный возраст файла для удаления (дни)  
+    /// Maximum file age for deletion (days)  
     pub max_age_for_deletion: u32,
-    /// Минимальный размер файла для сжатия (байты)
+    /// Minimum file size for compression (bytes)
     pub min_size_for_compression: u64,
-    /// Включить автоматическое сжатие
+    /// Enable automatic compaction
     pub enable_auto_compaction: bool,
-    /// Интервал проверки сжатия
+    /// Compaction check interval
     pub compaction_interval: Duration,
-    /// Директория для архивных файлов
+    /// Directory for archived files
     pub archive_directory: Option<PathBuf>,
-    /// Уровень сжатия (1-9)
+    /// Compression level (1-9)
     pub compression_level: u32,
-    /// Максимальное количество файлов для хранения
+    /// Maximum number of log files to keep
     pub max_log_files: u32,
 }
 
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
-            max_age_for_compression: 7,            // 7 дней
-            max_age_for_deletion: 30,              // 30 дней
+            max_age_for_compression: 7,            // 7 days
+            max_age_for_deletion: 30,              // 30 days
             min_size_for_compression: 1024 * 1024, // 1 MB
             enable_auto_compaction: true,
-            compaction_interval: Duration::from_secs(3600), // 1 час
+            compaction_interval: Duration::from_secs(3600), // 1 hour
             archive_directory: None,
             compression_level: 6,
             max_log_files: 100,
@@ -50,41 +50,41 @@ impl Default for CompactionConfig {
     }
 }
 
-/// Статистика сжатия
+/// Compaction statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompactionStatistics {
-    /// Количество сжатых файлов
+    /// Number of compressed files
     pub compressed_files: u64,
-    /// Количество удаленных файлов
+    /// Number of deleted files
     pub deleted_files: u64,
-    /// Количество архивированных файлов
+    /// Number of archived files
     pub archived_files: u64,
-    /// Освобожденное место (байты)
+    /// Freed space (bytes)
     pub space_saved: u64,
-    /// Общий размер до сжатия
+    /// Total size before compression
     pub original_size: u64,
-    /// Общий размер после сжатия
+    /// Total size after compression
     pub compressed_size: u64,
-    /// Коэффициент сжатия
+    /// Compression ratio
     pub compression_ratio: f64,
-    /// Время последнего сжатия
+    /// Timestamp of last compaction
     pub last_compaction_time: u64,
-    /// Общее время сжатия (мс)
+    /// Total compaction time (ms)
     pub total_compaction_time_ms: u64,
 }
 
-/// Менеджер сжатия логов
+/// Log compaction manager
 pub struct CompactionManager {
-    /// Конфигурация
+    /// Configuration
     config: CompactionConfig,
-    /// Статистика
+    /// Statistics
     statistics: CompactionStatistics,
-    /// Фоновая задача
+    /// Background task
     background_handle: Option<JoinHandle<()>>,
 }
 
 impl CompactionManager {
-    /// Создает новый менеджер сжатия
+    /// Creates a new compaction manager
     pub fn new(config: CompactionConfig) -> Self {
         Self {
             config,
@@ -93,7 +93,7 @@ impl CompactionManager {
         }
     }
 
-    /// Запускает автоматическое сжатие
+    /// Starts automatic compaction
     pub fn start_auto_compaction(&mut self, log_directory: PathBuf) {
         if !self.config.enable_auto_compaction {
             return;
@@ -109,18 +109,18 @@ impl CompactionManager {
 
                 let mut manager = CompactionManager::new(config.clone());
                 if let Err(e) = manager.compact_logs(&log_directory).await {
-                    eprintln!("Ошибка автоматического сжатия логов: {}", e);
+                    eprintln!("Automatic log compaction error: {}", e);
                 }
             }
         }));
     }
 
-    /// Выполняет сжатие логов
+    /// Performs log compaction
     pub async fn compact_logs(&mut self, log_directory: &Path) -> Result<CompactionStatistics> {
-        println!("🗜️  Начинаем сжатие лог-файлов в {:?}", log_directory);
+        println!("🗜️  Starting log file compaction in {:?}", log_directory);
 
         let log_files = self.discover_log_files(log_directory).await?;
-        println!("   📁 Найдено {} лог-файлов", log_files.len());
+        println!("   📁 Found {} log files", log_files.len());
 
         let mut stats_update = CompactionStatistics::default();
         let now = SystemTime::now()
@@ -128,14 +128,14 @@ impl CompactionManager {
             .unwrap_or_default()
             .as_secs();
 
-        // Классифицируем файлы
+        // Classify files
         let (to_compress, to_delete, to_archive) = self.classify_files(&log_files, now);
 
-        println!("   📊 Файлов для сжатия: {}", to_compress.len());
-        println!("   📊 Файлов для удаления: {}", to_delete.len());
-        println!("   📊 Файлов для архивации: {}", to_archive.len());
+        println!("   📊 Files to compress: {}", to_compress.len());
+        println!("   📊 Files to delete: {}", to_delete.len());
+        println!("   📊 Files to archive: {}", to_archive.len());
 
-        // Сжимаем файлы
+        // Compress files
         for file in to_compress {
             match self.compress_file(&file).await {
                 Ok((original_size, compressed_size)) => {
@@ -145,24 +145,24 @@ impl CompactionManager {
                     stats_update.space_saved += original_size.saturating_sub(compressed_size);
                 }
                 Err(e) => {
-                    eprintln!("   ❌ Ошибка сжатия {}: {}", file.filename, e);
+                    eprintln!("   ❌ Failed to compress {}: {}", file.filename, e);
                 }
             }
         }
 
-        // Архивируем файлы
+        // Archive files
         for file in to_archive {
             match self.archive_file(&file).await {
                 Ok(()) => {
                     stats_update.archived_files += 1;
                 }
                 Err(e) => {
-                    eprintln!("   ❌ Ошибка архивации {}: {}", file.filename, e);
+                    eprintln!("   ❌ Failed to archive {}: {}", file.filename, e);
                 }
             }
         }
 
-        // Удаляем старые файлы
+        // Delete obsolete files
         for file in to_delete {
             match self.delete_file(&file).await {
                 Ok(size) => {
@@ -170,12 +170,12 @@ impl CompactionManager {
                     stats_update.space_saved += size;
                 }
                 Err(e) => {
-                    eprintln!("   ❌ Ошибка удаления {}: {}", file.filename, e);
+                    eprintln!("   ❌ Failed to delete {}: {}", file.filename, e);
                 }
             }
         }
 
-        // Обновляем статистику
+        // Update statistics
         self.statistics.compressed_files += stats_update.compressed_files;
         self.statistics.deleted_files += stats_update.deleted_files;
         self.statistics.archived_files += stats_update.archived_files;
@@ -190,15 +190,15 @@ impl CompactionManager {
 
         self.statistics.last_compaction_time = now;
 
-        println!("   ✅ Сжатие завершено:");
-        println!("      💾 Освобождено: {} байт", stats_update.space_saved);
-        println!("      📦 Сжато файлов: {}", stats_update.compressed_files);
-        println!("      🗑️  Удалено файлов: {}", stats_update.deleted_files);
+        println!("   ✅ Compaction finished:");
+        println!("      💾 Space reclaimed: {} bytes", stats_update.space_saved);
+        println!("      📦 Files compressed: {}", stats_update.compressed_files);
+        println!("      🗑️  Files deleted: {}", stats_update.deleted_files);
 
         Ok(self.statistics.clone())
     }
 
-    /// Обнаруживает лог-файлы в директории
+    /// Discovers log files inside directory
     async fn discover_log_files(&self, log_directory: &Path) -> Result<Vec<LogFileInfo>> {
         let mut files = Vec::new();
 
@@ -208,12 +208,12 @@ impl CompactionManager {
 
         let mut entries = tokio::fs::read_dir(log_directory)
             .await
-            .map_err(|e| Error::internal(&format!("Не удалось прочитать директорию: {}", e)))?;
+            .map_err(|e| Error::internal(&format!("Failed to read directory: {}", e)))?;
 
         while let Some(entry) = entries
             .next_entry()
             .await
-            .map_err(|e| Error::internal(&format!("Ошибка чтения записи: {}", e)))?
+            .map_err(|e| Error::internal(&format!("Failed to read directory entry: {}", e)))?
         {
             let path = entry.path();
 
@@ -221,7 +221,7 @@ impl CompactionManager {
                 || path.extension().and_then(|s| s.to_str()) == Some("gz")
             {
                 let metadata = tokio::fs::metadata(&path).await.map_err(|e| {
-                    Error::internal(&format!("Не удалось получить метаданные: {}", e))
+                    Error::internal(&format!("Failed to obtain metadata: {}", e))
                 })?;
 
                 let file_info = LogFileInfo {
@@ -254,13 +254,13 @@ impl CompactionManager {
             }
         }
 
-        // Сортируем по времени создания
+        // Sort by creation time
         files.sort_by_key(|f| f.created_at);
 
         Ok(files)
     }
 
-    /// Классифицирует файлы для обработки
+    /// Classifies files for processing
     fn classify_files(
         &self,
         files: &[LogFileInfo],
@@ -279,21 +279,21 @@ impl CompactionManager {
             let file_age = current_time.saturating_sub(file.created_at);
 
             if file.created_at < deletion_threshold {
-                // Слишком старый - удаляем
+                // File too old — mark for deletion
                 to_delete.push(file.clone());
             } else if file.created_at < compression_threshold
                 && !file.is_compressed
                 && file.size >= self.config.min_size_for_compression
             {
-                // Подходит для сжатия
+                // Eligible for compression
                 to_compress.push(file.clone());
             } else if self.config.archive_directory.is_some() && file_age > 7 * 24 * 3600 {
-                // Архивируем недельные файлы
+                // Archive files older than a week
                 to_archive.push(file.clone());
             }
         }
 
-        // Проверяем лимит файлов
+        // Enforce file count limit
         if files.len() > self.config.max_log_files as usize {
             let excess_count = files.len() - self.config.max_log_files as usize;
             let oldest_files = &files[0..excess_count];
@@ -308,60 +308,60 @@ impl CompactionManager {
         (to_compress, to_delete, to_archive)
     }
 
-    /// Архивирует файл
+    /// Archives a file
     async fn archive_file(&self, file: &LogFileInfo) -> Result<()> {
         if let Some(ref archive_dir) = self.config.archive_directory {
-            println!("   📦 Архивируем файл: {}", file.filename);
+            println!("   📦 Archiving file: {}", file.filename);
 
-            // Создаем директорию архива если не существует
+            // Create archive directory if needed
             tokio::fs::create_dir_all(archive_dir).await.map_err(|e| {
-                Error::internal(&format!("Не удалось создать директорию архива: {}", e))
+                Error::internal(&format!("Failed to create archive directory: {}", e))
             })?;
 
             let archive_path = archive_dir.join(&file.filename);
 
-            // Копируем файл в архив
+            // Copy file into archive
             tokio::fs::copy(&file.path, &archive_path)
                 .await
                 .map_err(|e| {
-                    Error::internal(&format!("Не удалось скопировать файл в архив: {}", e))
+                    Error::internal(&format!("Failed to copy file into archive: {}", e))
                 })?;
 
-            // Удаляем оригинал
+            // Remove original
             tokio::fs::remove_file(&file.path).await.map_err(|e| {
-                Error::internal(&format!("Не удалось удалить исходный файл: {}", e))
+                Error::internal(&format!("Failed to remove original file: {}", e))
             })?;
 
-            println!("      ✅ Архивирован в: {:?}", archive_path);
+            println!("      ✅ Archived to: {:?}", archive_path);
         }
 
         Ok(())
     }
 
-    /// Удаляет файл
+    /// Deletes a file
     async fn delete_file(&self, file: &LogFileInfo) -> Result<u64> {
-        println!("   🗑️  Удаляем файл: {}", file.filename);
+        println!("   🗑️  Deleting file: {}", file.filename);
 
         let size = file.size;
 
         tokio::fs::remove_file(&file.path)
             .await
-            .map_err(|e| Error::internal(&format!("Не удалось удалить файл: {}", e)))?;
+            .map_err(|e| Error::internal(&format!("Failed to delete file: {}", e)))?;
 
-        println!("      ✅ Удален файл размером {} байт", size);
+        println!("      ✅ Removed file sized {} bytes", size);
 
         Ok(size)
     }
 
-    /// Возвращает статистику сжатия
+    /// Returns compaction statistics
     pub fn get_statistics(&self) -> &CompactionStatistics {
         &self.statistics
     }
 
-    /// Принудительно сжимает конкретный файл
+    /// Compresses a specific file on demand
     pub async fn compress_specific_file(&mut self, file_path: &Path) -> Result<(u64, u64)> {
         let metadata = tokio::fs::metadata(file_path).await.map_err(|e| {
-            Error::internal(&format!("Не удалось получить метаданные файла: {}", e))
+            Error::internal(&format!("Failed to obtain file metadata: {}", e))
         })?;
 
         let file_info = LogFileInfo {
@@ -383,33 +383,33 @@ impl CompactionManager {
         self.compress_file(&file_info).await
     }
 
-    /// Сжимает конкретный файл
+    /// Compresses a single file
     async fn compress_file(&mut self, file_info: &LogFileInfo) -> Result<(u64, u64)> {
-        println!("🗜️  Сжимаем файл: {}", file_info.filename);
+        println!("🗜️  Compressing file: {}", file_info.filename);
 
-        // Читаем исходный файл
+        // Read original file
         let original_data = tokio::fs::read(&file_info.path)
             .await
-            .map_err(|e| Error::internal(&format!("Не удалось прочитать файл: {}", e)))?;
+            .map_err(|e| Error::internal(&format!("Failed to read file: {}", e)))?;
 
         let original_size = original_data.len() as u64;
 
-        // Сжимаем данные (простое сжатие для примера)
+        // Compress data (simplified demonstration)
         let compressed_data = self.compress_data(&original_data)?;
         let compressed_size = compressed_data.len() as u64;
 
-        // Создаем новый сжатый файл
+        // Write compressed file
         let compressed_path = file_info.path.with_extension("log.gz");
         tokio::fs::write(&compressed_path, &compressed_data)
             .await
-            .map_err(|e| Error::internal(&format!("Не удалось записать сжатый файл: {}", e)))?;
+            .map_err(|e| Error::internal(&format!("Failed to write compressed file: {}", e)))?;
 
-        // Удаляем исходный файл
+        // Remove original file
         tokio::fs::remove_file(&file_info.path)
             .await
-            .map_err(|e| Error::internal(&format!("Не удалось удалить исходный файл: {}", e)))?;
+            .map_err(|e| Error::internal(&format!("Failed to remove original file: {}", e)))?;
 
-        // Обновляем статистику
+        // Update statistics
         self.statistics.compressed_files += 1;
         self.statistics.original_size += original_size;
         self.statistics.compressed_size += compressed_size;
@@ -422,33 +422,33 @@ impl CompactionManager {
 
         let ratio = compressed_size as f64 / original_size as f64;
         println!(
-            "      ✅ Сжато: {} -> {} байт (коэффициент: {:.2})",
+            "      ✅ Compressed: {} -> {} bytes (ratio: {:.2})",
             original_size, compressed_size, ratio
         );
 
         Ok((original_size, compressed_size))
     }
 
-    /// Простое сжатие данных (для демонстрации)
+    /// Simple data compression mock (for demo only)
     fn compress_data(&self, data: &[u8]) -> Result<Vec<u8>> {
-        // Простейшее "сжатие" - удаляем гласные и повторяющиеся символы
+        // Simplest "compression" — drop vowels and repeated characters
         let input = String::from_utf8_lossy(data);
         let mut compressed = String::new();
         let mut prev_char = '\0';
 
         for ch in input.chars() {
-            // Пропускаем гласные (кроме первого символа)
+            // Drop vowels (except the first character)
             if !compressed.is_empty() && "aeiouAEIOU".contains(ch) {
                 continue;
             }
-            // Пропускаем повторяющиеся символы
+            // Skip repeated characters
             if ch != prev_char {
                 compressed.push(ch);
                 prev_char = ch;
             }
         }
 
-        // Если сжатие не дало результата, принудительно уменьшаем размер
+        // If no gain, forcibly reduce size
         if compressed.len() >= input.len() {
             compressed = input.chars().take(input.len() / 2).collect();
         }
@@ -456,7 +456,7 @@ impl CompactionManager {
         Ok(compressed.into_bytes())
     }
 
-    /// Очищает директорию логов от старых файлов
+    /// Cleans up old log files in directory
     pub async fn cleanup_old_logs(
         &mut self,
         log_directory: &Path,
@@ -477,10 +477,10 @@ impl CompactionManager {
                     Ok(_) => {
                         deleted_size += file.size;
                         self.statistics.deleted_files += 1;
-                        println!("🗑️  Удален старый лог-файл: {}", file.filename);
+                        println!("🗑️  Removed old log file: {}", file.filename);
                     }
                     Err(e) => {
-                        println!("⚠️  Не удалось удалить файл {}: {}", file.filename, e);
+                        println!("⚠️  Failed to delete file {}: {}", file.filename, e);
                     }
                 }
             }
@@ -489,7 +489,7 @@ impl CompactionManager {
         Ok(deleted_size)
     }
 
-    /// Останавливает автоматическое сжатие
+    /// Stops automatic compaction
     pub fn stop_auto_compaction(&mut self) {
         if let Some(handle) = self.background_handle.take() {
             handle.abort();
@@ -520,7 +520,7 @@ mod tests {
         let config = CompactionConfig::default();
         let manager = CompactionManager::new(config);
 
-        // Создаем тестовые лог-файлы
+        // Create test log files
         let log1_path = temp_dir.path().join("test1.log");
         let log2_path = temp_dir.path().join("test2.log.gz");
 
@@ -539,9 +539,9 @@ mod tests {
     #[tokio::test]
     async fn test_file_classification() -> Result<()> {
         let mut config = CompactionConfig::default();
-        config.max_age_for_compression = 1; // 1 день
-        config.max_age_for_deletion = 7; // 7 дней
-        config.min_size_for_compression = 5; // 5 байт
+        config.max_age_for_compression = 1; // 1 day
+        config.max_age_for_deletion = 7; // 7 days
+        config.min_size_for_compression = 5; // 5 bytes
 
         let manager = CompactionManager::new(config);
 
@@ -558,7 +558,7 @@ mod tests {
                 record_count: 0,
                 first_lsn: 0,
                 last_lsn: 0,
-                created_at: current_time - 8 * 24 * 3600, // 8 дней назад
+                created_at: current_time - 8 * 24 * 3600, // 8 days ago
                 updated_at: current_time - 8 * 24 * 3600,
                 is_compressed: false,
             },
@@ -569,7 +569,7 @@ mod tests {
                 record_count: 0,
                 first_lsn: 0,
                 last_lsn: 0,
-                created_at: current_time - 2 * 24 * 3600, // 2 дня назад
+                created_at: current_time - 2 * 24 * 3600, // 2 days ago
                 updated_at: current_time - 2 * 24 * 3600,
                 is_compressed: false,
             },
@@ -580,7 +580,7 @@ mod tests {
                 record_count: 0,
                 first_lsn: 0,
                 last_lsn: 0,
-                created_at: current_time - 3600, // 1 час назад
+                created_at: current_time - 3600, // 1 hour ago
                 updated_at: current_time - 3600,
                 is_compressed: false,
             },
@@ -603,14 +603,14 @@ mod tests {
         let config = CompactionConfig::default();
         let mut manager = CompactionManager::new(config);
 
-        // Создаем тестовый файл
+        // Create test file
         let old_log_path = temp_dir.path().join("old.log");
         tokio::fs::write(&old_log_path, "old log data").await?;
 
-        // Ждем немного, чтобы файл "постарел"
+        // Allow file to "age"
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        // Очищаем файлы старше 0 дней (все файлы)
+        // Remove files older than 0 days (all files)
         let deleted_size = manager.cleanup_old_logs(temp_dir.path(), 0).await?;
 
         assert!(deleted_size > 0);
@@ -625,7 +625,7 @@ mod tests {
         let config = CompactionConfig::default();
         let mut manager = CompactionManager::new(config);
 
-        // Создаем тестовый файл
+        // Create test file
         let test_file = temp_dir.path().join("test.log");
         let test_data = "test log data for compression";
         tokio::fs::write(&test_file, test_data).await?;
@@ -635,10 +635,10 @@ mod tests {
         assert_eq!(original_size, test_data.len() as u64);
         assert!(compressed_size < original_size);
 
-        // Исходный файл должен быть удален
+        // Source file should be deleted
         assert!(!test_file.exists());
 
-        // Сжатый файл должен существовать
+        // Compressed file should exist
         let compressed_file = temp_dir.path().join("test.log.gz");
         assert!(compressed_file.exists());
 

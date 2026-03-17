@@ -1,4 +1,4 @@
-//! Главный исполняемый файл rustdb
+//! Main executable file for rustdb
 
 #![allow(unused_imports)]
 
@@ -8,16 +8,16 @@ use rustdb::{Database, VERSION};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Инициализируем CLI с поддержкой интернационализации
+    // Initialize CLI with internationalization support
     let cli = Cli::init();
 
-    // Загружаем конфигурацию
+    // Load configuration
     let config = cli.load_config()?;
 
-    // Устанавливаем язык из конфигурации
+    // Set language from configuration
     set_language(config.language)?;
 
-    // Выполняем команду
+    // Execute command
     cli.execute().await?;
 
     Ok(())

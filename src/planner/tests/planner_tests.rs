@@ -1,4 +1,4 @@
-//! Тесты для планировщика запросов
+//! Query planner tests
 
 use crate::common::Result;
 use crate::parser::{SqlParser, SqlStatement};
@@ -25,7 +25,7 @@ fn test_create_select_with_where_plan() -> Result<()> {
     let statement = parser.parse()?;
     let plan = planner.create_plan(&statement)?;
 
-    // Проверяем, что план создан успешно
+    // Ensure a plan was produced successfully
     assert!(matches!(plan.root, PlanNode::Projection(_)));
 
     Ok(())
@@ -78,7 +78,7 @@ fn test_plan_metadata() -> Result<()> {
     let statement = parser.parse()?;
     let plan = planner.create_plan(&statement)?;
 
-    // Проверяем, что метаданные созданы
+    // Confirm plan metadata is populated
     assert!(plan.metadata.estimated_cost >= 0.0);
     assert!(plan.metadata.estimated_rows >= 0);
     assert!(plan.metadata.statistics.operator_count > 0);

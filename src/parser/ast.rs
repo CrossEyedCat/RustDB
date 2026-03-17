@@ -1,26 +1,26 @@
-//! Абстрактное синтаксическое дерево SQL для rustdb
+//! SQL abstract syntax tree for rustdb
 
 use crate::common::{Error, Result};
 use crate::parser::token::Token;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Основной узел AST для SQL операций
+/// Main AST node for SQL operations
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SqlStatement {
-    /// SELECT запрос
+    /// SELECT query
     Select(SelectStatement),
-    /// INSERT операция
+    /// INSERT operation
     Insert(InsertStatement),
-    /// UPDATE операция
+    /// UPDATE operation
     Update(UpdateStatement),
-    /// DELETE операция
+    /// DELETE operation
     Delete(DeleteStatement),
-    /// CREATE TABLE операция
+    /// CREATE TABLE operation
     CreateTable(CreateTableStatement),
-    /// ALTER TABLE операция
+    /// ALTER TABLE operation
     AlterTable(AlterTableStatement),
-    /// DROP TABLE операция
+    /// DROP TABLE operation
     DropTable(DropTableStatement),
     /// BEGIN TRANSACTION
     BeginTransaction,
@@ -30,7 +30,7 @@ pub enum SqlStatement {
     RollbackTransaction,
 }
 
-/// SELECT запрос
+/// SELECT query
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelectStatement {
     pub select_list: Vec<SelectItem>,
@@ -43,38 +43,38 @@ pub struct SelectStatement {
     pub offset: Option<u64>,
 }
 
-/// Элемент в списке SELECT
+/// Item in SELECT list
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SelectItem {
-    /// Все колонки (*)
+    /// All columns (*)
     Wildcard,
-    /// Конкретное выражение с псевдонимом
+    /// Specific expression with alias
     Expression {
         expr: Expression,
         alias: Option<String>,
     },
 }
 
-/// FROM клаузула
+/// FROM clause
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FromClause {
     pub table: TableReference,
     pub joins: Vec<JoinClause>,
 }
 
-/// Ссылка на таблицу
+/// Table reference
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TableReference {
-    /// Простая таблица
+    /// Simple table
     Table { name: String, alias: Option<String> },
-    /// Подзапрос
+    /// Subquery
     Subquery {
         query: Box<SelectStatement>,
         alias: String,
     },
 }
 
-/// JOIN операция
+/// JOIN operation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JoinClause {
     pub join_type: JoinType,
@@ -82,7 +82,7 @@ pub struct JoinClause {
     pub condition: Option<Expression>,
 }
 
-/// Тип JOIN
+/// JOIN type
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum JoinType {
     Inner,
@@ -92,21 +92,21 @@ pub enum JoinType {
     Cross,
 }
 
-/// ORDER BY элемент
+/// ORDER BY item
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OrderByItem {
     pub expr: Expression,
     pub direction: OrderDirection,
 }
 
-/// Направление сортировки
+/// Sort direction
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum OrderDirection {
     Asc,
     Desc,
 }
 
-/// INSERT операция
+/// INSERT operation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InsertStatement {
     pub table: String,
@@ -114,7 +114,7 @@ pub struct InsertStatement {
     pub values: InsertValues,
 }
 
-/// Значения для INSERT
+/// Values for INSERT
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum InsertValues {
     /// VALUES (val1, val2, ...)
@@ -123,7 +123,7 @@ pub enum InsertValues {
     Select(Box<SelectStatement>),
 }
 
-/// UPDATE операция
+/// UPDATE operation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UpdateStatement {
     pub table: String,
@@ -131,21 +131,21 @@ pub struct UpdateStatement {
     pub where_clause: Option<Expression>,
 }
 
-/// Присваивание в UPDATE
+/// Assignment in UPDATE
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Assignment {
     pub column: String,
     pub value: Expression,
 }
 
-/// DELETE операция
+/// DELETE operation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeleteStatement {
     pub table: String,
     pub where_clause: Option<Expression>,
 }
 
-/// CREATE TABLE операция
+/// CREATE TABLE operation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CreateTableStatement {
     pub table_name: String,
@@ -154,7 +154,7 @@ pub struct CreateTableStatement {
     pub if_not_exists: bool,
 }
 
-/// Определение колонки
+/// Column definition
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnDefinition {
     pub name: String,
@@ -162,7 +162,7 @@ pub struct ColumnDefinition {
     pub constraints: Vec<ColumnConstraint>,
 }
 
-/// Тип данных
+/// Data type
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DataType {
     Integer,
@@ -184,7 +184,7 @@ pub enum DataType {
     Blob,
 }
 
-/// Ограничение колонки
+/// Column constraint
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ColumnConstraint {
     NotNull,
@@ -198,7 +198,7 @@ pub enum ColumnConstraint {
     },
 }
 
-/// Ограничение таблицы
+/// Table constraint
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TableConstraint {
     PrimaryKey(Vec<String>),
@@ -211,14 +211,14 @@ pub enum TableConstraint {
     Check(Expression),
 }
 
-/// ALTER TABLE операция
+/// ALTER TABLE operation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AlterTableStatement {
     pub table_name: String,
     pub operation: AlterTableOperation,
 }
 
-/// Операция ALTER TABLE
+/// ALTER TABLE operation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AlterTableOperation {
     AddColumn(ColumnDefinition),
@@ -230,7 +230,7 @@ pub enum AlterTableOperation {
     RenameTable(String),
 }
 
-/// DROP TABLE операция
+/// DROP TABLE operation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DropTableStatement {
     pub table_name: String,
@@ -238,39 +238,39 @@ pub struct DropTableStatement {
     pub cascade: bool,
 }
 
-/// SQL выражение
+/// SQL expression
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Expression {
-    /// Литерал
+    /// Literal
     Literal(Literal),
-    /// Идентификатор (колонка)
+    /// Identifier (column)
     Identifier(String),
-    /// Qualified идентификатор (table.column)
+    /// Qualified identifier (table.column)
     QualifiedIdentifier { table: String, column: String },
-    /// Бинарная операция
+    /// Binary operation
     BinaryOp {
         left: Box<Expression>,
         op: BinaryOperator,
         right: Box<Expression>,
     },
-    /// Унарная операция
+    /// Unary operation
     UnaryOp {
         op: UnaryOperator,
         expr: Box<Expression>,
     },
-    /// Функция
+    /// Function
     Function { name: String, args: Vec<Expression> },
-    /// CASE выражение
+    /// CASE expression
     Case {
         expr: Option<Box<Expression>>,
         when_clauses: Vec<WhenClause>,
         else_clause: Option<Box<Expression>>,
     },
-    /// EXISTS подзапрос
+    /// EXISTS subquery
     Exists(Box<SelectStatement>),
-    /// IN операция
+    /// IN operation
     In { expr: Box<Expression>, list: InList },
-    /// BETWEEN операция
+    /// BETWEEN operation
     Between {
         expr: Box<Expression>,
         low: Box<Expression>,
@@ -281,7 +281,7 @@ pub enum Expression {
         expr: Box<Expression>,
         negated: bool,
     },
-    /// LIKE операция
+    /// LIKE operation
     Like {
         expr: Box<Expression>,
         pattern: Box<Expression>,
@@ -289,7 +289,7 @@ pub enum Expression {
     },
 }
 
-/// Литерал
+/// Literal
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Literal {
     Null,
@@ -299,30 +299,30 @@ pub enum Literal {
     String(String),
 }
 
-/// Бинарный оператор
+/// Binary operator
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BinaryOperator {
-    // Арифметические
+    // Arithmetic
     Add,
     Subtract,
     Multiply,
     Divide,
     Modulo,
-    // Сравнения
+    // Comparison
     Equal,
     NotEqual,
     LessThan,
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
-    // Логические
+    // Logical
     And,
     Or,
-    // Строковые
+    // String
     Concat,
 }
 
-/// Унарный оператор
+/// Unary operator
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum UnaryOperator {
     Plus,
@@ -330,45 +330,45 @@ pub enum UnaryOperator {
     Not,
 }
 
-/// WHEN клаузула в CASE
+/// WHEN clause in CASE
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WhenClause {
     pub condition: Expression,
     pub result: Expression,
 }
 
-/// Список для IN операции
+/// List for IN operation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum InList {
     Values(Vec<Expression>),
     Subquery(Box<SelectStatement>),
 }
 
-/// Построитель AST
+/// AST builder
 pub struct AstBuilder {
-    // Дополнительные данные для построения AST
+    // Additional data for building AST
     metadata: HashMap<String, String>,
 }
 
 impl AstBuilder {
-    /// Создает новый построитель AST
+    /// Creates a new AST builder
     pub fn new() -> Result<Self> {
         Ok(Self {
             metadata: HashMap::new(),
         })
     }
 
-    /// Добавляет метаданные
+    /// Adds metadata
     pub fn add_metadata(&mut self, key: String, value: String) {
         self.metadata.insert(key, value);
     }
 
-    /// Получает метаданные
+    /// Gets metadata
     pub fn get_metadata(&self, key: &str) -> Option<&String> {
         self.metadata.get(key)
     }
 
-    /// Создает простой SELECT запрос
+    /// Creates a simple SELECT query
     pub fn build_simple_select(&self, columns: Vec<String>, table: String) -> Result<SqlStatement> {
         let select_list = if columns.is_empty() || columns[0] == "*" {
             vec![SelectItem::Wildcard]
@@ -402,7 +402,7 @@ impl AstBuilder {
         }))
     }
 
-    /// Создает простой INSERT запрос
+    /// Creates a simple INSERT query
     pub fn build_simple_insert(
         &self,
         table: String,

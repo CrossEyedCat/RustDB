@@ -1,26 +1,26 @@
-//! CLI интерфейс для rustdb
+//! CLI interface for rustdb
 //!
-//! Предоставляет командную строку для управления базой данных и настройки языка
+//! Provides command-line interface for database management and language settings
 
 use crate::common::{set_language, t, DatabaseConfig, I18nManager, Language, MessageKey, I18N};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-/// RustDB - Реализация реляционной базы данных на Rust
+/// RustDB - Relational database implementation in Rust
 #[derive(Parser)]
 #[command(name = "rustdb")]
 #[command(about = "RustDB - A relational database implementation in Rust")]
 #[command(version)]
 pub struct Cli {
-    /// Язык интерфейса (en, ru)
+    /// Interface language (en)
     #[arg(short, long, value_name = "LANGUAGE")]
     pub language: Option<String>,
 
-    /// Конфигурационный файл
+    /// Configuration file
     #[arg(short, long, value_name = "CONFIG")]
     pub config: Option<PathBuf>,
 
-    /// Уровень детализации логирования
+    /// Logging verbosity level
     #[arg(long, value_name = "LEVEL")]
     pub log_level: Option<String>,
 
@@ -30,42 +30,42 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Запустить сервер базы данных
+    /// Start the database server
     Server {
-        /// Порт для прослушивания
+        /// Port to listen on
         #[arg(short, long, default_value = "8080")]
         port: u16,
 
-        /// Хост для прослушивания
+        /// Host to listen on
         #[arg(long, default_value = "0.0.0.0")]
         host: String,
     },
 
-    /// Управление языком интерфейса
+    /// Interface language management
     Language {
         #[command(subcommand)]
         action: LanguageCommands,
     },
 
-    /// Показать информацию о системе
+    /// Show system information
     Info,
 
-    /// Создать новую базу данных
+    /// Create a new database
     Create {
-        /// Имя базы данных
+        /// Database name
         name: String,
 
-        /// Директория для хранения данных
+        /// Data storage directory
         #[arg(short, long)]
         data_dir: Option<PathBuf>,
     },
 
-    /// Выполнить SQL запрос
+    /// Execute SQL query
     Query {
-        /// SQL запрос
+        /// SQL query
         query: String,
 
-        /// База данных
+        /// Database
         #[arg(short, long)]
         database: Option<String>,
     },
@@ -73,25 +73,25 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum LanguageCommands {
-    /// Показать текущий язык
+    /// Show current language
     Show,
 
-    /// Установить язык
+    /// Set language
     Set {
-        /// Язык (en, ru)
+        /// Language (en)
         language: String,
     },
 
-    /// Показать поддерживаемые языки
+    /// Show supported languages
     List,
 }
 
 impl Cli {
-    /// Инициализирует CLI с учетом настроек языка
+    /// Initializes CLI with language settings
     pub fn init() -> Self {
         let cli = Self::parse();
 
-        // Устанавливаем язык из аргументов командной строки
+        // Set language from command line arguments
         if let Some(lang_str) = &cli.language {
             if let Ok(language) = lang_str.parse::<Language>() {
                 let _ = set_language(language);
@@ -101,17 +101,17 @@ impl Cli {
         cli
     }
 
-    /// Загружает конфигурацию
+    /// Loads configuration
     pub fn load_config(&self) -> Result<DatabaseConfig, Box<dyn std::error::Error>> {
         let mut config = if let Some(config_path) = &self.config {
             DatabaseConfig::from_file(config_path)?
         } else {
-            // Пытаемся загрузить из config.toml, если не найден - используем по умолчанию
+            // Try to load from config.toml, if not found - use default
             DatabaseConfig::from_file(&std::path::PathBuf::from("config.toml"))
                 .unwrap_or_else(|_| DatabaseConfig::default())
         };
 
-        // Применяем настройки из командной строки
+        // Apply settings from command line
         if let Some(lang_str) = &self.language {
             if let Ok(language) = lang_str.parse::<Language>() {
                 config.language = language;
@@ -126,7 +126,7 @@ impl Cli {
         Ok(config)
     }
 
-    /// Выполняет команду
+    /// Executes a command
     pub async fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
         match &self.command {
             Some(Commands::Server { port, host }) => self.run_server(host.clone(), *port).await,
@@ -142,23 +142,23 @@ impl Cli {
         }
     }
 
-    /// Запускает сервер базы данных
+    /// Starts the database server
     async fn run_server(&self, host: String, port: u16) -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", t(MessageKey::Welcome));
         println!("{}: {}:{}", t(MessageKey::Info), host, port);
 
-        // TODO: Реализовать запуск сервера
+        // TODO: Implement server startup
         println!("{}", t(MessageKey::Info));
 
         Ok(())
     }
 
-    /// Обрабатывает команды управления языком
+    /// Handles language management commands
     async fn handle_language_command(
         &self,
         action: &LanguageCommands,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Загружаем конфигурацию перед выполнением команд
+        // Load configuration before executing commands
         let config = self.load_config()?;
         println!("DEBUG: Loaded config language: {:?}", config.language);
         set_language(config.language)?;
@@ -183,7 +183,7 @@ impl Cli {
         Ok(())
     }
 
-    /// Показывает информацию о системе
+    /// Shows system information
     async fn show_info(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("RustDB {}", env!("CARGO_PKG_VERSION"));
         println!("{}: {}", t(MessageKey::Info), I18N.get_language()?);
@@ -193,7 +193,7 @@ impl Cli {
         Ok(())
     }
 
-    /// Создает новую базу данных
+    /// Creates a new database
     async fn create_database(
         &self,
         name: &str,
@@ -204,13 +204,13 @@ impl Cli {
         let data_path = data_dir.cloned().unwrap_or_else(|| PathBuf::from("./data"));
         println!("{}: {:?}", t(MessageKey::Info), data_path);
 
-        // TODO: Реализовать создание базы данных
+        // TODO: Implement database creation
         println!("{}", t(MessageKey::Success));
 
         Ok(())
     }
 
-    /// Выполняет SQL запрос
+    /// Executes an SQL query
     async fn execute_query(
         &self,
         query: &str,
@@ -222,18 +222,18 @@ impl Cli {
             println!("{}: {}", t(MessageKey::Info), db_name);
         }
 
-        // TODO: Реализовать выполнение запроса
+        // TODO: Implement query execution
         println!("{}", t(MessageKey::Success));
 
         Ok(())
     }
 
-    /// Показывает справку
+    /// Shows help
     async fn show_help(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", t(MessageKey::Welcome));
         println!("{}", t(MessageKey::Info));
 
-        // TODO: Показать подробную справку
+        // TODO: Show detailed help
 
         Ok(())
     }
@@ -245,10 +245,10 @@ mod tests {
 
     #[test]
     fn test_cli_parsing() {
-        let args = vec!["rustdb", "--language", "ru", "language", "show"];
+        let args = vec!["rustdb", "--language", "en", "language", "show"];
         let cli = Cli::try_parse_from(args).unwrap();
 
-        assert_eq!(cli.language, Some("ru".to_string()));
+        assert_eq!(cli.language, Some("en".to_string()));
         assert!(matches!(cli.command, Some(Commands::Language { .. })));
     }
 

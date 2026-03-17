@@ -1,10 +1,10 @@
-//! Менеджер файлов для rustdb
+//! File manager for rustdb
 //!
-//! Этот модуль отвечает за базовые операции с файлами базы данных:
-//! - Создание, открытие и закрытие файлов
-//! - Чтение и запись блоков данных
-//! - Управление размерами файлов
-//! - Синхронизация данных на диск
+//! This module is responsible for basic database file operations:
+//! - Creating, opening, and closing files
+//! - Reading and writing data blocks
+//! - Managing file sizes
+//! - Synchronizing data to disk
 
 use crate::common::{Error, Result};
 use crate::storage::block::BlockId;
@@ -14,43 +14,43 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-/// Размер блока в байтах (4KB)
+/// Block size in bytes (4KB)
 pub const BLOCK_SIZE: usize = 4096;
 
-/// ID файла
+/// File ID
 pub type FileId = u32;
 
-/// Заголовок файла базы данных
+/// Database file header
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileHeader {
-    /// Магическое число для идентификации файлов rustdb
+    /// Magic number for identifying rustdb files
     pub magic: u32,
-    /// Версия формата файла
+    /// File format version
     pub version: u16,
-    /// Размер блока
+    /// Block size
     pub block_size: u32,
-    /// Общее количество блоков в файле
+    /// Total number of blocks in the file
     pub total_blocks: u32,
-    /// Количество используемых блоков
+    /// Number of used blocks
     pub used_blocks: u32,
-    /// Указатель на первый свободный блок
+    /// Pointer to the first free block
     pub first_free_block: Option<BlockId>,
-    /// Время создания файла
+    /// File creation time
     pub created_at: u64,
-    /// Время последнего изменения
+    /// Last modification time
     pub modified_at: u64,
-    /// Контрольная сумма заголовка
+    /// Header checksum
     pub checksum: u32,
 }
 
 impl FileHeader {
-    /// Магическое число для файлов rustdb
+    /// Magic number for rustdb files
     pub const MAGIC: u32 = 0x52555354; // "RUST"
 
-    /// Текущая версия формата файла
+    /// Current file format version
     pub const VERSION: u16 = 1;
 
-    /// Создает новый заголовок файла
+    /// Creates a new file header
     pub fn new() -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -70,7 +70,7 @@ impl FileHeader {
         }
     }
 
-    /// Обновляет время модификации
+    /// Updates the modification time
     pub fn touch(&mut self) {
         self.modified_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -78,9 +78,9 @@ impl FileHeader {
             .as_secs();
     }
 
-    /// Вычисляет контрольную сумму заголовка
+    /// Calculates the header checksum
     pub fn calculate_checksum(&self) -> u32 {
-        // Простая контрольная сумма (в реальной БД используется CRC32)
+        // Simple checksum (real DB uses CRC32)
         let mut sum = 0u32;
         sum = sum.wrapping_add(self.magic);
         sum = sum.wrapping_add(self.version as u32);
@@ -92,7 +92,7 @@ impl FileHeader {
         sum
     }
 
-    /// Проверяет корректность заголовка
+    /// Checks header validity
     pub fn is_valid(&self) -> bool {
         self.magic == Self::MAGIC
             && self.version == Self::VERSION
@@ -107,53 +107,53 @@ impl Default for FileHeader {
     }
 }
 
-/// Дескриптор открытого файла базы данных
+/// Handle for an open database file
 pub struct DatabaseFile {
-    /// ID файла
+    /// File ID
     pub file_id: FileId,
-    /// Путь к файлу
+    /// File path
     pub path: PathBuf,
-    /// Файловый дескриптор
+    /// File descriptor
     pub file: File,
-    /// Заголовок файла
+    /// File header
     pub header: FileHeader,
-    /// Флаг изменения заголовка
+    /// Header modification flag
     pub header_dirty: bool,
-    /// Флаг только для чтения
+    /// Read-only flag
     pub read_only: bool,
 }
 
 impl DatabaseFile {
-    /// Создает новый файл базы данных
+    /// Creates a new database file
     pub fn create<P: AsRef<Path>>(file_id: FileId, path: P) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
 
-        // Проверяем, что файл не существует
+        // Check that the file doesn't exist
         if path.exists() {
             return Err(Error::database(format!(
-                "Файл {} уже существует",
+                "File {} already exists",
                 path.display()
             )));
         }
 
-        // Создаем файл
+        // Create the file
         let mut file = OpenOptions::new()
             .create(true)
             .write(true)
             .read(true)
             .open(&path)?;
 
-        // Создаем заголовок
+        // Create the header
         let mut header = FileHeader::new();
         header.checksum = header.calculate_checksum();
 
-        // Записываем заголовок в файл
+        // Write the header to the file
         let header_bytes = bincode::serialize(&header)
-            .map_err(|e| Error::database(format!("Ошибка сериализации заголовка: {}", e)))?;
+            .map_err(|e| Error::database(format!("Header serialization error: {}", e)))?;
 
         file.write_all(&header_bytes)?;
 
-        // Дополняем до границы блока, чтобы данные начинались с четкой позиции
+        // Pad to block boundary so data starts at a clear position
         let header_size = header_bytes.len();
         let padding_size = BLOCK_SIZE - (header_size % BLOCK_SIZE);
         if padding_size < BLOCK_SIZE {
@@ -173,40 +173,40 @@ impl DatabaseFile {
         })
     }
 
-    /// Открывает существующий файл базы данных
+    /// Opens an existing database file
     pub fn open<P: AsRef<Path>>(file_id: FileId, path: P, read_only: bool) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
 
-        // Проверяем, что файл существует
+        // Check that the file exists
         if !path.exists() {
             return Err(Error::database(format!(
-                "Файл {} не найден",
+                "File {} not found",
                 path.display()
             )));
         }
 
-        // Открываем файл
+        // Open the file
         let mut file = if read_only {
             OpenOptions::new().read(true).open(&path)?
         } else {
             OpenOptions::new().read(true).write(true).open(&path)?
         };
 
-        // Читаем заголовок
+        // Read the header
         let mut header_bytes = Vec::new();
         file.read_to_end(&mut header_bytes)?;
 
         if header_bytes.is_empty() {
-            return Err(Error::database("Файл поврежден: пустой файл".to_string()));
+            return Err(Error::database("File corrupted: empty file".to_string()));
         }
 
         let header: FileHeader = bincode::deserialize(&header_bytes)
-            .map_err(|e| Error::database(format!("Ошибка десериализации заголовка: {}", e)))?;
+            .map_err(|e| Error::database(format!("Header deserialization error: {}", e)))?;
 
-        // Проверяем корректность заголовка
+        // Check header validity
         if !header.is_valid() {
             return Err(Error::database(
-                "Файл поврежден: некорректный заголовок".to_string(),
+                "File corrupted: invalid header".to_string(),
             ));
         }
 
@@ -220,54 +220,54 @@ impl DatabaseFile {
         })
     }
 
-    /// Читает блок данных из файла
+    /// Reads a data block from the file
     pub fn read_block(&mut self, block_id: BlockId) -> Result<Vec<u8>> {
         if block_id >= self.header.total_blocks as u64 {
-            return Err(Error::database(format!("Блок {} не существует", block_id)));
+            return Err(Error::database(format!("Block {} does not exist", block_id)));
         }
 
-        // Вычисляем позицию блока в файле (данные начинаются с первого блока после заголовка)
+        // Calculate block position in file (data starts from first block after header)
         let offset = BLOCK_SIZE as u64 + (block_id as u64 * BLOCK_SIZE as u64);
 
-        // Переходим к позиции блока
+        // Seek to block position
         self.file.seek(SeekFrom::Start(offset))?;
 
-        // Читаем данные блока
+        // Read block data
         let mut buffer = vec![0u8; BLOCK_SIZE];
         self.file.read_exact(&mut buffer)?;
 
         Ok(buffer)
     }
 
-    /// Записывает блок данных в файл
+    /// Writes a data block to the file
     pub fn write_block(&mut self, block_id: BlockId, data: &[u8]) -> Result<()> {
         if self.read_only {
-            return Err(Error::database("Файл открыт только для чтения".to_string()));
+            return Err(Error::database("File is open for reading only".to_string()));
         }
 
         if data.len() != BLOCK_SIZE {
             return Err(Error::database(format!(
-                "Неверный размер блока: {} (ожидается {})",
+                "Invalid block size: {} (expected {})",
                 data.len(),
                 BLOCK_SIZE
             )));
         }
 
-        // Расширяем файл если необходимо
+        // Extend file if necessary
         if block_id >= self.header.total_blocks as u64 {
             self.extend_file((block_id + 1) as u32)?;
         }
 
-        // Вычисляем позицию блока в файле (данные начинаются с первого блока после заголовка)
+        // Calculate block position in file (data starts from first block after header)
         let offset = BLOCK_SIZE as u64 + (block_id as u64 * BLOCK_SIZE as u64);
 
-        // Переходим к позиции блока
+        // Seek to block position
         self.file.seek(SeekFrom::Start(offset))?;
 
-        // Записываем данные блока
+        // Write block data
         self.file.write_all(data)?;
 
-        // Обновляем счетчик используемых блоков
+        // Update used blocks counter
         if block_id >= self.header.used_blocks as u64 {
             self.header.used_blocks = (block_id + 1) as u32;
             self.header.touch();
@@ -277,24 +277,24 @@ impl DatabaseFile {
         Ok(())
     }
 
-    /// Расширяет файл до указанного количества блоков
+    /// Extends the file to the specified number of blocks
     pub fn extend_file(&mut self, new_block_count: u32) -> Result<()> {
         if self.read_only {
-            return Err(Error::database("Файл открыт только для чтения".to_string()));
+            return Err(Error::database("File is open for reading only".to_string()));
         }
 
         if new_block_count <= self.header.total_blocks {
-            return Ok(()); // Файл уже достаточного размера
+            return Ok(()); // File is already large enough
         }
 
-        // Вычисляем новый размер файла (заголовок + блоки данных)
+        // Calculate new file size (header + data blocks)
         let new_size = BLOCK_SIZE as u64 + (new_block_count as u64 * BLOCK_SIZE as u64);
 
-        // Расширяем файл
+        // Extend the file
         self.file.seek(SeekFrom::Start(new_size - 1))?;
         self.file.write_all(&[0])?;
 
-        // Обновляем заголовок
+        // Update header
         self.header.total_blocks = new_block_count;
         self.header.touch();
         self.header_dirty = true;
@@ -302,51 +302,51 @@ impl DatabaseFile {
         Ok(())
     }
 
-    /// Синхронизирует данные на диск
+    /// Synchronizes data to disk
     pub fn sync(&mut self) -> Result<()> {
         if self.read_only {
             return Ok(());
         }
 
-        // Записываем заголовок если он изменился
+        // Write header if it changed
         if self.header_dirty {
             self.write_header()?;
             self.header_dirty = false;
         }
 
-        // Синхронизируем все данные
+        // Synchronize all data
         self.file.sync_all()?;
 
         Ok(())
     }
 
-    /// Записывает заголовок в файл
+    /// Writes the header to the file
     fn write_header(&mut self) -> Result<()> {
-        // Обновляем контрольную сумму
+        // Update checksum
         self.header.checksum = self.header.calculate_checksum();
 
-        // Сериализуем заголовок
+        // Serialize header
         let header_bytes = bincode::serialize(&self.header)
-            .map_err(|e| Error::database(format!("Ошибка сериализации заголовка: {}", e)))?;
+            .map_err(|e| Error::database(format!("Header serialization error: {}", e)))?;
 
-        // Записываем в начало файла
+        // Write to beginning of file
         self.file.seek(SeekFrom::Start(0))?;
         self.file.write_all(&header_bytes)?;
 
         Ok(())
     }
 
-    /// Возвращает размер файла в блоках
+    /// Returns file size in blocks
     pub fn size_in_blocks(&self) -> u32 {
         self.header.total_blocks
     }
 
-    /// Возвращает количество используемых блоков
+    /// Returns number of used blocks
     pub fn used_blocks(&self) -> u32 {
         self.header.used_blocks
     }
 
-    /// Возвращает количество свободных блоков
+    /// Returns number of free blocks
     pub fn free_blocks(&self) -> u32 {
         self.header
             .total_blocks
@@ -354,22 +354,22 @@ impl DatabaseFile {
     }
 }
 
-/// Менеджер файлов базы данных
+/// Database file manager
 pub struct FileManager {
-    /// Открытые файлы
+    /// Open files
     files: HashMap<FileId, DatabaseFile>,
-    /// Корневая директория для файлов БД
+    /// Root directory for database files
     root_dir: PathBuf,
-    /// Счетчик для генерации ID файлов
+    /// Counter for generating file IDs
     next_file_id: FileId,
 }
 
 impl FileManager {
-    /// Создает новый менеджер файлов
+    /// Creates a new file manager
     pub fn new<P: AsRef<Path>>(root_dir: P) -> Result<Self> {
         let root_dir = root_dir.as_ref().to_path_buf();
 
-        // Создаем директорию если она не существует
+        // Create directory if it doesn't exist
         if !root_dir.exists() {
             std::fs::create_dir_all(&root_dir)?;
         }
@@ -381,7 +381,7 @@ impl FileManager {
         })
     }
 
-    /// Создает новый файл базы данных
+    /// Creates a new database file
     pub fn create_file(&mut self, filename: &str) -> Result<FileId> {
         let file_id = self.next_file_id;
         self.next_file_id += 1;
@@ -394,11 +394,11 @@ impl FileManager {
         Ok(file_id)
     }
 
-    /// Открывает существующий файл базы данных
+    /// Opens an existing database file
     pub fn open_file(&mut self, filename: &str, read_only: bool) -> Result<FileId> {
         let file_path = self.root_dir.join(filename);
 
-        // Проверяем, не открыт ли файл уже
+        // Check if the file is already open
         for (id, file) in &self.files {
             if file.path == file_path {
                 return Ok(*id);
@@ -414,7 +414,7 @@ impl FileManager {
         Ok(file_id)
     }
 
-    /// Закрывает файл базы данных
+    /// Closes a database file
     pub fn close_file(&mut self, file_id: FileId) -> Result<()> {
         if let Some(mut file) = self.files.remove(&file_id) {
             file.sync()?;
@@ -422,37 +422,37 @@ impl FileManager {
         Ok(())
     }
 
-    /// Читает блок из файла
+    /// Reads a block from a file
     pub fn read_block(&mut self, file_id: FileId, block_id: BlockId) -> Result<Vec<u8>> {
         let file = self
             .files
             .get_mut(&file_id)
-            .ok_or_else(|| Error::database(format!("Файл {} не открыт", file_id)))?;
+            .ok_or_else(|| Error::database(format!("File {} is not open", file_id)))?;
 
         file.read_block(block_id)
     }
 
-    /// Записывает блок в файл
+    /// Writes a block to a file
     pub fn write_block(&mut self, file_id: FileId, block_id: BlockId, data: &[u8]) -> Result<()> {
         let file = self
             .files
             .get_mut(&file_id)
-            .ok_or_else(|| Error::database(format!("Файл {} не открыт", file_id)))?;
+            .ok_or_else(|| Error::database(format!("File {} is not open", file_id)))?;
 
         file.write_block(block_id, data)
     }
 
-    /// Синхронизирует файл на диск
+    /// Synchronizes a file to disk
     pub fn sync_file(&mut self, file_id: FileId) -> Result<()> {
         let file = self
             .files
             .get_mut(&file_id)
-            .ok_or_else(|| Error::database(format!("Файл {} не открыт", file_id)))?;
+            .ok_or_else(|| Error::database(format!("File {} is not open", file_id)))?;
 
         file.sync()
     }
 
-    /// Синхронизирует все открытые файлы
+    /// Synchronizes all open files
     pub fn sync_all(&mut self) -> Result<()> {
         for file in self.files.values_mut() {
             file.sync()?;
@@ -460,17 +460,17 @@ impl FileManager {
         Ok(())
     }
 
-    /// Возвращает информацию о файле
+    /// Returns file information
     pub fn get_file_info(&self, file_id: FileId) -> Option<&DatabaseFile> {
         self.files.get(&file_id)
     }
 
-    /// Возвращает список открытых файлов
+    /// Returns list of open files
     pub fn list_open_files(&self) -> Vec<FileId> {
         self.files.keys().cloned().collect()
     }
 
-    /// Закрывает все открытые файлы
+    /// Closes all open files
     pub fn close_all(&mut self) -> Result<()> {
         let file_ids: Vec<FileId> = self.files.keys().cloned().collect();
         for file_id in file_ids {
@@ -479,11 +479,11 @@ impl FileManager {
         Ok(())
     }
 
-    /// Удаляет файл с диска
+    /// Deletes a file from disk
     pub fn delete_file(&mut self, filename: &str) -> Result<()> {
         let file_path = self.root_dir.join(filename);
 
-        // Закрываем файл если он открыт
+        // Close file if it's open
         let file_id_to_close = self
             .files
             .iter()
@@ -494,7 +494,7 @@ impl FileManager {
             self.close_file(file_id)?;
         }
 
-        // Удаляем файл
+        // Delete the file
         if file_path.exists() {
             std::fs::remove_file(file_path)?;
         }
@@ -551,10 +551,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.db");
 
-        // Создаем файл
+        // Create file
         let _db_file = DatabaseFile::create(1, &file_path)?;
 
-        // Открываем файл
+        // Open file
         let db_file = DatabaseFile::open(2, &file_path, false)?;
         assert_eq!(db_file.file_id, 2);
         assert_eq!(db_file.path, file_path);
@@ -570,13 +570,13 @@ mod tests {
 
         let mut db_file = DatabaseFile::create(1, &file_path)?;
 
-        // Создаем тестовые данные
+        // Prepare test data
         let test_data = vec![42u8; BLOCK_SIZE];
 
-        // Записываем блок
+        // Write block
         db_file.write_block(0, &test_data)?;
 
-        // Читаем блок
+        // Read block
         let read_data = db_file.read_block(0)?;
         assert_eq!(read_data, test_data);
 
@@ -588,21 +588,21 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let mut manager = FileManager::new(temp_dir.path())?;
 
-        // Создаем файл
+        // Create file
         let file_id = manager.create_file("test.db")?;
 
-        // Записываем данные
+        // Write data
         let test_data = vec![123u8; BLOCK_SIZE];
         manager.write_block(file_id, 0, &test_data)?;
 
-        // Читаем данные
+        // Read data
         let read_data = manager.read_block(file_id, 0)?;
         assert_eq!(read_data, test_data);
 
-        // Синхронизируем
+        // Sync to disk
         manager.sync_file(file_id)?;
 
-        // Закрываем файл
+        // Close file
         manager.close_file(file_id)?;
 
         Ok(())
@@ -615,14 +615,14 @@ mod tests {
 
         let mut db_file = DatabaseFile::create(1, &file_path)?;
 
-        // Изначально файл пустой
+        // File initially empty
         assert_eq!(db_file.size_in_blocks(), 0);
 
-        // Записываем блок с большим ID
+        // Write block with higher index
         let test_data = vec![1u8; BLOCK_SIZE];
         db_file.write_block(10, &test_data)?;
 
-        // Файл должен расшириться
+        // File should expand
         assert_eq!(db_file.size_in_blocks(), 11);
         assert_eq!(db_file.used_blocks(), 11);
 

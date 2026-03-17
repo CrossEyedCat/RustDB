@@ -1,4 +1,4 @@
-//! Тесты для расширенного оптимизатора запросов
+//! Advanced query optimizer tests
 
 use crate::catalog::statistics::StatisticsManager;
 use crate::planner::advanced_optimizer::{
@@ -43,7 +43,7 @@ fn test_advanced_optimizer_default_settings() {
     let optimizer = AdvancedQueryOptimizer::new().unwrap();
     let settings = optimizer.settings();
 
-    // Проверяем значения по умолчанию
+    // Validate default settings
     assert_eq!(settings.enable_statistics_usage, true);
     assert_eq!(settings.enable_query_rewriting, true);
     assert_eq!(settings.enable_expression_simplification, true);
@@ -57,7 +57,7 @@ fn test_advanced_optimizer_settings_update() {
     let mut optimizer = AdvancedQueryOptimizer::new().unwrap();
     let original_settings = optimizer.settings().clone();
 
-    // Создаем новые настройки
+    // Build new settings
     let new_settings = AdvancedOptimizerSettings {
         enable_statistics_usage: false,
         enable_query_rewriting: false,
@@ -67,10 +67,10 @@ fn test_advanced_optimizer_settings_update() {
         cost_threshold: 5000.0,
     };
 
-    // Обновляем настройки
+    // Apply updated settings
     optimizer.update_settings(new_settings.clone());
 
-    // Проверяем, что настройки обновились
+    // Ensure new settings took effect
     assert_eq!(
         optimizer.settings().enable_statistics_usage,
         new_settings.enable_statistics_usage
@@ -96,7 +96,7 @@ fn test_advanced_optimizer_settings_update() {
         new_settings.cost_threshold
     );
 
-    // Проверяем, что настройки отличаются от исходных
+    // Confirm settings differ from the original
     assert_ne!(
         optimizer.settings().enable_statistics_usage,
         original_settings.enable_statistics_usage
@@ -115,7 +115,7 @@ fn test_advanced_optimizer_settings_update() {
 fn test_advanced_optimizer_statistics() {
     let mut optimizer = AdvancedQueryOptimizer::new().unwrap();
 
-    // Проверяем начальную статистику
+    // Inspect initial statistics
     let initial_stats = optimizer.statistics();
     assert_eq!(initial_stats.optimizations_applied, 0);
     assert_eq!(initial_stats.optimization_time_ms, 0);
@@ -125,10 +125,10 @@ fn test_advanced_optimizer_statistics() {
     assert_eq!(initial_stats.subquery_extractions, 0);
     assert_eq!(initial_stats.statistics_usage_count, 0);
 
-    // Сбрасываем статистику
+    // Reset statistics
     optimizer.reset_statistics();
 
-    // Проверяем, что статистика сброшена
+    // Confirm statistics were cleared
     let reset_stats = optimizer.statistics();
     assert_eq!(reset_stats.optimizations_applied, 0);
     assert_eq!(reset_stats.optimization_time_ms, 0);
@@ -139,11 +139,11 @@ fn test_advanced_optimizer_statistics() {
 fn test_advanced_optimizer_statistics_manager_access() {
     let optimizer = AdvancedQueryOptimizer::new().unwrap();
 
-    // Проверяем доступ к менеджеру статистики
+    // Verify access to statistics manager
     let stats_manager = optimizer.statistics_manager();
     assert!(stats_manager.get_table_statistics("test_table").is_none());
 
-    // Проверяем доступ для изменения
+    // Verify mutable access
     let mut optimizer = AdvancedQueryOptimizer::new().unwrap();
     let stats_manager_mut = optimizer.statistics_manager_mut();
     assert!(stats_manager_mut
@@ -155,21 +155,21 @@ fn test_advanced_optimizer_statistics_manager_access() {
 fn test_advanced_optimizer_with_test_plan() {
     let mut optimizer = AdvancedQueryOptimizer::new().unwrap();
 
-    // Создаем тестовый план
+    // Create a test plan
     let test_plan = create_test_execution_plan().unwrap();
 
-    // Применяем оптимизацию
+    // Apply optimization
     let result = optimizer.optimize_with_statistics(test_plan);
     assert!(result.is_ok());
 
     let result = result.unwrap();
 
-    // Проверяем структуру результата
+    // Inspect result structure
     assert!(result.statistics.optimization_time_ms >= 0);
     assert!(result.optimized_plan.metadata.estimated_cost >= 0.0);
     assert!(result.optimized_plan.metadata.estimated_rows > 0);
 
-    // Проверяем, что использовалась статистика
+    // Ensure statistics were utilized
     assert!(!result.used_statistics.is_empty());
 }
 
@@ -177,13 +177,13 @@ fn test_advanced_optimizer_with_test_plan() {
 fn test_advanced_optimizer_table_extraction() {
     let optimizer = AdvancedQueryOptimizer::new().unwrap();
 
-    // Создаем тестовый план с несколькими таблицами
+    // Build a test plan covering multiple tables
     let test_plan = create_test_execution_plan().unwrap();
 
-    // Извлекаем имена таблиц
+    // Extract table names
     let table_names = optimizer.extract_table_names_from_plan(&test_plan);
 
-    // Проверяем, что найдены все таблицы
+    // Confirm tables were detected
     assert!(table_names.contains(&"users".to_string()));
     assert!(table_names.len() >= 1);
 }
@@ -192,7 +192,7 @@ fn test_advanced_optimizer_table_extraction() {
 fn test_advanced_optimizer_cost_estimation() {
     let optimizer = AdvancedQueryOptimizer::new().unwrap();
 
-    // Создаем простой узел TableScan
+    // Create a simple TableScan node
     let table_scan = PlanNode::TableScan(TableScanNode {
         table_name: "test_table".to_string(),
         alias: None,
@@ -202,7 +202,7 @@ fn test_advanced_optimizer_cost_estimation() {
         estimated_rows: 1000,
     });
 
-    // Оцениваем стоимость
+    // Estimate cost
     let cost = optimizer.estimate_node_cost(&table_scan);
     assert_eq!(cost, 100.0);
 }
@@ -211,7 +211,7 @@ fn test_advanced_optimizer_cost_estimation() {
 fn test_advanced_optimizer_child_nodes_extraction() {
     let optimizer = AdvancedQueryOptimizer::new().unwrap();
 
-    // Создаем узел Filter с дочерним узлом
+    // Create a Filter node with a child
     let child_node = PlanNode::TableScan(TableScanNode {
         table_name: "child_table".to_string(),
         alias: None,
@@ -228,14 +228,14 @@ fn test_advanced_optimizer_child_nodes_extraction() {
         cost: 25.0,
     });
 
-    // Извлекаем дочерние узлы
+    // Extract child nodes
     let child_nodes = optimizer.get_child_nodes(&filter_node);
     assert_eq!(child_nodes.len(), 1);
 }
 
-/// Создание тестового плана выполнения
+/// Constructs a sample execution plan
 fn create_test_execution_plan() -> Result<ExecutionPlan, Box<dyn std::error::Error>> {
-    // Создаем узлы плана
+    // Build plan nodes
     let users_scan = PlanNode::TableScan(TableScanNode {
         table_name: "users".to_string(),
         alias: Some("u".to_string()),
@@ -252,7 +252,7 @@ fn create_test_execution_plan() -> Result<ExecutionPlan, Box<dyn std::error::Err
         cost: 300.0,
     });
 
-    // Создаем метаданные плана
+    // Build plan metadata
     let metadata = PlanMetadata {
         estimated_cost: 1300.0,
         estimated_rows: 7000,
@@ -275,11 +275,11 @@ fn create_test_execution_plan() -> Result<ExecutionPlan, Box<dyn std::error::Err
 fn test_advanced_optimizer_condition_simplification() {
     let optimizer = AdvancedQueryOptimizer::new().unwrap();
 
-    // Тестируем упрощение условия
+    // Evaluate predicate simplification
     let condition = "a > 5 AND a > 3";
     let simplified = optimizer.simplify_condition(condition).unwrap();
 
-    // В текущей упрощенной реализации условие не изменяется
+    // Current simplified implementation leaves predicate unchanged
     assert_eq!(simplified, condition);
 }
 
@@ -287,7 +287,7 @@ fn test_advanced_optimizer_condition_simplification() {
 fn test_advanced_optimizer_join_order_optimization() {
     let optimizer = AdvancedQueryOptimizer::new().unwrap();
 
-    // Создаем тестовые узлы для JOIN
+    // Create test nodes for a JOIN
     let left_node = PlanNode::TableScan(TableScanNode {
         table_name: "left_table".to_string(),
         alias: None,
@@ -306,7 +306,7 @@ fn test_advanced_optimizer_join_order_optimization() {
         estimated_rows: 5000,
     });
 
-    // Создаем JOIN узел
+    // Construct JOIN node
     let join_node = crate::planner::planner::JoinNode {
         join_type: crate::planner::planner::JoinType::Inner,
         condition: "left_table.id = right_table.id".to_string(),
@@ -315,12 +315,12 @@ fn test_advanced_optimizer_join_order_optimization() {
         cost: 1500.0,
     };
 
-    // Оптимизируем порядок JOIN
+    // Optimize join order
     let optimized_join = optimizer
         .optimize_join_order(&join_node, &left_node, &right_node)
         .unwrap();
 
-    // Проверяем, что JOIN узел создан корректно
+    // Confirm join node is constructed correctly
     assert_eq!(optimized_join.join_type, join_node.join_type);
     assert_eq!(optimized_join.condition, join_node.condition);
     assert_eq!(optimized_join.cost, join_node.cost);
@@ -330,13 +330,13 @@ fn test_advanced_optimizer_join_order_optimization() {
 fn test_advanced_optimizer_statistics_integration() {
     let mut optimizer = AdvancedQueryOptimizer::new().unwrap();
 
-    // Собираем статистику для таблицы
+    // Collect statistics for table
     let stats_manager = optimizer.statistics_manager_mut();
     stats_manager
         .collect_table_statistics("test_table")
         .unwrap();
 
-    // Проверяем, что статистика доступна
+    // Ensure statistics are accessible
     let table_stats = stats_manager.get_table_statistics("test_table");
     assert!(table_stats.is_some());
 

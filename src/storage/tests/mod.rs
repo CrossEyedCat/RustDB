@@ -1,7 +1,7 @@
-//! Тесты для модуля storage
+//! Tests for the storage module
 //!
-//! Этот модуль содержит все тесты для компонентов системы хранения данных,
-//! включая структуры данных, менеджеры файлов и системы оптимизации.
+//! This module aggregates tests for storage components, including data structures,
+//! file managers, and optimization systems.
 
 // pub mod page_tests;
 // pub mod block_tests;
@@ -17,4 +17,4 @@ pub mod page_manager_tests_simple;
 // pub mod database_file_tests;
 pub mod io_optimization_tests_simple;
 // pub mod optimized_file_manager_tests;
-// pub mod integration_tests; // Временно отключены из-за множественных ошибок API
+// pub mod integration_tests; // Temporarily disabled due to API churn

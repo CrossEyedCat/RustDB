@@ -1,4 +1,4 @@
-//! Общие типы и утилиты для rustdb
+//! Common types and utilities for rustdb
 
 pub mod config;
 pub mod constants;

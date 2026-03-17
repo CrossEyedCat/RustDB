@@ -1,4 +1,4 @@
-//! Упрощенные тесты для системы I/O оптимизации
+//! Simplified tests for the I/O optimization subsystem
 
 use crate::storage::io_optimization::{BufferedIoManager, IoBufferConfig, IoStatistics, PageCache};
 use std::time::Duration;
@@ -22,7 +22,7 @@ async fn test_buffered_io_manager_creation() {
     let config = create_test_io_config();
 
     let _io_manager = BufferedIoManager::new(config);
-    // Проверяем, что менеджер создается без ошибок
+    // Ensure the manager initializes without errors
     assert!(true);
 }
 
@@ -32,15 +32,15 @@ async fn test_page_cache_operations() {
     let page_data = vec![0xAB; 4096];
     let file_id = 1u32;
 
-    // Добавляем страницу в кэш
+    // Add page to cache
     cache.put(file_id, 1, page_data.clone());
 
-    // Проверяем, что страница есть в кэше
+    // Verify page is cached
     let cached_data = cache.get(file_id, 1);
     assert!(cached_data.is_some());
     assert_eq!(cached_data.unwrap(), page_data);
 
-    // Проверяем, что несуществующей страницы нет в кэше
+    // Ensure missing page is not cached
     let missing_data = cache.get(file_id, 999);
     assert!(missing_data.is_none());
 }
@@ -50,20 +50,20 @@ async fn test_page_cache_lru_eviction() {
     let mut cache = PageCache::new(3);
     let file_id = 1u32;
 
-    // Заполняем кэш
+    // Fill cache
     cache.put(file_id, 1, vec![1; 4096]);
     cache.put(file_id, 2, vec![2; 4096]);
     cache.put(file_id, 3, vec![3; 4096]);
 
-    // Все страницы должны быть в кэше
+    // All pages should be cached
     assert!(cache.get(file_id, 1).is_some());
     assert!(cache.get(file_id, 2).is_some());
     assert!(cache.get(file_id, 3).is_some());
 
-    // Добавляем еще одну страницу - должна вытеснить наименее используемую
+    // Add another page—should evict least recently used
     cache.put(file_id, 4, vec![4; 4096]);
 
-    // Проверяем, что одна из старых страниц была вытеснена
+    // Confirm an older page was evicted
     let remaining_pages = [
         cache.get(file_id, 1).is_some(),
         cache.get(file_id, 2).is_some(),
@@ -73,7 +73,7 @@ async fn test_page_cache_lru_eviction() {
     let remaining_count = remaining_pages.iter().filter(|&&x| x).count();
     assert_eq!(remaining_count, 2);
 
-    // Новая страница должна быть в кэше
+    // New page must be cached
     assert!(cache.get(file_id, 4).is_some());
 }
 
@@ -81,13 +81,13 @@ async fn test_page_cache_lru_eviction() {
 async fn test_io_statistics() {
     let mut stats = IoStatistics::default();
 
-    // Изначально статистика пустая
+    // Statistics start at zero
     assert_eq!(stats.read_operations, 0);
     assert_eq!(stats.write_operations, 0);
     assert_eq!(stats.cache_hits, 0);
     assert_eq!(stats.cache_misses, 0);
 
-    // Обновляем статистику вручную
+    // Manually update statistics
     stats.read_operations += 1;
     stats.write_operations += 1;
     stats.cache_hits += 1;
@@ -108,7 +108,7 @@ async fn test_io_manager_basic_functionality() {
 
     let _io_manager = BufferedIoManager::new(config);
 
-    // Проверяем создание менеджера (API изменился)
+    // Basic sanity check for manager creation (API changed)
     let mut stats = IoStatistics::default();
     stats.write_operations = 1;
     assert!(stats.write_operations >= 0);
@@ -122,7 +122,7 @@ async fn test_cache_configuration() {
 
     let _io_manager = BufferedIoManager::new(config);
 
-    // Имитируем операции
+    // Simulate operations
     let mut stats = IoStatistics::default();
     stats.cache_hits = 2;
     stats.cache_misses = 3;
@@ -138,7 +138,7 @@ async fn test_buffer_configuration() {
 
     let _io_manager = BufferedIoManager::new(config);
 
-    // Имитируем переполнение буфера
+    // Simulate buffer overflow scenario
     let mut stats = IoStatistics::default();
     stats.write_operations = 10;
     stats.sync_operations = 3;
@@ -155,7 +155,7 @@ async fn test_prefetch_configuration() {
 
     let _io_manager = BufferedIoManager::new(config);
 
-    // Имитируем операции prefetch
+    // Simulate prefetch operations
     let mut stats = IoStatistics::default();
     stats.read_operations = 12;
 
@@ -164,7 +164,7 @@ async fn test_prefetch_configuration() {
 
 #[test]
 fn test_io_buffer_config_validation() {
-    // Корректная конфигурация
+    // Valid configuration
     let valid_config = IoBufferConfig {
         max_write_buffer_size: 1000,
         max_buffer_time: Duration::from_millis(100),
@@ -175,12 +175,12 @@ fn test_io_buffer_config_validation() {
         prefetch_window_size: 10,
     };
 
-    // Проверяем, что конфигурация создается без ошибок
+    // Ensure configuration values are acceptable
     assert!(valid_config.max_write_buffer_size > 0);
     assert!(valid_config.page_cache_size > 0);
     assert!(valid_config.prefetch_window_size > 0);
 
-    // Граничные значения
+    // Boundary configuration
     let minimal_config = IoBufferConfig {
         max_write_buffer_size: 1,
         max_buffer_time: Duration::from_millis(1),
@@ -203,7 +203,7 @@ async fn test_performance_simulation() {
 
     let _io_manager = BufferedIoManager::new(config);
 
-    // Имитируем операции производительности
+    // Simulate performance workload
     let mut stats = IoStatistics::default();
     stats.write_operations = 5;
     stats.read_operations = 5;
@@ -211,7 +211,7 @@ async fn test_performance_simulation() {
     stats.total_execution_time_us = 50000;
     stats.average_execution_time_us = 5000;
 
-    // Проверяем метрики
+    // Validate metrics
     assert!(stats.total_operations > 0);
     assert!(stats.average_execution_time_us < 1000000);
 }
@@ -223,7 +223,7 @@ async fn test_error_handling_simulation() {
 
     let _io_manager = BufferedIoManager::new(config);
 
-    // Имитируем обработку ошибок
+    // Simulate error handling
     let mut stats = IoStatistics::default();
     stats.read_operations = 1;
     stats.write_operations = 1;
