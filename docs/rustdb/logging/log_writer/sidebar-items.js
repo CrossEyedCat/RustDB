@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["SyncLevel"],"struct":["LogFileInfo","LogWriteRequest","LogWriter","LogWriterConfig","LogWriterStatistics"]};
+window.SIDEBAR_ITEMS = {"enum":["SyncLevel"],"struct":["LogFileInfo","LogFileState","LogWriteRequest","LogWriter","LogWriterConfig","LogWriterStatistics"]};

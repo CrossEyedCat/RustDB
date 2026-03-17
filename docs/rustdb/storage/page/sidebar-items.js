@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["PageType"],"struct":["CompactPage","Page","PageHeader","PageManager","RecordSlot"]};
+window.SIDEBAR_ITEMS = {"constant":["SLOTTED_DATA_OFFSET","SLOTTED_HEADER_OFFSET","SLOTTED_HEADER_SIZE","SLOTTED_PAGE_MAGIC","SLOT_SIZE"],"enum":["PageType"],"struct":["CompactPage","Page","PageHeader","PageManager","RecordSlot"]};
