@@ -420,9 +420,13 @@ impl LogWriter {
             let mut buffer = write_buffer.lock().unwrap();
             buffer.push_back(request.record.clone());
         }
+        let is_sync_request = request.force_sync;
         {
             let mut stats = statistics.write().unwrap();
             stats.total_records_written += 1;
+            if is_sync_request {
+                stats.sync_operations += 1;
+            }
             if let Ok(serialized) = request.record.serialize() {
                 stats.total_bytes_written += serialized.len() as u64;
             }
@@ -465,7 +469,7 @@ impl LogWriter {
         // Update remaining statistics (before notify so caller sees consistent state)
         {
             let mut stats = statistics.write().unwrap();
-            if request.force_sync || legacy_response_tx.is_some() {
+            if !is_sync_request && legacy_response_tx.is_some() {
                 stats.sync_operations += 1;
             }
 
