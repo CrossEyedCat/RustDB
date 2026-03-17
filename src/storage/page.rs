@@ -421,9 +421,7 @@ impl Page {
             }
         }
 
-        Err(Error::validation(
-            "Not enough free space on the page",
-        ))
+        Err(Error::validation("Not enough free space on the page"))
     }
 
     /// Updates the free space map

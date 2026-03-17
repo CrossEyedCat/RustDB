@@ -407,8 +407,7 @@ impl CheckpointManager {
 
         println!(
             "   ✅ Checkpoint {} created in {} ms",
-            checkpoint_id,
-            creation_time_ms
+            checkpoint_id, creation_time_ms
         );
 
         Ok(checkpoint_info)
@@ -446,13 +445,11 @@ impl CheckpointManager {
                 trigger: CheckpointTrigger::Manual,
                 response_tx: Some(response_tx),
             })
-            .map_err(|_| {
-                Error::internal("Failed to send checkpoint creation command")
-            })?;
+            .map_err(|_| Error::internal("Failed to send checkpoint creation command"))?;
 
-        response_rx.await.map_err(|_| {
-            Error::internal("Failed to receive checkpoint creation result")
-        })?
+        response_rx
+            .await
+            .map_err(|_| Error::internal("Failed to receive checkpoint creation result"))?
     }
 
     /// Creates a checkpoint during shutdown
@@ -464,13 +461,11 @@ impl CheckpointManager {
                 trigger: CheckpointTrigger::Shutdown,
                 response_tx: Some(response_tx),
             })
-            .map_err(|_| {
-                Error::internal("Failed to send shutdown checkpoint command")
-            })?;
+            .map_err(|_| Error::internal("Failed to send shutdown checkpoint command"))?;
 
-        response_rx.await.map_err(|_| {
-            Error::internal("Failed to receive shutdown checkpoint result")
-        })?
+        response_rx
+            .await
+            .map_err(|_| Error::internal("Failed to receive shutdown checkpoint result"))?
     }
 
     /// Returns checkpoint statistics

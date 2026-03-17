@@ -407,24 +407,15 @@ impl Profiler {
             "  Profiling duration: {} seconds\n",
             stats.profiling_duration_seconds
         ));
-        report.push_str(&format!(
-            "  Snapshot count: {}\n",
-            stats.total_snapshots
-        ));
+        report.push_str(&format!("  Snapshot count: {}\n", stats.total_snapshots));
         report.push_str(&format!("  Snapshot interval: 100 ms\n"));
         report.push_str("\n");
 
         // CPU statistics
         if self.config.enable_cpu_profiling {
             report.push_str("CPU statistics:\n");
-            report.push_str(&format!(
-                "  Average usage: {:.1}%\n",
-                stats.avg_cpu_usage
-            ));
-            report.push_str(&format!(
-                "  Peak usage: {:.1}%\n",
-                stats.max_cpu_usage
-            ));
+            report.push_str(&format!("  Average usage: {:.1}%\n", stats.avg_cpu_usage));
+            report.push_str(&format!("  Peak usage: {:.1}%\n", stats.max_cpu_usage));
             report.push_str("\n");
         }
 
@@ -435,10 +426,7 @@ impl Profiler {
                 "  Average usage: {:.1}%\n",
                 stats.avg_memory_usage
             ));
-            report.push_str(&format!(
-                "  Peak usage: {:.1}%\n",
-                stats.max_memory_usage
-            ));
+            report.push_str(&format!("  Peak usage: {:.1}%\n", stats.max_memory_usage));
             report.push_str(&format!(
                 "  Average process memory: {:.1} MB\n",
                 stats.avg_process_memory_mb
@@ -474,16 +462,13 @@ impl Profiler {
         // Recommendations
         report.push_str("Recommendations:\n");
         if stats.avg_cpu_usage > 80.0 {
-            report
-                .push_str("  ⚠️  High CPU usage detected. Consider optimizing algorithms.\n");
+            report.push_str("  ⚠️  High CPU usage detected. Consider optimizing algorithms.\n");
         }
         if stats.avg_memory_usage > 90.0 {
             report.push_str("  ⚠️  High memory usage. Inspect for memory leaks.\n");
         }
         if stats.max_process_memory_mb > 1000.0 {
-            report.push_str(
-                "  ⚠️  Process memory is large. Optimize data structures.\n",
-            );
+            report.push_str("  ⚠️  Process memory is large. Optimize data structures.\n");
         }
 
         if stats.avg_cpu_usage <= 80.0
@@ -533,14 +518,8 @@ impl Profiler {
         let mut report = String::new();
 
         report.push_str(&format!("Profiling active: {}\n", is_profiling));
-        report.push_str(&format!(
-            "Snapshots stored in memory: {}\n",
-            snapshot_count
-        ));
-        report.push_str(&format!(
-            "Total snapshots: {}\n",
-            stats.total_snapshots
-        ));
+        report.push_str(&format!("Snapshots stored in memory: {}\n", snapshot_count));
+        report.push_str(&format!("Total snapshots: {}\n", stats.total_snapshots));
         report.push_str(&format!(
             "CPU profiling: {}\n",
             self.config.enable_cpu_profiling

@@ -282,21 +282,17 @@ impl CombinedStatistics {
         }
 
         if self.average_utilization < 0.6 {
-            recommendations
-                .push("Low space utilization, consider file compression".to_string());
+            recommendations.push("Low space utilization, consider file compression".to_string());
         }
 
         if self.read_throughput < 1_000_000.0 {
             // < 1MB/s
-            recommendations.push(
-                "Low read throughput, check disk subsystem".to_string(),
-            );
+            recommendations.push("Low read throughput, check disk subsystem".to_string());
         }
 
         if self.write_throughput < 500_000.0 {
             // < 500KB/s
-            recommendations
-                .push("Low write throughput, consider SSD".to_string());
+            recommendations.push("Low write throughput, consider SSD".to_string());
         }
 
         if recommendations.is_empty() {

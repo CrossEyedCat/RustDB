@@ -223,7 +223,10 @@ impl DatabaseFile {
     /// Reads a data block from the file
     pub fn read_block(&mut self, block_id: BlockId) -> Result<Vec<u8>> {
         if block_id >= self.header.total_blocks as u64 {
-            return Err(Error::database(format!("Block {} does not exist", block_id)));
+            return Err(Error::database(format!(
+                "Block {} does not exist",
+                block_id
+            )));
         }
 
         // Calculate block position in file (data starts from first block after header)

@@ -165,10 +165,7 @@ impl DebugManager {
             "  - Memory profiling: {}\n",
             self.config.enable_memory_profiling
         ));
-        report.push_str(&format!(
-            "  - Detail level: {}\n",
-            self.config.detail_level
-        ));
+        report.push_str(&format!("  - Detail level: {}\n", self.config.detail_level));
         report.push_str(&format!(
             "  - Prometheus export: {}\n",
             self.config.enable_prometheus_export

@@ -387,7 +387,10 @@ impl AdvancedRecoveryManager {
 
         // Rollback active transactions (in reverse order)
         for tx_info in analysis.active_transactions.values() {
-            println!("   ↩️  Rolling back transaction TXN{}", tx_info.transaction_id);
+            println!(
+                "   ↩️  Rolling back transaction TXN{}",
+                tx_info.transaction_id
+            );
 
             // Operations in reverse order
             for operation in tx_info.operations.iter().rev() {

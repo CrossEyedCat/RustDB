@@ -548,9 +548,7 @@ impl SqlParser {
             self.advance();
             self.parse_create_table()
         } else {
-            Err(Error::parser(
-                "Only CREATE TABLE is supported".to_string(),
-            ))
+            Err(Error::parser("Only CREATE TABLE is supported".to_string()))
         }
     }
 
@@ -651,10 +649,7 @@ impl SqlParser {
                         "DATE" => Ok(DataType::Date),
                         "TIME" => Ok(DataType::Time),
                         "TIMESTAMP" => Ok(DataType::Timestamp),
-                        _ => Err(Error::parser(format!(
-                            "Unknown data type: {}",
-                            type_name
-                        ))),
+                        _ => Err(Error::parser(format!("Unknown data type: {}", type_name))),
                     }
                 }
                 _ => Err(Error::parser("Expected data type".to_string())),

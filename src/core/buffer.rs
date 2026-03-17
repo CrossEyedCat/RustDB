@@ -345,9 +345,7 @@ impl BufferManager {
             attempts += 1;
         }
 
-        Err(Error::validation(
-            "Failed to find page for eviction",
-        ))
+        Err(Error::validation("Failed to find page for eviction"))
     }
 
     /// Evicts page using adaptive strategy

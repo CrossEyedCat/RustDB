@@ -354,9 +354,7 @@ impl FreePageMap {
     /// Adds a free page block
     pub fn add_free_block(&mut self, start_page: PageId, page_count: u32) -> Result<()> {
         if page_count == 0 {
-            return Err(Error::validation(
-                "Page count cannot be zero",
-            ));
+            return Err(Error::validation("Page count cannot be zero"));
         }
 
         // Check for intersections with existing blocks
@@ -480,15 +478,11 @@ impl FreePageMap {
     /// Validates map integrity
     pub fn validate(&self) -> Result<()> {
         if self.header.magic != Self::MAGIC {
-            return Err(Error::validation(
-                "Invalid free page map magic number",
-            ));
+            return Err(Error::validation("Invalid free page map magic number"));
         }
 
         if self.header.version != Self::VERSION {
-            return Err(Error::validation(
-                "Unsupported free page map version",
-            ));
+            return Err(Error::validation("Unsupported free page map version"));
         }
 
         // Check for block intersections

@@ -480,10 +480,7 @@ impl DebugLogger {
         let stats = self.get_stats();
         let mut report = String::new();
 
-        report.push_str(&format!(
-            "Total entries: {}\n",
-            stats.total_entries
-        ));
+        report.push_str(&format!("Total entries: {}\n", stats.total_entries));
         report.push_str(&format!("Log file size: {} bytes\n", stats.log_file_size));
         report.push_str(&format!("Write errors: {}\n", stats.write_errors));
 

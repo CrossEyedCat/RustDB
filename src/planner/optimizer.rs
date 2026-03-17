@@ -193,10 +193,7 @@ impl QueryOptimizer {
         }
 
         if pushed_down {
-            Ok(Some((
-                new_plan,
-                "Predicate pushdown applied".to_string(),
-            )))
+            Ok(Some((new_plan, "Predicate pushdown applied".to_string())))
         } else {
             Ok(None)
         }

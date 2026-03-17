@@ -285,10 +285,7 @@ impl SchemaManager {
     ) -> Result<()> {
         // Check that the old column exists
         if !schema.has_column(old_name) {
-            return Err(Error::validation(format!(
-                "Column {} not found",
-                old_name
-            )));
+            return Err(Error::validation(format!("Column {} not found", old_name)));
         }
 
         // Check that the new name is not taken
@@ -367,10 +364,7 @@ impl SchemaManager {
         // Check that the index exists
         let exists = schema.base.indexes.iter().any(|i| i.name == *index_name);
         if !exists {
-            return Err(Error::validation(format!(
-                "Index {} not found",
-                index_name
-            )));
+            return Err(Error::validation(format!("Index {} not found", index_name)));
         }
 
         Ok(())
@@ -736,9 +730,7 @@ impl SchemaValidator for BasicSchemaValidator {
     fn validate_schema(&self, schema: &Schema) -> Result<()> {
         // Check that the table has columns
         if schema.get_columns().is_empty() {
-            return Err(Error::validation(
-                "Table must contain at least one column",
-            ));
+            return Err(Error::validation("Table must contain at least one column"));
         }
 
         // Check that the primary key references existing columns

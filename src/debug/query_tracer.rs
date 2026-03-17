@@ -450,14 +450,8 @@ impl QueryTracer {
 
             report.push_str("Execution time:\n");
             report.push_str(&format!("  Average: {:.2} ms\n", avg_time as f64 / 1000.0));
-            report.push_str(&format!(
-                "  Minimum: {:.2} ms\n",
-                min_time as f64 / 1000.0
-            ));
-            report.push_str(&format!(
-                "  Maximum: {:.2} ms\n",
-                max_time as f64 / 1000.0
-            ));
+            report.push_str(&format!("  Minimum: {:.2} ms\n", min_time as f64 / 1000.0));
+            report.push_str(&format!("  Maximum: {:.2} ms\n", max_time as f64 / 1000.0));
             report.push_str("\n");
 
             report.push_str("Data processing:\n");

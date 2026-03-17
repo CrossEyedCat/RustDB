@@ -157,9 +157,8 @@ impl LogWriter {
     pub fn new(config: LogWriterConfig) -> Result<Self> {
         // Create log directory if it does not exist
         if !config.log_directory.exists() {
-            std::fs::create_dir_all(&config.log_directory).map_err(|e| {
-                Error::internal(&format!("Failed to create log directory: {}", e))
-            })?;
+            std::fs::create_dir_all(&config.log_directory)
+                .map_err(|e| Error::internal(&format!("Failed to create log directory: {}", e)))?;
         }
 
         let (write_tx, write_rx) = mpsc::unbounded_channel();
@@ -204,13 +203,13 @@ impl LogWriter {
         let mut max_lsn = 0;
 
         if self.config.log_directory.exists() {
-            let entries = std::fs::read_dir(&self.config.log_directory).map_err(|e| {
-                Error::internal(&format!("Failed to read log directory: {}", e))
-            })?;
+            let entries = std::fs::read_dir(&self.config.log_directory)
+                .map_err(|e| Error::internal(&format!("Failed to read log directory: {}", e)))?;
 
             for entry in entries {
-                let entry = entry
-                    .map_err(|e| Error::internal(&format!("Failed to read directory entry: {}", e)))?;
+                let entry = entry.map_err(|e| {
+                    Error::internal(&format!("Failed to read directory entry: {}", e))
+                })?;
                 let path = entry.path();
 
                 if path.extension().and_then(|s| s.to_str()) == Some("log") {
@@ -242,9 +241,8 @@ impl LogWriter {
 
     /// Analyzes a log file and returns metadata
     fn analyze_log_file(&self, path: &Path) -> Result<LogFileInfo> {
-        let metadata = std::fs::metadata(path).map_err(|e| {
-            Error::internal(&format!("Failed to obtain file metadata: {}", e))
-        })?;
+        let metadata = std::fs::metadata(path)
+            .map_err(|e| Error::internal(&format!("Failed to obtain file metadata: {}", e)))?;
 
         let filename = path
             .file_name()
@@ -446,9 +444,9 @@ impl LogWriter {
             .send(request)
             .map_err(|_| Error::internal("Failed to send synchronous log write request"))?;
 
-        response_rx.await.map_err(|_| {
-            Error::internal("Failed to receive synchronous log write result")
-        })??;
+        response_rx
+            .await
+            .map_err(|_| Error::internal("Failed to receive synchronous log write result"))??;
 
         Ok(record.lsn)
     }

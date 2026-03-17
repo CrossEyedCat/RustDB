@@ -401,9 +401,7 @@ impl WriteAheadLog {
             let mut transactions = self.transactions.write().unwrap();
             if let Some(tx_info) = transactions.get_mut(&transaction_id) {
                 if tx_info.state == TransactionState::Committed {
-                    return Err(Error::database(
-                        "Cannot abort committed transaction",
-                    ));
+                    return Err(Error::database("Cannot abort committed transaction"));
                 }
 
                 tx_info.state = TransactionState::Aborted;
@@ -761,7 +759,9 @@ impl WriteAheadLog {
             }
         }
 
-        Err(Error::database("Timeout waiting for transaction completion"))
+        Err(Error::database(
+            "Timeout waiting for transaction completion",
+        ))
     }
 }
 

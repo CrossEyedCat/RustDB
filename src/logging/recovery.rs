@@ -264,9 +264,8 @@ impl RecoveryManager {
             return Ok(files);
         }
 
-        let entries = std::fs::read_dir(log_directory).map_err(|e| {
-            Error::internal(&format!("Failed to read log directory: {}", e))
-        })?;
+        let entries = std::fs::read_dir(log_directory)
+            .map_err(|e| Error::internal(&format!("Failed to read log directory: {}", e)))?;
 
         for entry in entries {
             let entry =
@@ -274,9 +273,8 @@ impl RecoveryManager {
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) == Some("log") {
-                let metadata = std::fs::metadata(&path).map_err(|e| {
-                    Error::internal(&format!("Failed to get file metadata: {}", e))
-                })?;
+                let metadata = std::fs::metadata(&path)
+                    .map_err(|e| Error::internal(&format!("Failed to get file metadata: {}", e)))?;
 
                 let file_info = LogFileInfo {
                     filename: path

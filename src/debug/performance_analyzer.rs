@@ -368,13 +368,10 @@ impl PerformanceAnalyzer {
 
         // Generate overall recommendations
         if overall_score < 70.0 {
-            recommendations.push(
-                "Critical performance. Immediate action required.".to_string(),
-            );
+            recommendations.push("Critical performance. Immediate action required.".to_string());
         } else if overall_score < 85.0 {
-            recommendations.push(
-                "Performance below optimal. Optimization recommended.".to_string(),
-            );
+            recommendations
+                .push("Performance below optimal. Optimization recommended.".to_string());
         }
 
         if bottlenecks
@@ -389,16 +386,14 @@ impl PerformanceAnalyzer {
             .iter()
             .any(|b| matches!(b.bottleneck_type, BottleneckType::Memory))
         {
-            recommendations
-                .push("Check for memory leaks and optimize memory usage.".to_string());
+            recommendations.push("Check for memory leaks and optimize memory usage.".to_string());
         }
 
         if bottlenecks
             .iter()
             .any(|b| matches!(b.bottleneck_type, BottleneckType::Io))
         {
-            recommendations
-                .push("Optimize I/O operations and consider using SSDs.".to_string());
+            recommendations.push("Optimize I/O operations and consider using SSDs.".to_string());
         }
 
         PerformanceAnalysis {
@@ -587,10 +582,7 @@ impl PerformanceAnalyzer {
             "  Bottlenecks detected: {}\n",
             stats.total_bottlenecks
         ));
-        report.push_str(&format!(
-            "  Critical issues: {}\n",
-            stats.critical_issues
-        ));
+        report.push_str(&format!("  Critical issues: {}\n", stats.critical_issues));
         report.push_str(&format!(
             "  Average performance score: {:.1}/100\n",
             stats.avg_performance_score
@@ -654,12 +646,9 @@ impl PerformanceAnalyzer {
         // Improvement guidance
         report.push_str("Improvement guidance:\n");
         if stats.avg_performance_score < 70.0 {
-            report.push_str(
-                "  🔴 Critical performance degradation. Immediate action required.\n",
-            );
+            report.push_str("  🔴 Critical performance degradation. Immediate action required.\n");
         } else if stats.avg_performance_score < 85.0 {
-            report
-                .push_str("  🟡 Performance below optimal. Optimization recommended.\n");
+            report.push_str("  🟡 Performance below optimal. Optimization recommended.\n");
         } else {
             report.push_str("  🟢 Performance within normal range.\n");
         }

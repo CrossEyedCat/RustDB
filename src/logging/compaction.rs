@@ -191,8 +191,14 @@ impl CompactionManager {
         self.statistics.last_compaction_time = now;
 
         println!("   ✅ Compaction finished:");
-        println!("      💾 Space reclaimed: {} bytes", stats_update.space_saved);
-        println!("      📦 Files compressed: {}", stats_update.compressed_files);
+        println!(
+            "      💾 Space reclaimed: {} bytes",
+            stats_update.space_saved
+        );
+        println!(
+            "      📦 Files compressed: {}",
+            stats_update.compressed_files
+        );
         println!("      🗑️  Files deleted: {}", stats_update.deleted_files);
 
         Ok(self.statistics.clone())
@@ -220,9 +226,9 @@ impl CompactionManager {
             if path.extension().and_then(|s| s.to_str()) == Some("log")
                 || path.extension().and_then(|s| s.to_str()) == Some("gz")
             {
-                let metadata = tokio::fs::metadata(&path).await.map_err(|e| {
-                    Error::internal(&format!("Failed to obtain metadata: {}", e))
-                })?;
+                let metadata = tokio::fs::metadata(&path)
+                    .await
+                    .map_err(|e| Error::internal(&format!("Failed to obtain metadata: {}", e)))?;
 
                 let file_info = LogFileInfo {
                     filename: path
@@ -328,9 +334,9 @@ impl CompactionManager {
                 })?;
 
             // Remove original
-            tokio::fs::remove_file(&file.path).await.map_err(|e| {
-                Error::internal(&format!("Failed to remove original file: {}", e))
-            })?;
+            tokio::fs::remove_file(&file.path)
+                .await
+                .map_err(|e| Error::internal(&format!("Failed to remove original file: {}", e)))?;
 
             println!("      ✅ Archived to: {:?}", archive_path);
         }
@@ -360,9 +366,9 @@ impl CompactionManager {
 
     /// Compresses a specific file on demand
     pub async fn compress_specific_file(&mut self, file_path: &Path) -> Result<(u64, u64)> {
-        let metadata = tokio::fs::metadata(file_path).await.map_err(|e| {
-            Error::internal(&format!("Failed to obtain file metadata: {}", e))
-        })?;
+        let metadata = tokio::fs::metadata(file_path)
+            .await
+            .map_err(|e| Error::internal(&format!("Failed to obtain file metadata: {}", e)))?;
 
         let file_info = LogFileInfo {
             filename: file_path

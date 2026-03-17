@@ -393,10 +393,7 @@ impl AdvancedQueryOptimizer {
         }
 
         if extracted {
-            Ok(Some((
-                new_plan,
-                "Applied subquery extraction".to_string(),
-            )))
+            Ok(Some((new_plan, "Applied subquery extraction".to_string())))
         } else {
             Ok(None)
         }
