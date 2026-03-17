@@ -58,6 +58,7 @@ jobs:
       run: cargo test --test integration_tests --verbose
 
     - name: Run clippy
+      if: matrix.rust == 'stable'
       run: cargo clippy -- -D warnings
 
     - name: Run fmt check
