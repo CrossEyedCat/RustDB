@@ -18,7 +18,6 @@ Thumbs.db
 
 # Rust
 target/
-Cargo.lock
 
 # Logs
 *.log

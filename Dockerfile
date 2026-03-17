@@ -1,5 +1,5 @@
 # Многоэтапная сборка для RustDB
-FROM rust:1.75-slim as builder
+FROM rust:1.81-slim as builder
 
 # Установка системных зависимостей
 RUN apt-get update && apt-get install -y \
@@ -22,7 +22,6 @@ RUN cargo build --release && rm -rf src
 
 # Копирование исходного кода
 COPY src ./src
-COPY examples ./examples
 
 # Сборка приложения
 RUN cargo build --release
@@ -48,7 +47,6 @@ COPY --from=builder /app/target/release/rustdb /usr/local/bin/rustdb
 
 # Копирование конфигурационных файлов
 COPY config.toml /app/config/
-COPY --chown=rustdb:rustdb . /app/
 
 # Переключение на пользователя rustdb
 USER rustdb
