@@ -11,16 +11,8 @@ RUN apt-get update && apt-get install -y \
 # Создание рабочей директории
 WORKDIR /app
 
-# Копирование файлов зависимостей
+# Копирование файлов зависимостей и исходного кода
 COPY Cargo.toml Cargo.lock ./
-
-# Создание фиктивного main.rs для кэширования зависимостей
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-
-# Сборка зависимостей (кэширование)
-RUN cargo build --release && rm -rf src
-
-# Копирование исходного кода
 COPY src ./src
 
 # Сборка приложения
