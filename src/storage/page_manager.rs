@@ -347,12 +347,7 @@ impl PageManager {
 
         // Process in batches to avoid holding too many pages
         while !self.dirty_pages.is_empty() {
-            let page_ids: Vec<PageId> = self
-                .dirty_pages
-                .keys()
-                .take(batch_size)
-                .copied()
-                .collect();
+            let page_ids: Vec<PageId> = self.dirty_pages.keys().take(batch_size).copied().collect();
 
             for page_id in page_ids {
                 if let Some(page) = self.dirty_pages.remove(&page_id) {
@@ -444,7 +439,11 @@ impl PageManager {
     }
 
     /// Gets a single record for read-only access without adding page to dirty_pages.
-    fn get_record_from_page(&mut self, page_id: PageId, record_id: RecordId) -> Result<Option<Vec<u8>>> {
+    fn get_record_from_page(
+        &mut self,
+        page_id: PageId,
+        record_id: RecordId,
+    ) -> Result<Option<Vec<u8>>> {
         if let Some(page) = self.dirty_pages.get(&page_id) {
             return Ok(page.get_record(record_id).map(|s| s.to_vec()));
         }
@@ -517,7 +516,10 @@ impl PageManager {
         // Lock ordering: ascending page_id to prevent deadlock (store latches so we don't borrow self)
         let mut sorted_ids = [page_id, new_page_id];
         sorted_ids.sort_unstable();
-        let latches: Vec<PageLatch> = sorted_ids.iter().map(|&pid| self.get_page_latch(pid)).collect();
+        let latches: Vec<PageLatch> = sorted_ids
+            .iter()
+            .map(|&pid| self.get_page_latch(pid))
+            .collect();
         let _guards: Vec<_> = latches.iter().map(|l| l.write()).collect();
 
         // Load the overflowed page (from dirty_pages or disk)
@@ -727,7 +729,10 @@ impl PageManager {
         // Lock ordering: ascending page_id to prevent deadlock (store latches so we don't borrow self)
         let mut sorted_ids = [page_id1, page_id2];
         sorted_ids.sort_unstable();
-        let latches: Vec<PageLatch> = sorted_ids.iter().map(|&pid| self.get_page_latch(pid)).collect();
+        let latches: Vec<PageLatch> = sorted_ids
+            .iter()
+            .map(|&pid| self.get_page_latch(pid))
+            .collect();
         let _guards: Vec<_> = latches.iter().map(|l| l.write()).collect();
 
         // Load both pages (from dirty_pages or disk)

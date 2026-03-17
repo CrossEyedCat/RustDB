@@ -187,7 +187,9 @@ impl Page {
     /// Creates a page from bytes (deserialization)
     /// Detects format: slotted (magic RP) or legacy bincode
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() >= 2 && bytes[0] == SLOTTED_PAGE_MAGIC[0] && bytes[1] == SLOTTED_PAGE_MAGIC[1]
+        if bytes.len() >= 2
+            && bytes[0] == SLOTTED_PAGE_MAGIC[0]
+            && bytes[1] == SLOTTED_PAGE_MAGIC[1]
         {
             Self::from_bytes_slotted(bytes)
         } else {
@@ -267,7 +269,9 @@ impl Page {
             };
             slots.push(slot);
 
-            if !is_deleted && (offset as usize) < PAGE_SIZE && (offset as usize) + (size as usize) <= PAGE_SIZE
+            if !is_deleted
+                && (offset as usize) < PAGE_SIZE
+                && (offset as usize) + (size as usize) <= PAGE_SIZE
             {
                 let start = offset as usize;
                 let end = start + size as usize;
@@ -361,8 +365,7 @@ impl Page {
             let base = slot_start + i * SLOT_SIZE;
             buf[base..base + 2].copy_from_slice(&(slot.offset as u16).to_le_bytes());
             buf[base + 2..base + 4].copy_from_slice(&(slot.size as u16).to_le_bytes());
-            buf[base + 4..base + 8]
-                .copy_from_slice(&(slot.record_id as u32).to_le_bytes());
+            buf[base + 4..base + 8].copy_from_slice(&(slot.record_id as u32).to_le_bytes());
             buf[base + 8] = if slot.is_deleted { 1 } else { 0 };
         }
 
@@ -375,7 +378,9 @@ impl Page {
             .map(|s| (s.offset + s.size) as usize)
             .max()
             .unwrap_or(PAGE_HEADER_SIZE);
-        let copy_len = data_end.saturating_sub(PAGE_HEADER_SIZE).min(slot_start.saturating_sub(PAGE_HEADER_SIZE));
+        let copy_len = data_end
+            .saturating_sub(PAGE_HEADER_SIZE)
+            .min(slot_start.saturating_sub(PAGE_HEADER_SIZE));
         if copy_len > 0 {
             buf[PAGE_HEADER_SIZE..PAGE_HEADER_SIZE + copy_len]
                 .copy_from_slice(&self.data[PAGE_HEADER_SIZE..PAGE_HEADER_SIZE + copy_len]);

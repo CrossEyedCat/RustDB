@@ -359,7 +359,8 @@ impl CheckpointManager {
         // Flush dirty pages: use PageManager callback if set (WAL-first), else legacy simulation
         let flusher_opt = dirty_page_flusher.read().unwrap().clone();
         let flushed_pages: u64 = if let Some(flusher) = flusher_opt {
-            let count = tokio::task::spawn_blocking(move || flusher()).await
+            let count = tokio::task::spawn_blocking(move || flusher())
+                .await
                 .map_err(|e| Error::internal(&format!("Flush task join error: {}", e)))??;
             count as u64
         } else {

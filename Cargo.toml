@@ -70,6 +70,10 @@ rayon = "1.10"
 # Testing
 criterion = { version = "0.5", optional = true }
 
+[features]
+default = []
+criterion = ["dep:criterion"]
+
 [dev-dependencies]
 criterion = "0.5"
 tempfile = "3.8"

@@ -80,7 +80,9 @@ async fn execute_insert_e2e(
 }
 
 /// Setup for e2e benchmarks. When enable_wal is false, WAL is None for pure I/O measurement.
-fn setup_e2e_env(enable_wal: bool) -> (
+fn setup_e2e_env(
+    enable_wal: bool,
+) -> (
     TempDir,
     Arc<Mutex<PageManager>>,
     Runtime,
@@ -121,8 +123,12 @@ fn bench_e2e_insert_single(c: &mut Criterion) {
     group.bench_function("insert_with_tx_wal", |b| {
         b.iter(|| {
             let sql = "INSERT INTO bench_table (id, name, age) VALUES (1, 'Alice', 30)";
-            rt.block_on(execute_insert_e2e(black_box(sql), &page_manager, wal.as_deref()))
-                .unwrap();
+            rt.block_on(execute_insert_e2e(
+                black_box(sql),
+                &page_manager,
+                wal.as_deref(),
+            ))
+            .unwrap();
         });
     });
 
@@ -130,7 +136,8 @@ fn bench_e2e_insert_single(c: &mut Criterion) {
     group.bench_function("insert_without_wal", |b| {
         b.iter(|| {
             let sql = "INSERT INTO bench_table (id, name, age) VALUES (1, 'Alice', 30)";
-            rt_io.block_on(execute_insert_e2e(black_box(sql), &page_manager_io, None))
+            rt_io
+                .block_on(execute_insert_e2e(black_box(sql), &page_manager_io, None))
                 .unwrap();
         });
     });
@@ -182,14 +189,20 @@ fn bench_e2e_insert_batch(c: &mut Criterion) {
                                     };
                                     let (page_id, record_offset) =
                                         parse_record_id(result.record_id);
-                                    wal.as_ref().unwrap().log_insert(tx_id, file_id, page_id, record_offset, data)
+                                    wal.as_ref()
+                                        .unwrap()
+                                        .log_insert(tx_id, file_id, page_id, record_offset, data)
                                         .await
                                         .unwrap();
                                 }
                             }
                         }
 
-                        wal.as_ref().unwrap().commit_transaction(tx_id).await.unwrap();
+                        wal.as_ref()
+                            .unwrap()
+                            .commit_transaction(tx_id)
+                            .await
+                            .unwrap();
                         let mut pm = page_manager.lock().unwrap();
                         pm.flush_dirty_pages().unwrap();
                     });
@@ -210,7 +223,9 @@ fn bench_e2e_transaction_cycle(c: &mut Criterion) {
     group.bench_function("begin_insert_commit", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let tx_id = wal.as_ref().unwrap()
+                let tx_id = wal
+                    .as_ref()
+                    .unwrap()
                     .begin_transaction(IsolationLevel::ReadCommitted)
                     .await
                     .unwrap();
@@ -222,10 +237,16 @@ fn bench_e2e_transaction_cycle(c: &mut Criterion) {
                     (result, file_id)
                 };
                 let (page_id, record_offset) = parse_record_id(result.record_id);
-                wal.as_ref().unwrap().log_insert(tx_id, file_id, page_id, record_offset, data)
+                wal.as_ref()
+                    .unwrap()
+                    .log_insert(tx_id, file_id, page_id, record_offset, data)
                     .await
                     .unwrap();
-                wal.as_ref().unwrap().commit_transaction(tx_id).await.unwrap();
+                wal.as_ref()
+                    .unwrap()
+                    .commit_transaction(tx_id)
+                    .await
+                    .unwrap();
             })
         });
     });
@@ -241,7 +262,9 @@ fn bench_e2e_select_scan(c: &mut Criterion) {
 
     // Предзаполняем данными
     rt.block_on(async {
-        let tx_id = wal.as_ref().unwrap()
+        let tx_id = wal
+            .as_ref()
+            .unwrap()
             .begin_transaction(IsolationLevel::ReadCommitted)
             .await
             .unwrap();
@@ -258,11 +281,17 @@ fn bench_e2e_select_scan(c: &mut Criterion) {
                 (result, file_id)
             };
             let (page_id, record_offset) = parse_record_id(result.record_id);
-            wal.as_ref().unwrap().log_insert(tx_id, file_id, page_id, record_offset, data)
+            wal.as_ref()
+                .unwrap()
+                .log_insert(tx_id, file_id, page_id, record_offset, data)
                 .await
                 .unwrap();
         }
-        wal.as_ref().unwrap().commit_transaction(tx_id).await.unwrap();
+        wal.as_ref()
+            .unwrap()
+            .commit_transaction(tx_id)
+            .await
+            .unwrap();
         let mut pm = page_manager.lock().unwrap();
         pm.flush_dirty_pages().unwrap();
     });

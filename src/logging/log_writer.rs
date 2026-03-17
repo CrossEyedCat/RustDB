@@ -353,8 +353,13 @@ impl LogWriter {
 
             loop {
                 interval.tick().await;
-                Self::flush_write_buffer(&flush_buffer, &flush_stats, &flush_log_file, &flush_config)
-                    .await;
+                Self::flush_write_buffer(
+                    &flush_buffer,
+                    &flush_stats,
+                    &flush_log_file,
+                    &flush_config,
+                )
+                .await;
                 Self::notify_sync_waiters(&flush_waiters);
             }
         }));
@@ -409,10 +414,18 @@ impl LogWriter {
     ) {
         let start_time = Instant::now();
 
-        // Push record into buffer
+        // Push record into buffer and update stats immediately (before any notify)
+        // so callers reading stats after response see consistent state
         {
             let mut buffer = write_buffer.lock().unwrap();
             buffer.push_back(request.record.clone());
+        }
+        {
+            let mut stats = statistics.write().unwrap();
+            stats.total_records_written += 1;
+            if let Ok(serialized) = request.record.serialize() {
+                stats.total_bytes_written += serialized.len() as u64;
+            }
         }
 
         let mut should_flush = false;
@@ -438,13 +451,8 @@ impl LogWriter {
             } else {
                 // Legacy: immediate flush when group commit disabled
                 legacy_response_tx = request.response_tx;
-                Self::flush_write_buffer(
-                    &write_buffer,
-                    &statistics,
-                    &log_file_state,
-                    &config,
-                )
-                .await;
+                Self::flush_write_buffer(&write_buffer, &statistics, &log_file_state, &config)
+                    .await;
             }
         } else if let Some(tx) = request.response_tx {
             let _ = tx.send(Ok(()));
@@ -454,13 +462,11 @@ impl LogWriter {
             Self::flush_write_buffer(&write_buffer, &statistics, &log_file_state, &config).await;
         }
 
-        // Update statistics (before notify so caller sees consistent state)
+        // Update remaining statistics (before notify so caller sees consistent state)
         {
             let mut stats = statistics.write().unwrap();
-            stats.total_records_written += 1;
-
-            if let Ok(serialized) = request.record.serialize() {
-                stats.total_bytes_written += serialized.len() as u64;
+            if request.force_sync || legacy_response_tx.is_some() {
+                stats.sync_operations += 1;
             }
 
             let execution_time = start_time.elapsed().as_micros() as u64;
@@ -544,9 +550,9 @@ impl LogWriter {
         let mut state_guard = log_file_state.lock().unwrap();
 
         for record in records {
-            let serialized = record.serialize().map_err(|e| {
-                Error::internal(&format!("Failed to serialize log record: {}", e))
-            })?;
+            let serialized = record
+                .serialize()
+                .map_err(|e| Error::internal(&format!("Failed to serialize log record: {}", e)))?;
 
             // Get or create log file
             if state_guard.is_none() {
@@ -572,12 +578,15 @@ impl LogWriter {
             // Rotate if needed
             if state.size > 0 && state.size + 4 + serialized.len() as u64 > config.max_log_file_size
             {
-                state.writer.flush().map_err(|e| {
-                    Error::internal(&format!("Failed to flush log file: {}", e))
-                })?;
-                state.writer.get_mut().sync_all().map_err(|e| {
-                    Error::internal(&format!("Failed to sync log file: {}", e))
-                })?;
+                state
+                    .writer
+                    .flush()
+                    .map_err(|e| Error::internal(&format!("Failed to flush log file: {}", e)))?;
+                state
+                    .writer
+                    .get_mut()
+                    .sync_all()
+                    .map_err(|e| Error::internal(&format!("Failed to sync log file: {}", e)))?;
 
                 let timestamp = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -601,19 +610,23 @@ impl LogWriter {
             state.writer.write_all(&len.to_le_bytes()).map_err(|e| {
                 Error::internal(&format!("Failed to write log record length: {}", e))
             })?;
-            state.writer.write_all(&serialized).map_err(|e| {
-                Error::internal(&format!("Failed to write log record: {}", e))
-            })?;
+            state
+                .writer
+                .write_all(&serialized)
+                .map_err(|e| Error::internal(&format!("Failed to write log record: {}", e)))?;
             state.size += 4 + serialized.len() as u64;
         }
 
         if let Some(state) = state_guard.as_mut() {
-            state.writer.flush().map_err(|e| {
-                Error::internal(&format!("Failed to flush log file: {}", e))
-            })?;
-            state.writer.get_mut().sync_all().map_err(|e| {
-                Error::internal(&format!("Failed to sync log file: {}", e))
-            })?;
+            state
+                .writer
+                .flush()
+                .map_err(|e| Error::internal(&format!("Failed to flush log file: {}", e)))?;
+            state
+                .writer
+                .get_mut()
+                .sync_all()
+                .map_err(|e| Error::internal(&format!("Failed to sync log file: {}", e)))?;
         }
 
         Ok(())
@@ -838,6 +851,7 @@ mod tests {
         assert!(lsn > 0);
 
         let stats = writer.get_statistics();
+        assert!(stats.total_records_written >= 1);
         assert!(stats.sync_operations >= 1);
 
         Ok(())
@@ -928,7 +942,11 @@ mod tests {
             .await?;
 
         let stats = writer.get_statistics();
-        assert!(stats.total_records_written >= 2, "expected at least 2 records, got {}", stats.total_records_written);
+        assert!(
+            stats.total_records_written >= 2,
+            "expected at least 2 records, got {}",
+            stats.total_records_written
+        );
         assert!(stats.total_bytes_written > 0);
         assert!(stats.sync_operations >= 1);
         assert!(stats.average_write_time_us > 0);
