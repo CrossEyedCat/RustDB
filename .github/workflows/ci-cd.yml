@@ -62,6 +62,7 @@ jobs:
       run: cargo clippy -- -D warnings
 
     - name: Run fmt check
+      if: matrix.rust == 'stable'
       run: cargo fmt -- --check
 
   # Сборка
