@@ -42,6 +42,8 @@ pub struct PageManagerConfig {
     pub flush_on_commit: bool,
     /// Max dirty pages to flush in one batch (for batch_flush)
     pub batch_flush_size: usize,
+    /// Use spawn_blocking for disk I/O (avoids blocking tokio runtime when in async context)
+    pub use_async_flush: bool,
 }
 
 impl Default for PageManagerConfig {
@@ -55,6 +57,7 @@ impl Default for PageManagerConfig {
             buffer_pool_size: 5000,
             flush_on_commit: true,
             batch_flush_size: 10,
+            use_async_flush: true,
         }
     }
 }
@@ -133,6 +136,10 @@ pub struct PageManager {
     file_manager: CachedFileManager,
     /// Data file ID
     file_id: u32,
+    /// Data directory path (for async flush)
+    data_dir: PathBuf,
+    /// Table name (for async flush)
+    table_name: String,
     /// Configuration
     config: PageManagerConfig,
     /// Page information cache
@@ -151,6 +158,7 @@ impl PageManager {
     /// Creates a new page manager
     pub fn new(data_dir: PathBuf, table_name: &str, config: PageManagerConfig) -> Result<Self> {
         let buffer_size = config.buffer_pool_size.max(1);
+        let data_dir_clone = data_dir.clone();
         let mut file_manager = CachedFileManager::new(data_dir, buffer_size)?;
 
         let filename = format!("{}.tbl", table_name);
@@ -164,6 +172,8 @@ impl PageManager {
         let mut manager = Self {
             file_manager,
             file_id,
+            data_dir: data_dir_clone,
+            table_name: table_name.to_string(),
             config,
             page_cache: HashMap::new(),
             preallocated_pages: Vec::new(),
@@ -181,6 +191,7 @@ impl PageManager {
     /// Opens an existing page manager
     pub fn open(data_dir: PathBuf, table_name: &str, config: PageManagerConfig) -> Result<Self> {
         let buffer_size = config.buffer_pool_size.max(1);
+        let data_dir_clone = data_dir.clone();
         let mut file_manager = CachedFileManager::new(data_dir, buffer_size)?;
 
         let filename = format!("{}.tbl", table_name);
@@ -189,6 +200,8 @@ impl PageManager {
         let mut manager = Self {
             file_manager,
             file_id,
+            data_dir: data_dir_clone,
+            table_name: table_name.to_string(),
             config,
             page_cache: HashMap::new(),
             preallocated_pages: Vec::new(),
@@ -341,26 +354,72 @@ impl PageManager {
     }
 
     /// Flushes all dirty pages to disk. Call after commit when using write-ahead.
+    /// When `use_async_flush` is true and running in tokio context, disk I/O runs in
+    /// `block_in_place` to avoid blocking the async runtime.
     pub fn flush_dirty_pages(&mut self) -> Result<usize> {
         let batch_size = self.config.batch_flush_size;
         let mut flushed = 0;
 
-        // Process in batches to avoid holding too many pages
         while !self.dirty_pages.is_empty() {
             let page_ids: Vec<PageId> = self.dirty_pages.keys().take(batch_size).copied().collect();
 
-            for page_id in page_ids {
-                if let Some(page) = self.dirty_pages.remove(&page_id) {
-                    let serialized = page.to_bytes()?;
-                    self.file_manager
-                        .write_page(self.file_id, page_id, &serialized)?;
-                    self.update_page_cache(page_id, &page);
-                    flushed += 1;
+            // Collect serialized pages and update cache (no disk I/O yet)
+            let to_flush: Vec<(PageId, Vec<u8>)> = {
+                let mut batch = Vec::with_capacity(page_ids.len());
+                for page_id in page_ids {
+                    if let Some(page) = self.dirty_pages.remove(&page_id) {
+                        let serialized = page.to_bytes()?;
+                        self.update_page_cache(page_id, &page);
+                        batch.push((page_id, serialized));
+                    }
+                }
+                batch
+            };
+
+            let count = to_flush.len();
+            if count == 0 {
+                break;
+            }
+
+            let data_dir = self.data_dir.clone();
+            let table_name = self.table_name.clone();
+            let file_id = self.file_id;
+
+            let page_ids: Vec<PageId> = to_flush.iter().map(|(id, _)| *id).collect();
+            let do_flush = || Self::flush_pages_to_disk(&data_dir, &table_name, file_id, &to_flush);
+
+            if self.config.use_async_flush {
+                if let Ok(_) = tokio::runtime::Handle::try_current() {
+                    flushed += tokio::task::block_in_place(do_flush)?;
+                    self.file_manager.invalidate_pages(file_id, &page_ids);
+                    continue;
                 }
             }
+
+            flushed += do_flush()?;
+            self.file_manager.invalidate_pages(file_id, &page_ids);
         }
 
         Ok(flushed)
+    }
+
+    /// Writes collected page data to disk (used by flush_dirty_pages, runs in block_in_place when async)
+    fn flush_pages_to_disk(
+        data_dir: &PathBuf,
+        table_name: &str,
+        file_id: u32,
+        to_flush: &[(PageId, Vec<u8>)],
+    ) -> Result<usize> {
+        let mut file_manager = CachedFileManager::new(data_dir, 64)?;
+        let filename = format!("{}.tbl", table_name);
+        file_manager.open_database_file(&filename)?;
+
+        for (page_id, data) in to_flush {
+            file_manager.write_page(file_id, *page_id, data)?;
+        }
+        file_manager.sync_file(file_id)?;
+
+        Ok(to_flush.len())
     }
 
     /// Performs page defragmentation

@@ -69,7 +69,7 @@ impl Default for LogWriterConfig {
             log_directory: PathBuf::from("./logs"),
             max_log_file_size: 100 * 1024 * 1024, // 100 MB
             max_log_files: 10,
-            write_buffer_size: 1000,
+            write_buffer_size: 2000,
             max_buffer_time: Duration::from_millis(100),
             enable_compression: true,
             sync_level: SyncLevel::OnCommit,
@@ -111,6 +111,35 @@ struct LogFileState {
     writer: BufWriter<File>,
     path: PathBuf,
     size: u64,
+}
+
+/// Double buffer: while one buffer is flushed to disk, new writes go to the other
+struct DoubleBuffer {
+    active: VecDeque<LogRecord>,
+    flush: VecDeque<LogRecord>,
+}
+
+impl DoubleBuffer {
+    fn new() -> Self {
+        Self {
+            active: VecDeque::new(),
+            flush: VecDeque::new(),
+        }
+    }
+
+    fn push(&mut self, record: LogRecord) {
+        self.active.push_back(record);
+    }
+
+    fn len(&self) -> usize {
+        self.active.len()
+    }
+
+    /// Swap buffers and return records to flush (active becomes empty, flush gets the data)
+    fn take_for_flush(&mut self) -> VecDeque<LogRecord> {
+        std::mem::swap(&mut self.active, &mut self.flush);
+        std::mem::take(&mut self.flush)
+    }
 }
 
 /// Log write request
@@ -157,8 +186,8 @@ pub struct LogWriter {
     current_file: Arc<RwLock<Option<LogFileInfo>>>,
     /// List of all log files
     log_files: Arc<RwLock<Vec<LogFileInfo>>>,
-    /// Record buffer
-    write_buffer: Arc<Mutex<VecDeque<LogRecord>>>,
+    /// Record buffer (double-buffered)
+    write_buffer: Arc<Mutex<DoubleBuffer>>,
     /// Sync waiters (response channels for force_sync requests, batched by group commit)
     sync_waiters: Arc<Mutex<Vec<oneshot::Sender<Result<()>>>>>,
     /// Channel for write requests
@@ -209,7 +238,7 @@ impl LogWriter {
             config: config.clone(),
             current_file: Arc::new(RwLock::new(None)),
             log_files: Arc::new(RwLock::new(Vec::new())),
-            write_buffer: Arc::new(Mutex::new(VecDeque::new())),
+            write_buffer: Arc::new(Mutex::new(DoubleBuffer::new())),
             sync_waiters: sync_waiters.clone(),
             write_tx,
             lsn_generator: Arc::new(Mutex::new(1)),
@@ -403,7 +432,7 @@ impl LogWriter {
     /// Handles a write request
     async fn handle_write_request(
         request: LogWriteRequest,
-        write_buffer: Arc<Mutex<VecDeque<LogRecord>>>,
+        write_buffer: Arc<Mutex<DoubleBuffer>>,
         sync_waiters: Arc<Mutex<Vec<oneshot::Sender<Result<()>>>>>,
         statistics: Arc<RwLock<LogWriterStatistics>>,
         _current_file: Arc<RwLock<Option<LogFileInfo>>>,
@@ -418,7 +447,7 @@ impl LogWriter {
         // so callers reading stats after response see consistent state
         {
             let mut buffer = write_buffer.lock().unwrap();
-            buffer.push_back(request.record.clone());
+            buffer.push(request.record.clone());
         }
         let is_sync_request = request.force_sync;
         {
@@ -498,19 +527,18 @@ impl LogWriter {
 
     /// Flushes write buffer to disk
     async fn flush_write_buffer(
-        write_buffer: &Arc<Mutex<VecDeque<LogRecord>>>,
+        write_buffer: &Arc<Mutex<DoubleBuffer>>,
         statistics: &Arc<RwLock<LogWriterStatistics>>,
         log_file_state: &Arc<Mutex<Option<LogFileState>>>,
         config: &LogWriterConfig,
     ) {
-        let records_to_write = {
+        let records_to_write: Vec<LogRecord> = {
             let mut buffer = write_buffer.lock().unwrap();
-            if buffer.is_empty() {
+            if buffer.len() == 0 {
                 return;
             }
 
-            let records: Vec<_> = buffer.drain(..).collect();
-            records
+            buffer.take_for_flush().into_iter().collect()
         };
 
         let config = config.clone();
@@ -534,7 +562,7 @@ impl LogWriter {
         {
             let mut stats = statistics.write().unwrap();
             stats.sync_operations += 1;
-            stats.current_buffer_size = 0;
+            stats.current_buffer_size = write_buffer.lock().unwrap().len();
 
             // Calculate throughput
             if stats.total_records_written > 0 && stats.average_write_time_us > 0 {
@@ -543,7 +571,8 @@ impl LogWriter {
         }
     }
 
-    /// Writes records to the log file (blocking, run in spawn_blocking)
+    /// Writes records to the log file (blocking, run in spawn_blocking).
+    /// Batch serialization: pre-serialize all records before the write loop to minimize syscalls.
     fn write_records_to_file(
         records: &[LogRecord],
         log_file_state: &Arc<Mutex<Option<LogFileState>>>,
@@ -551,75 +580,85 @@ impl LogWriter {
     ) -> Result<()> {
         use std::io::Write as _;
 
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        // Pre-serialize all records before acquiring file lock (batch serialization)
+        let serialized: Vec<Vec<u8>> = records
+            .iter()
+            .map(|r| {
+                r.serialize()
+                    .map_err(|e| Error::internal(&format!("Failed to serialize log record: {}", e)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Build single buffer: [len1, data1, len2, data2, ...] for fewer syscalls
+        let total_size: usize = serialized.iter().map(|d| 4 + d.len()).sum();
+        let mut batch = Vec::with_capacity(total_size);
+        for data in &serialized {
+            batch.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            batch.extend_from_slice(data);
+        }
+
         let mut state_guard = log_file_state.lock().unwrap();
 
-        for record in records {
-            let serialized = record
-                .serialize()
-                .map_err(|e| Error::internal(&format!("Failed to serialize log record: {}", e)))?;
+        // Get or create log file
+        if state_guard.is_none() {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let path = config.log_directory.join(format!("wal_{}.log", timestamp));
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|e| Error::internal(&format!("Failed to open log file: {}", e)))?;
+            *state_guard = Some(LogFileState {
+                writer: BufWriter::new(file),
+                path: path.clone(),
+                size: 0,
+            });
+        }
 
-            // Get or create log file
-            if state_guard.is_none() {
-                let timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let path = config.log_directory.join(format!("wal_{}.log", timestamp));
-                let file = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
-                    .map_err(|e| Error::internal(&format!("Failed to open log file: {}", e)))?;
-                *state_guard = Some(LogFileState {
-                    writer: BufWriter::new(file),
-                    path: path.clone(),
-                    size: 0,
-                });
-            }
+        let state = state_guard.as_mut().unwrap();
 
-            let state = state_guard.as_mut().unwrap();
-
-            // Rotate if needed
-            if state.size > 0 && state.size + 4 + serialized.len() as u64 > config.max_log_file_size
-            {
-                state
-                    .writer
-                    .flush()
-                    .map_err(|e| Error::internal(&format!("Failed to flush log file: {}", e)))?;
-                state
-                    .writer
-                    .get_mut()
-                    .sync_all()
-                    .map_err(|e| Error::internal(&format!("Failed to sync log file: {}", e)))?;
-
-                let timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let path = config.log_directory.join(format!("wal_{}.log", timestamp));
-                let file = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
-                    .map_err(|e| Error::internal(&format!("Failed to open new log file: {}", e)))?;
-                *state_guard = Some(LogFileState {
-                    writer: BufWriter::new(file),
-                    path,
-                    size: 0,
-                });
-            }
-
-            let state = state_guard.as_mut().unwrap();
-            let len = serialized.len() as u32;
-            state.writer.write_all(&len.to_le_bytes()).map_err(|e| {
-                Error::internal(&format!("Failed to write log record length: {}", e))
-            })?;
+        // Rotate if batch would exceed max file size
+        if state.size > 0 && state.size + batch.len() as u64 > config.max_log_file_size {
             state
                 .writer
-                .write_all(&serialized)
-                .map_err(|e| Error::internal(&format!("Failed to write log record: {}", e)))?;
-            state.size += 4 + serialized.len() as u64;
+                .flush()
+                .map_err(|e| Error::internal(&format!("Failed to flush log file: {}", e)))?;
+            state
+                .writer
+                .get_mut()
+                .sync_all()
+                .map_err(|e| Error::internal(&format!("Failed to sync log file: {}", e)))?;
+
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let path = config.log_directory.join(format!("wal_{}.log", timestamp));
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|e| Error::internal(&format!("Failed to open new log file: {}", e)))?;
+            *state_guard = Some(LogFileState {
+                writer: BufWriter::new(file),
+                path,
+                size: 0,
+            });
         }
+
+        let state = state_guard.as_mut().unwrap();
+        state
+            .writer
+            .write_all(&batch)
+            .map_err(|e| Error::internal(&format!("Failed to write log records: {}", e)))?;
+        state.size += batch.len() as u64;
 
         if let Some(state) = state_guard.as_mut() {
             state

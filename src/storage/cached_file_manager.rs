@@ -110,4 +110,12 @@ impl CachedFileManager {
     pub fn clear_cache(&self) {
         self.cache.lock().unwrap().clear();
     }
+
+    /// Invalidates cached pages (e.g. after external flush)
+    pub fn invalidate_pages(&self, file_id: AdvancedFileId, page_ids: &[PageId]) {
+        let mut cache = self.cache.lock().unwrap();
+        for &page_id in page_ids {
+            cache.remove(file_id, page_id);
+        }
+    }
 }

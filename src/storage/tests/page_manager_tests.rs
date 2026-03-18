@@ -218,6 +218,7 @@ fn test_page_manager_config() {
             buffer_pool_size: 1000,
             flush_on_commit: true,
             batch_flush_size: 10,
+            use_async_flush: true,
         };
 
         let manager = PageManager::new(temp_dir.path().to_path_buf(), "config_test", custom_config);
@@ -339,6 +340,7 @@ fn test_page_merge() {
             buffer_pool_size: 1000,
             flush_on_commit: true,
             batch_flush_size: 10,
+            use_async_flush: true,
         };
 
         if let Ok(mut manager) =
@@ -392,6 +394,7 @@ fn test_compression_functionality() {
             buffer_pool_size: 1000,
             flush_on_commit: true,
             batch_flush_size: 10,
+            use_async_flush: true,
         };
 
         if let Ok(mut manager) =
@@ -435,6 +438,7 @@ fn test_page_split_with_compression() {
             buffer_pool_size: 1000,
             flush_on_commit: true,
             batch_flush_size: 10,
+            use_async_flush: true,
         };
 
         if let Ok(mut manager) = PageManager::new(
