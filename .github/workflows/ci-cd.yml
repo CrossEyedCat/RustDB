@@ -11,43 +11,6 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Проверка форматирования кода
-  format:
-    name: Format Check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-  # Проверка качества кода с Clippy
-  clippy:
-    name: Clippy Check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Setup cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Run Clippy
-        run: cargo clippy --all-targets -- -D warnings
-
   # Тестирование на разных платформах
   test:
     name: Test Suite (${{ matrix.os }}, ${{ matrix.rust }})
@@ -98,11 +61,68 @@ jobs:
         run: cargo test --doc --verbose ${{ matrix.features }}
         timeout-minutes: 10
 
+  # После тестов — качество кода и MSRV (параллельно), затем сборка release
+  format:
+    name: Format Check
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy Check
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust 1.81.0 (MSRV)
+        uses: dtolnay/rust-toolchain@1.81.0
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Check MSRV
+        run: cargo check
+
   # Проверка сборки в release режиме
   build:
     name: Build Release
     runs-on: ubuntu-latest
-    needs: test
+    needs: [format, clippy, msrv]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -123,6 +143,67 @@ jobs:
         with:
           name: rustdb-linux-x64
           path: target/release/rustdb
+
+  # Бенчмарки — те же зависимости, что у build; выполняется параллельно со сборкой release
+  benchmark:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    needs: [format, clippy, msrv]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Run benchmarks
+        run: cargo bench --bench benchmarks --bench io_benchmarks --bench performance_benchmarks --bench sql_benchmarks --bench e2e_benchmarks
+
+      - name: Verify benchmark results
+        run: |
+          if [ ! -d "target/criterion" ]; then
+            echo "Error: target/criterion directory not found"
+            exit 1
+          fi
+          estimate_count=$(find target/criterion -name "estimates.json" \( -path "*/new/*" -o -path "*/base/*" \) 2>/dev/null | wc -l)
+          if [ "$estimate_count" -eq 0 ]; then
+            echo "Error: No estimates.json files found"
+            find target/criterion -type d | head -30 || true
+            exit 1
+          fi
+          echo "Found $estimate_count benchmark result files"
+
+      - name: Extract benchmark summary
+        run: |
+          echo "## Benchmark Results Summary" > benchmark_summary.md
+          echo "" >> benchmark_summary.md
+          echo "| Benchmark | Mean (ns) | Median (ns) | Std Dev |" >> benchmark_summary.md
+          echo "|-----------|-----------|-------------|---------|" >> benchmark_summary.md
+          for f in $(find target/criterion -name "estimates.json" \( -path "*/new/*" -o -path "*/base/*" \) 2>/dev/null | sort); do
+            name=$(echo "$f" | sed -E 's|target/criterion/([^/]+)/.*|\1|')
+            mean=$(jq -r '.mean.point_estimate * 1e9' "$f" 2>/dev/null || echo "N/A")
+            median=$(jq -r '.median.point_estimate * 1e9' "$f" 2>/dev/null || echo "N/A")
+            std=$(jq -r '.std_dev.point_estimate * 1e9' "$f" 2>/dev/null || echo "N/A")
+            echo "| $name | $mean | $median | $std |" >> benchmark_summary.md
+          done
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            target/criterion
+            benchmark_summary.md
+          retention-days: 30
 
   # Docker сборка
   docker:
@@ -201,85 +282,6 @@ jobs:
           file: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
-
-  # Бенчмарки
-  benchmark:
-    name: Benchmarks
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Run benchmarks
-        run: cargo bench --bench benchmarks --bench io_benchmarks --bench performance_benchmarks --bench sql_benchmarks --bench e2e_benchmarks
-
-      - name: Verify benchmark results
-        run: |
-          if [ ! -d "target/criterion" ]; then
-            echo "Error: target/criterion directory not found"
-            exit 1
-          fi
-          estimate_count=$(find target/criterion -name "estimates.json" \( -path "*/new/*" -o -path "*/base/*" \) 2>/dev/null | wc -l)
-          if [ "$estimate_count" -eq 0 ]; then
-            echo "Error: No estimates.json files found"
-            find target/criterion -type d | head -30 || true
-            exit 1
-          fi
-          echo "Found $estimate_count benchmark result files"
-
-      - name: Extract benchmark summary
-        run: |
-          echo "## Benchmark Results Summary" > benchmark_summary.md
-          echo "" >> benchmark_summary.md
-          echo "| Benchmark | Mean (ns) | Median (ns) | Std Dev |" >> benchmark_summary.md
-          echo "|-----------|-----------|-------------|---------|" >> benchmark_summary.md
-          for f in $(find target/criterion -name "estimates.json" \( -path "*/new/*" -o -path "*/base/*" \) 2>/dev/null | sort); do
-            name=$(echo "$f" | sed -E 's|target/criterion/([^/]+)/.*|\1|')
-            mean=$(jq -r '.mean.point_estimate * 1e9' "$f" 2>/dev/null || echo "N/A")
-            median=$(jq -r '.median.point_estimate * 1e9' "$f" 2>/dev/null || echo "N/A")
-            std=$(jq -r '.std_dev.point_estimate * 1e9' "$f" 2>/dev/null || echo "N/A")
-            echo "| $name | $mean | $median | $std |" >> benchmark_summary.md
-          done
-
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-results
-          path: |
-            target/criterion
-            benchmark_summary.md
-          retention-days: 30
-
-  # Проверка MSRV
-  msrv:
-    name: MSRV
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust 1.81.0 (MSRV)
-        uses: dtolnay/rust-toolchain@1.81.0
-
-      - name: Setup cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Check MSRV
-        run: cargo check
 
   # Документация
   docs:
