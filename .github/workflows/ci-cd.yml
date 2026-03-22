@@ -165,8 +165,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type:gha
-          cache-to: type:gha,mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   # Проверка покрытия кода
   coverage:
@@ -192,10 +192,11 @@ jobs:
       - name: Generate coverage report
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
 
-      - name: Upload to codecov.io
-        uses: codecov/codecov-action@v4
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
         with:
           file: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
   # Бенчмарки
