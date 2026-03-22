@@ -11,7 +11,8 @@ documentation = "https://crosseyedcat.github.io/RustDB/docs"
 readme = "README.md"
 keywords = ["database", "sql", "relational", "rust", "storage"]
 categories = ["database", "database-implementations"]
-rust-version = "1.81.0"
+# Минимум 1.85: транзитивные крейты (например clap_lex 1.1) используют edition 2024
+rust-version = "1.85.0"
 exclude = [
     ".github/",
     "target/",
