@@ -24,13 +24,19 @@ cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 85
 
 
 
-В `Cargo.toml` в `package.metadata.cargo-llvm-cov.exclude-files` исключены **`src/main.rs`** и **`src/cli.rs`** (точка входа и исполняемые ветки CLI; парсинг CLI всё равно покрывается unit-тестами в `src/cli.rs` для регрессий).
+Исключения путей для расчёта порога задаются в CI через **`--ignore-filename-regex`** (в т.ч. `src/cli.rs`, `src/main.rs` и ряд крупных модулей).
 
 
 
 ## CI
 
-В `.github/workflows/ci-cd.yml` порог **`--fail-under-lines 85`** выполняется в job **Test Suite** для матрицы **`ubuntu-latest` + `stable`** (шаги `cargo llvm-cov` и загрузка в Codecov после обычных тестов).
+В `.github/workflows/ci-cd.yml` отдельный job **`Coverage (lines ≥85%)`** (Ubuntu):
+
+1. **`cargo llvm-cov --workspace --lcov --output-path lcov.info`** с **`--ignore-filename-regex`** — тесты и **lcov без** `--fail-under-lines`, чтобы отчёт всегда генерировался.
+2. Загрузка **`lcov.info`** в [Codecov](https://codecov.io) (`codecov/codecov-action@v5`). Нужен секрет **`CODECOV_TOKEN`** в настройках репозитория.
+3. **`cargo llvm-cov report --workspace --fail-under-lines 85`** — отдельная проверка порога по уже собранным данным.
+
+Если **`--fail-under-lines`** стоит в одной команде с **`--lcov`**, при провале порога процесс завершается с ошибкой **до** шага загрузки — на Codecov для коммита не будет отчёта («Missing report»).
 
 
 
