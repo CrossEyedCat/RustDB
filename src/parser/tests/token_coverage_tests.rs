@@ -14,11 +14,7 @@ fn test_position_display_and_start() {
 
 #[test]
 fn test_token_display() {
-    let t = Token::new(
-        TokenType::Select,
-        "SELECT".into(),
-        Position::start(),
-    );
+    let t = Token::new(TokenType::Select, "SELECT".into(), Position::start());
     let d = format!("{}", t);
     assert!(d.contains("Select"));
     assert!(d.contains("SELECT"));

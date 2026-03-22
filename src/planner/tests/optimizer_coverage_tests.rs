@@ -1,11 +1,11 @@
 //! Дополнительное покрытие веток `optimizer.rs` (reorder, index registry, filter/join).
 
 use crate::common::Result;
+use crate::parser::SqlParser;
 use crate::planner::planner::{
     ExecutionPlan, FilterNode, JoinNode, JoinType, PlanMetadata, PlanNode, PlanStatistics,
     TableScanNode,
 };
-use crate::parser::SqlParser;
 use crate::planner::{OptimizerSettings, QueryOptimizer, QueryPlanner};
 use crate::storage::index_registry::IndexRegistry;
 use std::sync::Arc;

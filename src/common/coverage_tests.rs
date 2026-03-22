@@ -3,9 +3,8 @@
 use crate::common::config::{
     DatabaseConfig, LoggingConfig, NetworkConfig, PerformanceConfig, StorageConfig,
 };
-use crate::common::i18n::Language;
-use std::path::PathBuf;
 use crate::common::error::Error;
+use crate::common::i18n::Language;
 use crate::common::i18n::MessageKey;
 use crate::common::types::PAGE_SIZE;
 use crate::common::types::{ColumnValue, DataType};
@@ -15,6 +14,7 @@ use crate::common::utils::{
     format_duration, is_power_of_two, is_valid_column_name, is_valid_index_name,
     is_valid_page_size, is_valid_table_name, next_power_of_two, prev_power_of_two,
 };
+use std::path::PathBuf;
 
 #[test]
 fn test_error_constructors_and_display() {
@@ -161,10 +161,7 @@ fn test_storage_logging_network_performance_serde_roundtrip() {
     let p = PerformanceConfig::default();
     let pj = serde_json::to_string(&p).unwrap();
     let p2: PerformanceConfig = serde_json::from_str(&pj).unwrap();
-    assert_eq!(
-        p2.max_query_plan_cache_size,
-        p.max_query_plan_cache_size
-    );
+    assert_eq!(p2.max_query_plan_cache_size, p.max_query_plan_cache_size);
 }
 
 #[test]

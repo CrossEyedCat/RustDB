@@ -1,8 +1,6 @@
 //! Network connection tests
 
-use crate::network::connection::{
-    Connection, ConnectionConfig, ConnectionPool, ConnectionState,
-};
+use crate::network::connection::{Connection, ConnectionConfig, ConnectionPool, ConnectionState};
 use std::time::Duration;
 
 #[test]
