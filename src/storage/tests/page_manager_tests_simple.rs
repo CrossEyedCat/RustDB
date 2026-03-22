@@ -47,6 +47,7 @@ fn test_page_manager_config() {
         flush_on_commit: true,
         batch_flush_size: 10,
         use_async_flush: true,
+        ..Default::default()
     };
 
     let manager_result =

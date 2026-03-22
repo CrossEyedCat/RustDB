@@ -21,7 +21,7 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Page manager configuration
 #[derive(Debug, Clone)]
@@ -44,6 +44,10 @@ pub struct PageManagerConfig {
     pub batch_flush_size: usize,
     /// Use spawn_blocking for disk I/O (avoids blocking tokio runtime when in async context)
     pub use_async_flush: bool,
+    /// When true, do not flush immediately on each commit; caller should flush periodically or at batch end
+    pub defer_data_flush: bool,
+    /// When defer_data_flush is true, minimum ms between flushes (0 = caller controls manually)
+    pub flush_interval_ms: u64,
 }
 
 impl Default for PageManagerConfig {
@@ -58,6 +62,8 @@ impl Default for PageManagerConfig {
             flush_on_commit: true,
             batch_flush_size: 10,
             use_async_flush: true,
+            defer_data_flush: false,
+            flush_interval_ms: 0,
         }
     }
 }
@@ -879,6 +885,24 @@ impl PageManager {
         self.file_manager
             .write_page(self.file_id, page_id, &compressed_data)
     }
+}
+
+/// Spawns a background task that flushes dirty pages every `interval_ms` ms.
+/// Use when `defer_data_flush` is true. Returns a handle to abort the task when done.
+pub fn spawn_deferred_flush_task(
+    pm: Arc<Mutex<PageManager>>,
+    interval_ms: u64,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval =
+            tokio::time::interval(tokio::time::Duration::from_millis(interval_ms.max(1)));
+        loop {
+            interval.tick().await;
+            if let Ok(mut guard) = pm.lock() {
+                let _ = guard.flush_dirty_pages();
+            }
+        }
+    })
 }
 
 impl Drop for PageManager {

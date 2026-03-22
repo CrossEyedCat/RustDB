@@ -82,6 +82,8 @@ fn demo_create_page_manager(data_dir: &Path) -> Result<(), Box<dyn std::error::E
         flush_on_commit: true,
         batch_flush_size: 10,
         use_async_flush: true,
+        defer_data_flush: false,
+        flush_interval_ms: 0,
     };
 
     println!("\n📊 Кастомная конфигурация:");

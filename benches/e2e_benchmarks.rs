@@ -88,6 +88,18 @@ fn setup_e2e_env(
     Runtime,
     Option<Arc<WriteAheadLog>>,
 ) {
+    setup_e2e_env_with_wal_config(enable_wal.then_some(WalConfig::default()))
+}
+
+/// Setup with custom WalConfig (for high_throughput, durable presets).
+fn setup_e2e_env_with_wal_config(
+    wal_config: Option<WalConfig>,
+) -> (
+    TempDir,
+    Arc<Mutex<PageManager>>,
+    Runtime,
+    Option<Arc<WriteAheadLog>>,
+) {
     let temp_dir = TempDir::new().unwrap();
     let data_path = temp_dir.path().join("data");
     let log_path = temp_dir.path().join("wal");
@@ -95,10 +107,9 @@ fn setup_e2e_env(
     std::fs::create_dir_all(&log_path).unwrap();
 
     let rt = Runtime::new().unwrap();
-    let wal = if enable_wal {
-        let mut wal_config = WalConfig::default();
-        wal_config.log_writer_config.log_directory = log_path;
-        wal_config.max_active_transactions = 50_000; // enough for benchmark iterations
+    let wal = if let Some(mut wal_config) = wal_config {
+        wal_config.log_writer_config.log_directory = log_path.clone();
+        wal_config.max_active_transactions = 50_000;
         let w = rt.block_on(WriteAheadLog::new(wal_config)).unwrap();
         Some(Arc::new(w))
     } else {
@@ -133,6 +144,36 @@ fn bench_e2e_insert_single(c: &mut Criterion) {
         });
     });
 
+    // Group commit: default config now uses force_flush_immediately=false
+    group.bench_function("insert_with_tx_wal_group_commit", |b| {
+        let (temp_dir_gc, page_manager_gc, rt_gc, wal_gc) = setup_e2e_env(true);
+        b.iter(|| {
+            let sql = "INSERT INTO bench_table (id, name, age) VALUES (1, 'Alice', 30)";
+            rt_gc.block_on(execute_insert_e2e(
+                black_box(sql),
+                &page_manager_gc,
+                wal_gc.as_deref(),
+            ))
+            .unwrap();
+        });
+        drop(temp_dir_gc);
+    });
+
+    // synchronous_commit=off: max throughput, lower durability (log dir overwritten in setup)
+    let (temp_dir_async, page_manager_async, rt_async, wal_async) =
+        setup_e2e_env_with_wal_config(Some(WalConfig::high_throughput(PathBuf::from("."))));
+    group.bench_function("insert_with_tx_wal_async_commit", |b| {
+        b.iter(|| {
+            let sql = "INSERT INTO bench_table (id, name, age) VALUES (1, 'Alice', 30)";
+            rt_async.block_on(execute_insert_e2e(
+                black_box(sql),
+                &page_manager_async,
+                wal_async.as_deref(),
+            ))
+            .unwrap();
+        });
+    });
+
     let (temp_dir_io, page_manager_io, rt_io, _) = setup_e2e_env(false);
     group.bench_function("insert_without_wal", |b| {
         b.iter(|| {
@@ -143,7 +184,71 @@ fn bench_e2e_insert_single(c: &mut Criterion) {
         });
     });
 
+    // insert_batch_flush: N inserts in one tx + single flush at end (plan Phase 4)
+    group.bench_with_input(
+        BenchmarkId::new("insert_batch_flush", 50),
+        &50,
+        |b, &count| {
+            b.iter(|| {
+                let (temp_dir_bf, page_manager_bf, rt_bf, wal_bf) = setup_e2e_env(true);
+                rt_bf.block_on(async {
+                    let tx_id = wal_bf
+                        .as_ref()
+                        .unwrap()
+                        .begin_transaction(IsolationLevel::ReadCommitted)
+                        .await
+                        .unwrap();
+                    let mut planner = QueryPlanner::new().unwrap();
+                    let mut optimizer = QueryOptimizer::new().unwrap();
+
+                    for i in 1..=count {
+                        let sql = format!(
+                            "INSERT INTO bench_table (id, name, age) VALUES ({}, 'User{}', {})",
+                            i,
+                            i,
+                            20 + (i % 50)
+                        );
+                        let mut parser = SqlParser::new(&sql).unwrap();
+                        let stmt = parser.parse().unwrap();
+                        let plan = planner.create_plan(&stmt).unwrap();
+                        let optimized = optimizer.optimize(plan).unwrap();
+
+                        if let PlanNode::Insert(insert_node) = &optimized.optimized_plan.root {
+                            for row_values in &insert_node.values {
+                                let data = serialize_insert_values(row_values);
+                                let (result, file_id) = {
+                                    let mut pm_guard = page_manager_bf.lock().unwrap();
+                                    let result = pm_guard.insert(&data).unwrap();
+                                    let file_id = pm_guard.file_id();
+                                    (result, file_id)
+                                };
+                                let (page_id, record_offset) = parse_record_id(result.record_id);
+                                wal_bf
+                                    .as_ref()
+                                    .unwrap()
+                                    .log_insert(tx_id, file_id, page_id, record_offset, data)
+                                    .await
+                                    .unwrap();
+                            }
+                        }
+                    }
+
+                    wal_bf
+                        .as_ref()
+                        .unwrap()
+                        .commit_transaction(tx_id)
+                        .await
+                        .unwrap();
+                    let mut pm = page_manager_bf.lock().unwrap();
+                    pm.flush_dirty_pages().unwrap();
+                });
+                drop(temp_dir_bf);
+            });
+        },
+    );
+
     drop(temp_dir);
+    drop(temp_dir_async);
     drop(temp_dir_io);
     group.finish();
 }

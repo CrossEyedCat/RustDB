@@ -48,6 +48,9 @@ pub struct LogWriterConfig {
     pub group_commit_enabled: bool,
     /// When true, force_sync requests flush immediately without waiting for group commit
     pub force_flush_immediately: bool,
+    /// When true, commit waits for WAL fsync (durable). When false, commit returns immediately
+    /// without fsync - higher throughput but risk of data loss on crash (PostgreSQL's synchronous_commit=off).
+    pub synchronous_commit: bool,
 }
 
 /// Log synchronization level
@@ -61,6 +64,31 @@ pub enum SyncLevel {
     OnCommit,
     /// Sync after every write (slow but safest)
     Always,
+}
+
+impl LogWriterConfig {
+    /// Preset for maximum throughput (group commit, no sync wait).
+    /// Lower durability: risk of data loss on crash.
+    pub fn high_throughput(log_directory: PathBuf) -> Self {
+        let mut c = Self::default();
+        c.log_directory = log_directory;
+        c.force_flush_immediately = false;
+        c.synchronous_commit = false;
+        c.group_commit_enabled = true;
+        c.group_commit_interval_ms = 1;
+        c.group_commit_max_batch = 10;
+        c
+    }
+
+    /// Preset for maximum durability (immediate fsync on each commit).
+    pub fn durable(log_directory: PathBuf) -> Self {
+        let mut c = Self::default();
+        c.log_directory = log_directory;
+        c.force_flush_immediately = true;
+        c.synchronous_commit = true;
+        c.group_commit_enabled = false;
+        c
+    }
 }
 
 impl Default for LogWriterConfig {
@@ -78,7 +106,8 @@ impl Default for LogWriterConfig {
             group_commit_interval_ms: 1,
             group_commit_max_batch: 10,
             group_commit_enabled: true,
-            force_flush_immediately: true,
+            force_flush_immediately: false, // Use group commit for better TPS
+            synchronous_commit: true,        // Wait for fsync by default (durable)
         }
     }
 }
@@ -701,10 +730,25 @@ impl LogWriter {
         Ok(record.lsn)
     }
 
-    /// Writes a log record with forced synchronization
+    /// Writes a log record with forced synchronization.
+    /// When synchronous_commit=false, returns immediately without waiting for fsync (higher throughput, lower durability).
     pub async fn write_log_sync(&self, mut record: LogRecord) -> Result<LogSequenceNumber> {
         if record.lsn == 0 {
             record.lsn = self.generate_lsn();
+        }
+
+        if !self.config.synchronous_commit {
+            // No sync: buffer only, return immediately (PostgreSQL's synchronous_commit=off)
+            let request = LogWriteRequest {
+                record: record.clone(),
+                response_tx: None,
+                force_sync: false,
+                force_flush_immediately: false,
+            };
+            self.write_tx
+                .send(request)
+                .map_err(|_| Error::internal("Failed to send log write request"))?;
+            return Ok(record.lsn);
         }
 
         let (response_tx, response_rx) = oneshot::channel();
@@ -712,7 +756,7 @@ impl LogWriter {
             record: record.clone(),
             response_tx: Some(response_tx),
             force_sync: true,
-            force_flush_immediately: true,
+            force_flush_immediately: self.config.force_flush_immediately,
         };
 
         self.write_tx

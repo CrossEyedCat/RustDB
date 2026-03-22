@@ -12,6 +12,7 @@ use crate::logging::log_writer::{LogWriter, LogWriterConfig};
 use crate::storage::database_file::PageId;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, Notify};
@@ -22,6 +23,8 @@ use tokio::task::JoinHandle;
 pub struct WalConfig {
     /// Log writer configuration
     pub log_writer_config: LogWriterConfig,
+    /// When true, commit waits for WAL fsync (durable). When false, higher throughput but risk of data loss on crash.
+    pub synchronous_commit: bool,
     /// Enable strict WAL mode (all changes are logged)
     pub strict_mode: bool,
     /// Maximum lock wait time (ms)
@@ -38,10 +41,29 @@ pub struct WalConfig {
     pub enable_integrity_validation: bool,
 }
 
+impl WalConfig {
+    /// Preset for maximum throughput (group commit + synchronous_commit=off).
+    pub fn high_throughput(log_directory: PathBuf) -> Self {
+        let mut c = Self::default();
+        c.log_writer_config = LogWriterConfig::high_throughput(log_directory);
+        c.synchronous_commit = false;
+        c
+    }
+
+    /// Preset for maximum durability (immediate fsync on each commit).
+    pub fn durable(log_directory: PathBuf) -> Self {
+        let mut c = Self::default();
+        c.log_writer_config = LogWriterConfig::durable(log_directory);
+        c.synchronous_commit = true;
+        c
+    }
+}
+
 impl Default for WalConfig {
     fn default() -> Self {
         Self {
             log_writer_config: LogWriterConfig::default(),
+            synchronous_commit: true,
             strict_mode: true,
             lock_timeout_ms: 5000,
             transaction_pool_size: 100,
@@ -216,7 +238,8 @@ enum WalCommand {
 
 impl WriteAheadLog {
     /// Create new WAL system
-    pub async fn new(config: WalConfig) -> Result<Self> {
+    pub async fn new(mut config: WalConfig) -> Result<Self> {
+        config.log_writer_config.synchronous_commit = config.synchronous_commit;
         let log_writer = Arc::new(LogWriter::new(config.log_writer_config.clone())?);
         let (command_tx, command_rx) = mpsc::unbounded_channel();
 
