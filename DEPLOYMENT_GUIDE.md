@@ -20,13 +20,11 @@ RustDB is now fully ready for deployment in various environments. The system inc
 git clone https://github.com/your-org/rustdb.git
 cd rustdb
 
-# Deployment (Linux/macOS)
 chmod +x deployment/deploy.sh
 ./deployment/deploy.sh deploy
-
-# Deployment (Windows)
-.\deployment\deploy.ps1 deploy
 ```
+
+RustDB is supported on **Linux only**; on other hosts use Docker or a Linux VM/WSL2.
 
 ### 2. Production (Kubernetes)
 

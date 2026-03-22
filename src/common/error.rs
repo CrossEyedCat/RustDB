@@ -3,13 +3,13 @@
 use crate::common::i18n::{t, t_with_params, MessageKey};
 use thiserror::Error;
 
-/// Bincode encode/decode failure (bincode 2 uses distinct error types).
+/// Bincode encode/decode failure (`bincode-next` uses distinct error types).
 #[derive(Error, Debug)]
 pub enum BincodeError {
     #[error("{0}")]
-    Encode(#[from] bincode::error::EncodeError),
+    Encode(#[from] bincode_next::error::EncodeError),
     #[error("{0}")]
-    Decode(#[from] bincode::error::DecodeError),
+    Decode(#[from] bincode_next::error::DecodeError),
 }
 
 /// Main error type for rustdb
@@ -95,14 +95,14 @@ pub enum Error {
 /// Result type for rustdb
 pub type Result<T> = std::result::Result<T, Error>;
 
-impl From<bincode::error::EncodeError> for Error {
-    fn from(e: bincode::error::EncodeError) -> Self {
+impl From<bincode_next::error::EncodeError> for Error {
+    fn from(e: bincode_next::error::EncodeError) -> Self {
         Self::BincodeSerialization(e.into())
     }
 }
 
-impl From<bincode::error::DecodeError> for Error {
-    fn from(e: bincode::error::DecodeError) -> Self {
+impl From<bincode_next::error::DecodeError> for Error {
+    fn from(e: bincode_next::error::DecodeError) -> Self {
         Self::BincodeSerialization(e.into())
     }
 }

@@ -1,5 +1,7 @@
 # Развертывание RustDB
 
+**Поддерживается только Linux.** Сборки и скрипты для Windows/macOS не предоставляются.
+
 Этот каталог содержит все необходимые файлы и скрипты для развертывания RustDB в различных средах.
 
 ## Структура каталога
@@ -7,8 +9,7 @@
 ```
 deployment/
 ├── README.md                    # Этот файл
-├── deploy.sh                    # Скрипт развертывания для Linux/macOS
-├── deploy.ps1                   # Скрипт развертывания для Windows
+├── deploy.sh                    # Скрипт развертывания (только Linux)
 ├── docker-compose.yml           # Docker Compose конфигурация
 ├── prometheus.yml               # Конфигурация Prometheus
 ├── nginx.conf                   # Конфигурация Nginx
@@ -32,16 +33,10 @@ deployment/
 
 ### Docker Compose (рекомендуется для разработки)
 
-1. **Linux/macOS:**
-   ```bash
-   chmod +x deploy.sh
-   ./deploy.sh deploy
-   ```
-
-2. **Windows:**
-   ```powershell
-   .\deploy.ps1 deploy
-   ```
+```bash
+chmod +x deploy.sh
+./deploy.sh deploy
+```
 
 ### Kubernetes (для продакшена)
 

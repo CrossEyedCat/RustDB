@@ -101,6 +101,7 @@ mod crate_tests {
     use super::{Database, Result, VERSION};
 
     #[test]
+    #[allow(clippy::const_is_empty)] // CARGO_PKG_VERSION не пустой; проверка оставлена для явности
     fn test_version_constant() {
         assert!(!VERSION.is_empty());
     }

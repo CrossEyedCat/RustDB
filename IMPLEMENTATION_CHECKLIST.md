@@ -654,8 +654,7 @@
 - [x] **Health checks** - Проверки здоровья
 
 ### 8.7 Скрипты развертывания
-- [x] **Linux/macOS скрипт** - deploy.sh
-- [x] **Windows скрипт** - deploy.ps1
+- [x] **Linux: скрипт развёртывания** — `deployment/deploy.sh` (Windows/macOS не поддерживаются)
 - [x] **Kubernetes скрипт** - k8s/deploy.sh
 - [x] **Документация** - deployment/README.md
 

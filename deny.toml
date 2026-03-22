@@ -8,7 +8,7 @@
 # Проверка уязвимостей из RustSec Advisory Database
 ignore = [
     # RUSTSEC-2025-0141: bincode unmaintained (не уязвимость — команда прекратила разработку).
-    # Проект на bincode 2 + legacy(); crates.io «3.0.0» — неполноценный релиз, не использовать.
+    # Проект на bincode-next + legacy(); оригинальный crates.io bincode 1.x без сопровождения (RUSTSEC).
     "RUSTSEC-2025-0141",
 ]
 

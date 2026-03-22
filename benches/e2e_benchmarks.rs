@@ -2,7 +2,8 @@
 //!
 //! Измеряет полный цикл: парсинг → планирование → выполнение → WAL → диск.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
 use rustdb::{
     common::types::RecordId,
     logging::log_record::IsolationLevel,

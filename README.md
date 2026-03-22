@@ -47,8 +47,9 @@ Create a fully functional relational database with support for SQL-like query la
 ## 🚀 Quick Start
 
 ### Requirements
-- **Rust 1.70+** - for main code
-- **Cargo** - for dependency management
+- **Linux (x86_64 or aarch64)** — RustDB is built and supported **only on Linux**. Windows and macOS are not supported (no CI, no release binaries, not a target for deployment).
+- **Rust 1.85+** (see `rust-version` in `Cargo.toml`)
+- **Cargo** — dependency management
 
 ### Installation and Running
 ```bash

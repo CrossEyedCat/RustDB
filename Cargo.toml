@@ -29,8 +29,8 @@ exclude = [
 # Core dependencies
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-# 3.x on crates.io is not a real release; use 2.x + `legacy()` for bincode 1 wire compatibility.
-bincode = { version = "2.0.1", features = ["serde", "std"] }
+# Форк bincode с поддержкой развития; serde + `config::legacy()` — совместимость с bincode 1.x на диске.
+bincode-next = { version = "2.1.0", features = ["serde", "std"] }
 # >=1.23.1 — закрывает RUSTSEC-2023-0001 (tokio / Windows named pipes)
 tokio = { version = "1.23.1", features = ["full"] }
 anyhow = "1.0"
@@ -57,6 +57,8 @@ lz4_flex = "0.13"
 
 # Dependencies with version constraints for MSRV compatibility
 twox-hash = "=2.1.2"
+# Транзитивно через bincode-next: 0.1.1 требует rustc 1.90; держим 0.1.0 для rust-version 1.85.
+unty-next = "=0.1.0"
 indexmap = "2.13"
 
 # UUID for generating unique identifiers
@@ -74,13 +76,14 @@ rayon = "1.10"
 # Testing
 criterion = { version = "0.8", optional = true }
 
-# io_uring for Linux (optional, kernel 5.6+)
-io-uring = { version = "0.7", optional = true }
-
 [features]
 default = []
 criterion = ["dep:criterion"]
 io-uring = ["dep:io-uring"]
+
+# io_uring только для Linux (платформа поддержки — Linux).
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = { version = "0.7", optional = true }
 
 [dev-dependencies]
 criterion = "0.8"
