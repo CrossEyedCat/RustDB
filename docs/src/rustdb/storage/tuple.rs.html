@@ -101,12 +101,12 @@
 <a href=#101 id=101 data-nosnippet>101</a>
 <a href=#102 id=102 data-nosnippet>102</a>    <span class="doccomment">/// Serializes the tuple to bytes
 <a href=#103 id=103 data-nosnippet>103</a>    </span><span class="kw">pub fn </span>to_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;&gt; {
-<a href=#104 id=104 data-nosnippet>104</a>        bincode::serialize(<span class="self">self</span>).map_err(Error::BincodeSerialization)
+<a href=#104 id=104 data-nosnippet>104</a>        <span class="kw">crate</span>::common::bincode_io::serialize(<span class="self">self</span>).map_err(Error::from)
 <a href=#105 id=105 data-nosnippet>105</a>    }
 <a href=#106 id=106 data-nosnippet>106</a>
 <a href=#107 id=107 data-nosnippet>107</a>    <span class="doccomment">/// Creates a tuple from bytes (deserialization)
 <a href=#108 id=108 data-nosnippet>108</a>    </span><span class="kw">pub fn </span>from_bytes(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-<a href=#109 id=109 data-nosnippet>109</a>        bincode::deserialize(bytes).map_err(Error::BincodeSerialization)
+<a href=#109 id=109 data-nosnippet>109</a>        <span class="kw">crate</span>::common::bincode_io::deserialize(bytes).map_err(Error::from)
 <a href=#110 id=110 data-nosnippet>110</a>    }
 <a href=#111 id=111 data-nosnippet>111</a>
 <a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// Returns the tuple size in bytes

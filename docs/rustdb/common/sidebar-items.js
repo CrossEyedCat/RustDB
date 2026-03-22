@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["config","constants","error","i18n","types","utils"]};
+window.SIDEBAR_ITEMS = {"mod":["bincode_io","config","constants","error","i18n","types","utils"]};

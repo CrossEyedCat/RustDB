@@ -101,16 +101,17 @@
 <a href=#101 id=101 data-nosnippet>101</a>    <span class="kw">use </span>super::{Database, <span class="prelude-ty">Result</span>, VERSION};
 <a href=#102 id=102 data-nosnippet>102</a>
 <a href=#103 id=103 data-nosnippet>103</a>    <span class="attr">#[test]
-<a href=#104 id=104 data-nosnippet>104</a>    </span><span class="kw">fn </span>test_version_constant() {
-<a href=#105 id=105 data-nosnippet>105</a>        <span class="macro">assert!</span>(!VERSION.is_empty());
-<a href=#106 id=106 data-nosnippet>106</a>    }
-<a href=#107 id=107 data-nosnippet>107</a>
-<a href=#108 id=108 data-nosnippet>108</a>    <span class="attr">#[test]
-<a href=#109 id=109 data-nosnippet>109</a>    </span><span class="kw">fn </span>test_database_new_open_close() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#110 id=110 data-nosnippet>110</a>        <span class="kw">let </span><span class="kw-2">mut </span>db = Database::new()<span class="question-mark">?</span>;
-<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">let _ </span>= Database::open(<span class="string">"/tmp/rustdb_test"</span>)<span class="question-mark">?</span>;
-<a href=#112 id=112 data-nosnippet>112</a>        db.close()<span class="question-mark">?</span>;
-<a href=#113 id=113 data-nosnippet>113</a>        <span class="prelude-val">Ok</span>(())
-<a href=#114 id=114 data-nosnippet>114</a>    }
-<a href=#115 id=115 data-nosnippet>115</a>}
+<a href=#104 id=104 data-nosnippet>104</a>    #[allow(clippy::const_is_empty)] </span><span class="comment">// CARGO_PKG_VERSION не пустой; проверка оставлена для явности
+<a href=#105 id=105 data-nosnippet>105</a>    </span><span class="kw">fn </span>test_version_constant() {
+<a href=#106 id=106 data-nosnippet>106</a>        <span class="macro">assert!</span>(!VERSION.is_empty());
+<a href=#107 id=107 data-nosnippet>107</a>    }
+<a href=#108 id=108 data-nosnippet>108</a>
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="attr">#[test]
+<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="kw">fn </span>test_database_new_open_close() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">let </span><span class="kw-2">mut </span>db = Database::new()<span class="question-mark">?</span>;
+<a href=#112 id=112 data-nosnippet>112</a>        <span class="kw">let _ </span>= Database::open(<span class="string">"/tmp/rustdb_test"</span>)<span class="question-mark">?</span>;
+<a href=#113 id=113 data-nosnippet>113</a>        db.close()<span class="question-mark">?</span>;
+<a href=#114 id=114 data-nosnippet>114</a>        <span class="prelude-val">Ok</span>(())
+<a href=#115 id=115 data-nosnippet>115</a>    }
+<a href=#116 id=116 data-nosnippet>116</a>}
 </code></pre></div></section></main></body></html>
