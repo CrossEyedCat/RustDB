@@ -98,36 +98,6 @@ jobs:
         name: rustdb-linux
         path: target/release/rustdb
 
-  # Сборка для Windows
-  build-windows:
-    name: Build (Windows)
-    runs-on: windows-latest
-    needs: test
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Cache cargo build
-      uses: actions/cache@v3
-      with:
-        path: target
-        key: windows-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Build release
-      run: cargo build --release
-      env:
-        RUSTFLAGS: -C target-feature=+crt-static
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: rustdb-windows
-        path: target/release/rustdb.exe
-
   # Docker сборка
   docker:
     name: Docker Build
@@ -200,7 +170,7 @@ jobs:
   deploy:
     name: Deploy to GitHub Releases
     runs-on: ubuntu-latest
-    needs: [build, build-windows, docker, security]
+    needs: [build, docker, security]
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: write
@@ -220,12 +190,6 @@ jobs:
         name: rustdb-linux
         path: linux
 
-    - name: Download Windows build
-      uses: actions/download-artifact@v4
-      with:
-        name: rustdb-windows
-        path: windows
-
     - name: Create release archives
       run: |
         set -e
@@ -233,14 +197,11 @@ jobs:
         LINUX_BIN=$(find linux -name rustdb -type f 2>/dev/null | head -1)
         cp "$LINUX_BIN" release/rustdb
         tar -czf rustdb-main-${{ github.sha }}-linux-x86_64.tar.gz -C release rustdb
-        WIN_EXE=$(find windows -name "rustdb.exe" -type f 2>/dev/null | head -1)
-        zip -j rustdb-main-${{ github.sha }}-windows-x86_64.zip "$WIN_EXE"
 
     - name: Verify artifacts
       run: |
-        ls -la rustdb-main-*.tar.gz rustdb-main-*.zip 2>/dev/null || true
+        ls -la rustdb-main-*.tar.gz 2>/dev/null || true
         test -f rustdb-main-${{ github.sha }}-linux-x86_64.tar.gz
-        test -f rustdb-main-${{ github.sha }}-windows-x86_64.zip
         test -f rustdb-main-${{ github.sha }}-source.tar.gz
 
     - name: Create GitHub Release
@@ -252,7 +213,6 @@ jobs:
         body: |
           ## Artifacts
           - **Linux x86_64**: rustdb-main-${{ github.sha }}-linux-x86_64.tar.gz
-          - **Windows x86_64**: rustdb-main-${{ github.sha }}-windows-x86_64.zip
           - **Source**: rustdb-main-${{ github.sha }}-source.tar.gz
           ## Docker
           ```bash
@@ -260,7 +220,6 @@ jobs:
           ```
         files: |
           rustdb-main-${{ github.sha }}-linux-x86_64.tar.gz
-          rustdb-main-${{ github.sha }}-windows-x86_64.zip
           rustdb-main-${{ github.sha }}-source.tar.gz
         draft: false
         prerelease: true
