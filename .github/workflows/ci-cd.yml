@@ -168,10 +168,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Проверка покрытия кода
+  # Проверка покрытия кода (после успешных тестов)
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+    needs: test
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -189,8 +190,8 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Generate coverage report
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - name: Generate coverage report and check threshold (≥85% lines)
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 85
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
@@ -331,11 +332,11 @@ jobs:
         with:
           command: check
 
-  # Развёртывание в GitHub Releases
+  # Развёртывание в GitHub Releases (только при покрытии ≥85%)
   deploy:
     name: Deploy to GitHub Releases
     runs-on: ubuntu-latest
-    needs: [build, docker, security]
+    needs: [build, docker, security, coverage]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write

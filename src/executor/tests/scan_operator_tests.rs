@@ -1,18 +1,17 @@
 //! Тесты для операторов сканирования
 
+use super::common;
 use crate::executor::operators::{
-    Operator, TableScanOperator, IndexScanOperator, RangeScanOperator, 
-    ConditionalScanOperator, ScanOperatorFactory, IndexCondition, IndexOperator
+    ConditionalScanOperator, IndexCondition, IndexOperator, IndexScanOperator, Operator,
+    RangeScanOperator, ScanOperatorFactory, TableScanOperator,
 };
-use crate::storage::{Row, PageId};
 use crate::storage::index::BPlusTree;
-use crate::storage::page_manager::PageManager;
 use crate::common::Result;
 use std::sync::{Arc, Mutex};
 
 #[test]
 fn test_table_scan_operator_creation() -> Result<()> {
-    let page_manager = Arc::new(Mutex::new(PageManager::new()?));
+    let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
     
     let operator = TableScanOperator::new(
@@ -30,7 +29,7 @@ fn test_table_scan_operator_creation() -> Result<()> {
 
 #[test]
 fn test_table_scan_with_filter() -> Result<()> {
-    let page_manager = Arc::new(Mutex::new(PageManager::new()?));
+    let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
     
     let operator = TableScanOperator::new(
@@ -50,8 +49,8 @@ fn test_table_scan_with_filter() -> Result<()> {
 
 #[test]
 fn test_index_scan_operator_creation() -> Result<()> {
-    let page_manager = Arc::new(Mutex::new(PageManager::new()?));
-    let index = Arc::new(Mutex::new(BPlusTree::new()));
+    let (_temp, page_manager) = common::create_test_page_manager();
+    let index = Arc::new(Mutex::new(BPlusTree::new(3)));
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
     
     let search_conditions = vec![
@@ -79,7 +78,7 @@ fn test_index_scan_operator_creation() -> Result<()> {
 
 #[test]
 fn test_range_scan_operator() -> Result<()> {
-    let page_manager = Arc::new(Mutex::new(PageManager::new()?));
+    let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
     
     let base_operator = TableScanOperator::new(
@@ -104,7 +103,7 @@ fn test_range_scan_operator() -> Result<()> {
 
 #[test]
 fn test_conditional_scan_operator() -> Result<()> {
-    let page_manager = Arc::new(Mutex::new(PageManager::new()?));
+    let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
     
     let base_operator = TableScanOperator::new(
@@ -128,7 +127,7 @@ fn test_conditional_scan_operator() -> Result<()> {
 
 #[test]
 fn test_scan_operator_factory() -> Result<()> {
-    let page_manager = Arc::new(Mutex::new(PageManager::new()?));
+    let (_temp, page_manager) = common::create_test_page_manager();
     let mut factory = ScanOperatorFactory::new(page_manager);
     
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
@@ -173,7 +172,7 @@ fn test_scan_operator_factory() -> Result<()> {
 
 #[test]
 fn test_operator_reset() -> Result<()> {
-    let page_manager = Arc::new(Mutex::new(PageManager::new()?));
+    let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
     
     let mut operator = TableScanOperator::new(
@@ -196,7 +195,7 @@ fn test_operator_reset() -> Result<()> {
 
 #[test]
 fn test_operator_statistics() -> Result<()> {
-    let page_manager = Arc::new(Mutex::new(PageManager::new()?));
+    let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
     
     let operator = TableScanOperator::new(
@@ -249,7 +248,7 @@ fn test_index_operators() {
 
 #[test]
 fn test_operator_trait_implementation() -> Result<()> {
-    let page_manager = Arc::new(Mutex::new(PageManager::new()?));
+    let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
     
     let mut operator: Box<dyn Operator> = Box::new(TableScanOperator::new(

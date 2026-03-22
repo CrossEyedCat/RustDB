@@ -4,6 +4,9 @@ pub mod executor;
 pub mod operators;
 pub mod result;
 
+#[cfg(test)]
+mod tests;
+
 pub use executor::{QueryExecutor, QueryExecutorConfig};
 pub use operators::{
     // New aggregation and sorting operators

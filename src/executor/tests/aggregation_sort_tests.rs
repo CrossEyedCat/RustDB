@@ -4,8 +4,7 @@ use crate::executor::operators::{
     Operator, AggregateFunction, HashGroupByOperator, SortOperator,
     SortGroupByOperator, AggregationSortOperatorFactory
 };
-use crate::storage::row::Row;
-use crate::storage::tuple::Tuple;
+use crate::Row;
 use crate::common::types::{DataType, ColumnValue};
 use crate::common::Result;
 use std::collections::HashMap;
@@ -19,16 +18,14 @@ struct TestOperator {
 impl TestOperator {
     fn new() -> Self {
         let mut data = Vec::new();
-        
+
         // Создаем тестовые данные
         for i in 0..10 {
-            let mut tuple = Tuple::new();
-            tuple.set_value("id", ColumnValue::new(DataType::Integer(i)));
-            tuple.set_value("name", ColumnValue::new(DataType::Varchar(format!("user_{}", i))));
-            tuple.set_value("age", ColumnValue::new(DataType::Integer(20 + (i % 5) * 10)));
-            tuple.set_value("salary", ColumnValue::new(DataType::Double(1000.0 + (i as f64) * 100.0)));
-            
-            let row = Row::new(i as u64, tuple);
+            let mut row = Row::new();
+            row.set_value("id", ColumnValue::new(DataType::Integer(i)));
+            row.set_value("name", ColumnValue::new(DataType::Varchar(format!("user_{}", i))));
+            row.set_value("age", ColumnValue::new(DataType::Integer(20 + (i % 5) * 10)));
+            row.set_value("salary", ColumnValue::new(DataType::Double(1000.0 + (i as f64) * 100.0)));
             data.push(row);
         }
         
