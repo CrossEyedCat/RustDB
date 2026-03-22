@@ -1,0 +1,6 @@
+# Enforce LF line endings for Rust and config files (CI uses Linux)
+*.rs text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf

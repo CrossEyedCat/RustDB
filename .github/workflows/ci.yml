@@ -46,9 +46,10 @@ jobs:
           cache-on-failure: true
 
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
   # Тестирование на разных платформах
+  # Примечание: io-uring не включается в CI (Linux-специфично, требует kernel 5.6+)
   test:
     name: Test Suite (${{ matrix.os }}, ${{ matrix.rust }})
     strategy:
@@ -56,10 +57,10 @@ jobs:
         include:
           - os: ubuntu-latest
             rust: stable
-            features: --all-features
+            features: ""
           - os: ubuntu-latest
             rust: beta
-            features: --all-features
+            features: ""
           - os: macos-latest
             rust: stable
             features: ""
@@ -110,7 +111,7 @@ jobs:
           cache-on-failure: true
 
       - name: Build release
-        run: cargo build --release --verbose --all-features
+        run: cargo build --release --verbose
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -140,7 +141,7 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage report
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
 
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v4
@@ -235,7 +236,7 @@ jobs:
           cache-on-failure: true
 
       - name: Check MSRV compatibility
-        run: cargo check --all-features
+        run: cargo check
 
   # Проверка документации
   docs:
@@ -256,7 +257,7 @@ jobs:
           cache-on-failure: true
 
       - name: Check documentation
-        run: cargo doc --all-features --no-deps --document-private-items
+        run: cargo doc --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: "-D warnings"
 

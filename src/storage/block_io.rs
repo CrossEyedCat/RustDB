@@ -67,7 +67,11 @@ impl StdFileBackend {
 /// On Linux with `io-uring` feature: uses IoUringBackend.
 /// Otherwise: uses StdFileBackend.
 #[allow(clippy::missing_panics_doc)]
-pub fn create_backend_for_file(path: &Path, create: bool, read_only: bool) -> Result<Box<dyn BlockIoBackend>> {
+pub fn create_backend_for_file(
+    path: &Path,
+    create: bool,
+    read_only: bool,
+) -> Result<Box<dyn BlockIoBackend>> {
     #[cfg(all(target_os = "linux", feature = "io-uring"))]
     {
         if create {
