@@ -3,11 +3,11 @@
 //! Измеряет производительность парсера, планировщика и оптимизатора запросов.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use std::hint::black_box;
 use rustdb::{
     parser::SqlParser,
     planner::{QueryOptimizer, QueryPlanner},
 };
+use std::hint::black_box;
 
 fn bench_sql_parse_only(c: &mut Criterion) {
     let mut group = c.benchmark_group("sql_parse_only");

@@ -6,7 +6,9 @@
 use bincode_next::config::legacy;
 
 /// Serialize with bincode 1–compatible wire format.
-pub fn serialize<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, bincode_next::error::EncodeError> {
+pub fn serialize<T: serde::Serialize>(
+    value: &T,
+) -> Result<Vec<u8>, bincode_next::error::EncodeError> {
     bincode_next::serde::encode_to_vec(value, legacy())
 }
 

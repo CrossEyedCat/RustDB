@@ -3,7 +3,7 @@
 [![CI/CD](https://github.com/CrossEyedCat/RustDB/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/CrossEyedCat/RustDB/actions/workflows/ci-cd.yml)
 [![codecov](https://codecov.io/gh/CrossEyedCat/RustDB/branch/main/graph/badge.svg)](https://codecov.io/gh/CrossEyedCat/RustDB)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust 1.90+](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
 [![dependency status](https://deps.rs/repo/github/CrossEyedCat/RustDB/status.svg)](https://deps.rs/repo/github/CrossEyedCat/RustDB)
 
 This project is an implementation of a custom relational database in Rust.
@@ -48,7 +48,7 @@ Create a fully functional relational database with support for SQL-like query la
 
 ### Requirements
 - **Linux (x86_64 or aarch64)** — RustDB is built and supported **only on Linux**. Windows and macOS are not supported (no CI, no release binaries, not a target for deployment).
-- **Rust 1.85+** (see `rust-version` in `Cargo.toml`)
+- **Rust 1.90+** (see `rust-version` in `Cargo.toml`; требуется для `unty-next` / `virtue-next` в цепочке `bincode-next`)
 - **Cargo** — dependency management
 
 ### Installation and Running

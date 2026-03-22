@@ -11,8 +11,8 @@ documentation = "https://crosseyedcat.github.io/RustDB/docs"
 readme = "README.md"
 keywords = ["database", "sql", "relational", "rust", "storage"]
 categories = ["database", "database-implementations"]
-# Минимум 1.85: транзитивные крейты (например clap_lex 1.1) используют edition 2024
-rust-version = "1.85.0"
+# Минимум: unty-next 0.1.1 (1.90+), virtue-next 0.1.3 / bincode-next derive (let chains, const API).
+rust-version = "1.90.0"
 exclude = [
     ".github/",
     "target/",
@@ -57,8 +57,6 @@ lz4_flex = "0.13"
 
 # Dependencies with version constraints for MSRV compatibility
 twox-hash = "=2.1.2"
-# Транзитивно через bincode-next: 0.1.1 требует rustc 1.90; держим 0.1.0 для rust-version 1.85.
-unty-next = "=0.1.0"
 indexmap = "2.13"
 
 # UUID for generating unique identifiers

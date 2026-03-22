@@ -1,7 +1,6 @@
 //! Бенчмарки производительности RustDB
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use std::hint::black_box;
 use rustdb::common::types::PAGE_SIZE;
 use rustdb::storage::{
     advanced_file_manager::AdvancedFileManager,
@@ -9,6 +8,7 @@ use rustdb::storage::{
     database_file::{DatabaseFileType, ExtensionStrategy},
     file_manager::{FileManager, BLOCK_SIZE},
 };
+use std::hint::black_box;
 // use rustdb::storage::block::BlockId; // unused
 use tempfile::TempDir;
 
