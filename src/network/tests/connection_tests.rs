@@ -1,6 +1,8 @@
 //! Network connection tests
 
-use crate::network::connection::{Connection, ConnectionConfig, ConnectionState};
+use crate::network::connection::{
+    Connection, ConnectionConfig, ConnectionPool, ConnectionState,
+};
 use std::time::Duration;
 
 #[test]
@@ -123,4 +125,16 @@ fn test_connection_statistics() {
 
     // Statistics should be available
     assert!(config.buffer_size > 0);
+}
+
+#[test]
+fn test_connection_new_and_state() {
+    let c = Connection::new(ConnectionConfig::default()).unwrap();
+    assert_eq!(c.state(), ConnectionState::New);
+}
+
+#[test]
+fn test_connection_pool_new() {
+    let pool = ConnectionPool::new();
+    assert!(pool.is_ok());
 }

@@ -4,3 +4,4 @@ pub mod ast_tests;
 pub mod lexer_tests;
 pub mod parser_tests;
 pub mod prepared_tests;
+pub mod token_coverage_tests;

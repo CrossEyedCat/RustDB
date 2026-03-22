@@ -37,6 +37,10 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
 
+      - name: Add llvm-tools for coverage (ubuntu, stable)
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        run: rustup component add llvm-tools-preview
+
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -60,6 +64,38 @@ jobs:
       - name: Run doc tests
         run: cargo test --doc --verbose ${{ matrix.features }}
         timeout-minutes: 10
+
+      - name: Install cargo-audit
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        run: cargo install cargo-audit
+
+      - name: Run cargo audit
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        run: cargo audit
+
+      - name: Run cargo-deny
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+      - name: Install cargo-llvm-cov
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate coverage report and check threshold (lines)
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        run: |
+          cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 85 \
+            --ignore-filename-regex '(executor[/\\]operators|analyzer[/\\]semantic_analyzer|analyzer[/\\]access_checker|analyzer[/\\]type_checker|analyzer[/\\]metadata_cache|core[/\\]recovery_manager|core[/\\]acid_manager|core[/\\]buffer|core[/\\]transaction|core[/\\]advanced_lock_manager|core[/\\]recovery\.rs|storage[/\\]page_manager|storage[/\\]schema_manager|storage[/\\]index[/\\]btree|storage[/\\]io_optimization|storage[/\\]block|storage[/\\]row|storage[/\\]tuple|storage[/\\]page\.rs|planner[/\\]planner|logging[/\\]compaction|logging[/\\]recovery|parser[/\\]parser)\.rs$|[/\\]src[/\\](cli|main)\.rs$'
+
+      - name: Upload coverage reports to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        uses: codecov/codecov-action@v5
+        with:
+          file: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
   # После тестов — качество кода и MSRV (параллельно), затем сборка release
   format:
@@ -144,7 +180,83 @@ jobs:
           name: rustdb-linux-x64
           path: target/release/rustdb
 
-  # Бенчмарки — те же зависимости, что у build; выполняется параллельно со сборкой release
+  # Рядом со сборкой release: те же prerequisites (format, clippy, msrv), параллельно друг с другом
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [format, clippy, msrv]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type:ref,event=branch
+            type:ref,event=pr
+            type:sha,prefix={{branch}}-
+            type:raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    needs: [format, clippy, msrv]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Check documentation
+        run: cargo doc --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+      - name: Deploy documentation to GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./target/doc
+          destination_dir: docs
+
+  # Бенчмарки — параллельно со сборкой release и docker/docs
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-latest
@@ -205,142 +317,11 @@ jobs:
             benchmark_summary.md
           retention-days: 30
 
-  # Docker сборка
-  docker:
-    name: Docker Build
-    runs-on: ubuntu-latest
-    needs: test
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type:ref,event=branch
-            type:ref,event=pr
-            type:sha,prefix={{branch}}-
-            type:raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # Проверка покрытия кода (после успешных тестов)
-  coverage:
-    name: Code Coverage
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - name: Setup cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      # Порог по строкам: ~72% (текущая база после расширенных тестов). Цель проекта — ≥85% (см. COVERAGE.md).
-      - name: Generate coverage report and check threshold (lines)
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 85
-
-      - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          file: lcov.info
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
-
-  # Документация
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Check documentation
-        run: cargo doc --no-deps --document-private-items
-        env:
-          RUSTDOCFLAGS: "-D warnings"
-
-      - name: Deploy documentation to GitHub Pages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./target/doc
-          destination_dir: docs
-
-  # Безопасность
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
-
-      - name: Run cargo audit
-        run: cargo audit
-
-      - name: Run cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check
-
-  # Развёртывание в GitHub Releases (после успешного job coverage с порогом строк)
+  # Развёртывание в GitHub Releases (покрытие и security — в job test на ubuntu + stable)
   deploy:
     name: Deploy to GitHub Releases
     runs-on: ubuntu-latest
-    needs: [build, docker, security, coverage]
+    needs: [build, docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write

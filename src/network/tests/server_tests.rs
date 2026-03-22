@@ -1,6 +1,6 @@
 //! Network server tests
 
-use crate::network::server::{Server, ServerConfig};
+use crate::network::server::{NetworkServer, Server, ServerConfig};
 use std::time::Duration;
 
 #[test]
@@ -151,4 +151,9 @@ fn test_server_statistics() {
         assert!(s.total_connections >= 0);
         assert!(s.active_connections >= 0);
     }
+}
+
+#[test]
+fn test_network_server_legacy_new() {
+    assert!(NetworkServer::new().is_ok());
 }

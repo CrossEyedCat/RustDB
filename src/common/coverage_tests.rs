@@ -3,6 +3,8 @@
 use crate::common::config::{
     DatabaseConfig, LoggingConfig, NetworkConfig, PerformanceConfig, StorageConfig,
 };
+use crate::common::i18n::Language;
+use std::path::PathBuf;
 use crate::common::error::Error;
 use crate::common::i18n::MessageKey;
 use crate::common::types::PAGE_SIZE;
@@ -66,6 +68,112 @@ fn test_config_defaults_and_merge() {
     db.name = "x".into();
     let merged = db.merge(DatabaseConfig::default());
     assert_eq!(merged.name, "x");
+}
+
+#[test]
+fn test_database_config_file_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("db.toml");
+    let original = DatabaseConfig {
+        name: "mydb".into(),
+        data_directory: "/var/data".into(),
+        max_connections: 42,
+        connection_timeout: 11,
+        query_timeout: 22,
+        language: Language::English,
+    };
+    original.to_file(&path)?;
+    let loaded = DatabaseConfig::from_file(&path)?;
+    assert_eq!(loaded.name, original.name);
+    assert_eq!(loaded.data_directory, original.data_directory);
+    assert_eq!(loaded.max_connections, original.max_connections);
+    assert_eq!(loaded.connection_timeout, original.connection_timeout);
+    assert_eq!(loaded.query_timeout, original.query_timeout);
+    Ok(())
+}
+
+#[test]
+fn test_database_config_from_env() -> Result<(), Box<dyn std::error::Error>> {
+    let keys = [
+        "RUSTDB_NAME",
+        "RUSTDB_DATA_DIR",
+        "RUSTDB_MAX_CONNECTIONS",
+        "RUSTDB_LANGUAGE",
+    ];
+    let mut saved: Vec<(String, Option<String>)> = Vec::new();
+    for k in keys {
+        saved.push((k.to_string(), std::env::var(k).ok()));
+    }
+    std::env::set_var("RUSTDB_NAME", "envdb");
+    std::env::set_var("RUSTDB_DATA_DIR", "/tmp/envdata");
+    std::env::set_var("RUSTDB_MAX_CONNECTIONS", "7");
+    std::env::set_var("RUSTDB_LANGUAGE", "en");
+    let cfg = DatabaseConfig::from_env()?;
+    assert_eq!(cfg.name, "envdb");
+    assert_eq!(cfg.data_directory, "/tmp/envdata");
+    assert_eq!(cfg.max_connections, 7);
+    assert_eq!(cfg.language, Language::English);
+    for (k, v) in saved {
+        match v {
+            Some(val) => std::env::set_var(&k, val),
+            None => std::env::remove_var(&k),
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_database_config_merge_non_defaults() {
+    let base = DatabaseConfig::default();
+    let other = DatabaseConfig {
+        name: "merged".into(),
+        data_directory: "/other".into(),
+        max_connections: 5,
+        connection_timeout: 99,
+        query_timeout: 88,
+        language: Language::English,
+    };
+    let m = base.merge(other);
+    assert_eq!(m.name, "merged");
+    assert_eq!(m.data_directory, "/other");
+    assert_eq!(m.max_connections, 5);
+    assert_eq!(m.connection_timeout, 99);
+    assert_eq!(m.query_timeout, 88);
+}
+
+#[test]
+fn test_storage_logging_network_performance_serde_roundtrip() {
+    let s = StorageConfig::default();
+    let json = serde_json::to_string(&s).unwrap();
+    let s2: StorageConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(s2.page_size, s.page_size);
+
+    let l = LoggingConfig::default();
+    let lj = serde_json::to_string(&l).unwrap();
+    let l2: LoggingConfig = serde_json::from_str(&lj).unwrap();
+    assert_eq!(l2.level, l.level);
+
+    let n = NetworkConfig::default();
+    let nj = serde_json::to_string(&n).unwrap();
+    let n2: NetworkConfig = serde_json::from_str(&nj).unwrap();
+    assert_eq!(n2.port, n.port);
+
+    let p = PerformanceConfig::default();
+    let pj = serde_json::to_string(&p).unwrap();
+    let p2: PerformanceConfig = serde_json::from_str(&pj).unwrap();
+    assert_eq!(
+        p2.max_query_plan_cache_size,
+        p.max_query_plan_cache_size
+    );
+}
+
+#[test]
+fn test_logging_config_pathbuf_clone() {
+    let mut l = LoggingConfig::default();
+    l.file = PathBuf::from("./custom.log");
+    let j = serde_json::to_string(&l).unwrap();
+    let l2: LoggingConfig = serde_json::from_str(&j).unwrap();
+    assert!(l2.file.to_string_lossy().contains("custom"));
 }
 
 #[test]

@@ -30,9 +30,7 @@ cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 85
 
 ## CI
 
-
-
-Job **Code Coverage** в `.github/workflows/ci-cd.yml` использует `--fail-under-lines 85`.
+В `.github/workflows/ci-cd.yml` порог **`--fail-under-lines 85`** выполняется в job **Test Suite** для матрицы **`ubuntu-latest` + `stable`** (шаги `cargo llvm-cov` и загрузка в Codecov после обычных тестов).
 
 
 
