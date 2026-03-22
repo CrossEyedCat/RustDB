@@ -126,7 +126,7 @@ impl OptimizedFileManager {
             .await?;
 
         // Periodically sync to disk
-        if page_id % 100 == 0 {
+        if page_id.is_multiple_of(100) {
             self.sync_file(file_id).await?;
         }
 
