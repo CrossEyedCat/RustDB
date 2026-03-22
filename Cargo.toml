@@ -93,6 +93,10 @@ panic = "abort"
 opt-level = 0
 debug = true
 
+# Точка входа и CLI: unit-тесты в `cli.rs` проверяют парсинг; исполняемые ветки — через интеграционные сценарии
+[package.metadata.cargo-llvm-cov]
+exclude-files = ["src/main.rs", "src/cli.rs"]
+
 [[bench]]
 name = "benchmarks"
 harness = false

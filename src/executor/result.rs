@@ -13,3 +13,15 @@ impl ResultSet {
         Ok(Self {})
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ResultSet;
+    use crate::common::Result;
+
+    #[test]
+    fn test_result_set_new() -> Result<()> {
+        let _rs = ResultSet::new()?;
+        Ok(())
+    }
+}

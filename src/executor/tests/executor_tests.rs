@@ -1,16 +1,18 @@
 //! QueryExecutor tests - full plan execution
 
 use super::common;
+use crate::common::Result;
 use crate::executor::{QueryExecutor, QueryExecutorConfig};
 use crate::parser::{SqlParser, SqlStatement};
 use crate::planner::{QueryOptimizer, QueryPlanner};
-use crate::common::Result;
 use std::sync::Arc;
 
 #[test]
 fn test_executor_creation() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
-    let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(page_manager));
+    let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(
+        page_manager,
+    ));
     let _executor = QueryExecutor::new(factory)?;
     Ok(())
 }
@@ -18,7 +20,9 @@ fn test_executor_creation() -> Result<()> {
 #[test]
 fn test_executor_config_creation() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
-    let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(page_manager));
+    let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(
+        page_manager,
+    ));
     let config = QueryExecutorConfig {
         enable_parallel_execution: false,
         num_worker_threads: 1,
@@ -39,7 +43,9 @@ fn test_executor_simple_table_scan() -> Result<()> {
         pm.insert(&data)?;
     }
 
-    let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(page_manager));
+    let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(
+        page_manager,
+    ));
     let executor = QueryExecutor::new(factory)?;
 
     let mut planner = QueryPlanner::new()?;
@@ -62,7 +68,9 @@ fn test_executor_simple_table_scan() -> Result<()> {
 #[ignore] // Can hang on some environments - full plan execution
 fn test_executor_with_config() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
-    let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(page_manager));
+    let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(
+        page_manager,
+    ));
 
     let config = QueryExecutorConfig {
         enable_parallel_execution: false,

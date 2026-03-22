@@ -811,4 +811,125 @@ mod tests {
 
         assert!(validator.validate_schema(&schema).is_ok());
     }
+
+    #[test]
+    fn test_alter_add_index_drop_index() {
+        let mut m = SchemaManager::new();
+        let mut schema = Schema::new("t".into());
+        schema = schema.add_column(Column::new("id".into(), DataType::Integer(0)));
+        m.create_schema("t".into(), schema).unwrap();
+        m.alter_table(
+            "t",
+            SchemaOperation::AddIndex {
+                index_name: "ix".into(),
+                columns: vec!["id".into()],
+                unique: false,
+            },
+        )
+        .unwrap();
+        m.alter_table(
+            "t",
+            SchemaOperation::DropIndex {
+                index_name: "ix".into(),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_alter_add_drop_constraint() {
+        let mut m = SchemaManager::new();
+        let mut schema = Schema::new("t2".into());
+        schema = schema.add_column(Column::new("c".into(), DataType::Integer(0)));
+        m.create_schema("t2".into(), schema).unwrap();
+        let c = crate::storage::tuple::Constraint::new(
+            "chk".into(),
+            crate::storage::tuple::ConstraintType::Check,
+            "1".into(),
+            vec!["c".into()],
+        );
+        m.alter_table(
+            "t2",
+            SchemaOperation::AddConstraint {
+                constraint: c.clone(),
+            },
+        )
+        .unwrap();
+        m.alter_table(
+            "t2",
+            SchemaOperation::DropConstraint {
+                constraint_name: "chk".into(),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_alter_modify_primary_key_and_table_options() {
+        let mut m = SchemaManager::new();
+        let mut schema = Schema::new("t3".into());
+        schema = schema.add_column(
+            Column::new("id".into(), DataType::Integer(0))
+                .not_null()
+                .default_value(ColumnValue::new(DataType::Integer(0))),
+        );
+        m.create_schema("t3".into(), schema).unwrap();
+        m.alter_table(
+            "t3",
+            SchemaOperation::ModifyPrimaryKey {
+                new_columns: vec!["id".into()],
+            },
+        )
+        .unwrap();
+        m.alter_table(
+            "t3",
+            SchemaOperation::ModifyTableOptions {
+                options: crate::storage::tuple::TableOptions {
+                    engine: "innodb".into(),
+                    charset: "utf8".into(),
+                    collation: "utf8_bin".into(),
+                    comment: None,
+                    auto_increment: None,
+                    max_rows: None,
+                    min_rows: None,
+                },
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_rename_column_and_rollback() {
+        let mut m = SchemaManager::new();
+        let mut schema = Schema::new("t4".into());
+        schema = schema.add_column(Column::new("a".into(), DataType::Integer(0)));
+        m.create_schema("t4".into(), schema).unwrap();
+        m.alter_table(
+            "t4",
+            SchemaOperation::RenameColumn {
+                old_name: "a".into(),
+                new_name: "b".into(),
+            },
+        )
+        .unwrap();
+        assert!(m.get_change_history().len() >= 2);
+        let _ = m.rollback_last_change();
+    }
+
+    #[test]
+    fn test_type_compatibility_paths() {
+        let mut m = SchemaManager::new();
+        let mut schema = Schema::new("t5".into());
+        schema = schema.add_column(Column::new("i".into(), DataType::Integer(0)));
+        m.create_schema("t5".into(), schema).unwrap();
+        let new_col = Column::new("i".into(), DataType::BigInt(0));
+        m.alter_table(
+            "t5",
+            SchemaOperation::ModifyColumn {
+                column_name: "i".into(),
+                new_column: new_col,
+            },
+        )
+        .unwrap();
+    }
 }

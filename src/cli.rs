@@ -263,4 +263,66 @@ mod tests {
             panic!("Expected language command");
         }
     }
+
+    #[test]
+    fn test_cli_server_command() {
+        let cli = Cli::try_parse_from(vec![
+            "rustdb",
+            "server",
+            "--port",
+            "9000",
+            "--host",
+            "127.0.0.1",
+        ])
+        .unwrap();
+        if let Some(Commands::Server { port, host }) = cli.command {
+            assert_eq!(port, 9000);
+            assert_eq!(host, "127.0.0.1");
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn test_cli_info() {
+        let cli = Cli::try_parse_from(vec!["rustdb", "info"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Info)));
+    }
+
+    #[test]
+    fn test_cli_create() {
+        let cli = Cli::try_parse_from(vec!["rustdb", "create", "mydb", "--data-dir", "./d"]).unwrap();
+        if let Some(Commands::Create { name, data_dir }) = cli.command {
+            assert_eq!(name, "mydb");
+            assert_eq!(data_dir, Some(std::path::PathBuf::from("./d")));
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn test_cli_query() {
+        let cli = Cli::try_parse_from(vec!["rustdb", "query", "SELECT 1", "-d", "db1"]).unwrap();
+        if let Some(Commands::Query { query, database }) = cli.command {
+            assert!(query.contains("SELECT"));
+            assert_eq!(database, Some("db1".into()));
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn test_cli_language_set() {
+        let cli = Cli::try_parse_from(vec!["rustdb", "language", "set", "en"]).unwrap();
+        if let Some(Commands::Language { action }) = cli.command {
+            assert!(matches!(action, LanguageCommands::Set { .. }));
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn test_cli_init_parses_language() {
+        let _ = Cli::try_parse_from(vec!["rustdb", "--language", "en"]);
+    }
 }

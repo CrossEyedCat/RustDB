@@ -10,6 +10,9 @@ pub mod utils;
 #[cfg(test)]
 pub mod test_utils;
 
+#[cfg(test)]
+mod coverage_tests;
+
 pub use config::*;
 pub use constants::*;
 pub use error::{Error, Result};

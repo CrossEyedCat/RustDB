@@ -1,38 +1,30 @@
 //! Тесты для операторов соединения
 
 use super::common;
+use crate::common::Result;
 use crate::executor::operators::{
-    JoinCondition, JoinOperator, JoinType, HashJoinOperator, MergeJoinOperator,
+    HashJoinOperator, JoinCondition, JoinOperator, JoinType, MergeJoinOperator,
     NestedLoopJoinOperator, Operator, TableScanOperator,
 };
-use crate::common::Result;
 
 #[test]
 fn test_nested_loop_join_creation() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
-    
-    let left_operator = TableScanOperator::new(
-        "users".to_string(),
-        page_manager.clone(),
-        None,
-        left_schema,
-    )?;
-    
-    let right_operator = TableScanOperator::new(
-        "emails".to_string(),
-        page_manager,
-        None,
-        right_schema,
-    )?;
-    
+
+    let left_operator =
+        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+
+    let right_operator =
+        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
         right_column: "user_id".to_string(),
         operator: JoinOperator::Equal,
     };
-    
+
     let join_operator = NestedLoopJoinOperator::new(
         Box::new(left_operator),
         Box::new(right_operator),
@@ -40,10 +32,10 @@ fn test_nested_loop_join_creation() -> Result<()> {
         JoinType::Inner,
         100, // block_size
     )?;
-    
+
     let schema = join_operator.get_schema()?;
     assert_eq!(schema.len(), 4); // id, name, user_id, email
-    
+
     Ok(())
 }
 
@@ -53,27 +45,19 @@ fn test_hash_join_creation() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
-    
-    let left_operator = TableScanOperator::new(
-        "users".to_string(),
-        page_manager.clone(),
-        None,
-        left_schema,
-    )?;
-    
-    let right_operator = TableScanOperator::new(
-        "emails".to_string(),
-        page_manager,
-        None,
-        right_schema,
-    )?;
-    
+
+    let left_operator =
+        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+
+    let right_operator =
+        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
         right_column: "user_id".to_string(),
         operator: JoinOperator::Equal,
     };
-    
+
     let join_operator = HashJoinOperator::new(
         Box::new(left_operator),
         Box::new(right_operator),
@@ -81,10 +65,10 @@ fn test_hash_join_creation() -> Result<()> {
         JoinType::Inner,
         1000, // hash_table_size
     )?;
-    
+
     let schema = join_operator.get_schema()?;
     assert_eq!(schema.len(), 4); // id, name, user_id, email
-    
+
     Ok(())
 }
 
@@ -93,37 +77,29 @@ fn test_merge_join_creation() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
-    
-    let left_operator = TableScanOperator::new(
-        "users".to_string(),
-        page_manager.clone(),
-        None,
-        left_schema,
-    )?;
-    
-    let right_operator = TableScanOperator::new(
-        "emails".to_string(),
-        page_manager,
-        None,
-        right_schema,
-    )?;
-    
+
+    let left_operator =
+        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+
+    let right_operator =
+        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
         right_column: "user_id".to_string(),
         operator: JoinOperator::Equal,
     };
-    
+
     let join_operator = MergeJoinOperator::new(
         Box::new(left_operator),
         Box::new(right_operator),
         join_condition,
         JoinType::Inner,
     )?;
-    
+
     let schema = join_operator.get_schema()?;
     assert_eq!(schema.len(), 4); // id, name, user_id, email
-    
+
     Ok(())
 }
 
@@ -146,7 +122,7 @@ fn test_join_conditions() {
             operator: JoinOperator::LessThanOrEqual,
         },
     ];
-    
+
     assert_eq!(conditions.len(), 3);
     assert_eq!(conditions[0].left_column, "id");
     assert_eq!(conditions[0].right_column, "user_id");
@@ -161,7 +137,7 @@ fn test_join_types() {
         JoinType::RightOuter,
         JoinType::FullOuter,
     ];
-    
+
     assert_eq!(join_types.len(), 4);
 }
 
@@ -175,7 +151,7 @@ fn test_join_operators() {
         JoinOperator::GreaterThan,
         JoinOperator::GreaterThanOrEqual,
     ];
-    
+
     assert_eq!(operators.len(), 6);
 }
 
@@ -184,27 +160,19 @@ fn test_nested_loop_join_reset() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
-    
-    let left_operator = TableScanOperator::new(
-        "users".to_string(),
-        page_manager.clone(),
-        None,
-        left_schema,
-    )?;
-    
-    let right_operator = TableScanOperator::new(
-        "emails".to_string(),
-        page_manager,
-        None,
-        right_schema,
-    )?;
-    
+
+    let left_operator =
+        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+
+    let right_operator =
+        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
         right_column: "user_id".to_string(),
         operator: JoinOperator::Equal,
     };
-    
+
     let mut join_operator = NestedLoopJoinOperator::new(
         Box::new(left_operator),
         Box::new(right_operator),
@@ -212,15 +180,15 @@ fn test_nested_loop_join_reset() -> Result<()> {
         JoinType::Inner,
         100,
     )?;
-    
+
     // Сбрасываем оператор
     join_operator.reset()?;
-    
+
     let statistics = join_operator.get_statistics();
     assert_eq!(statistics.rows_processed, 0);
     assert_eq!(statistics.rows_returned, 0);
     assert_eq!(statistics.execution_time_ms, 0);
-    
+
     Ok(())
 }
 
@@ -230,27 +198,19 @@ fn test_hash_join_reset() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
-    
-    let left_operator = TableScanOperator::new(
-        "users".to_string(),
-        page_manager.clone(),
-        None,
-        left_schema,
-    )?;
-    
-    let right_operator = TableScanOperator::new(
-        "emails".to_string(),
-        page_manager,
-        None,
-        right_schema,
-    )?;
-    
+
+    let left_operator =
+        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+
+    let right_operator =
+        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
         right_column: "user_id".to_string(),
         operator: JoinOperator::Equal,
     };
-    
+
     let mut join_operator = HashJoinOperator::new(
         Box::new(left_operator),
         Box::new(right_operator),
@@ -258,15 +218,15 @@ fn test_hash_join_reset() -> Result<()> {
         JoinType::Inner,
         1000,
     )?;
-    
+
     // Сбрасываем оператор
     join_operator.reset()?;
-    
+
     let statistics = join_operator.get_statistics();
     assert_eq!(statistics.rows_processed, 0);
     assert_eq!(statistics.rows_returned, 0);
     assert_eq!(statistics.execution_time_ms, 0);
-    
+
     Ok(())
 }
 
@@ -275,42 +235,34 @@ fn test_merge_join_reset() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
-    
-    let left_operator = TableScanOperator::new(
-        "users".to_string(),
-        page_manager.clone(),
-        None,
-        left_schema,
-    )?;
-    
-    let right_operator = TableScanOperator::new(
-        "emails".to_string(),
-        page_manager,
-        None,
-        right_schema,
-    )?;
-    
+
+    let left_operator =
+        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+
+    let right_operator =
+        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
         right_column: "user_id".to_string(),
         operator: JoinOperator::Equal,
     };
-    
+
     let mut join_operator = MergeJoinOperator::new(
         Box::new(left_operator),
         Box::new(right_operator),
         join_condition,
         JoinType::Inner,
     )?;
-    
+
     // Сбрасываем оператор
     join_operator.reset()?;
-    
+
     let statistics = join_operator.get_statistics();
     assert_eq!(statistics.rows_processed, 0);
     assert_eq!(statistics.rows_returned, 0);
     assert_eq!(statistics.execution_time_ms, 0);
-    
+
     Ok(())
 }
 
@@ -319,27 +271,19 @@ fn test_join_operator_statistics() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
-    
-    let left_operator = TableScanOperator::new(
-        "users".to_string(),
-        page_manager.clone(),
-        None,
-        left_schema,
-    )?;
-    
-    let right_operator = TableScanOperator::new(
-        "emails".to_string(),
-        page_manager,
-        None,
-        right_schema,
-    )?;
-    
+
+    let left_operator =
+        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+
+    let right_operator =
+        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
         right_column: "user_id".to_string(),
         operator: JoinOperator::Equal,
     };
-    
+
     let join_operator = NestedLoopJoinOperator::new(
         Box::new(left_operator),
         Box::new(right_operator),
@@ -347,9 +291,9 @@ fn test_join_operator_statistics() -> Result<()> {
         JoinType::Inner,
         100,
     )?;
-    
+
     let statistics = join_operator.get_statistics();
-    
+
     // Проверяем, что все поля статистики инициализированы
     assert_eq!(statistics.rows_processed, 0);
     assert_eq!(statistics.rows_returned, 0);
@@ -357,7 +301,7 @@ fn test_join_operator_statistics() -> Result<()> {
     assert_eq!(statistics.io_operations, 0);
     assert_eq!(statistics.memory_operations, 0);
     assert_eq!(statistics.memory_used_bytes, 0);
-    
+
     Ok(())
 }
 
@@ -366,27 +310,19 @@ fn test_join_operator_trait_implementation() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
-    
-    let left_operator = TableScanOperator::new(
-        "users".to_string(),
-        page_manager.clone(),
-        None,
-        left_schema,
-    )?;
-    
-    let right_operator = TableScanOperator::new(
-        "emails".to_string(),
-        page_manager,
-        None,
-        right_schema,
-    )?;
-    
+
+    let left_operator =
+        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+
+    let right_operator =
+        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
         right_column: "user_id".to_string(),
         operator: JoinOperator::Equal,
     };
-    
+
     let mut operator: Box<dyn Operator> = Box::new(NestedLoopJoinOperator::new(
         Box::new(left_operator),
         Box::new(right_operator),
@@ -394,16 +330,15 @@ fn test_join_operator_trait_implementation() -> Result<()> {
         JoinType::Inner,
         100,
     )?);
-    
+
     // Тестируем методы трейта
     let operator_schema = operator.get_schema()?;
     assert_eq!(operator_schema.len(), 4);
-    
+
     let statistics = operator.get_statistics();
     assert_eq!(statistics.rows_processed, 0);
-    
+
     operator.reset()?;
-    
+
     Ok(())
 }
-

@@ -95,3 +95,21 @@ impl Drop for Database {
         let _ = self.close();
     }
 }
+
+#[cfg(test)]
+mod crate_tests {
+    use super::{Database, Result, VERSION};
+
+    #[test]
+    fn test_version_constant() {
+        assert!(!VERSION.is_empty());
+    }
+
+    #[test]
+    fn test_database_new_open_close() -> Result<()> {
+        let mut db = Database::new()?;
+        let _ = Database::open("/tmp/rustdb_test")?;
+        db.close()?;
+        Ok(())
+    }
+}

@@ -1,29 +1,24 @@
 //! Тесты для операторов сканирования
 
 use super::common;
+use crate::common::Result;
 use crate::executor::operators::{
     ConditionalScanOperator, IndexCondition, IndexOperator, IndexScanOperator, Operator,
     RangeScanOperator, ScanOperatorFactory, TableScanOperator,
 };
 use crate::storage::index::BPlusTree;
-use crate::common::Result;
 use std::sync::{Arc, Mutex};
 
 #[test]
 fn test_table_scan_operator_creation() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
-    
-    let operator = TableScanOperator::new(
-        "users".to_string(),
-        page_manager,
-        None,
-        schema.clone(),
-    )?;
-    
+
+    let operator = TableScanOperator::new("users".to_string(), page_manager, None, schema.clone())?;
+
     let operator_schema = operator.get_schema()?;
     assert_eq!(operator_schema, schema);
-    
+
     Ok(())
 }
 
@@ -31,19 +26,19 @@ fn test_table_scan_operator_creation() -> Result<()> {
 fn test_table_scan_with_filter() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
-    
+
     let operator = TableScanOperator::new(
         "users".to_string(),
         page_manager,
         Some("age > 18".to_string()),
         schema,
     )?;
-    
+
     // Проверяем, что оператор создался успешно
     let statistics = operator.get_statistics();
     assert_eq!(statistics.rows_processed, 0);
     assert_eq!(statistics.rows_returned, 0);
-    
+
     Ok(())
 }
 
@@ -52,15 +47,13 @@ fn test_index_scan_operator_creation() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let index = Arc::new(Mutex::new(BPlusTree::new(3)));
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
-    
-    let search_conditions = vec![
-        IndexCondition {
-            column: "id".to_string(),
-            operator: IndexOperator::Equal,
-            value: "1".to_string(),
-        }
-    ];
-    
+
+    let search_conditions = vec![IndexCondition {
+        column: "id".to_string(),
+        operator: IndexOperator::Equal,
+        value: "1".to_string(),
+    }];
+
     let operator = IndexScanOperator::new(
         "users".to_string(),
         "idx_users_id".to_string(),
@@ -69,10 +62,10 @@ fn test_index_scan_operator_creation() -> Result<()> {
         search_conditions,
         schema.clone(),
     )?;
-    
+
     let operator_schema = operator.get_schema()?;
     assert_eq!(operator_schema, schema);
-    
+
     Ok(())
 }
 
@@ -80,24 +73,19 @@ fn test_index_scan_operator_creation() -> Result<()> {
 fn test_range_scan_operator() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
-    
-    let base_operator = TableScanOperator::new(
-        "users".to_string(),
-        page_manager,
-        None,
-        schema,
-    )?;
-    
+
+    let base_operator = TableScanOperator::new("users".to_string(), page_manager, None, schema)?;
+
     let range_operator = RangeScanOperator::new(
         Box::new(base_operator),
         Some("1".to_string()),
         Some("10".to_string()),
     )?;
-    
+
     let statistics = range_operator.get_statistics();
     assert_eq!(statistics.rows_processed, 0);
     assert_eq!(statistics.rows_returned, 0);
-    
+
     Ok(())
 }
 
@@ -105,23 +93,16 @@ fn test_range_scan_operator() -> Result<()> {
 fn test_conditional_scan_operator() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
-    
-    let base_operator = TableScanOperator::new(
-        "users".to_string(),
-        page_manager,
-        None,
-        schema,
-    )?;
-    
-    let conditional_operator = ConditionalScanOperator::new(
-        Box::new(base_operator),
-        "name LIKE 'John%'".to_string(),
-    )?;
-    
+
+    let base_operator = TableScanOperator::new("users".to_string(), page_manager, None, schema)?;
+
+    let conditional_operator =
+        ConditionalScanOperator::new(Box::new(base_operator), "name LIKE 'John%'".to_string())?;
+
     let statistics = conditional_operator.get_statistics();
     assert_eq!(statistics.rows_processed, 0);
     assert_eq!(statistics.rows_returned, 0);
-    
+
     Ok(())
 }
 
@@ -129,44 +110,31 @@ fn test_conditional_scan_operator() -> Result<()> {
 fn test_scan_operator_factory() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let mut factory = ScanOperatorFactory::new(page_manager);
-    
+
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
-    
+
     // Тестируем создание TableScan
-    let table_scan = factory.create_table_scan(
-        "users".to_string(),
-        None,
-        schema.clone(),
-    )?;
-    
+    let table_scan = factory.create_table_scan("users".to_string(), None, schema.clone())?;
+
     let table_scan_schema = table_scan.get_schema()?;
     assert_eq!(table_scan_schema, schema);
-    
+
     // Тестируем создание RangeScan
-    let range_scan = factory.create_range_scan(
-        table_scan,
-        Some("1".to_string()),
-        Some("10".to_string()),
-    )?;
-    
+    let range_scan =
+        factory.create_range_scan(table_scan, Some("1".to_string()), Some("10".to_string()))?;
+
     let range_scan_schema = range_scan.get_schema()?;
     assert_eq!(range_scan_schema, schema);
-    
+
     // Тестируем создание ConditionalScan
-    let base_operator = factory.create_table_scan(
-        "users".to_string(),
-        None,
-        schema,
-    )?;
-    
-    let conditional_scan = factory.create_conditional_scan(
-        base_operator,
-        "age > 18".to_string(),
-    )?;
-    
+    let base_operator = factory.create_table_scan("users".to_string(), None, schema)?;
+
+    let conditional_scan =
+        factory.create_conditional_scan(base_operator, "age > 18".to_string())?;
+
     let conditional_schema = conditional_scan.get_schema()?;
     assert_eq!(conditional_schema.len(), 3);
-    
+
     Ok(())
 }
 
@@ -174,22 +142,17 @@ fn test_scan_operator_factory() -> Result<()> {
 fn test_operator_reset() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
-    
-    let mut operator = TableScanOperator::new(
-        "users".to_string(),
-        page_manager,
-        None,
-        schema,
-    )?;
-    
+
+    let mut operator = TableScanOperator::new("users".to_string(), page_manager, None, schema)?;
+
     // Сбрасываем оператор
     operator.reset()?;
-    
+
     let statistics = operator.get_statistics();
     assert_eq!(statistics.rows_processed, 0);
     assert_eq!(statistics.rows_returned, 0);
     assert_eq!(statistics.execution_time_ms, 0);
-    
+
     Ok(())
 }
 
@@ -197,16 +160,11 @@ fn test_operator_reset() -> Result<()> {
 fn test_operator_statistics() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
-    
-    let operator = TableScanOperator::new(
-        "users".to_string(),
-        page_manager,
-        None,
-        schema,
-    )?;
-    
+
+    let operator = TableScanOperator::new("users".to_string(), page_manager, None, schema)?;
+
     let statistics = operator.get_statistics();
-    
+
     // Проверяем, что все поля статистики инициализированы
     assert_eq!(statistics.rows_processed, 0);
     assert_eq!(statistics.rows_returned, 0);
@@ -214,7 +172,7 @@ fn test_operator_statistics() -> Result<()> {
     assert_eq!(statistics.io_operations, 0);
     assert_eq!(statistics.memory_operations, 0);
     assert_eq!(statistics.memory_used_bytes, 0);
-    
+
     Ok(())
 }
 
@@ -225,7 +183,7 @@ fn test_index_conditions() {
         operator: IndexOperator::Equal,
         value: "1".to_string(),
     };
-    
+
     assert_eq!(condition.column, "id");
     assert!(matches!(condition.operator, IndexOperator::Equal));
     assert_eq!(condition.value, "1");
@@ -242,7 +200,7 @@ fn test_index_operators() {
         IndexOperator::Between,
         IndexOperator::In,
     ];
-    
+
     assert_eq!(operators.len(), 7);
 }
 
@@ -250,24 +208,22 @@ fn test_index_operators() {
 fn test_operator_trait_implementation() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
-    
+
     let mut operator: Box<dyn Operator> = Box::new(TableScanOperator::new(
         "users".to_string(),
         page_manager,
         None,
         schema,
     )?);
-    
+
     // Тестируем методы трейта
     let operator_schema = operator.get_schema()?;
     assert_eq!(operator_schema.len(), 3);
-    
+
     let statistics = operator.get_statistics();
     assert_eq!(statistics.rows_processed, 0);
-    
+
     operator.reset()?;
-    
+
     Ok(())
 }
-
-

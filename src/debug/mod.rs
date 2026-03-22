@@ -241,3 +241,47 @@ impl Drop for DebugManager {
         self.shutdown();
     }
 }
+
+#[cfg(test)]
+mod debug_manager_tests {
+    use super::{DebugConfig, DebugManager};
+
+    #[test]
+    fn test_debug_config_default() {
+        let c = DebugConfig::default();
+        assert!(!c.enable_debug_logging);
+        assert_eq!(c.detail_level, 2);
+    }
+
+    #[tokio::test]
+    async fn test_debug_manager_minimal() {
+        let m = DebugManager::new(DebugConfig::default());
+        assert!(m.debug_logger().is_none());
+        assert!(m.profiler().is_none());
+        let _ = m.generate_debug_report();
+    }
+
+    #[tokio::test]
+    async fn test_debug_manager_all_flags() {
+        let mut cfg = DebugConfig::default();
+        cfg.enable_debug_logging = true;
+        cfg.enable_query_tracing = true;
+        cfg.enable_cpu_profiling = true;
+        cfg.enable_memory_profiling = true;
+        let m = DebugManager::new(cfg);
+        assert!(m.debug_logger().is_some());
+        assert!(m.query_tracer().is_some());
+        assert!(m.profiler().is_some());
+        let report = m.generate_debug_report();
+        assert!(report.contains("rustdb Debug Status"));
+    }
+
+    #[tokio::test]
+    async fn test_debug_manager_update_config() {
+        let mut m = DebugManager::new(DebugConfig::default());
+        let mut cfg = DebugConfig::default();
+        cfg.enable_debug_logging = true;
+        m.update_config(cfg);
+        assert!(m.debug_logger().is_some());
+    }
+}
