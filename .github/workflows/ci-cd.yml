@@ -114,10 +114,13 @@ jobs:
           ls -la lcov.info
           head -n 5 lcov.info || true
 
+      # Иначе CLI ищет всё по шаблону *coverage* и подмешивает .rs тесты → отчёт на Codecov битый / Missing Head Report
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
           files: lcov.info
+          disable_search: true
+          plugins: noop
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
