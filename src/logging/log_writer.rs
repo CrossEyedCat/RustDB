@@ -107,7 +107,7 @@ impl Default for LogWriterConfig {
             group_commit_max_batch: 10,
             group_commit_enabled: true,
             force_flush_immediately: false, // Use group commit for better TPS
-            synchronous_commit: true,        // Wait for fsync by default (durable)
+            synchronous_commit: true,       // Wait for fsync by default (durable)
         }
     }
 }

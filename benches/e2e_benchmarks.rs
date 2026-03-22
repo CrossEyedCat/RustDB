@@ -149,12 +149,13 @@ fn bench_e2e_insert_single(c: &mut Criterion) {
         let (temp_dir_gc, page_manager_gc, rt_gc, wal_gc) = setup_e2e_env(true);
         b.iter(|| {
             let sql = "INSERT INTO bench_table (id, name, age) VALUES (1, 'Alice', 30)";
-            rt_gc.block_on(execute_insert_e2e(
-                black_box(sql),
-                &page_manager_gc,
-                wal_gc.as_deref(),
-            ))
-            .unwrap();
+            rt_gc
+                .block_on(execute_insert_e2e(
+                    black_box(sql),
+                    &page_manager_gc,
+                    wal_gc.as_deref(),
+                ))
+                .unwrap();
         });
         drop(temp_dir_gc);
     });
@@ -165,12 +166,13 @@ fn bench_e2e_insert_single(c: &mut Criterion) {
     group.bench_function("insert_with_tx_wal_async_commit", |b| {
         b.iter(|| {
             let sql = "INSERT INTO bench_table (id, name, age) VALUES (1, 'Alice', 30)";
-            rt_async.block_on(execute_insert_e2e(
-                black_box(sql),
-                &page_manager_async,
-                wal_async.as_deref(),
-            ))
-            .unwrap();
+            rt_async
+                .block_on(execute_insert_e2e(
+                    black_box(sql),
+                    &page_manager_async,
+                    wal_async.as_deref(),
+                ))
+                .unwrap();
         });
     });
 
