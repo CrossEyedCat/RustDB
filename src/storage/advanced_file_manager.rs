@@ -405,28 +405,15 @@ impl AdvancedFileManager {
     ) -> Result<AdvancedFileId> {
         // Create base file
         let base_file_id = self.base_manager.create_file(filename)?;
-        let base_file_info = self
+        let mut base_file = self
             .base_manager
-            .get_file_info(base_file_id)
-            .ok_or_else(|| Error::database("Failed to get information about created file"))?;
-
-        // Create base file from information
-        let mut base_file = DatabaseFile {
-            file_id: base_file_info.file_id,
-            path: base_file_info.path.clone(),
-            file: std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(&base_file_info.path)?, // Correct file opening
-            header: crate::storage::file_manager::FileHeader::new(),
-            header_dirty: false,
-            read_only: false,
-        };
+            .take_file(base_file_id)
+            .ok_or_else(|| Error::database("Failed to get created file"))?;
 
         // Initialize file with minimum size (10 blocks)
-        base_file.extend_file(10)?;
+        if base_file.header.total_blocks < 10 {
+            base_file.extend_file(10)?;
+        }
 
         // Create advanced file
         let advanced_file =
@@ -445,30 +432,17 @@ impl AdvancedFileManager {
     pub fn open_database_file(&mut self, filename: &str) -> Result<AdvancedFileId> {
         // Open base file
         let base_file_id = self.base_manager.open_file(filename, false)?;
-        let base_file_info = self
+        let mut base_file = self
             .base_manager
-            .get_file_info(base_file_id)
-            .ok_or_else(|| Error::database("Failed to get information about opened file"))?;
-
-        // Create base file from information
-        let mut base_file = DatabaseFile {
-            file_id: base_file_info.file_id,
-            path: base_file_info.path.clone(),
-            file: std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&base_file_info.path)?, // Temporary solution
-            header: crate::storage::file_manager::FileHeader::new(),
-            header_dirty: false,
-            read_only: false,
-        };
+            .take_file(base_file_id)
+            .ok_or_else(|| Error::database("Failed to get opened file"))?;
 
         // Make sure file has minimum size
         if base_file.header.total_blocks < 10 {
             base_file.extend_file(10)?;
         }
 
-        // Open advanced file
+        // Open advanced file (reads advanced header format)
         let advanced_file = AdvancedDatabaseFile::open(base_file)?;
 
         let advanced_file_id = self.next_file_id;

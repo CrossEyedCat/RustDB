@@ -8,10 +8,10 @@
 
 use crate::common::{Error, Result};
 use crate::storage::block::BlockId;
+use crate::storage::block_io::{create_backend_for_file, BlockIoBackend};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 /// Block size in bytes (4KB)
@@ -113,8 +113,8 @@ pub struct DatabaseFile {
     pub file_id: FileId,
     /// File path
     pub path: PathBuf,
-    /// File descriptor
-    pub file: File,
+    /// I/O backend (std::fs or io_uring on Linux)
+    pub backend: Box<dyn BlockIoBackend>,
     /// File header
     pub header: FileHeader,
     /// Header modification flag
@@ -136,12 +136,7 @@ impl DatabaseFile {
             )));
         }
 
-        // Create the file
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .read(true)
-            .open(&path)?;
+        let mut backend = create_backend_for_file(&path, true, false)?;
 
         // Create the header
         let mut header = FileHeader::new();
@@ -151,22 +146,22 @@ impl DatabaseFile {
         let header_bytes = bincode::serialize(&header)
             .map_err(|e| Error::database(format!("Header serialization error: {}", e)))?;
 
-        file.write_all(&header_bytes)?;
+        backend.write_at(0, &header_bytes)?;
 
         // Pad to block boundary so data starts at a clear position
         let header_size = header_bytes.len();
         let padding_size = BLOCK_SIZE - (header_size % BLOCK_SIZE);
         if padding_size < BLOCK_SIZE {
             let padding = vec![0u8; padding_size];
-            file.write_all(&padding)?;
+            backend.write_at(header_size as u64, &padding)?;
         }
 
-        file.sync_all()?;
+        backend.sync()?;
 
         Ok(Self {
             file_id,
             path,
-            file,
+            backend,
             header,
             header_dirty: false,
             read_only: false,
@@ -185,22 +180,14 @@ impl DatabaseFile {
             )));
         }
 
-        // Open the file
-        let mut file = if read_only {
-            OpenOptions::new().read(true).open(&path)?
-        } else {
-            OpenOptions::new().read(true).write(true).open(&path)?
-        };
+        let mut backend = create_backend_for_file(&path, false, read_only)?;
 
-        // Read the header
-        let mut header_bytes = Vec::new();
-        file.read_to_end(&mut header_bytes)?;
+        // Read the header (first block)
+        let mut header_buf = vec![0u8; BLOCK_SIZE];
+        backend.read_at(0, &mut header_buf)?;
 
-        if header_bytes.is_empty() {
-            return Err(Error::database("File corrupted: empty file".to_string()));
-        }
-
-        let header: FileHeader = bincode::deserialize(&header_bytes)
+        let mut cursor = Cursor::new(&header_buf);
+        let header: FileHeader = bincode::deserialize_from(&mut cursor)
             .map_err(|e| Error::database(format!("Header deserialization error: {}", e)))?;
 
         // Check header validity
@@ -213,7 +200,7 @@ impl DatabaseFile {
         Ok(Self {
             file_id,
             path,
-            file,
+            backend,
             header,
             header_dirty: false,
             read_only,
@@ -232,12 +219,8 @@ impl DatabaseFile {
         // Calculate block position in file (data starts from first block after header)
         let offset = BLOCK_SIZE as u64 + (block_id as u64 * BLOCK_SIZE as u64);
 
-        // Seek to block position
-        self.file.seek(SeekFrom::Start(offset))?;
-
-        // Read block data
         let mut buffer = vec![0u8; BLOCK_SIZE];
-        self.file.read_exact(&mut buffer)?;
+        self.backend.read_at(offset, &mut buffer)?;
 
         Ok(buffer)
     }
@@ -264,11 +247,7 @@ impl DatabaseFile {
         // Calculate block position in file (data starts from first block after header)
         let offset = BLOCK_SIZE as u64 + (block_id as u64 * BLOCK_SIZE as u64);
 
-        // Seek to block position
-        self.file.seek(SeekFrom::Start(offset))?;
-
-        // Write block data
-        self.file.write_all(data)?;
+        self.backend.write_at(offset, data)?;
 
         // Update used blocks counter
         if block_id >= self.header.used_blocks as u64 {
@@ -293,9 +272,7 @@ impl DatabaseFile {
         // Calculate new file size (header + data blocks)
         let new_size = BLOCK_SIZE as u64 + (new_block_count as u64 * BLOCK_SIZE as u64);
 
-        // Extend the file
-        self.file.seek(SeekFrom::Start(new_size - 1))?;
-        self.file.write_all(&[0])?;
+        self.backend.extend(new_size)?;
 
         // Update header
         self.header.total_blocks = new_block_count;
@@ -317,8 +294,7 @@ impl DatabaseFile {
             self.header_dirty = false;
         }
 
-        // Synchronize all data
-        self.file.sync_all()?;
+        self.backend.sync()?;
 
         Ok(())
     }
@@ -332,9 +308,7 @@ impl DatabaseFile {
         let header_bytes = bincode::serialize(&self.header)
             .map_err(|e| Error::database(format!("Header serialization error: {}", e)))?;
 
-        // Write to beginning of file
-        self.file.seek(SeekFrom::Start(0))?;
-        self.file.write_all(&header_bytes)?;
+        self.backend.write_at(0, &header_bytes)?;
 
         Ok(())
     }
@@ -466,6 +440,11 @@ impl FileManager {
     /// Returns file information
     pub fn get_file_info(&self, file_id: FileId) -> Option<&DatabaseFile> {
         self.files.get(&file_id)
+    }
+
+    /// Removes and returns the database file (for transfer to AdvancedFileManager).
+    pub fn take_file(&mut self, file_id: FileId) -> Option<DatabaseFile> {
+        self.files.remove(&file_id)
     }
 
     /// Returns list of open files

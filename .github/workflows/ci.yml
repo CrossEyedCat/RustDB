@@ -50,19 +50,24 @@ jobs:
 
   # Тестирование на разных платформах
   test:
-    name: Test Suite
+    name: Test Suite (${{ matrix.os }}, ${{ matrix.rust }})
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        rust: [stable, beta]
-        exclude:
-          # Исключаем beta на Windows и macOS для ускорения
+        include:
+          - os: ubuntu-latest
+            rust: stable
+            features: --all-features
+          - os: ubuntu-latest
+            rust: beta
+            features: --all-features
           - os: windows-latest
-            rust: beta
+            rust: stable
+            features: ""
           - os: macos-latest
-            rust: beta
+            rust: stable
+            features: ""
     runs-on: ${{ matrix.os }}
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -84,11 +89,11 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config
 
       - name: Run tests
-        run: cargo test --verbose --all-features
+        run: cargo test --verbose ${{ matrix.features }}
         timeout-minutes: 10
 
       - name: Run doc tests
-        run: cargo test --doc --verbose
+        run: cargo test --doc --verbose ${{ matrix.features }}
         timeout-minutes: 5
 
   # Проверка сборки в release режиме
@@ -108,7 +113,7 @@ jobs:
           cache-on-failure: true
 
       - name: Build release
-        run: cargo build --release --verbose
+        run: cargo build --release --verbose --all-features
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4

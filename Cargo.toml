@@ -70,9 +70,13 @@ rayon = "1.10"
 # Testing
 criterion = { version = "0.5", optional = true }
 
+# io_uring for Linux (optional, kernel 5.6+)
+io-uring = { version = "0.7", optional = true }
+
 [features]
 default = []
 criterion = ["dep:criterion"]
+io-uring = ["dep:io-uring"]
 
 [dev-dependencies]
 criterion = "0.5"

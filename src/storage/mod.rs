@@ -2,6 +2,7 @@
 
 pub mod advanced_file_manager;
 pub mod block;
+pub mod block_io;
 pub mod cached_file_manager;
 pub mod database_file;
 pub mod file_manager;

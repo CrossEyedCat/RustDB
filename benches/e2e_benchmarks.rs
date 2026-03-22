@@ -98,6 +98,7 @@ fn setup_e2e_env(
     let wal = if enable_wal {
         let mut wal_config = WalConfig::default();
         wal_config.log_writer_config.log_directory = log_path;
+        wal_config.max_active_transactions = 50_000; // enough for benchmark iterations
         let w = rt.block_on(WriteAheadLog::new(wal_config)).unwrap();
         Some(Arc::new(w))
     } else {

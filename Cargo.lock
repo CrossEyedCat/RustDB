@@ -825,6 +825,7 @@ dependencies = [
  "dashmap",
  "env_logger",
  "indexmap",
+ "io-uring",
  "lazy_static",
  "log",
  "lz4_flex",
