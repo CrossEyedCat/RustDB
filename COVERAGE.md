@@ -34,7 +34,7 @@ cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 85
 
 1. **`cargo llvm-cov --workspace --lcov --output-path lcov.info`** с **`--ignore-filename-regex`** — тесты и **lcov без** `--fail-under-lines`, чтобы отчёт всегда генерировался.
 2. Загрузка **`lcov.info`** в [Codecov](https://codecov.io) (`codecov/codecov-action@v5`). Нужен секрет **`CODECOV_TOKEN`** в настройках репозитория.
-3. **`cargo llvm-cov report --workspace --fail-under-lines 85`** — отдельная проверка порога по уже собранным данным.
+3. **`cargo llvm-cov report --fail-under-lines 85`** (без `--workspace`: у подкоманды `report` этого флага нет) — проверка порога по уже собранным данным.
 
 Если **`--fail-under-lines`** стоит в одной команде с **`--lcov`**, при провале порога процесс завершается с ошибкой **до** шага загрузки — на Codecov для коммита не будет отчёта («Missing report»).
 

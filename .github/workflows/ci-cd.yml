@@ -123,9 +123,10 @@ jobs:
           verbose: true
           name: rustdb-coverage
 
+      # У подкоманды `report` нет флага `--workspace` (он только у `test`/`nextest`/…).
       - name: Enforce line coverage threshold (≥85%)
         run: |
-          cargo llvm-cov report --workspace --fail-under-lines 85 \
+          cargo llvm-cov report --fail-under-lines 85 \
             --ignore-filename-regex "$COV_REGEX"
 
   # После тестов — качество кода и MSRV (параллельно), затем сборка release
