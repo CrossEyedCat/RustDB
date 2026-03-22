@@ -85,17 +85,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
 
+      # Полный прогон (lib + integration + doctests) на cold cache и beta может занимать >10 мин.
       - name: Run tests
         run: cargo test --verbose ${{ matrix.features }}
-        timeout-minutes: 10
+        timeout-minutes: 25
 
       - name: Run integration tests
         run: cargo test --test integration_tests --verbose ${{ matrix.features }}
-        timeout-minutes: 5
+        timeout-minutes: 15
 
       - name: Run doc tests
         run: cargo test --doc --verbose ${{ matrix.features }}
-        timeout-minutes: 5
+        timeout-minutes: 10
 
   # Проверка сборки в release режиме
   build:

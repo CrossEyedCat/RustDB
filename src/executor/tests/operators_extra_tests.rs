@@ -1,12 +1,12 @@
 //! Дополнительное покрытие фабрики сканов и операторов.
 
 use super::common;
+use crate::common::types::{ColumnValue, DataType, Row};
+use crate::common::Result;
 use crate::executor::operators::{
     AggregationSortOperatorFactory, IndexCondition, IndexOperator, Operator, OperatorStatistics,
     ScanOperatorFactory,
 };
-use crate::common::Result;
-use crate::common::types::{ColumnValue, DataType, Row};
 use std::sync::{Arc, Mutex};
 
 /// Возвращает несколько строк и завершается (без длинного table scan).
@@ -22,10 +22,7 @@ impl Operator for FewRows {
         }
         let mut row = Row::new();
         row.version = self.versions[self.idx as usize];
-        row.set_value(
-            "a",
-            ColumnValue::new(DataType::Varchar("a_val".into())),
-        );
+        row.set_value("a", ColumnValue::new(DataType::Varchar("a_val".into())));
         self.idx += 1;
         Ok(Some(row))
     }

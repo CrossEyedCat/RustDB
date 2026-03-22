@@ -244,25 +244,23 @@ fn test_executor_join_types() -> crate::common::Result<()> {
             num_worker_threads: 1,
         },
     )?;
-    let make_join = |jt: JoinType| {
-        ExecutionPlan {
-            root: PlanNode::Join(JoinNode {
-                join_type: jt,
-                condition: "id=id".to_string(),
-                left: Box::new(PlanNode::Limit(LimitNode {
-                    limit: 1,
-                    input: Box::new(PlanNode::TableScan(table_scan_node())),
-                    cost: 1.0,
-                })),
-                right: Box::new(PlanNode::Limit(LimitNode {
-                    limit: 1,
-                    input: Box::new(PlanNode::TableScan(table_scan_node())),
-                    cost: 1.0,
-                })),
+    let make_join = |jt: JoinType| ExecutionPlan {
+        root: PlanNode::Join(JoinNode {
+            join_type: jt,
+            condition: "id=id".to_string(),
+            left: Box::new(PlanNode::Limit(LimitNode {
+                limit: 1,
+                input: Box::new(PlanNode::TableScan(table_scan_node())),
                 cost: 1.0,
-            }),
-            metadata: plan_meta(),
-        }
+            })),
+            right: Box::new(PlanNode::Limit(LimitNode {
+                limit: 1,
+                input: Box::new(PlanNode::TableScan(table_scan_node())),
+                cost: 1.0,
+            })),
+            cost: 1.0,
+        }),
+        metadata: plan_meta(),
     };
     for jt in [
         JoinType::Inner,

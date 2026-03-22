@@ -291,7 +291,8 @@ mod tests {
 
     #[test]
     fn test_cli_create() {
-        let cli = Cli::try_parse_from(vec!["rustdb", "create", "mydb", "--data-dir", "./d"]).unwrap();
+        let cli =
+            Cli::try_parse_from(vec!["rustdb", "create", "mydb", "--data-dir", "./d"]).unwrap();
         if let Some(Commands::Create { name, data_dir }) = cli.command {
             assert_eq!(name, "mydb");
             assert_eq!(data_dir, Some(std::path::PathBuf::from("./d")));

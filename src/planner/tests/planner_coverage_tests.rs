@@ -27,10 +27,7 @@ fn test_planner_multiple_sql_variants() -> Result<()> {
 fn test_optimizer_multiple_plans() -> Result<()> {
     let mut planner = QueryPlanner::new()?;
     let mut opt = QueryOptimizer::new()?;
-    let sqls = [
-        "SELECT * FROM users",
-        "SELECT * FROM users WHERE age > 0",
-    ];
+    let sqls = ["SELECT * FROM users", "SELECT * FROM users WHERE age > 0"];
     for sql in sqls {
         let mut p = SqlParser::new(sql)?;
         let stmt = p.parse()?;
