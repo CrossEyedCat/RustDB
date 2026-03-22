@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["advanced_file_manager","block","cached_file_manager","database_file","file_manager","index","index_registry","io_optimization","optimized_file_manager","page","page_manager","row","schema_manager","tuple"]};
+window.SIDEBAR_ITEMS = {"mod":["advanced_file_manager","block","block_io","cached_file_manager","database_file","file_manager","index","index_registry","io_optimization","optimized_file_manager","page","page_manager","row","schema_manager","tuple"]};
