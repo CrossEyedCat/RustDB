@@ -1,5 +1,6 @@
 //! Block structures for rustdb
 
+use crate::common::bincode_io;
 use crate::common::{types::PageId, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -186,8 +187,7 @@ impl Block {
         let mut bytes = Vec::new();
 
         // Add header
-        let header_bytes =
-            bincode::serialize(&self.header).map_err(|e| Error::BincodeSerialization(e))?;
+        let header_bytes = bincode_io::serialize(&self.header).map_err(Error::from)?;
         bytes.extend_from_slice(&header_bytes);
 
         // Add page count
@@ -215,8 +215,7 @@ impl Block {
         // Therefore, use Cursor to control read position
         // Determine header size by serializing a test header
         let test_header = BlockHeader::new(0, BlockType::Data, 0);
-        let test_header_bytes = bincode::serialize(&test_header)
-            .map_err(|e| Error::BincodeSerialization(Box::new(*e)))?;
+        let test_header_bytes = bincode_io::serialize(&test_header).map_err(Error::from)?;
         let header_size = test_header_bytes.len();
 
         if bytes.len() < header_size {
@@ -230,7 +229,8 @@ impl Block {
         // Deserialize header from the beginning of the array
         let mut cursor = Cursor::new(&bytes[..header_size]);
 
-        let header: BlockHeader = bincode::deserialize_from(&mut cursor).map_err(Error::from)?;
+        let header: BlockHeader =
+            bincode_io::deserialize_from_reader(&mut cursor).map_err(Error::from)?;
 
         // Get position after reading header
         // If we used direct deserialization, we need to determine header size

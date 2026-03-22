@@ -1,8 +1,16 @@
 //! Error handling for rustdb
 
 use crate::common::i18n::{t, t_with_params, MessageKey};
-use bincode;
 use thiserror::Error;
+
+/// Bincode encode/decode failure (bincode 2 uses distinct error types).
+#[derive(Error, Debug)]
+pub enum BincodeError {
+    #[error("{0}")]
+    Encode(#[from] bincode::error::EncodeError),
+    #[error("{0}")]
+    Decode(#[from] bincode::error::DecodeError),
+}
 
 /// Main error type for rustdb
 #[derive(Error, Debug)]
@@ -16,8 +24,8 @@ pub enum Error {
     JsonSerialization(#[from] serde_json::Error),
 
     /// Bincode serialization/deserialization error
-    #[error("Bincode serialization error: {0}")]
-    BincodeSerialization(#[from] Box<bincode::ErrorKind>),
+    #[error(transparent)]
+    BincodeSerialization(#[from] BincodeError),
 
     /// Database error
     #[error("Database error: {message}")]
@@ -86,6 +94,18 @@ pub enum Error {
 
 /// Result type for rustdb
 pub type Result<T> = std::result::Result<T, Error>;
+
+impl From<bincode::error::EncodeError> for Error {
+    fn from(e: bincode::error::EncodeError) -> Self {
+        Self::BincodeSerialization(e.into())
+    }
+}
+
+impl From<bincode::error::DecodeError> for Error {
+    fn from(e: bincode::error::DecodeError) -> Self {
+        Self::BincodeSerialization(e.into())
+    }
+}
 
 impl Error {
     /// Creates a database error

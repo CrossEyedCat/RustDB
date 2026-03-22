@@ -381,7 +381,7 @@ impl IndexScanOperator {
 
     /// Convert record bytes to Row (tries bincode, falls back to simple row)
     fn bytes_to_row(bytes: &[u8], schema: &[String]) -> Option<Row> {
-        if let Ok(row) = bincode::deserialize::<Row>(bytes) {
+        if let Ok(row) = crate::common::bincode_io::deserialize::<Row>(bytes) {
             return Some(row);
         }
         // Fallback: create row with raw data as single column

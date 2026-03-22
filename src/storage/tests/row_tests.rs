@@ -249,8 +249,8 @@ fn test_row_status_enum() {
     let statuses = vec![RowStatus::Active, RowStatus::Deleted];
     
     for status in statuses {
-        let serialized = bincode::serialize(&status).unwrap();
-        let deserialized: RowStatus = bincode::deserialize(&serialized).unwrap();
+        let serialized = crate::common::bincode_io::serialize(&status).unwrap();
+        let deserialized: RowStatus = crate::common::bincode_io::deserialize(&serialized).unwrap();
         assert_eq!(status, deserialized);
     }
 }

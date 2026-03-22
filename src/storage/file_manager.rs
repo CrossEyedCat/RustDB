@@ -143,7 +143,7 @@ impl DatabaseFile {
         header.checksum = header.calculate_checksum();
 
         // Write the header to the file
-        let header_bytes = bincode::serialize(&header)
+        let header_bytes = crate::common::bincode_io::serialize(&header)
             .map_err(|e| Error::database(format!("Header serialization error: {}", e)))?;
 
         backend.write_at(0, &header_bytes)?;
@@ -187,7 +187,7 @@ impl DatabaseFile {
         backend.read_at(0, &mut header_buf)?;
 
         let mut cursor = Cursor::new(&header_buf);
-        let header: FileHeader = bincode::deserialize_from(&mut cursor)
+        let header: FileHeader = crate::common::bincode_io::deserialize_from_reader(&mut cursor)
             .map_err(|e| Error::database(format!("Header deserialization error: {}", e)))?;
 
         // Check header validity
@@ -305,7 +305,7 @@ impl DatabaseFile {
         self.header.checksum = self.header.calculate_checksum();
 
         // Serialize header
-        let header_bytes = bincode::serialize(&self.header)
+        let header_bytes = crate::common::bincode_io::serialize(&self.header)
             .map_err(|e| Error::database(format!("Header serialization error: {}", e)))?;
 
         self.backend.write_at(0, &header_bytes)?;

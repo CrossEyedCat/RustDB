@@ -437,13 +437,13 @@ impl LogRecord {
 
     /// Serializes record to bytes
     pub fn serialize(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self)
+        crate::common::bincode_io::serialize(self)
             .map_err(|e| Error::internal(&format!("Log record serialization error: {}", e)))
     }
 
     /// Deserializes record from bytes
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        bincode::deserialize(data)
+        crate::common::bincode_io::deserialize(data)
             .map_err(|e| Error::internal(&format!("Log record deserialization error: {}", e)))
     }
 

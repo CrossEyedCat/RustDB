@@ -135,12 +135,12 @@ impl Row {
 
     /// Serializes the row to bytes
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self).map_err(Error::BincodeSerialization)
+        crate::common::bincode_io::serialize(self).map_err(Error::from)
     }
 
     /// Creates a row from bytes (deserialization)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        bincode::deserialize(bytes).map_err(Error::BincodeSerialization)
+        crate::common::bincode_io::deserialize(bytes).map_err(Error::from)
     }
 
     /// Returns the row size in bytes
@@ -459,12 +459,12 @@ impl Table {
 
     /// Serializes the table to bytes
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self).map_err(Error::BincodeSerialization)
+        crate::common::bincode_io::serialize(self).map_err(Error::from)
     }
 
     /// Creates a table from bytes (deserialization)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        bincode::deserialize(bytes).map_err(Error::BincodeSerialization)
+        crate::common::bincode_io::deserialize(bytes).map_err(Error::from)
     }
 }
 

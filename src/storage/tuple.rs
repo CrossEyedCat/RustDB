@@ -101,12 +101,12 @@ impl Tuple {
 
     /// Serializes the tuple to bytes
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self).map_err(Error::BincodeSerialization)
+        crate::common::bincode_io::serialize(self).map_err(Error::from)
     }
 
     /// Creates a tuple from bytes (deserialization)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        bincode::deserialize(bytes).map_err(Error::BincodeSerialization)
+        crate::common::bincode_io::deserialize(bytes).map_err(Error::from)
     }
 
     /// Returns the tuple size in bytes

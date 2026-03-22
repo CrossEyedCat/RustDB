@@ -199,10 +199,8 @@ impl Page {
 
     /// Deserializes from legacy bincode format
     fn from_bytes_bincode(bytes: &[u8]) -> Result<Self> {
-        use bincode;
-
         let compact_page: CompactPage =
-            bincode::deserialize(bytes).map_err(Error::BincodeSerialization)?;
+            crate::common::bincode_io::deserialize(bytes).map_err(Error::from)?;
 
         let mut data = compact_page.data.clone();
         data.resize(PAGE_SIZE, 0);
