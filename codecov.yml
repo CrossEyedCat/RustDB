@@ -1,0 +1,25 @@
+# Codecov — конфигурация репозитория
+# Документация: https://docs.codecov.com/docs/codecov-yaml
+# Проверка YAML: curl --data-binary @codecov.yml https://codecov.io/validate
+
+codecov:
+  # Не блокировать обработку отчёта, если другие проверки CI ещё не прошли
+  require_ci_to_pass: false
+
+coverage:
+  precision: 2
+  round: down
+  range: "50...100"
+  status:
+    project:
+      default:
+        target: 85%
+        threshold: 1%
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: "reach,diff,flags,files,footer"
+  behavior: default
+  require_changes: false

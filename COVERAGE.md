@@ -1,64 +1,42 @@
-# Покрытие кода (line coverage)
-
-
+# Покрытие кода
 
 ## Цель
 
+- **CI:** job **Coverage** в `.github/workflows/ci-cd.yml` — `cargo llvm-cov` → **`lcov.info`** → [Codecov](https://codecov.io).
+- **Порог ~85%** по строкам: локально через `cargo llvm-cov report`, на сайте — см. **`codecov.yml`** (`coverage.status.project`).
 
+## Файлы
 
-CI и локальная проверка: **`cargo llvm-cov --workspace --fail-under-lines 85`** (порог по строкам).
+| Файл | Назначение |
+|------|------------|
+| **`codecov.yml`** | Официальный конфиг Codecov ([документация](https://docs.codecov.com/docs/codecov-yaml)): пороги, комментарии к PR. Проверка: `curl --data-binary @codecov.yml https://codecov.io/validate` |
+| **`lcov.info`** | Генерируется в CI и не коммитится; загружается action’ом `codecov/codecov-action@v5` |
 
-
-
-## Команды
-
-
+## Локальные команды
 
 ```bash
-
 cargo llvm-cov --workspace --summary-only
 
-cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 85
-
+cargo llvm-cov --workspace --lcov --output-path lcov.info \
+  --ignore-filename-regex '<как COV_REGEX в workflow>'
 ```
 
+Исключения путей для порога задаются через **`--ignore-filename-regex`** в CI (`COV_REGEX` в job **Coverage**).
 
+## CI (стандартный поток)
 
-Исключения путей для расчёта порога задаются в CI через **`--ignore-filename-regex`** (в т.ч. `src/cli.rs`, `src/main.rs` и ряд крупных модулей).
+1. **`actions/checkout@v4`** с **`fetch-depth: 0`** — полная история git помогает Codecov сопоставлять коммиты и уменьшает «Missing Head Report».
+2. **`cargo llvm-cov --workspace --lcov --output-path lcov.info`** + `COV_REGEX` — **без** `--fail-under-lines`, чтобы всегда получить файл и успеть загрузить его.
+3. **Upload:** только **`lcov.info`**, **`disable_search: true`** (иначе CLI подмешивает файлы вроде `*_coverage_tests.rs` по маске `*coverage*`).
+4. **`cargo llvm-cov report --fail-under-lines 85`** — проверка порога после загрузки.
 
-
-
-## CI
-
-В `.github/workflows/ci-cd.yml` отдельный job **`Coverage (lines ≥85%)`** (Ubuntu):
-
-1. **`cargo llvm-cov --workspace --lcov --output-path lcov.info`** с **`--ignore-filename-regex`** — тесты и **lcov без** `--fail-under-lines`, чтобы отчёт всегда генерировался.
-2. Загрузка **`lcov.info`** в [Codecov](https://codecov.io) (`codecov/codecov-action@v5` с **`disable_search: true`** и **`plugins: noop`**, чтобы не подхватывались файлы вроде `*_coverage_tests.rs` по маске `*coverage*` — иначе отчёт на сайте может не собраться («Missing Head Report»)). Нужен секрет **`CODECOV_TOKEN`**.
-3. **`cargo llvm-cov report --fail-under-lines 85`** (без `--workspace`: у подкоманды `report` этого флага нет) — проверка порога по уже собранным данным.
-
-Если **`--fail-under-lines`** стоит в одной команде с **`--lcov`**, при провале порога процесс завершается с ошибкой **до** шага загрузки — на Codecov для коммита не будет отчёта («Missing report»).
-
-
+Секрет репозитория: **`CODECOV_TOKEN`**.
 
 ## Если порог не достигается
 
-
-
-Имеет смысл дополнительно покрыть в первую очередь:
-
-
-
 | Область | Комментарий |
-
-|--------|-------------|
-
-| `src/executor/operators.rs` | Большой файл, много веток операторов |
-
+|---------|-------------|
+| `src/executor/operators.rs` | Много веток операторов |
 | `src/storage/schema_manager.rs` | ALTER / валидации |
-
 | `src/planner/optimizer.rs` | Ветки оптимизаций |
-
-| `src/main.rs` | Обычно исключён из отчёта; при необходимости — интеграционные тесты / `cargo run` |
-
-| `src/core/recovery.rs` | Полный цикл с WAL (async, тяжёлые зависимости) |
-
+| `src/core/recovery.rs` | WAL / async |

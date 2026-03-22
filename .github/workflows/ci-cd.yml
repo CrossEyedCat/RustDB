@@ -75,9 +75,9 @@ jobs:
         with:
           command: check
 
-  # Отдельно от матрицы test: llvm-cov + Codecov (стабильный llvm-tools, один артефакт lcov)
+  # Покрытие: cargo-llvm-cov → lcov.info → Codecov (см. codecov.yml в корне репозитория)
   coverage:
-    name: Coverage (lines ≥85%)
+    name: Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -85,20 +85,22 @@ jobs:
     env:
       COV_REGEX: '(executor[/\\]operators|analyzer[/\\]semantic_analyzer|analyzer[/\\]access_checker|analyzer[/\\]type_checker|analyzer[/\\]metadata_cache|core[/\\]recovery_manager|core[/\\]acid_manager|core[/\\]buffer|core[/\\]transaction|core[/\\]advanced_lock_manager|core[/\\]recovery\.rs|storage[/\\]page_manager|storage[/\\]schema_manager|storage[/\\]index[/\\]btree|storage[/\\]io_optimization|storage[/\\]block|storage[/\\]row|storage[/\\]tuple|storage[/\\]page\.rs|planner[/\\]planner|logging[/\\]compaction|logging[/\\]recovery|parser[/\\]parser)\.rs$|[/\\]src[/\\](cli|main)\.rs$'
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Setup Rust stable
+      - name: Rust stable + llvm-tools
         uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
 
-      - name: Setup cache
+      - name: Cache
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
 
-      - name: Install dependencies (Ubuntu)
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
@@ -106,28 +108,27 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      # Без --fail-under-lines: иначе при провале порога шаг завершается с ошибкой и Codecov не получает lcov.
-      - name: Run tests and generate lcov
+      # Сначала только LCOV (без --fail-under-lines), иначе при провале порога загрузка в Codecov не выполняется.
+      - name: cargo llvm-cov (tests + lcov.info)
         run: |
           cargo llvm-cov --workspace --lcov --output-path lcov.info \
             --ignore-filename-regex "$COV_REGEX"
-          ls -la lcov.info
-          head -n 5 lcov.info || true
+          test -s lcov.info
+          wc -l lcov.info
 
-      # Иначе CLI ищет всё по шаблону *coverage* и подмешивает .rs тесты → отчёт на Codecov битый / Missing Head Report
-      - name: Upload coverage reports to Codecov
+      # Только lcov.info; disable_search — иначе CLI подхватывает *_coverage_tests.rs по маске *coverage*
+      - name: Upload to Codecov
         uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
           disable_search: true
-          plugins: noop
-          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
-          name: rustdb-coverage
 
-      # У подкоманды `report` нет флага `--workspace` (он только у `test`/`nextest`/…).
-      - name: Enforce line coverage threshold (≥85%)
+      - name: Enforce ≥85% lines (local threshold)
         run: |
           cargo llvm-cov report --fail-under-lines 85 \
             --ignore-filename-regex "$COV_REGEX"
