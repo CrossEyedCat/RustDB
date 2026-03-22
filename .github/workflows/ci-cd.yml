@@ -37,10 +37,6 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
 
-      - name: Add llvm-tools for coverage (ubuntu, stable)
-        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
-        run: rustup component add llvm-tools-preview
-
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -79,21 +75,44 @@ jobs:
         with:
           command: check
 
+  # Отдельно от матрицы test: llvm-cov + Codecov (стабильный llvm-tools, один артефакт lcov)
+  coverage:
+    name: Coverage (lines ≥85%)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install dependencies (Ubuntu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
       - name: Install cargo-llvm-cov
-        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage report and check threshold (lines)
-        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        env:
+          COV_REGEX: '(executor[/\\]operators|analyzer[/\\]semantic_analyzer|analyzer[/\\]access_checker|analyzer[/\\]type_checker|analyzer[/\\]metadata_cache|core[/\\]recovery_manager|core[/\\]acid_manager|core[/\\]buffer|core[/\\]transaction|core[/\\]advanced_lock_manager|core[/\\]recovery\.rs|storage[/\\]page_manager|storage[/\\]schema_manager|storage[/\\]index[/\\]btree|storage[/\\]io_optimization|storage[/\\]block|storage[/\\]row|storage[/\\]tuple|storage[/\\]page\.rs|planner[/\\]planner|logging[/\\]compaction|logging[/\\]recovery|parser[/\\]parser)\.rs$|[/\\]src[/\\](cli|main)\.rs$'
         run: |
           cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 85 \
-            --ignore-filename-regex '(executor[/\\]operators|analyzer[/\\]semantic_analyzer|analyzer[/\\]access_checker|analyzer[/\\]type_checker|analyzer[/\\]metadata_cache|core[/\\]recovery_manager|core[/\\]acid_manager|core[/\\]buffer|core[/\\]transaction|core[/\\]advanced_lock_manager|core[/\\]recovery\.rs|storage[/\\]page_manager|storage[/\\]schema_manager|storage[/\\]index[/\\]btree|storage[/\\]io_optimization|storage[/\\]block|storage[/\\]row|storage[/\\]tuple|storage[/\\]page\.rs|planner[/\\]planner|logging[/\\]compaction|logging[/\\]recovery|parser[/\\]parser)\.rs$|[/\\]src[/\\](cli|main)\.rs$'
+            --ignore-filename-regex "$COV_REGEX"
 
       - name: Upload coverage reports to Codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
         uses: codecov/codecov-action@v5
         with:
-          file: lcov.info
+          files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
@@ -158,7 +177,7 @@ jobs:
   build:
     name: Build Release
     runs-on: ubuntu-latest
-    needs: [format, clippy, msrv]
+    needs: [format, clippy, msrv, coverage]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -184,7 +203,7 @@ jobs:
   docker:
     name: Docker Build
     runs-on: ubuntu-latest
-    needs: [format, clippy, msrv]
+    needs: [format, clippy, msrv, coverage]
     permissions:
       contents: read
       packages: write
@@ -228,7 +247,7 @@ jobs:
   docs:
     name: Documentation
     runs-on: ubuntu-latest
-    needs: [format, clippy, msrv]
+    needs: [format, clippy, msrv, coverage]
     permissions:
       contents: write
     steps:
@@ -260,7 +279,7 @@ jobs:
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-latest
-    needs: [format, clippy, msrv]
+    needs: [format, clippy, msrv, coverage]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code
