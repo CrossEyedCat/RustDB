@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_RECORDS_PER_PAGE"],"struct":["DeleteResult","InsertResult","PageInfo","PageManager","PageManagerConfig","PageManagerStatistics","UpdateResult"],"type":["PageLatch"]};
+window.SIDEBAR_ITEMS = {"constant":["MAX_RECORDS_PER_PAGE"],"fn":["spawn_deferred_flush_task"],"struct":["DeleteResult","InsertResult","PageInfo","PageManager","PageManagerConfig","PageManagerStatistics","UpdateResult"],"type":["PageLatch"]};
