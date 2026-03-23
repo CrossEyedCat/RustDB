@@ -56,10 +56,7 @@ async fn demonstrate_buffered_io() -> Result<()> {
         config.max_write_buffer_size
     );
     println!("- Buffering time: {:?}", config.max_buffer_time);
-    println!(
-        "- Page cache size: {} pages",
-        config.page_cache_size
-    );
+    println!("- Page cache size: {} pages", config.page_cache_size);
     println!(
         "- Prefetch: {} (window: {})",
         config.enable_prefetch, config.prefetch_window_size
@@ -106,10 +103,7 @@ async fn demonstrate_buffered_io() -> Result<()> {
     println!("- Read operations: {}", stats.read_operations);
     println!("- Cache hits: {}", stats.cache_hits);
     println!("- Cache misses: {}", stats.cache_misses);
-    println!(
-        "- Hit Rate: {:.2}%",
-        stats.cache_hit_ratio * 100.0
-    );
+    println!("- Hit Rate: {:.2}%", stats.cache_hit_ratio * 100.0);
 
     let (buffer_used, buffer_max, cache_size) = manager.get_buffer_info();
     println!("- Buffer usage: {}/{}", buffer_used, buffer_max);
@@ -177,10 +171,7 @@ async fn demonstrate_optimized_file_manager() -> Result<()> {
             println!("- Total pages: {}", file_info.total_pages);
             println!("- Pages used: {}", file_info.used_pages);
             println!("- Free pages: {}", file_info.free_pages);
-            println!(
-                "- Usage rate: {:.1}%",
-                file_info.utilization_ratio * 100.0
-            );
+            println!("- Usage rate: {:.1}%", file_info.utilization_ratio * 100.0);
             println!(
                 "- Fragmentation rate: {:.1}%",
                 file_info.fragmentation_ratio * 100.0
@@ -334,10 +325,7 @@ async fn demonstrate_monitoring() -> Result<()> {
     println!("- Total pages: {}", stats.total_pages);
     println!("- Read operations: {}", stats.total_reads);
     println!("- Write operations: {}", stats.total_writes);
-    println!(
-        "- Cache hit rate: {:.1}%",
-        stats.cache_hit_ratio * 100.0
-    );
+    println!("- Cache hit rate: {:.1}%", stats.cache_hit_ratio * 100.0);
     println!(
         "- Average utilization: {:.1}%",
         stats.average_utilization * 100.0
@@ -346,10 +334,7 @@ async fn demonstrate_monitoring() -> Result<()> {
         "- Average fragmentation: {:.1}%",
         stats.average_fragmentation * 100.0
     );
-    println!(
-        "- Buffer usage: {:.1}%",
-        stats.buffer_usage * 100.0
-    );
+    println!("- Buffer usage: {:.1}%", stats.buffer_usage * 100.0);
     println!("- Cache size: {} pages", stats.cache_usage);
 
     if stats.read_throughput > 0.0 {
@@ -472,20 +457,14 @@ mod tests {
 
         println!("Optimized manager:");
         println!("Time: {:?}", optimized_time);
-        println!(
-            "Cache hit rate: {:.1}%",
-            stats.cache_hit_ratio * 100.0
-        );
+        println!("Cache hit rate: {:.1}%", stats.cache_hit_ratio * 100.0);
         println!(
             "Performance Rating: {:.1}%",
             stats.performance_score() * 100.0
         );
 
         // Checking that performance is acceptable
-        assert!(
-            stats.performance_score() > 0.5,
-            "Performance is too low"
-        );
+        assert!(stats.performance_score() > 0.5, "Performance is too low");
 
         Ok(())
     }

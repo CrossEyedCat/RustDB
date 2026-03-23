@@ -821,6 +821,7 @@ mod tests {
         assert_eq!(size.max_bytes, 2048);
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_logging_metrics() {
         let mut metrics = LoggingMetrics::new();
@@ -852,6 +853,7 @@ mod tests {
         assert!(!top_ops.is_empty());
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_metrics_manager() {
         let manager = LoggingMetricsManager::new();

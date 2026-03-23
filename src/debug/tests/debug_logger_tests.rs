@@ -4,6 +4,7 @@ use crate::debug::debug_logger::*;
 use crate::debug::DebugConfig;
 use std::time::Duration;
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_debug_logger_creation() {
     let config = DebugConfig {
@@ -19,6 +20,7 @@ async fn test_debug_logger_creation() {
     assert_eq!(stats.total_entries, 0);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_debug_logging_levels() {
     let config = DebugConfig {
@@ -59,6 +61,7 @@ async fn test_debug_logging_levels() {
     assert_eq!(stats.total_entries, 1);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_transaction_logging() {
     let config = DebugConfig {
@@ -93,6 +96,7 @@ async fn test_transaction_logging() {
     assert!(stats.entries_by_category.contains_key("TX"));
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_data_operation_logging() {
     let config = DebugConfig {
@@ -127,6 +131,7 @@ async fn test_data_operation_logging() {
     assert!(stats.entries_by_category.contains_key("DATA"));
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_query_operation_logging() {
     let config = DebugConfig {
@@ -161,6 +166,7 @@ async fn test_query_operation_logging() {
     assert!(stats.entries_by_category.contains_key("QUERY"));
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_system_operation_logging() {
     let config = DebugConfig {
@@ -248,6 +254,7 @@ fn test_log_entry_formatting() {
     assert!(formatted.contains("Test error message"));
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_logger_status_report() {
     let config = DebugConfig {

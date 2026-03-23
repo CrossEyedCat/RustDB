@@ -28,9 +28,8 @@ pub struct IntegrationTestConfig {
 impl IntegrationTestConfig {
     // / Creates a new configuration for tests
     pub fn new() -> Result<Self> {
-        let temp_dir = TempDir::new().map_err(|e| {
-            Error::internal(format!("Failed to create temporary directory: {}", e))
-        })?;
+        let temp_dir = TempDir::new()
+            .map_err(|e| Error::internal(format!("Failed to create temporary directory: {}", e)))?;
 
         let database_path = temp_dir
             .path()

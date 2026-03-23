@@ -145,9 +145,12 @@ jobs:
         with:
           cache-on-failure: true
 
+      # Library unit tests only: integration tests in `tests/` use async I/O and are covered
+      # by `cargo test` in CI. Async `#[tokio::test]` cases in `src/` are skipped under Miri
+      # via `#[cfg_attr(miri, ignore)]`.
       - name: Run Miri
         run: |
           cargo miri setup
-          cargo miri test
+          cargo miri test --lib
         env:
           MIRIFLAGS: -Zmiri-strict-provenance

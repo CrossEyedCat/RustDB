@@ -4,6 +4,7 @@ use crate::logging::log_record::{LogOperationData, LogPriority, LogRecord, LogRe
 use crate::logging::log_writer::{LogFileInfo, LogWriter, LogWriterConfig, SyncLevel};
 use std::path::PathBuf;
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_log_writer_creation() {
     let config = LogWriterConfig::default();
@@ -32,6 +33,7 @@ fn test_log_writer_config() {
     assert!(!config.enable_compression);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_log_writer_write() {
     let config = LogWriterConfig::default();
@@ -54,6 +56,7 @@ async fn test_log_writer_write() {
     assert!(result.is_ok() || result.is_err()); // May fail if directory is missing
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_log_writer_file_rotation() {
     let config = LogWriterConfig {
@@ -90,6 +93,7 @@ async fn test_log_writer_file_rotation() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_log_writer_flush() {
     let config = LogWriterConfig::default();
@@ -99,6 +103,7 @@ async fn test_log_writer_flush() {
     assert!(result.is_ok() || result.is_err());
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_log_writer_statistics() {
     let config = LogWriterConfig::default();
@@ -109,6 +114,7 @@ async fn test_log_writer_statistics() {
     assert!(stats.total_records_written >= 0);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_log_writer_sync_levels() {
     let sync_levels = vec![
@@ -137,6 +143,7 @@ async fn test_log_writer_sync_levels() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_log_writer_buffer_management() {
     let config = LogWriterConfig {
@@ -177,6 +184,7 @@ async fn test_log_writer_buffer_management() {
     assert!(stats.total_records_written <= 10);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_log_writer_compression() {
     let config_with_compression = LogWriterConfig {
@@ -196,6 +204,7 @@ async fn test_log_writer_compression() {
     assert!(writer.is_ok());
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_log_writer_different_record_types() {
     let config = LogWriterConfig::default();

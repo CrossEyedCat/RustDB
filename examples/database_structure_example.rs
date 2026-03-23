@@ -47,10 +47,7 @@ fn demonstrate_database_header() -> Result<()> {
     );
     println!("- Page size: {} bytes", data_header.page_size);
     println!("- Maximum pages: {}", data_header.max_pages);
-    println!(
-        "- Extension size: {} pages",
-        data_header.extension_size
-    );
+    println!("- Extension size: {} pages", data_header.extension_size);
 
     // Demonstrating how to work with flags
     data_header.set_flag(DatabaseFileHeader::FLAG_COMPRESSED);
@@ -98,10 +95,7 @@ fn demonstrate_database_header() -> Result<()> {
         "- Directory root page: {:?}",
         index_header.catalog_root_page
     );
-    println!(
-        "- File sequence: {}",
-        index_header.file_sequence
-    );
+    println!("- File sequence: {}", index_header.file_sequence);
 
     Ok(())
 }
@@ -125,9 +119,7 @@ fn demonstrate_free_page_map() -> Result<()> {
 
     // We are trying to add a neighboring block (must merge)
     free_map.add_free_block(150, 20)?;
-    println!(
-        "✅ Added adjacent block: pages 150-169 (20 pages) - merged with the previous one"
-    );
+    println!("✅ Added adjacent block: pages 150-169 (20 pages) - merged with the previous one");
 
     println!("\n📊 Free pages map statistics:");
     println!(
@@ -135,10 +127,7 @@ fn demonstrate_free_page_map() -> Result<()> {
         free_map.header.total_entries
     );
     println!("- Active entries: {}", free_map.header.active_entries);
-    println!(
-        "- Total free pages: {}",
-        free_map.total_free_pages()
-    );
+    println!("- Total free pages: {}", free_map.total_free_pages());
     println!(
         "- Largest free block: {} pages",
         free_map.find_largest_free_block()
@@ -148,33 +137,21 @@ fn demonstrate_free_page_map() -> Result<()> {
 
     // Selecting pages of different sizes
     if let Some(allocated) = free_map.allocate_pages(30) {
-        println!(
-            "✅ 30 pages allocated, starting from page {}",
-            allocated
-        );
+        println!("✅ 30 pages allocated, starting from page {}", allocated);
     }
 
     if let Some(allocated) = free_map.allocate_pages(10) {
-        println!(
-            "✅ 10 pages allocated, starting from page {}",
-            allocated
-        );
+        println!("✅ 10 pages allocated, starting from page {}", allocated);
     }
 
     if let Some(allocated) = free_map.allocate_pages(100) {
-        println!(
-            "✅ 100 pages allocated, starting from page {}",
-            allocated
-        );
+        println!("✅ 100 pages allocated, starting from page {}", allocated);
     } else {
         println!("❌ Failed to allocate 100 pages (not enough space)");
     }
 
     println!("\n📊 Updated statistics:");
-    println!(
-        "- Total free pages: {}",
-        free_map.total_free_pages()
-    );
+    println!("- Total free pages: {}", free_map.total_free_pages());
     println!(
         "- Largest free block: {} pages",
         free_map.find_largest_free_block()
@@ -260,10 +237,7 @@ fn demonstrate_extension_manager() -> Result<()> {
 
         // Checking recommendations for preliminary expansion
         let should_preextend = manager.should_preextend(file_size, 100, file_size);
-        println!(
-            "- Pre-extension recommended: {}",
-            should_preextend
-        );
+        println!("- Pre-extension recommended: {}", should_preextend);
     }
 
     // Demonstrating an adaptive strategy with history

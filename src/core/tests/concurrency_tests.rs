@@ -3,6 +3,7 @@
 use crate::core::{ConcurrencyManager, ResourceType, RowKey, Timestamp, TransactionId};
 use std::time::Duration;
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_concurrency_manager_creation() {
     let manager = ConcurrencyManager::new(Default::default());
@@ -10,6 +11,7 @@ async fn test_concurrency_manager_creation() {
     // Simple check that the manager can be constructed
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_write_operation_with_timeout() {
     let manager = ConcurrencyManager::new(Default::default());
@@ -36,6 +38,7 @@ async fn test_write_operation_with_timeout() {
     // Test passes as long as it does not hang
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_read_operation_with_timeout() {
     let manager = ConcurrencyManager::new(Default::default());
@@ -61,6 +64,7 @@ async fn test_read_operation_with_timeout() {
     // Test passes as long as it does not hang
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_delete_operation_with_timeout() {
     let manager = ConcurrencyManager::new(Default::default());
@@ -82,6 +86,7 @@ async fn test_delete_operation_with_timeout() {
     // Test passes as long as it does not hang
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_begin_transaction() {
     let manager = ConcurrencyManager::new(Default::default());
@@ -97,6 +102,7 @@ async fn test_begin_transaction() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_multiple_operations_with_timeout() {
     let manager = ConcurrencyManager::new(Default::default());
@@ -131,6 +137,7 @@ async fn test_multiple_operations_with_timeout() {
     // Test passes as long as it does not hang
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_concurrent_transactions_with_timeout() {
     let manager = ConcurrencyManager::new(Default::default());
@@ -168,6 +175,7 @@ async fn test_concurrent_transactions_with_timeout() {
     // Test passes as long as it does not hang
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_lock_conflict_with_timeout() {
     let manager = ConcurrencyManager::new(Default::default());

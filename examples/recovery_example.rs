@@ -79,11 +79,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Total entries: {}", stats.total_records);
                 println!("REDO operations: {}", stats.redo_operations);
                 println!("UNDO operations: {}", stats.undo_operations);
+                println!("Transactions recovered: {}", stats.recovered_transactions);
                 println!(
-                    "Transactions recovered: {}",
-                    stats.recovered_transactions
+                    "Transactions rolled back: {}",
+                    stats.rolled_back_transactions
                 );
-                println!("Transactions rolled back: {}", stats.rolled_back_transactions);
                 println!("Pages recovered: {}", stats.recovered_pages);
                 println!("Recovery Time: {}ms", stats.recovery_time_ms);
                 println!("Errors: {}", stats.recovery_errors);

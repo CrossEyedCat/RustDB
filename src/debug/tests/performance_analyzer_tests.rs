@@ -4,6 +4,7 @@ use crate::debug::performance_analyzer::*;
 use crate::debug::DebugConfig;
 use std::time::Duration;
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_performance_analyzer_creation() {
     let config = DebugConfig {
@@ -18,6 +19,7 @@ async fn test_performance_analyzer_creation() {
     assert_eq!(stats.total_analyses, 0);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_performance_analysis() {
     let config = DebugConfig {
@@ -44,6 +46,7 @@ async fn test_performance_analysis() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_bottleneck_detection() {
     let config = DebugConfig {
@@ -75,6 +78,7 @@ async fn test_bottleneck_detection() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_performance_report() {
     let config = DebugConfig {
@@ -92,6 +96,7 @@ async fn test_performance_report() {
     assert!(report.contains("Recommendations for improvement"));
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_status_report() {
     let config = DebugConfig {

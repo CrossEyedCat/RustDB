@@ -309,6 +309,7 @@ mod tests {
     use crate::storage::database_file::BLOCK_SIZE;
     use tempfile::TempDir;
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_optimized_file_manager_creation() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -316,6 +317,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_create_and_open_file() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -336,6 +338,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_optimized_page_operations() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -374,6 +377,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_combined_statistics() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -413,6 +417,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_maintenance_operations() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -441,6 +446,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_cache_performance() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();

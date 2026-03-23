@@ -594,12 +594,14 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_recovery_manager_creation() {
         let config = RecoveryConfig::default();
         let _manager = RecoveryManager::new(config);
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_needs_recovery() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -613,6 +615,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_get_log_files() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -630,6 +633,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_log_analysis() -> Result<()> {
         use crate::logging::log_record::{IsolationLevel, LogRecord};
@@ -668,6 +672,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_backup_creation() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -685,6 +690,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_statistics() {
         let config = RecoveryConfig::default();

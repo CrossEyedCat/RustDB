@@ -713,6 +713,7 @@ mod tests {
     use super::*;
     use tokio::time::timeout;
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_page_cache() {
         let mut cache = PageCache::new(3);
@@ -737,6 +738,7 @@ mod tests {
         assert!(cache.get(1, 40).is_some());
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_buffered_io_manager() -> Result<()> {
         let config = IoBufferConfig::default();
@@ -762,6 +764,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_async_operations() -> Result<()> {
         let config = IoBufferConfig::default();
@@ -798,6 +801,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_buffer_flush() -> Result<()> {
         let mut config = IoBufferConfig::default();
@@ -821,6 +825,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_cache_hit_ratio() -> Result<()> {
         let config = IoBufferConfig::default();

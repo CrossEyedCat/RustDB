@@ -35,10 +35,7 @@ fn demo_statistics_manager() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Statistics for table 'users':");
     println!("- Total number of lines: {}", table_stats.total_rows);
-    println!(
-        "- Table size: {} bytes",
-        table_stats.total_size_bytes
-    );
+    println!("- Table size: {} bytes", table_stats.total_size_bytes);
     println!(
         "- Number of columns: {}",
         table_stats.column_statistics.len()
@@ -47,10 +44,7 @@ fn demo_statistics_manager() -> Result<(), Box<dyn std::error::Error>> {
     // Showing statistics by columns
     for (col_name, col_stats) in &table_stats.column_statistics {
         println!("- Column '{}':", col_name);
-        println!(
-            "* Unique values: {}",
-            col_stats.distinct_values
-        );
+        println!("* Unique values: {}", col_stats.distinct_values);
         println!("* NULL values: {}", col_stats.null_count);
         println!("* Minimum value: {:?}", col_stats.min_value);
         println!("* Maximum value: {:?}", col_stats.max_value);
@@ -60,16 +54,10 @@ fn demo_statistics_manager() -> Result<(), Box<dyn std::error::Error>> {
                 println!("* Distribution: uniform (step: {})", step);
             }
             ValueDistribution::Normal { mean, std_dev } => {
-                println!(
-                    "* Distribution: normal (mean: {}, std: {})",
-                    mean, std_dev
-                );
+                println!("* Distribution: normal (mean: {}, std: {})", mean, std_dev);
             }
             ValueDistribution::Histogram { buckets } => {
-                println!(
-                    "* Distribution: histogram ({} buckets)",
-                    buckets.len()
-                );
+                println!("* Distribution: histogram ({} buckets)", buckets.len());
             }
             ValueDistribution::Unknown => {
                 println!("*Distribution: unknown");
@@ -132,10 +120,7 @@ fn demo_advanced_optimizer() -> Result<(), Box<dyn std::error::Error>> {
         "- Submitting subqueries: {}",
         optimizer.settings().enable_subquery_extraction
     );
-    println!(
-        "- Cost threshold: {}",
-        optimizer.settings().cost_threshold
-    );
+    println!("- Cost threshold: {}", optimizer.settings().cost_threshold);
 
     println!();
     Ok(())
@@ -150,10 +135,7 @@ fn demo_optimization_with_statistics() -> Result<(), Box<dyn std::error::Error>>
     let test_plan = create_test_execution_plan()?;
 
     println!("Original plan:");
-    println!(
-        "- Cost Estimate: {:.2}",
-        test_plan.metadata.estimated_cost
-    );
+    println!("- Cost Estimate: {:.2}", test_plan.metadata.estimated_cost);
     println!(
         "- Number of lines estimate: {}",
         test_plan.metadata.estimated_rows

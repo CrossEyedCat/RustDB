@@ -17,10 +17,7 @@ fn main() -> Result<()> {
     );
     println!("Type checking: {}", settings.check_types);
     println!("Permission check: {}", settings.check_access_rights);
-    println!(
-        "Metadata caching: {}",
-        settings.enable_metadata_cache
-    );
+    println!("Metadata caching: {}", settings.enable_metadata_cache);
 
     // 2. Analysis of a simple SELECT query
     println!("\n2. Analysis of a simple SELECT query:");
@@ -33,15 +30,9 @@ fn main() -> Result<()> {
     println!("The request is valid: {}", result.is_valid);
     println!("Number of errors: {}", result.errors.len());
     println!("Number of warnings: {}", result.warnings.len());
-    println!(
-        "Checked objects: {}",
-        result.statistics.objects_checked
-    );
+    println!("Checked objects: {}", result.statistics.objects_checked);
     println!("Type checks: {}", result.statistics.type_checks);
-    println!(
-        "Analysis time: {} ms",
-        result.statistics.analysis_time_ms
-    );
+    println!("Analysis time: {} ms", result.statistics.analysis_time_ms);
 
     // 3. SELECT analysis with columns and WHERE
     println!("\n3. SELECT analysis with columns and WHERE:");
@@ -67,10 +58,7 @@ fn main() -> Result<()> {
 
     let result = analyzer.analyze(&statement, &context)?;
     println!("The request is valid: {}", result.is_valid);
-    println!(
-        "Checked objects: {}",
-        result.statistics.objects_checked
-    );
+    println!("Checked objects: {}", result.statistics.objects_checked);
     println!("Type checks: {}", result.statistics.type_checks);
 
     // 5. Analysis of the UPDATE request
@@ -94,10 +82,7 @@ fn main() -> Result<()> {
 
     let result = analyzer.analyze(&statement, &context)?;
     println!("The request is valid: {}", result.is_valid);
-    println!(
-        "Checked objects: {}",
-        result.statistics.objects_checked
-    );
+    println!("Checked objects: {}", result.statistics.objects_checked);
 
     // 7. Analysis of multiple requests
     println!("\n7. Analysis of multiple requests:");
@@ -190,10 +175,7 @@ fn main() -> Result<()> {
         updated_settings.check_object_existence
     );
     println!("Caching: {}", updated_settings.enable_metadata_cache);
-    println!(
-        "Strong validation: {}",
-        updated_settings.strict_validation
-    );
+    println!("Strong validation: {}", updated_settings.strict_validation);
 
     // 11. Clear cache
     println!("\n11. Clearing the analyzer cache:");

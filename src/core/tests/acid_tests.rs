@@ -56,6 +56,7 @@ fn create_test_advanced_lock_manager() -> AdvancedLockManager {
     AdvancedLockManager::new(config)
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_acid_manager_creation() {
     run_test_with_timeout(|| async {
@@ -65,6 +66,7 @@ async fn test_acid_manager_creation() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_acid_manager_transaction_lifecycle() {
     run_test_with_timeout(|| async {
@@ -90,6 +92,7 @@ async fn test_acid_manager_transaction_lifecycle() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_acid_manager_transaction_abort() {
     run_test_with_timeout(|| async {
@@ -111,6 +114,7 @@ async fn test_acid_manager_transaction_abort() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_acid_manager_read_only_transaction() {
     run_test_with_timeout(|| async {
@@ -132,6 +136,7 @@ async fn test_acid_manager_read_only_transaction() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_acid_manager_isolation_levels() {
     run_test_with_timeout(|| async {
@@ -154,6 +159,7 @@ async fn test_acid_manager_isolation_levels() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_advanced_lock_manager_creation() {
     run_test_with_timeout(|| async {
@@ -165,6 +171,7 @@ async fn test_advanced_lock_manager_creation() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_advanced_lock_manager_basic_operations() {
     run_test_with_timeout(|| async {
@@ -200,6 +207,7 @@ async fn test_advanced_lock_manager_basic_operations() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_advanced_lock_manager_lock_compatibility() {
     run_test_with_timeout(|| async {
@@ -245,6 +253,7 @@ async fn test_advanced_lock_manager_lock_compatibility() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_advanced_lock_manager_lock_conflict() {
     run_test_with_timeout(|| async {
@@ -293,6 +302,7 @@ async fn test_advanced_lock_manager_lock_conflict() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_advanced_lock_manager_lock_upgrade() {
     run_test_with_timeout(|| async {
@@ -327,6 +337,7 @@ async fn test_advanced_lock_manager_lock_upgrade() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_advanced_lock_manager_deadlock_detection() {
     // This test checks basic locking functionality
@@ -371,6 +382,7 @@ async fn test_advanced_lock_manager_deadlock_detection() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_advanced_lock_manager_statistics() {
     run_test_with_timeout(|| async {
@@ -404,6 +416,7 @@ async fn test_advanced_lock_manager_statistics() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_advanced_lock_manager_resource_types() {
     run_test_with_timeout(|| async {
@@ -437,6 +450,7 @@ async fn test_advanced_lock_manager_resource_types() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_advanced_lock_manager_lock_modes() {
     run_test_with_timeout(|| async {
@@ -467,6 +481,7 @@ async fn test_advanced_lock_manager_lock_modes() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_acid_manager_concurrent_transactions() {
     run_test_with_timeout(|| async {
@@ -502,6 +517,7 @@ async fn test_acid_manager_concurrent_transactions() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_acid_manager_error_handling() {
     run_test_with_timeout(|| async {
@@ -527,6 +543,7 @@ async fn test_acid_manager_error_handling() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_acid_manager_configuration() {
     run_test_with_timeout(|| async {
@@ -544,6 +561,7 @@ async fn test_acid_manager_configuration() {
     .await;
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_advanced_lock_manager_configuration() {
     run_test_with_timeout(|| async {

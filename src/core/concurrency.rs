@@ -262,6 +262,7 @@ impl Default for ConcurrencyManager {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_concurrency_manager_creation() {
         let manager = ConcurrencyManager::default();
@@ -272,6 +273,7 @@ mod tests {
         assert_eq!(mvcc_stats.total_versions, 0);
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_write_and_read() {
         let manager = ConcurrencyManager::default();
@@ -293,6 +295,7 @@ mod tests {
         assert_eq!(read_data, Some(data));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_transaction_isolation() {
         let manager = ConcurrencyManager::default();
@@ -321,6 +324,7 @@ mod tests {
         assert_eq!(read_data, Some(data1));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_abort_transaction() {
         let manager = ConcurrencyManager::default();
@@ -340,6 +344,7 @@ mod tests {
         assert_eq!(mvcc_stats.active_versions, 0);
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_vacuum() {
         let manager = ConcurrencyManager::default();

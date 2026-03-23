@@ -4,6 +4,7 @@ use crate::debug::query_tracer::*;
 use crate::debug::DebugConfig;
 use std::time::Duration;
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_query_tracer_creation() {
     let config = DebugConfig {
@@ -18,6 +19,7 @@ async fn test_query_tracer_creation() {
     assert_eq!(stats.total_queries, 0);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_query_trace_lifecycle() {
     let config = DebugConfig {
@@ -89,6 +91,7 @@ async fn test_query_trace_lifecycle() {
     assert!(trace.events.len() >= 4);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_query_trace_error() {
     let config = DebugConfig {
@@ -131,6 +134,7 @@ async fn test_query_trace_error() {
     assert_eq!(trace.error, Some("Syntax error at line 1".to_string()));
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_multiple_query_traces() {
     let config = DebugConfig {
@@ -167,6 +171,7 @@ async fn test_multiple_query_traces() {
     assert_eq!(completed.len(), 3);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_active_trace_retrieval() {
     let config = DebugConfig {
@@ -216,6 +221,7 @@ async fn test_active_trace_retrieval() {
     assert_eq!(completed.len(), 1);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_performance_report() {
     let config = DebugConfig {
@@ -254,6 +260,7 @@ async fn test_performance_report() {
     assert!(report.contains("Top 5 slow queries"));
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_status_report() {
     let config = DebugConfig {

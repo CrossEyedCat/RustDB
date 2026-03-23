@@ -538,6 +538,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_query_tracer() {
         let config = DebugConfig {
@@ -615,6 +616,7 @@ mod tests {
         assert!(report.contains("Completed successfully: 1"));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_query_tracer_error() {
         let config = DebugConfig {

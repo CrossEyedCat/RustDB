@@ -253,6 +253,7 @@ mod debug_manager_tests {
         assert_eq!(c.detail_level, 2);
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_debug_manager_minimal() {
         let m = DebugManager::new(DebugConfig::default());
@@ -261,6 +262,7 @@ mod debug_manager_tests {
         let _ = m.generate_debug_report();
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_debug_manager_all_flags() {
         let mut cfg = DebugConfig::default();
@@ -276,6 +278,7 @@ mod debug_manager_tests {
         assert!(report.contains("rustdb Debug Status"));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_debug_manager_update_config() {
         let mut m = DebugManager::new(DebugConfig::default());

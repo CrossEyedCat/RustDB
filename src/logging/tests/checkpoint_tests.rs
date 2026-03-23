@@ -9,6 +9,7 @@ fn create_test_log_writer() -> Arc<LogWriter> {
     Arc::new(LogWriter::new(config).unwrap())
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_checkpoint_manager_creation() {
     let config = CheckpointConfig::default();
@@ -46,6 +47,7 @@ fn test_checkpoint_config_custom() {
     assert!(!config.enable_auto_checkpoint);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_checkpoint_creation() {
     let config = CheckpointConfig::default();
@@ -57,6 +59,7 @@ async fn test_checkpoint_creation() {
     assert!(result.is_ok() || result.is_err());
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_checkpoint_statistics() {
     let config = CheckpointConfig::default();
@@ -67,6 +70,7 @@ async fn test_checkpoint_statistics() {
     assert!(stats.total_checkpoints >= 0);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_checkpoint_multiple() {
     let config = CheckpointConfig::default();
@@ -80,6 +84,7 @@ async fn test_checkpoint_multiple() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_checkpoint_config_validation() {
     let config = CheckpointConfig {
@@ -99,6 +104,7 @@ async fn test_checkpoint_config_validation() {
     assert!(true);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_checkpoint_config_disabled_auto() {
     let config = CheckpointConfig {
@@ -118,6 +124,7 @@ async fn test_checkpoint_config_disabled_auto() {
     assert!(true);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_multiple_checkpoints() {
     let config = CheckpointConfig::default();
@@ -133,6 +140,7 @@ async fn test_multiple_checkpoints() {
     assert!(stats.total_checkpoints >= 0);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_checkpoint_config_thread_settings() {
     let thread_counts = vec![1, 2, 4, 8, 16];
@@ -156,6 +164,7 @@ async fn test_checkpoint_config_thread_settings() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_checkpoint_config_batch_sizes() {
     let batch_sizes = vec![10, 50, 100, 500, 1000];

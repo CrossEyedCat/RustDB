@@ -552,6 +552,7 @@ impl Drop for Profiler {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_profiler() {
         let config = DebugConfig {

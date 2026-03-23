@@ -810,6 +810,7 @@ mod tests {
         WriteAheadLog::new(config).await
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_transaction_lifecycle() -> Result<()> {
         let wal = create_test_wal().await?;
@@ -839,6 +840,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_transaction_abort() -> Result<()> {
         let wal = create_test_wal().await?;
@@ -859,6 +861,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_multiple_transactions() -> Result<()> {
         let wal = create_test_wal().await?;
@@ -894,6 +897,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_checkpoint() -> Result<()> {
         let wal = create_test_wal().await?;
@@ -915,6 +919,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_lsn_ordering() -> Result<()> {
         let wal = create_test_wal().await?;
@@ -934,6 +939,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_transaction_validation() -> Result<()> {
         let wal = create_test_wal().await?;

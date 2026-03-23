@@ -582,6 +582,7 @@ mod tests {
         assert!(formatted.contains("Test error message"));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_debug_logger() {
         let config = DebugConfig {

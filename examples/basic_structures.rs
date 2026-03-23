@@ -201,7 +201,10 @@ fn example_tuples_and_schemas() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a new version of the tuple
     let new_tuple = tuple.create_new_version();
-    println!("- A new version of the tuple has been created: {}", new_tuple.version);
+    println!(
+        "- A new version of the tuple has been created: {}",
+        new_tuple.version
+    );
 
     println!("✓ Tuples and schemas work correctly\n");
     Ok(())

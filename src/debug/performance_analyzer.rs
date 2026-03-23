@@ -709,6 +709,7 @@ impl Drop for PerformanceAnalyzer {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_performance_analyzer() {
         let config = DebugConfig {

@@ -313,7 +313,10 @@ pub async fn test_long_running_transaction() -> Result<()> {
     let results = ctx.execute_sql("SELECT * FROM test_long").await?;
     let count = results.len();
 
-    assert_eq!(count, 2, "There must be 2 records in a long-running transaction");
+    assert_eq!(
+        count, 2,
+        "There must be 2 records in a long-running transaction"
+    );
 
     // Confirm the transaction
     ctx.transaction_manager.commit_transaction(tx_id)?;

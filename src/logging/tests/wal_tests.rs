@@ -4,6 +4,7 @@ use crate::logging::log_record::IsolationLevel;
 use crate::logging::wal::{WalConfig, WriteAheadLog};
 use std::path::PathBuf;
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_wal_creation() {
     let config = WalConfig::default();
@@ -40,6 +41,7 @@ fn test_wal_config_custom() {
     );
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_wal_transaction_begin() {
     let config = WalConfig::default();
@@ -49,6 +51,7 @@ async fn test_wal_transaction_begin() {
     assert!(result.is_ok() || result.is_err()); // May fail if directory is missing
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_wal_transaction_lifecycle() {
     let config = WalConfig::default();
@@ -61,6 +64,7 @@ async fn test_wal_transaction_lifecycle() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_wal_multiple_transactions() {
     let config = WalConfig::default();
@@ -73,6 +77,7 @@ async fn test_wal_multiple_transactions() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_wal_force_sync() {
     let config = WalConfig::default();
@@ -107,6 +112,7 @@ fn test_wal_statistics() {
     });
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_wal_different_isolation_levels() {
     let config = WalConfig::default();
@@ -126,6 +132,7 @@ async fn test_wal_different_isolation_levels() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_wal_transaction_abort() {
     let config = WalConfig::default();
@@ -137,6 +144,7 @@ async fn test_wal_transaction_abort() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_wal_checkpoint() {
     let config = WalConfig::default();
@@ -146,6 +154,7 @@ async fn test_wal_checkpoint() {
     assert!(result.is_ok() || result.is_err());
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_wal_log_operations() {
     let config = WalConfig::default();

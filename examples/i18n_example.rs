@@ -20,10 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Connection error: {}", t(MessageKey::ConnectionError));
     println!("Transaction error: {}", t(MessageKey::TransactionError));
     println!("Lock timeout: {}", t(MessageKey::LockTimeout));
-    println!(
-        "Deadlock detected: {}",
-        t(MessageKey::DeadlockDetected)
-    );
+    println!("Deadlock detected: {}", t(MessageKey::DeadlockDetected));
 
     println!("\nTransaction messages:");
     println!("Transaction started: {}", t(MessageKey::TransactionStarted));

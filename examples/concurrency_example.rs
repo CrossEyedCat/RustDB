@@ -96,10 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
     {
         Ok(_) => println!("Transaction {} acquired a lock", tx6),
-        Err(_) => println!(
-            "✓ Transaction {} failed to acquire a lock (timed out)",
-            tx6
-        ),
+        Err(_) => println!("✓ Transaction {} failed to acquire a lock (timed out)", tx6),
     }
 
     // Release the lock
@@ -125,10 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Locks:");
     println!("Total locks: {}", lock_stats.total_locks);
     println!("Timeouts: {}", lock_stats.lock_timeouts);
-    println!(
-        "Deadlocks detected: {}",
-        lock_stats.deadlocks_detected
-    );
+    println!("Deadlocks detected: {}", lock_stats.deadlocks_detected);
 
     let mvcc_stats = manager.get_mvcc_statistics();
     println!("\n   MVCC:");

@@ -514,12 +514,14 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_compaction_manager_creation() {
         let config = CompactionConfig::default();
         let _manager = CompactionManager::new(config);
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_discover_log_files() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -542,6 +544,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_file_classification() -> Result<()> {
         let mut config = CompactionConfig::default();
@@ -603,6 +606,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_cleanup_old_logs() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -625,6 +629,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_compress_specific_file() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -651,6 +656,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_statistics() -> Result<()> {
         let config = CompactionConfig::default();

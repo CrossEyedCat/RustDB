@@ -99,10 +99,7 @@ fn lock_operations_demo() {
 
     // Checking blocked resources
     let info = tm.get_transaction_info(txn_id).unwrap().unwrap();
-    println!(
-        "✓ Total blocked resources: {}",
-        info.locked_resources.len()
-    );
+    println!("✓ Total blocked resources: {}", info.locked_resources.len());
 
     // Release one lock
     tm.release_lock(txn_id, "temp_resource".to_string())
@@ -181,14 +178,8 @@ fn isolation_levels_demo() {
     let tm = TransactionManager::new().unwrap();
 
     let levels = vec![
-        (
-            IsolationLevel::ReadUncommitted,
-            "Reading Uncommitted Data",
-        ),
-        (
-            IsolationLevel::ReadCommitted,
-            "Reading Captured Data",
-        ),
+        (IsolationLevel::ReadUncommitted, "Reading Uncommitted Data"),
+        (IsolationLevel::ReadCommitted, "Reading Captured Data"),
         (IsolationLevel::RepeatableRead, "Repeatable reading"),
         (IsolationLevel::Serializable, "Serializability"),
     ];
@@ -234,10 +225,7 @@ fn statistics_demo() {
         cfg.max_concurrent_transactions
     );
     println!("• Lock timeout: {} ms", cfg.lock_timeout_ms);
-    println!(
-        "• Deadlock detection: {}",
-        cfg.enable_deadlock_detection
-    );
+    println!("• Deadlock detection: {}", cfg.enable_deadlock_detection);
 
     // We perform several operations to collect statistics
     let mut transaction_ids = Vec::new();
@@ -277,10 +265,7 @@ fn statistics_demo() {
     println!("• Fixed: {}", stats.committed_transactions);
     println!("• Canceled: {}", stats.aborted_transactions);
     println!("• Blocking operations: {}", stats.lock_operations);
-    println!(
-        "• Unlock operations: {}",
-        stats.unlock_operations
-    );
+    println!("• Unlock operations: {}", stats.unlock_operations);
     println!("• Deadlocks detected: {}", stats.deadlocks_detected);
 
     println!("\n ✓ Statistics collected and displayed\n");

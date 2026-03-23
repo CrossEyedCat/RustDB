@@ -158,10 +158,7 @@ fn main() -> Result<()> {
         "- JOIN permutation: {}",
         opt_settings.enable_join_reordering
     );
-    println!(
-        "- Index selection: {}",
-        opt_settings.enable_index_selection
-    );
+    println!("- Index selection: {}", opt_settings.enable_index_selection);
     println!(
         "- Simplifying expressions: {}",
         opt_settings.enable_expression_simplification
@@ -184,10 +181,7 @@ fn main() -> Result<()> {
         "- Optimizations applied: {}",
         opt_stats.optimizations_applied
     );
-    println!(
-        "- Optimization time: {} ms",
-        opt_stats.optimization_time_ms
-    );
+    println!("- Optimization time: {} ms", opt_stats.optimization_time_ms);
     println!(
         "- Cost Improvement: {:.2}%",
         opt_stats.cost_improvement_percent

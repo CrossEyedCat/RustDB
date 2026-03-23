@@ -7,6 +7,7 @@ use crate::logging::wal::{WalConfig, WriteAheadLog};
 use crate::storage::page_manager::{PageManager, PageManagerConfig};
 use std::sync::Arc;
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_recovery_manager_perform_recovery() -> crate::common::Result<()> {
     let temp = tempfile::tempdir()

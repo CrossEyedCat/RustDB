@@ -893,6 +893,7 @@ mod tests {
     use crate::logging::log_record::{IsolationLevel, LogRecord, LogRecordType};
     use tempfile::TempDir;
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_log_writer_creation() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -903,6 +904,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_write_log() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -923,6 +925,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_write_log_sync() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -944,6 +947,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_multiple_writes() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -970,6 +974,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_lsn_generation() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -991,6 +996,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_statistics() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -1041,6 +1047,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_buffer_management() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();

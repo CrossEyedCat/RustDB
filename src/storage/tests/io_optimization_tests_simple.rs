@@ -16,6 +16,7 @@ fn create_test_io_config() -> IoBufferConfig {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_buffered_io_manager_creation() {
     let _temp_dir = TempDir::new().unwrap();
@@ -26,6 +27,7 @@ async fn test_buffered_io_manager_creation() {
     assert!(true);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_page_cache_operations() {
     let mut cache = PageCache::new(5);
@@ -45,6 +47,7 @@ async fn test_page_cache_operations() {
     assert!(missing_data.is_none());
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_page_cache_lru_eviction() {
     let mut cache = PageCache::new(3);
@@ -77,6 +80,7 @@ async fn test_page_cache_lru_eviction() {
     assert!(cache.get(file_id, 4).is_some());
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_io_statistics() {
     let mut stats = IoStatistics::default();
@@ -101,6 +105,7 @@ async fn test_io_statistics() {
     assert!(stats.total_execution_time_us >= 30000);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_io_manager_basic_functionality() {
     let _temp_dir = TempDir::new().unwrap();
@@ -114,6 +119,7 @@ async fn test_io_manager_basic_functionality() {
     assert!(stats.write_operations >= 0);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_cache_configuration() {
     let _temp_dir = TempDir::new().unwrap();
@@ -130,6 +136,7 @@ async fn test_cache_configuration() {
     assert!(stats.cache_hits + stats.cache_misses > 0);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_buffer_configuration() {
     let _temp_dir = TempDir::new().unwrap();
@@ -146,6 +153,7 @@ async fn test_buffer_configuration() {
     assert!(stats.sync_operations > 0);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_prefetch_configuration() {
     let _temp_dir = TempDir::new().unwrap();
@@ -196,6 +204,7 @@ fn test_io_buffer_config_validation() {
     assert_eq!(minimal_config.prefetch_window_size, 1);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_performance_simulation() {
     let _temp_dir = TempDir::new().unwrap();
@@ -216,6 +225,7 @@ async fn test_performance_simulation() {
     assert!(stats.average_execution_time_us < 1000000);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_error_handling_simulation() {
     let _temp_dir = TempDir::new().unwrap();

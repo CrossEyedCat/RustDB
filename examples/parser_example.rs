@@ -168,14 +168,8 @@ fn main() -> Result<()> {
         "Maximum recursion depth: {}",
         parser.settings().max_recursion_depth
     );
-    println!(
-        "Caching enabled: {}",
-        parser.settings().enable_caching
-    );
-    println!(
-        "Strong validation: {}",
-        parser.settings().strict_validation
-    );
+    println!("Caching enabled: {}", parser.settings().enable_caching);
+    println!("Strong validation: {}", parser.settings().strict_validation);
 
     println!();
 
@@ -206,10 +200,7 @@ fn main() -> Result<()> {
     let statement = parser.parse()?;
     if let SqlStatement::Update(update_stmt) = statement {
         println!("UPDATE tables: {}", update_stmt.table);
-        println!(
-            "Number of assignments: {}",
-            update_stmt.assignments.len()
-        );
+        println!("Number of assignments: {}", update_stmt.assignments.len());
         println!("There is WHERE: {}", update_stmt.where_clause.is_some());
     }
 

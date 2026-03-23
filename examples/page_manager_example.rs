@@ -203,10 +203,7 @@ fn demo_crud_operations(data_dir: &Path) -> Result<(), Box<dyn std::error::Error
                 if update_result.in_place {
                     println!("📍 Upgrade done on site");
                 } else {
-                    println!(
-                        "🔄 Post moved to page {:?}",
-                        update_result.new_page_id
-                    );
+                    println!("🔄 Post moved to page {:?}", update_result.new_page_id);
                 }
             }
             Err(e) => {

@@ -597,12 +597,14 @@ mod tests {
         Ok(CheckpointManager::new(checkpoint_config, log_writer))
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_checkpoint_manager_creation() -> Result<()> {
         let _manager = create_test_checkpoint_manager().await?;
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_manual_checkpoint() -> Result<()> {
         let manager = create_test_checkpoint_manager().await?;
@@ -616,6 +618,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_checkpoint_with_transactions() -> Result<()> {
         let manager = create_test_checkpoint_manager().await?;
@@ -639,6 +642,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_checkpoint_statistics() -> Result<()> {
         let manager = create_test_checkpoint_manager().await?;
@@ -656,6 +660,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_shutdown_checkpoint() -> Result<()> {
         let mut manager = create_test_checkpoint_manager().await?;
@@ -672,6 +677,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_data_source_updates() -> Result<()> {
         let manager = create_test_checkpoint_manager().await?;

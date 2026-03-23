@@ -4,6 +4,7 @@ use crate::debug::profiler::*;
 use crate::debug::DebugConfig;
 use std::time::Duration;
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_profiler_creation() {
     let config = DebugConfig {
@@ -19,6 +20,7 @@ async fn test_profiler_creation() {
     assert_eq!(stats.total_snapshots, 0);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_profiler_data_collection() {
     let config = DebugConfig {
@@ -58,6 +60,7 @@ async fn test_profiler_data_collection() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_profiler_start_stop() {
     let config = DebugConfig {
@@ -88,6 +91,7 @@ async fn test_profiler_start_stop() {
     assert_eq!(stats_before.total_snapshots, stats_after.total_snapshots);
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_cpu_only_profiling() {
     let config = DebugConfig {
@@ -109,6 +113,7 @@ async fn test_cpu_only_profiling() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_memory_only_profiling() {
     let config = DebugConfig {
@@ -130,6 +135,7 @@ async fn test_memory_only_profiling() {
     }
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_performance_report() {
     let config = DebugConfig {
@@ -150,6 +156,7 @@ async fn test_performance_report() {
     assert!(report.contains("Recommendations"));
 }
 
+#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_status_report() {
     let config = DebugConfig {
