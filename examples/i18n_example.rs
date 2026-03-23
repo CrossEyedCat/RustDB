@@ -1,77 +1,77 @@
-//! Пример использования системы интернационализации RustDB
+//! An example of using the RustDB internationalization system
 
 use rustdb::common::{set_language, t, t_with_params, I18nManager, Language, MessageKey, I18N};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Пример системы интернационализации RustDB ===\n");
+    println!("=== Example of the RustDB internationalization system ===\n");
 
-    // Демонстрация работы с английским языком
-    println!("--- Английский язык ---");
+    // Demonstration of working with English
+    println!("--- English language ---");
     set_language(Language::English)?;
 
-    println!("Приветствие: {}", t(MessageKey::Welcome));
-    println!("Ошибка: {}", t(MessageKey::Error));
-    println!("Успех: {}", t(MessageKey::Success));
-    println!("Предупреждение: {}", t(MessageKey::Warning));
-    println!("Информация: {}", t(MessageKey::Info));
+    println!("Greetings: {}", t(MessageKey::Welcome));
+    println!("Error: {}", t(MessageKey::Error));
+    println!("Success: {}", t(MessageKey::Success));
+    println!("Warning: {}", t(MessageKey::Warning));
+    println!("Information: {}", t(MessageKey::Info));
 
-    println!("\nСообщения об ошибках:");
-    println!("Ошибка базы данных: {}", t(MessageKey::DatabaseError));
-    println!("Ошибка подключения: {}", t(MessageKey::ConnectionError));
-    println!("Ошибка транзакции: {}", t(MessageKey::TransactionError));
-    println!("Таймаут блокировки: {}", t(MessageKey::LockTimeout));
+    println!("\nError messages:");
+    println!("Database Error: {}", t(MessageKey::DatabaseError));
+    println!("Connection error: {}", t(MessageKey::ConnectionError));
+    println!("Transaction error: {}", t(MessageKey::TransactionError));
+    println!("Lock timeout: {}", t(MessageKey::LockTimeout));
     println!(
-        "Обнаружена взаимоблокировка: {}",
+        "Deadlock detected: {}",
         t(MessageKey::DeadlockDetected)
     );
 
-    println!("\nСообщения транзакций:");
-    println!("Транзакция начата: {}", t(MessageKey::TransactionStarted));
+    println!("\nTransaction messages:");
+    println!("Transaction started: {}", t(MessageKey::TransactionStarted));
     println!(
-        "Транзакция подтверждена: {}",
+        "Transaction confirmed: {}",
         t(MessageKey::TransactionCommitted)
     );
     println!(
-        "Транзакция откачена: {}",
+        "Transaction rolled back: {}",
         t(MessageKey::TransactionRolledBack)
     );
 
-    println!("\nСообщения блокировок:");
-    println!("Блокировка получена: {}", t(MessageKey::LockAcquired));
-    println!("Блокировка освобождена: {}", t(MessageKey::LockReleased));
-    println!("Ожидание блокировки: {}", t(MessageKey::LockWaiting));
+    println!("\nBlocking messages:");
+    println!("Lock received: {}", t(MessageKey::LockAcquired));
+    println!("Lock released: {}", t(MessageKey::LockReleased));
+    println!("Waiting for lock: {}", t(MessageKey::LockWaiting));
 
-    // Демонстрация сообщений с параметрами
-    println!("\n--- Сообщения с параметрами ---");
+    // Demonstration of messages with parameters
+    println!("\n--- Messages with parameters ---");
 
-    // Пример с английским языком
+    // English example
     set_language(Language::English)?;
     println!(
-        "Английский: {}",
+        "English: {}",
         t_with_params(MessageKey::Welcome, &["RustDB"])
     );
 
-    // Демонстрация получения текущего языка
-    println!("\n--- Информация о языке ---");
+    // Demonstration of getting the current language
+    println!("\n--- Language information ---");
     let current_lang = I18N.get_language()?;
-    println!("Текущий язык: {}", current_lang);
-    println!("Название языка: {}", I18N.get_language_name(current_lang));
+    println!("Current language: {}", current_lang);
+    println!("Language name: {}", I18N.get_language_name(current_lang));
 
-    // Демонстрация поддерживаемых языков
-    println!("\nПоддерживаемые языки:");
+    // Demonstration of supported languages
+    println!("\nSupported languages:");
     for lang in I18nManager::supported_languages() {
         println!("  {} - {}", lang, I18N.get_language_name(lang));
     }
 
-    // Демонстрация переключения языка
-    println!("\n--- Переключение языка ---");
+    // Demonstration of language switching
+    println!("\n--- Switch language ---");
 
-    println!("Переключение на английский...");
+    println!("Switch to English...");
     set_language(Language::English)?;
-    println!("Текущий язык: {}", I18N.get_language()?);
-    println!("Приветствие: {}", t(MessageKey::Welcome));
+    println!("Current language: {}", I18N.get_language()?);
+    println!("Greetings: {}", t(MessageKey::Welcome));
 
-    println!("\n=== Пример завершен ===");
+    println!("\n=== Example completed ===");
 
     Ok(())
 }

@@ -1,4 +1,4 @@
-//! Тесты для структуры Tuple
+//! Tests for the Tuple structure
 
 use crate::storage::tuple::{Tuple, TupleHeader, Schema, Column, Constraint, TableOptions};
 use crate::common::types::{DataType, ColumnValue};
@@ -38,7 +38,7 @@ fn test_tuple_get_value() {
     
     assert_eq!(tuple.get_value(0), Some(&ColumnValue::Integer(100)));
     assert_eq!(tuple.get_value(1), Some(&ColumnValue::Text("World".to_string())));
-    assert_eq!(tuple.get_value(2), None); // Несуществующий индекс
+    assert_eq!(tuple.get_value(2), None);
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn test_tuple_set_value() {
     tuple.add_value(ColumnValue::Integer(10));
     tuple.add_value(ColumnValue::Text("Old".to_string()));
     
-    // Изменяем значения
+    // Changing the values
     tuple.set_value(0, ColumnValue::Integer(20));
     tuple.set_value(1, ColumnValue::Text("New".to_string()));
     
@@ -61,7 +61,7 @@ fn test_tuple_set_invalid_index() {
     let mut tuple = Tuple::new(1);
     tuple.add_value(ColumnValue::Integer(1));
     
-    // Попытка установить значение по несуществующему индексу
+    // Attempting to set a value at a non-existent index
     let result = tuple.set_value(5, ColumnValue::Integer(2));
     assert!(result.is_err());
 }
@@ -82,11 +82,11 @@ fn test_tuple_serialization() {
     tuple.add_value(ColumnValue::Text("Test".to_string()));
     tuple.add_value(ColumnValue::Boolean(false));
     
-    // Сериализуем кортеж
+    // Serializing a tuple
     let serialized = tuple.serialize();
     assert!(!serialized.is_empty());
     
-    // Десериализуем кортеж
+    // Deserializing the tuple
     let deserialized = Tuple::deserialize(&serialized);
     assert!(deserialized.is_ok());
     
@@ -102,7 +102,7 @@ fn test_tuple_serialization() {
 fn test_tuple_different_data_types() {
     let mut tuple = Tuple::new(1);
     
-    // Добавляем различные типы данных
+    // Adding different types of data
     tuple.add_value(ColumnValue::Integer(i64::MAX));
     tuple.add_value(ColumnValue::Float(3.14159));
     tuple.add_value(ColumnValue::Text("Unicode: 🦀".to_string()));
@@ -111,7 +111,7 @@ fn test_tuple_different_data_types() {
     
     assert_eq!(tuple.get_values().len(), 5);
     
-    // Проверяем каждое значение
+    // Checking every value
     assert_eq!(tuple.get_value(0), Some(&ColumnValue::Integer(i64::MAX)));
     assert_eq!(tuple.get_value(1), Some(&ColumnValue::Float(3.14159)));
     assert_eq!(tuple.get_value(2), Some(&ColumnValue::Text("Unicode: 🦀".to_string())));
@@ -122,7 +122,7 @@ fn test_tuple_different_data_types() {
 #[test]
 fn test_tuple_large_text() {
     let mut tuple = Tuple::new(1);
-    let large_text = "A".repeat(10000); // 10KB текста
+    let large_text = "A".repeat(10000);
     
     tuple.add_value(ColumnValue::Text(large_text.clone()));
     
@@ -134,8 +134,8 @@ fn test_tuple_large_text() {
 fn test_tuple_empty_values() {
     let mut tuple = Tuple::new(1);
     
-    tuple.add_value(ColumnValue::Text("".to_string())); // Пустая строка
-    tuple.add_value(ColumnValue::Null); // NULL значение
+    tuple.add_value(ColumnValue::Text("".to_string()));
+    tuple.add_value(ColumnValue::Null);
     
     assert_eq!(tuple.get_values().len(), 2);
     assert_eq!(tuple.get_value(0), Some(&ColumnValue::Text("".to_string())));
@@ -145,12 +145,12 @@ fn test_tuple_empty_values() {
 #[test]
 fn test_tuple_dirty_flag() {
     let mut tuple = Tuple::new(1);
-    assert!(tuple.is_dirty()); // Новый кортеж помечен как грязный
+    assert!(tuple.is_dirty());
     
     tuple.mark_clean();
     assert!(!tuple.is_dirty());
     
-    // Любое изменение должно помечать кортеж как грязный
+    // Any change must mark the tuple as dirty
     tuple.add_value(ColumnValue::Integer(1));
     assert!(tuple.is_dirty());
     
@@ -213,7 +213,7 @@ fn test_schema_multiple_columns() {
     
     assert_eq!(schema.get_columns().len(), 3);
     
-    // Проверяем nullable колонки
+    // Checking nullable columns
     assert!(!schema.get_columns()[0].nullable);
     assert!(!schema.get_columns()[1].nullable);
     assert!(schema.get_columns()[2].nullable);
@@ -230,7 +230,7 @@ fn test_schema_constraints() {
         default_value: None,
     });
     
-    // Добавляем ограничения
+    // Adding restrictions
     schema.add_constraint(Constraint::PrimaryKey(vec!["id".to_string()]));
     schema.add_constraint(Constraint::Unique(vec!["id".to_string()]));
     
@@ -255,7 +255,7 @@ fn test_schema_validation() {
         default_value: Some(ColumnValue::Text("default".to_string())),
     });
     
-    // Создаем кортеж, соответствующий схеме
+    // Create a tuple that matches the schema
     let mut valid_tuple = Tuple::new(1);
     valid_tuple.add_value(ColumnValue::Integer(42));
     valid_tuple.add_value(ColumnValue::Text("test".to_string()));
@@ -263,9 +263,9 @@ fn test_schema_validation() {
     let result = schema.validate_tuple(&valid_tuple);
     assert!(result.is_ok());
     
-    // Создаем кортеж с NULL в обязательном поле
+    // Create a tuple with NULL in a required field
     let mut invalid_tuple = Tuple::new(2);
-    invalid_tuple.add_value(ColumnValue::Null); // Нарушение NOT NULL
+    invalid_tuple.add_value(ColumnValue::Null);
     invalid_tuple.add_value(ColumnValue::Text("test".to_string()));
     
     let result = schema.validate_tuple(&invalid_tuple);
@@ -296,7 +296,7 @@ fn test_tuple_equality() {
     tuple2.add_value(ColumnValue::Integer(42));
     tuple2.add_value(ColumnValue::Text("Test".to_string()));
     
-    let mut tuple3 = Tuple::new(2); // Другой ID
+    let mut tuple3 = Tuple::new(2);
     tuple3.add_value(ColumnValue::Integer(42));
     tuple3.add_value(ColumnValue::Text("Test".to_string()));
     
@@ -309,7 +309,7 @@ fn test_tuple_size_calculation() {
     let mut tuple = Tuple::new(1);
     
     let initial_size = tuple.calculate_size();
-    assert!(initial_size > 0); // Размер заголовка
+    assert!(initial_size > 0);
     
     tuple.add_value(ColumnValue::Integer(42));
     let size_with_int = tuple.calculate_size();
@@ -322,10 +322,10 @@ fn test_tuple_size_calculation() {
 
 #[test]
 fn test_tuple_boundary_conditions() {
-    // Тест с максимальным количеством полей
+    // Test with maximum number of fields
     let mut tuple = Tuple::new(u32::MAX);
     
-    // Добавляем много значений
+    // Adding a lot of values
     for i in 0..1000 {
         tuple.add_value(ColumnValue::Integer(i));
     }
@@ -341,8 +341,8 @@ fn test_tuple_memory_efficiency() {
     let tuple = Tuple::new(1);
     let size = mem::size_of_val(&tuple);
     
-    // Кортеж должен иметь разумный размер в памяти
-    assert!(size < 1024); // Менее 1KB для пустого кортежа
+    // The tuple must have a reasonable size in memory
+    assert!(size < 1024);
 }
 
 #[test]
@@ -363,11 +363,11 @@ fn test_schema_serialization() {
         default_value: Some(ColumnValue::Text("Unknown".to_string())),
     });
     
-    // Сериализуем схему
+    // Serializing the schema
     let serialized = schema.serialize();
     assert!(!serialized.is_empty());
     
-    // Десериализуем схему
+    // Deserialize the schema
     let deserialized = Schema::deserialize(&serialized);
     assert!(deserialized.is_ok());
     

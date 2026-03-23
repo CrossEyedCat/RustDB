@@ -1,7 +1,7 @@
-//! Stress тесты
+//! Stress tests
 //!
-//! Эти тесты проверяют поведение системы под высокой нагрузкой
-//! и в экстремальных условиях.
+//! These tests check the behavior of the system under high load
+//! and in extreme conditions.
 
 use super::common::*;
 use rustdb::common::{Error, Result};
@@ -10,22 +10,22 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 // use tokio::time::{sleep, Duration};
 
-/// Stress тест множественных одновременных соединений
+// / Stress test of multiple simultaneous connections
 #[tokio::test]
 pub async fn stress_test_concurrent_connections() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("stress_concurrent").await?;
 
     let mut handles = Vec::new();
     let ctx_arc = Arc::new(Mutex::new(ctx));
 
-    // Запускаем 10 параллельных соединений
+    // We launch 10 parallel connections
     for i in 0..10 {
         let ctx_clone = Arc::clone(&ctx_arc);
         let handle = tokio::spawn(async move {
-            // Каждое соединение выполняет 5 операций
+            // Each connection performs 5 operations
             for j in 0..5 {
                 let sql = format!(
                     "INSERT INTO stress_concurrent (id, name, age, email) VALUES ({}, 'User{}', {}, 'user{}@example.com')",
@@ -41,37 +41,37 @@ pub async fn stress_test_concurrent_connections() -> Result<()> {
         handles.push(handle);
     }
 
-    // Ждем завершения всех соединений
+    // Waiting for all connections to complete
     for handle in handles {
         let _ = handle
             .await
             .map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
 
-    // Проверяем, что данные вставились
+    // Checking that the data has been inserted
     let results = ctx_arc
         .lock()
         .await
         .execute_sql("SELECT * FROM stress_concurrent")
         .await?;
-    assert!(!results.is_empty(), "Должны быть вставлены данные");
+    assert!(!results.is_empty(), "Data must be inserted");
 
     Ok(())
 }
 
-/// Stress тест длительных транзакций
+// / Stress test for long transactions
 #[tokio::test]
 pub async fn stress_test_long_transactions() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовые таблицы
+    // Creating test tables
     ctx.create_test_table("stress_long1").await?;
     ctx.create_test_table("stress_long2").await?;
 
     let mut handles = Vec::new();
     let ctx_arc = Arc::new(Mutex::new(ctx));
 
-    // Запускаем 5 длительных транзакций
+    // We launch 5 long transactions
     for i in 0..5 {
         let ctx_clone = Arc::clone(&ctx_arc);
         let handle = tokio::spawn(async move {
@@ -81,7 +81,7 @@ pub async fn stress_test_long_transactions() -> Result<()> {
                 .transaction_manager
                 .begin_transaction(IsolationLevel::ReadCommitted, false)?;
 
-            // Выполняем операции в транзакции
+            // Performing operations in a transaction
             for j in 0..10 {
                 let sql1 = format!(
                     "INSERT INTO stress_long1 (id, name, age, email) VALUES ({}, 'User{}', {}, 'user{}@example.com')",
@@ -108,14 +108,14 @@ pub async fn stress_test_long_transactions() -> Result<()> {
         handles.push(handle);
     }
 
-    // Ждем завершения всех транзакций
+    // We are waiting for all transactions to complete
     for handle in handles {
         let _ = handle
             .await
             .map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
 
-    // Проверяем данные
+    // Checking the data
     let results1 = ctx_arc
         .lock()
         .await
@@ -133,19 +133,19 @@ pub async fn stress_test_long_transactions() -> Result<()> {
     Ok(())
 }
 
-/// Stress тест блокировок
+// / Stress test of blocking
 #[tokio::test]
 pub async fn stress_test_locking() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("stress_locking").await?;
     ctx.insert_test_data("stress_locking", 100).await?;
 
     let mut handles = Vec::new();
     let ctx_arc = Arc::new(Mutex::new(ctx));
 
-    // Запускаем 5 параллельных транзакций
+    // We launch 5 parallel transactions
     for i in 0..5 {
         let ctx_clone = Arc::clone(&ctx_arc);
         let handle = tokio::spawn(async move {
@@ -155,7 +155,7 @@ pub async fn stress_test_locking() -> Result<()> {
                 .transaction_manager
                 .begin_transaction(IsolationLevel::ReadCommitted, false)?;
 
-            // Каждая транзакция вставляет новые записи
+            // Each transaction inserts new records
             for j in 1..=5 {
                 let sql = format!(
                     "INSERT INTO stress_locking (id, name, age, email) VALUES ({}, 'User{}', {}, 'user{}@example.com')",
@@ -176,41 +176,41 @@ pub async fn stress_test_locking() -> Result<()> {
         handles.push(handle);
     }
 
-    // Ждем завершения всех транзакций
+    // We are waiting for all transactions to complete
     for handle in handles {
         let _ = handle
             .await
             .map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
 
-    // Проверяем, что данные вставились
+    // Checking that the data has been inserted
     let results = ctx_arc
         .lock()
         .await
         .execute_sql("SELECT * FROM stress_locking")
         .await?;
-    assert!(!results.is_empty(), "Должны быть данные");
+    assert!(!results.is_empty(), "There must be data");
 
     Ok(())
 }
 
-/// Stress тест памяти
+// / Stress memory test
 #[tokio::test]
 pub async fn stress_test_memory_usage() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем простую таблицу
+    // Create a simple table
     ctx.execute_sql("CREATE TABLE stress_memory (id INTEGER, data TEXT)")
         .await?;
 
     let mut handles = Vec::new();
     let ctx_arc = Arc::new(Mutex::new(ctx));
 
-    // Запускаем операции
+    // Launching operations
     for i in 0..5 {
         let ctx_clone = Arc::clone(&ctx_arc);
         let handle = tokio::spawn(async move {
-            // Вставляем данные
+            // Inserting data
             for j in 0..20 {
                 let data = format!("Data_{}_{}", i, j);
                 let sql = format!(
@@ -228,14 +228,14 @@ pub async fn stress_test_memory_usage() -> Result<()> {
         handles.push(handle);
     }
 
-    // Ждем завершения всех операций
+    // We are waiting for the completion of all operations
     for handle in handles {
         let _ = handle
             .await
             .map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
 
-    // Проверяем данные
+    // Checking the data
     let results = ctx_arc
         .lock()
         .await
@@ -246,23 +246,23 @@ pub async fn stress_test_memory_usage() -> Result<()> {
     Ok(())
 }
 
-/// Stress тест checkpoint операций
+// / Stress test checkpoint operations
 #[tokio::test]
 pub async fn stress_test_checkpoint_operations() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем таблицу и заполняем данными
+    // Create a table and fill it with data
     ctx.create_test_table("stress_checkpoint").await?;
     ctx.insert_test_data("stress_checkpoint", 100).await?;
 
     let mut handles = Vec::new();
     let ctx_arc = Arc::new(Mutex::new(ctx));
 
-    // Запускаем операции записи параллельно с checkpoint операциями
+    // We run write operations in parallel with checkpoint operations
     for i in 0..3 {
         let ctx_clone = Arc::clone(&ctx_arc);
         let handle = tokio::spawn(async move {
-            // Выполняем операции записи
+            // Performing write operations
             for j in 0..20 {
                 let sql = format!(
                     "INSERT INTO stress_checkpoint (id, name, age, email) VALUES ({}, 'StressUser{}', {}, 'stress{}@example.com')",
@@ -271,7 +271,7 @@ pub async fn stress_test_checkpoint_operations() -> Result<()> {
 
                 ctx_clone.lock().await.execute_sql(&sql).await?;
 
-                // Периодически создаем checkpoint
+                // We periodically create checkpoints
                 if j % 10 == 0 {
                     ctx_clone
                         .lock()
@@ -288,14 +288,14 @@ pub async fn stress_test_checkpoint_operations() -> Result<()> {
         handles.push(handle);
     }
 
-    // Ждем завершения всех операций
+    // We are waiting for the completion of all operations
     for handle in handles {
         let _ = handle
             .await
             .map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
 
-    // Проверяем данные
+    // Checking the data
     let results = ctx_arc
         .lock()
         .await
@@ -306,66 +306,66 @@ pub async fn stress_test_checkpoint_operations() -> Result<()> {
     Ok(())
 }
 
-/// Stress тест восстановления
+// / Stress recovery test
 #[tokio::test]
 pub async fn stress_test_recovery() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем таблицу
+    // Create a table
     ctx.create_test_table("stress_recovery").await?;
 
-    // Выполняем операции
+    // We carry out operations
     for i in 1..=100 {
         ctx.execute_sql(&format!(
             "INSERT INTO stress_recovery (id, name, age, email) VALUES ({}, 'User{}', {}, 'user{}@example.com')",
             i, i, 20 + (i % 50), i
         )).await?;
 
-        // Периодически создаем checkpoint
+        // We periodically create checkpoints
         if i % 20 == 0 {
             ctx.checkpoint_manager.create_checkpoint().await?;
         }
     }
 
-    // Создаем финальный checkpoint
+    // Creating the final checkpoint
     ctx.checkpoint_manager.create_checkpoint().await?;
 
-    // Симулируем сбой - создаем новый контекст
+    // Simulating a failure - creating a new context
     let mut new_ctx = IntegrationTestContext::new().await?;
 
-    // Для симуляции восстановления, мы восстанавливаем данные
+    // To simulate recovery, we recover data
     new_ctx
         .inserted_records
         .insert("stress_recovery".to_string(), 5);
 
-    // Проверяем восстановление данных
+    // Checking data recovery
     let results = new_ctx.execute_sql("SELECT * FROM stress_recovery").await?;
     assert!(!results.is_empty(), "Should recover data");
 
     Ok(())
 }
 
-/// Stress тест производительности под нагрузкой
+// / Stress performance test under load
 #[tokio::test]
 pub async fn stress_test_performance_under_load() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем таблицу
+    // Create a table
     ctx.create_test_table("stress_performance").await?;
     ctx.insert_test_data("stress_performance", 100).await?;
 
     let mut handles = Vec::new();
     let ctx_arc = Arc::new(Mutex::new(ctx));
 
-    // Запускаем 10 параллельных операций
+    // We launch 10 parallel operations
     for i in 0..10 {
         let ctx_clone = Arc::clone(&ctx_arc);
         let handle = tokio::spawn(async move {
-            // Каждая горутина выполняет 10 операций
+            // Each goroutine performs 10 operations
             for j in 0..10 {
                 match i % 4 {
                     0 => {
-                        // SELECT операции
+                        // SELECT operations
                         ctx_clone
                             .lock()
                             .await
@@ -373,7 +373,7 @@ pub async fn stress_test_performance_under_load() -> Result<()> {
                             .await?;
                     }
                     1 => {
-                        // INSERT операции
+                        // INSERT operations
                         let sql = format!(
                             "INSERT INTO stress_performance (id, name, age, email) VALUES ({}, 'LoadUser{}', {}, 'load{}@example.com')",
                             i * 10 + j + 101, i * 10 + j + 101, 20 + (j % 40), i * 10 + j + 101
@@ -381,12 +381,12 @@ pub async fn stress_test_performance_under_load() -> Result<()> {
                         ctx_clone.lock().await.execute_sql(&sql).await?;
                     }
                     2 => {
-                        // UPDATE операции (без WHERE для упрощения)
+                        // UPDATE operations (without WHERE for simplicity)
                         let sql = format!("UPDATE stress_performance SET age = {}", 25 + (j % 30));
                         ctx_clone.lock().await.execute_sql(&sql).await?;
                     }
                     _ => {
-                        // SELECT операции
+                        // SELECT operations
                         ctx_clone
                             .lock()
                             .await
@@ -402,14 +402,14 @@ pub async fn stress_test_performance_under_load() -> Result<()> {
         handles.push(handle);
     }
 
-    // Ждем завершения всех операций
+    // We are waiting for the completion of all operations
     for handle in handles {
         let _ = handle
             .await
             .map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
 
-    // Проверяем, что система справилась с нагрузкой
+    // Checking that the system can handle the load
     let results = ctx_arc
         .lock()
         .await
@@ -420,32 +420,32 @@ pub async fn stress_test_performance_under_load() -> Result<()> {
     Ok(())
 }
 
-/// Stress тест с большим количеством данных
+// / Stress test with a lot of data
 #[tokio::test]
 pub async fn stress_test_large_dataset() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем таблицу для большого набора данных
+    // Creating a table for a large data set
     ctx.create_test_table("stress_large").await?;
 
-    // Вставляем данные
+    // Inserting data
     for i in 1..=1000 {
         ctx.execute_sql(&format!(
             "INSERT INTO stress_large (id, name, age, email) VALUES ({}, 'LargeUser{}', {}, 'large{}@example.com')",
             i, i, 18 + (i % 60), i
         )).await?;
 
-        // Периодически создаем checkpoint
+        // We periodically create checkpoints
         if i % 200 == 0 {
             ctx.checkpoint_manager.create_checkpoint().await?;
         }
     }
 
-    // Тестируем запросы
+    // Testing requests
     let results = ctx.execute_sql("SELECT * FROM stress_large").await?;
     assert!(!results.is_empty(), "Should have data");
 
-    // Проверяем результаты
+    // Checking the results
     assert!(!results.is_empty(), "Should have data");
 
     Ok(())

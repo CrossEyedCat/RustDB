@@ -1,4 +1,4 @@
-//! Пример использования операторов агрегации и сортировки
+//! Example of using aggregation and sorting operators
 
 use rustdb::common::types::{ColumnValue, DataType, Row};
 use rustdb::executor::{
@@ -6,7 +6,7 @@ use rustdb::executor::{
     OperatorStatistics, SortGroupByOperator, SortOperator,
 };
 
-/// Демонстрационный оператор для предоставления тестовых данных
+// / Demo operator to provide test data
 struct DemoOperator {
     data: Vec<Row>,
     current_index: usize,
@@ -16,7 +16,7 @@ impl DemoOperator {
     fn new() -> Self {
         let mut data = Vec::new();
 
-        // Создаем тестовые данные
+        // Creating test data
         for i in 0..10 {
             let mut row = Row::new();
             row.set_value("id", ColumnValue::new(DataType::Integer(i)));
@@ -77,14 +77,14 @@ impl Operator for DemoOperator {
     }
 }
 
-/// Демонстрация оператора сортировки
+// / Demonstration of the sort operator
 fn demo_sort_operator() -> rustdb::common::Result<()> {
-    println!("=== Демонстрация оператора сортировки ===");
+    println!("=== Demonstration of the sort operator ===");
 
     let input = Box::new(DemoOperator::new());
     let sort_operator = SortOperator::new(
         input,
-        vec![3],    // Сортировка по department
+        vec![3],
         vec![true], // ASC
         vec![
             "id".to_string(),
@@ -100,9 +100,9 @@ fn demo_sort_operator() -> rustdb::common::Result<()> {
 
     while let Some(row) = operator.next()? {
         if count < 5 {
-            // Показываем первые 5 результатов
+            // Showing the first 5 results
             println!(
-                "Строка {}: ID={:?}, Name={:?}, Age={:?}, Department={:?}, Salary={:?}",
+                "Line {}: ID={:?}, Name={:?}, Age={:?}, Department={:?}, Salary={:?}",
                 count,
                 row.get_value("id")
                     .map(|v| &v.data_type)
@@ -124,21 +124,21 @@ fn demo_sort_operator() -> rustdb::common::Result<()> {
         count += 1;
     }
 
-    println!("Всего отсортировано строк: {}", count);
-    println!("Статистика: {:?}", operator.get_statistics());
+    println!("Total rows sorted: {}", count);
+    println!("Statistics: {:?}", operator.get_statistics());
     println!();
 
     Ok(())
 }
 
-/// Демонстрация оператора группировки
+// / Demonstration of the grouping operator
 fn demo_group_by_operator() -> rustdb::common::Result<()> {
-    println!("=== Демонстрация оператора группировки ===");
+    println!("=== Grouping operator demonstration ===");
 
     let input = Box::new(DemoOperator::new());
     let group_by_operator = HashGroupByOperator::new(
         input,
-        vec![3], // Группировка по department
+        vec![3],
         vec![
             (AggregateFunction::Count, 0),
             (AggregateFunction::Sum, 4), // salary
@@ -160,7 +160,7 @@ fn demo_group_by_operator() -> rustdb::common::Result<()> {
 
     while let Some(row) = operator.next()? {
         println!(
-            "Группа: Department={:?}, Count={:?}, Sum={:?}, Avg={:?}, Min={:?}, Max={:?}",
+            "Group: Department={:?}, Count={:?}, Sum={:?}, Avg={:?}, Min={:?}, Max={:?}",
             row.get_value("department")
                 .map(|v| &v.data_type)
                 .unwrap_or(&DataType::Null),
@@ -182,20 +182,20 @@ fn demo_group_by_operator() -> rustdb::common::Result<()> {
         );
     }
 
-    println!("Статистика: {:?}", operator.get_statistics());
+    println!("Statistics: {:?}", operator.get_statistics());
     println!();
 
     Ok(())
 }
 
-/// Демонстрация оператора сортировки-группировки
+// / Demonstration of the sort-group operator
 fn demo_sort_group_by_operator() -> rustdb::common::Result<()> {
-    println!("=== Демонстрация оператора сортировки-группировки ===");
+    println!("=== Demonstration of the sort-group operator ===");
 
     let input = Box::new(DemoOperator::new());
     let sort_group_by_operator = SortGroupByOperator::new(
         input,
-        vec![3], // Группировка по department
+        vec![3],
         vec![
             (AggregateFunction::Count, 0),
             (AggregateFunction::Sum, 4), // salary
@@ -211,7 +211,7 @@ fn demo_sort_group_by_operator() -> rustdb::common::Result<()> {
 
     while let Some(row) = operator.next()? {
         println!(
-            "Группа: Department={:?}, Count={:?}, Sum={:?}",
+            "Group: Department={:?}, Count={:?}, Sum={:?}",
             row.get_value("department")
                 .map(|v| &v.data_type)
                 .unwrap_or(&DataType::Null),
@@ -224,22 +224,22 @@ fn demo_sort_group_by_operator() -> rustdb::common::Result<()> {
         );
     }
 
-    println!("Статистика: {:?}", operator.get_statistics());
+    println!("Statistics: {:?}", operator.get_statistics());
     println!();
 
     Ok(())
 }
 
-/// Демонстрация фабрики операторов
+// / Demonstration of operator factory
 fn demo_operator_factory() -> rustdb::common::Result<()> {
-    println!("=== Демонстрация фабрики операторов ===");
+    println!("=== Operator Factory Demonstration ===");
 
     let input = Box::new(DemoOperator::new());
 
-    // Создаем оператор группировки через фабрику
+    // Creating a grouping operator through a factory
     let group_by_operator = AggregationSortOperatorFactory::create_group_by(
         input,
-        vec![3], // Группировка по department
+        vec![3],
         vec![
             (AggregateFunction::Count, 0),
             (AggregateFunction::Sum, 4), // salary
@@ -249,14 +249,14 @@ fn demo_operator_factory() -> rustdb::common::Result<()> {
             "count".to_string(),
             "sum".to_string(),
         ],
-        true, // Используем хеш-группировку
+        true,
     )?;
 
     let mut operator = group_by_operator;
 
     while let Some(row) = operator.next()? {
         println!(
-            "Группа: Department={:?}, Count={:?}, Sum={:?}",
+            "Group: Department={:?}, Count={:?}, Sum={:?}",
             row.get_value("department")
                 .map(|v| &v.data_type)
                 .unwrap_or(&DataType::Null),
@@ -269,23 +269,23 @@ fn demo_operator_factory() -> rustdb::common::Result<()> {
         );
     }
 
-    println!("Статистика: {:?}", operator.get_statistics());
+    println!("Statistics: {:?}", operator.get_statistics());
     println!();
 
     Ok(())
 }
 
 fn main() -> rustdb::common::Result<()> {
-    println!("Демонстрация операторов агрегации и сортировки в RustDB");
+    println!("Demonstration of aggregation and sorting operators in RustDB");
     println!("=====================================================");
     println!();
 
-    // Запускаем демонстрации
+    // Launching demos
     demo_sort_operator()?;
     demo_group_by_operator()?;
     demo_sort_group_by_operator()?;
     demo_operator_factory()?;
 
-    println!("Демонстрация завершена успешно!");
+    println!("Demonstration completed successfully!");
     Ok(())
 }

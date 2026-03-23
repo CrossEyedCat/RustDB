@@ -1,4 +1,4 @@
-//! Тесты для операторов сканирования
+//! Tests for scan operators
 
 use super::common;
 use crate::common::Result;
@@ -34,7 +34,7 @@ fn test_table_scan_with_filter() -> Result<()> {
         schema,
     )?;
 
-    // Проверяем, что оператор создался успешно
+    // We check that the operator was created successfully
     let statistics = operator.get_statistics();
     assert_eq!(statistics.rows_processed, 0);
     assert_eq!(statistics.rows_returned, 0);
@@ -113,20 +113,20 @@ fn test_scan_operator_factory() -> Result<()> {
 
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
 
-    // Тестируем создание TableScan
+    // Testing the creation of TableScan
     let table_scan = factory.create_table_scan("users".to_string(), None, schema.clone())?;
 
     let table_scan_schema = table_scan.get_schema()?;
     assert_eq!(table_scan_schema, schema);
 
-    // Тестируем создание RangeScan
+    // Testing the creation of RangeScan
     let range_scan =
         factory.create_range_scan(table_scan, Some("1".to_string()), Some("10".to_string()))?;
 
     let range_scan_schema = range_scan.get_schema()?;
     assert_eq!(range_scan_schema, schema);
 
-    // Тестируем создание ConditionalScan
+    // Testing the creation of ConditionalScan
     let base_operator = factory.create_table_scan("users".to_string(), None, schema)?;
 
     let conditional_scan =
@@ -145,7 +145,7 @@ fn test_operator_reset() -> Result<()> {
 
     let mut operator = TableScanOperator::new("users".to_string(), page_manager, None, schema)?;
 
-    // Сбрасываем оператор
+    // Resetting the operator
     operator.reset()?;
 
     let statistics = operator.get_statistics();
@@ -165,7 +165,7 @@ fn test_operator_statistics() -> Result<()> {
 
     let statistics = operator.get_statistics();
 
-    // Проверяем, что все поля статистики инициализированы
+    // Checking that all statistics fields are initialized
     assert_eq!(statistics.rows_processed, 0);
     assert_eq!(statistics.rows_returned, 0);
     assert_eq!(statistics.execution_time_ms, 0);
@@ -216,7 +216,7 @@ fn test_operator_trait_implementation() -> Result<()> {
         schema,
     )?);
 
-    // Тестируем методы трейта
+    // Testing trait methods
     let operator_schema = operator.get_schema()?;
     assert_eq!(operator_schema.len(), 3);
 

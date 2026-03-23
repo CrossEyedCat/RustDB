@@ -1,4 +1,4 @@
-//! Тесты для расширенной системы восстановления
+//! Tests for the extended recovery system
 
 use crate::core::{
     AdvancedRecoveryManager, AnalysisResult, RecoveryConfig, RecoveryStatistics,
@@ -112,9 +112,9 @@ fn test_recovery_backup_non_existent_dir() {
     let source = Path::new("./non_existent_source");
     let backup = Path::new("./test_backup");
 
-    // Не должно падать, если директория не существует
+    // Shouldn't crash if directory doesn't exist
     let result = manager.create_backup(source, backup);
-    assert!(result.is_ok() || result.is_err()); // Просто проверяем, что не паникует
+    assert!(result.is_ok() || result.is_err());
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn test_recovery_validation_empty_analysis() {
         total_records: 0,
     };
 
-    // Валидация должна пройти, если нет активных транзакций
+    // Validation should pass if there are no active transactions
     assert!(manager.validate_recovery(&analysis).is_ok());
 }
 
@@ -140,7 +140,7 @@ fn test_recovery_statistics_updates() {
     let manager = AdvancedRecoveryManager::default();
     let stats = manager.get_statistics();
 
-    // Изначально все счётчики нулевые
+    // Initially all counters are zero
     assert_eq!(stats.redo_operations, 0);
     assert_eq!(stats.undo_operations, 0);
     assert_eq!(stats.recovery_errors, 0);

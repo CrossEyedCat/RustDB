@@ -1,4 +1,4 @@
-//! Тесты для операторов агрегации и сортировки
+//! Tests for aggregation and sorting operators
 
 use crate::common::types::{ColumnValue, DataType};
 use crate::common::Result;
@@ -9,7 +9,7 @@ use crate::executor::operators::{
 use crate::Row;
 use std::collections::HashMap;
 
-/// Простой оператор для тестирования, который возвращает фиксированные данные
+// / A simple test operator that returns fixed data
 struct TestOperator {
     data: Vec<Row>,
     current_index: usize,
@@ -19,7 +19,7 @@ impl TestOperator {
     fn new() -> Self {
         let mut data = Vec::new();
 
-        // Создаем тестовые данные
+        // Creating test data
         for i in 0..10 {
             let mut row = Row::new();
             row.set_value("id", ColumnValue::new(DataType::Integer(i)));
@@ -79,8 +79,8 @@ impl Operator for TestOperator {
 fn test_hash_group_by_operator() -> Result<()> {
     let input = Box::new(TestOperator::new());
 
-    // Группировка по возрасту, агрегация по зарплате
-    let group_keys = vec![2]; // индекс колонки age
+    // Grouping by age, aggregation by salary
+    let group_keys = vec![2];
     let aggregate_functions = vec![
         (AggregateFunction::Count, 0), // COUNT(id)
         (AggregateFunction::Sum, 3),   // SUM(salary)
@@ -96,16 +96,16 @@ fn test_hash_group_by_operator() -> Result<()> {
     let mut operator =
         HashGroupByOperator::new(input, group_keys, aggregate_functions, result_schema)?;
 
-    // Получаем результаты
+    // Getting results
     let mut results = Vec::new();
     while let Some(row) = operator.next()? {
         results.push(row);
     }
 
-    // Проверяем, что получили результаты группировки
-    assert!(!results.is_empty(), "Должны быть результаты группировки");
+    // Checking that we have received grouping results
+    assert!(!results.is_empty(), "There should be grouping results");
 
-    println!("Результаты группировки:");
+    println!("Grouping results:");
     for row in &results {
         println!("  {:?}", row);
     }
@@ -117,7 +117,7 @@ fn test_hash_group_by_operator() -> Result<()> {
 fn test_sort_operator() -> Result<()> {
     let input = Box::new(TestOperator::new());
 
-    // Сортировка по возрасту (ASC), затем по зарплате (DESC)
+    // Sort by age (ASC), then by salary (DESC)
     let sort_columns = vec![2, 3]; // age, salary
     let sort_directions = vec![true, false]; // ASC, DESC
     let result_schema = vec![
@@ -129,16 +129,16 @@ fn test_sort_operator() -> Result<()> {
 
     let mut operator = SortOperator::new(input, sort_columns, sort_directions, result_schema)?;
 
-    // Получаем отсортированные результаты
+    // Getting sorted results
     let mut results = Vec::new();
     while let Some(row) = operator.next()? {
         results.push(row);
     }
 
-    // Проверяем, что получили отсортированные результаты
-    assert_eq!(results.len(), 10, "Должно быть 10 отсортированных строк");
+    // Checking that we have received sorted results
+    assert_eq!(results.len(), 10, "There should be 10 sorted rows");
 
-    println!("Отсортированные результаты:");
+    println!("Sorted results:");
     for row in &results {
         println!("  {:?}", row);
     }
@@ -150,8 +150,8 @@ fn test_sort_operator() -> Result<()> {
 fn test_sort_group_by_operator() -> Result<()> {
     let input = Box::new(TestOperator::new());
 
-    // Группировка по возрасту с сортировкой
-    let group_keys = vec![2]; // индекс колонки age
+    // Grouping by age with sorting
+    let group_keys = vec![2];
     let aggregate_functions = vec![
         (AggregateFunction::Count, 0), // COUNT(id)
         (AggregateFunction::Max, 3),   // MAX(salary)
@@ -165,16 +165,16 @@ fn test_sort_group_by_operator() -> Result<()> {
     let mut operator =
         SortGroupByOperator::new(input, group_keys, aggregate_functions, result_schema)?;
 
-    // Получаем результаты
+    // Getting results
     let mut results = Vec::new();
     while let Some(row) = operator.next()? {
         results.push(row);
     }
 
-    // Проверяем, что получили результаты группировки
-    assert!(!results.is_empty(), "Должны быть результаты группировки");
+    // Checking that we have received grouping results
+    assert!(!results.is_empty(), "There should be grouping results");
 
-    println!("Результаты сортировки-группировки:");
+    println!("Sorting-grouping results:");
     for row in &results {
         println!("  {:?}", row);
     }
@@ -186,12 +186,12 @@ fn test_sort_group_by_operator() -> Result<()> {
 fn test_aggregation_sort_factory() -> Result<()> {
     let input = Box::new(TestOperator::new());
 
-    // Тестируем фабрику для создания оператора группировки
-    let group_keys = vec![2]; // возраст
+    // Testing the factory to create a grouping operator
+    let group_keys = vec![2];
     let aggregate_functions = vec![(AggregateFunction::Count, 0), (AggregateFunction::Sum, 3)];
     let result_schema = vec!["age".to_string(), "count".to_string(), "sum".to_string()];
 
-    // Создаем хеш-группировку
+    // Create a hash group
     let mut hash_operator = AggregationSortOperatorFactory::create_group_by(
         input,
         group_keys.clone(),
@@ -200,7 +200,7 @@ fn test_aggregation_sort_factory() -> Result<()> {
         true, // use_hash
     )?;
 
-    // Создаем сортировку-группировку
+    // Create a sorting grouping
     let input2 = Box::new(TestOperator::new());
     let mut sort_operator = AggregationSortOperatorFactory::create_group_by(
         input2,
@@ -210,7 +210,7 @@ fn test_aggregation_sort_factory() -> Result<()> {
         false, // use_sort
     )?;
 
-    // Получаем результаты от обоих операторов
+    // We get results from both operators
     let mut hash_results = Vec::new();
     while let Some(row) = hash_operator.next()? {
         hash_results.push(row);
@@ -221,18 +221,18 @@ fn test_aggregation_sort_factory() -> Result<()> {
         sort_results.push(row);
     }
 
-    // Проверяем, что оба оператора дали результаты
+    // We check that both operators gave results
     assert!(
         !hash_results.is_empty(),
-        "Хеш-группировка должна дать результаты"
+        "Hash grouping should give results"
     );
     assert!(
         !sort_results.is_empty(),
-        "Сортировка-группировка должна дать результаты"
+        "Sorting-grouping should give results"
     );
 
-    println!("Результаты хеш-группировки: {}", hash_results.len());
-    println!("Результаты сортировки-группировки: {}", sort_results.len());
+    println!("Hash grouping results: {}", hash_results.len());
+    println!("Sorting-grouping results: {}", sort_results.len());
 
     Ok(())
 }
@@ -241,8 +241,8 @@ fn test_aggregation_sort_factory() -> Result<()> {
 fn test_aggregate_functions() -> Result<()> {
     let input = Box::new(TestOperator::new());
 
-    // Тестируем различные агрегатные функции
-    let group_keys = vec![2]; // возраст
+    // Testing various aggregate functions
+    let group_keys = vec![2];
     let aggregate_functions = vec![
         (AggregateFunction::Count, 0),         // COUNT
         (AggregateFunction::Sum, 3),           // SUM
@@ -264,19 +264,19 @@ fn test_aggregate_functions() -> Result<()> {
     let mut operator =
         HashGroupByOperator::new(input, group_keys, aggregate_functions, result_schema)?;
 
-    // Получаем результаты
+    // Getting results
     let mut results = Vec::new();
     while let Some(row) = operator.next()? {
         results.push(row);
     }
 
-    // Проверяем, что получили результаты
+    // Checking that we have received the results
     assert!(
         !results.is_empty(),
-        "Должны быть результаты с различными агрегатными функциями"
+        "There should be results with different aggregate functions"
     );
 
-    println!("Результаты с различными агрегатными функциями:");
+    println!("Results with various aggregate functions:");
     for row in &results {
         println!("  {:?}", row);
     }

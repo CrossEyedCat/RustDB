@@ -1,4 +1,4 @@
-# RustDB - Relational Database Implementation in Rust
+# RustDB
 
 [![CI/CD](https://github.com/CrossEyedCat/RustDB/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/CrossEyedCat/RustDB/actions/workflows/ci-cd.yml)
 [![codecov](https://codecov.io/gh/CrossEyedCat/RustDB/branch/main/graph/badge.svg)](https://codecov.io/gh/CrossEyedCat/RustDB)
@@ -6,122 +6,40 @@
 [![Rust 1.90+](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
 [![dependency status](https://deps.rs/repo/github/CrossEyedCat/RustDB/status.svg)](https://deps.rs/repo/github/CrossEyedCat/RustDB)
 
-This project is an implementation of a custom relational database in Rust.
+![RustDB Logo](assets/logo.png)
 
-## 🎯 Project Goal
+Relational database engine implemented in Rust. The project provides storage, SQL parsing, planning, execution, transactions, and supporting subsystems suitable for experimentation and controlled OLTP-style workloads.
 
-Create a fully functional relational database with support for SQL-like query language, ACID transactions, and efficient data storage.
+## Requirements
 
-## 🏗️ System Architecture
+- **Rust toolchain**: MSRV **1.90.0** (see `rust-version` in `Cargo.toml`), required by dependencies such as `unty-next` / `virtue-next` in the `bincode-next` stack.
+- **Supported platform for production-style use**: **Linux**. Other operating systems are not a supported deployment target.
 
-### 1. Database Core
-- **Memory Manager** - buffer and cache management
-- **Transaction Manager** - ensuring ACID properties
-- **Lock Manager** - managing concurrent access
-- **Recovery Manager** - logging and recovery after failures
+## Building
 
-### 2. Data Storage
-- **Page Manager** - working with data blocks on disk
-- **File Manager** - organizing database file structure
-- **Index Manager** - B+ trees, hash indexes
-- **Table Manager** - data structures for storing tables
-
-### 3. Parser and Planner
-- **Lexical Analyzer** - SQL query tokenization
-- **Syntax Analyzer** - building AST
-- **Semantic Analyzer** - query correctness validation
-- **Query Optimizer** - selecting optimal execution plan
-- **Planner** - creating query execution plans
-
-### 4. Query Executor
-- **Scan Operators** - TableScan, IndexScan
-- **Join Operators** - NestedLoop, HashJoin, MergeJoin
-- **Aggregation Operators** - GroupBy, Aggregate
-- **Sort Operators** - OrderBy, TopK
-
-### 5. Metadata Catalog
-- **Database Schema** - information about tables, columns, indexes
-- **Statistics** - information about data distribution
-- **Access Rights** - user and permission management
-
-## 🚀 Quick Start
-
-### Requirements
-- **Linux (x86_64 or aarch64)** — RustDB is built and supported **only on Linux**. Windows and macOS are not supported (no CI, no release binaries, not a target for deployment).
-- **Rust 1.90+** (see `rust-version` in `Cargo.toml`; требуется для `unty-next` / `virtue-next` в цепочке `bincode-next`)
-- **Cargo** — dependency management
-
-### Installation and Running
 ```bash
-# Clone repository
-git clone <your-repo-url>
-cd RustDB
+cargo build --release
+```
 
-# Build project
-cargo build
+## Testing
 
-# Run CLI
-cargo run -- --help
-
-# Show database information
-cargo run -- info
-
-# Run tests
+```bash
 cargo test
+cargo test --test integration_tests
 ```
 
-## 🛠️ Technical Requirements
+## Documentation
 
-### Programming Language
-- **Rust** - for main code
-- **Cargo** - for dependency management
+API documentation is generated with:
 
-### Main Dependencies
-- `serde` - serialization/deserialization
-- `tokio` - asynchronous execution
-- `clap` - CLI interface
-- `log` - logging
-- `anyhow` - error handling
-
-### Project Structure
-```
-src/
-├── core/           # Database core
-├── storage/        # Data storage
-├── parser/         # SQL parser
-├── planner/        # Query planner
-├── executor/       # Query executor
-├── catalog/        # Metadata
-├── network/        # Network layer (optional)
-└── main.rs         # Entry point
+```bash
+cargo doc --no-deps --document-private-items
 ```
 
-## 📚 Documentation
+## License
 
-- [System Architecture](ARCHITECTURE.md)
-- [Architecture Guide](ARCHITECTURE_GUIDE.md)
-- [Development Guide](DEVELOPMENT.md)
-- [Coding Standards](CODING_STANDARDS.md)
-- [API Reference](API_REFERENCE.md)
-- [Usage Examples](EXAMPLES.md)
-- [Rustdoc Guide](RUSTDOC_GUIDE.md)
-- [Testing Guide](TESTING_GUIDE.md)
-- [CI/CD Guide](CI_CD_GUIDE.md)
-- [Deployment Guide](DEPLOYMENT.md)
-- [Contributing Guide](CONTRIBUTING.md)
+This project is licensed under the MIT License. See the `LICENSE` file in the repository root when present.
 
-## 🚧 Current Status
+## Repository
 
-The project is in the early stages of development.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please create issues to discuss new features and submit pull requests with improvements.
-
-## 📄 License
-
-MIT License
-
----
-
-**Note**: This is an educational project for learning the internals of relational databases. Not recommended for production use.
+Source and issue tracking: [GitHub](https://github.com/CrossEyedCat/RustDB).

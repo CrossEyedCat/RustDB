@@ -1,6 +1,6 @@
 version: 2
 updates:
-  # Обновление зависимостей Rust
+  # Rust dependency updates
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
@@ -20,7 +20,7 @@ updates:
     labels:
       - "dependencies"
       - "rust"
-    # Группировка минорных и патч обновлений
+    # Group minor and patch updates
     groups:
       minor-and-patch:
         patterns:
@@ -29,7 +29,7 @@ updates:
           - "minor"
           - "patch"
 
-  # Обновление GitHub Actions
+  # GitHub Actions updates
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -49,7 +49,7 @@ updates:
       - "dependencies"
       - "github-actions"
 
-  # Обновление Docker (если будет использоваться)
+  # Docker updates (if used)
   - package-ecosystem: "docker"
     directory: "/"
     schedule:

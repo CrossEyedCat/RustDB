@@ -1,4 +1,4 @@
-//! Пример использования операторов соединения
+//! Example of using join operators
 
 use rustdb::common::Result;
 use rustdb::executor::{
@@ -10,9 +10,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 fn main() -> Result<()> {
-    println!("=== Пример использования операторов соединения ===\n");
+    println!("=== Example of using join operators ===\n");
 
-    // Создаем менеджеры страниц для разных таблиц
+    // Creating page managers for different tables
     let users_page_manager = Arc::new(Mutex::new(PageManager::new(
         PathBuf::from("./data"),
         "users",
@@ -32,7 +32,7 @@ fn main() -> Result<()> {
         "type".to_string(),
     ];
 
-    // Пример 1: Nested Loop Join
+    // Example 1: Nested Loop Join
     println!("1. Nested Loop Join:");
     let users_operator = TableScanOperator::new(
         "users".to_string(),
@@ -62,12 +62,12 @@ fn main() -> Result<()> {
         100, // block_size
     )?;
 
-    println!("   Создан Nested Loop Join оператор");
-    println!("   Схема: {:?}", nested_loop_join.get_schema()?);
-    println!("   Статистика: {:?}", nested_loop_join.get_statistics());
+    println!("Nested Loop Join operator created");
+    println!("Scheme: {:?}", nested_loop_join.get_schema()?);
+    println!("Statistics: {:?}", nested_loop_join.get_statistics());
     println!();
 
-    // Пример 2: Hash Join
+    // Example 2: Hash Join
     println!("2. Hash Join:");
     let users_operator_hash = TableScanOperator::new(
         "users".to_string(),
@@ -91,12 +91,12 @@ fn main() -> Result<()> {
         1000, // hash_table_size
     )?;
 
-    println!("   Создан Hash Join оператор");
-    println!("   Схема: {:?}", hash_join.get_schema()?);
-    println!("   Статистика: {:?}", hash_join.get_statistics());
+    println!("Hash Join operator created");
+    println!("Scheme: {:?}", hash_join.get_schema()?);
+    println!("Statistics: {:?}", hash_join.get_statistics());
     println!();
 
-    // Пример 3: Merge Join
+    // Example 3: Merge Join
     println!("3. Merge Join:");
     let users_operator_merge = TableScanOperator::new(
         "users".to_string(),
@@ -119,13 +119,13 @@ fn main() -> Result<()> {
         JoinType::Inner,
     )?;
 
-    println!("   Создан Merge Join оператор");
-    println!("   Схема: {:?}", merge_join.get_schema()?);
-    println!("   Статистика: {:?}", merge_join.get_statistics());
+    println!("Created Merge Join operator");
+    println!("Scheme: {:?}", merge_join.get_schema()?);
+    println!("Statistics: {:?}", merge_join.get_statistics());
     println!();
 
-    // Пример 4: Различные типы соединений
-    println!("4. Различные типы соединений:");
+    // Example 4: Different connection types
+    println!("4. Various types of connections:");
     let join_types = [
         JoinType::Inner,
         JoinType::LeftOuter,
@@ -134,12 +134,12 @@ fn main() -> Result<()> {
     ];
 
     for (i, join_type) in join_types.iter().enumerate() {
-        println!("   Тип {}: {:?}", i + 1, join_type);
+        println!("Type {}: {:?}", i + 1, join_type);
     }
     println!();
 
-    // Пример 5: Различные операторы соединения
-    println!("5. Различные операторы соединения:");
+    // Example 5: Various join operators
+    println!("5. Various join operators:");
     let join_operators = [
         JoinOperator::Equal,
         JoinOperator::NotEqual,
@@ -150,12 +150,12 @@ fn main() -> Result<()> {
     ];
 
     for (i, operator) in join_operators.iter().enumerate() {
-        println!("   Оператор {}: {:?}", i + 1, operator);
+        println!("Operator {}: {:?}", i + 1, operator);
     }
     println!();
 
-    // Пример 6: Сложные условия соединения
-    println!("6. Сложные условия соединения:");
+    // Example 6: Complex connection conditions
+    println!("6. Difficult connection conditions:");
     let complex_conditions = [
         JoinCondition {
             left_column: "id".to_string(),
@@ -176,7 +176,7 @@ fn main() -> Result<()> {
 
     for (i, condition) in complex_conditions.iter().enumerate() {
         println!(
-            "   Условие {}: {} {} {}",
+            "Condition {}: {} {} {}",
             i + 1,
             condition.left_column,
             match condition.operator {
@@ -192,8 +192,8 @@ fn main() -> Result<()> {
     }
     println!();
 
-    // Пример 7: Работа с операторами через трейт
-    println!("7. Работа с операторами через трейт Operator:");
+    // Example 7: Working with operators through traits
+    println!("7. Working with operators using the Operator trait:");
     let users_operator_trait = TableScanOperator::new(
         "users".to_string(),
         users_page_manager.clone(),
@@ -216,18 +216,18 @@ fn main() -> Result<()> {
         100,
     )?);
 
-    println!("   Создан оператор через трейт");
-    println!("   Схема: {:?}", operator.get_schema()?);
-    println!("   Статистика: {:?}", operator.get_statistics());
+    println!("An operator via trait has been created");
+    println!("Scheme: {:?}", operator.get_schema()?);
+    println!("Statistics: {:?}", operator.get_statistics());
 
-    // Сбрасываем оператор
+    // Resetting the operator
     operator.reset()?;
-    println!("   Оператор сброшен");
-    println!("   Новая статистика: {:?}", operator.get_statistics());
+    println!("Operator reset");
+    println!("New statistics: {:?}", operator.get_statistics());
     println!();
 
-    // Пример 8: Сравнение производительности
-    println!("8. Сравнение производительности:");
+    // Example 8: Performance Comparison
+    println!("8. Performance Comparison:");
 
     // Nested Loop Join
     let start_time = std::time::Instant::now();
@@ -249,7 +249,7 @@ fn main() -> Result<()> {
         100,
     )?;
     let nested_time = start_time.elapsed();
-    println!("   Nested Loop Join создан за {:?}", nested_time);
+    println!("Nested Loop Join created by {:?}", nested_time);
 
     // Hash Join
     let start_time = std::time::Instant::now();
@@ -271,7 +271,7 @@ fn main() -> Result<()> {
         1000,
     )?;
     let hash_time = start_time.elapsed();
-    println!("   Hash Join создан за {:?}", hash_time);
+    println!("Hash Join created in {:?}", hash_time);
 
     // Merge Join
     let start_time = std::time::Instant::now();
@@ -292,22 +292,22 @@ fn main() -> Result<()> {
         JoinType::Inner,
     )?;
     let merge_time = start_time.elapsed();
-    println!("   Merge Join создан за {:?}", merge_time);
+    println!("Merge Join created by {:?}", merge_time);
     println!();
 
-    // Пример 9: Статистика выполнения
-    println!("9. Статистика выполнения:");
+    // Example 9: Execution Statistics
+    println!("9. Execution statistics:");
     let stats = nested_loop_join_perf.get_statistics();
-    println!("   Обработанных строк: {}", stats.rows_processed);
-    println!("   Возвращенных строк: {}", stats.rows_returned);
-    println!("   Время выполнения: {} мс", stats.execution_time_ms);
-    println!("   I/O операций: {}", stats.io_operations);
-    println!("   Операций с памятью: {}", stats.memory_operations);
-    println!("   Использовано памяти: {} байт", stats.memory_used_bytes);
+    println!("Rows processed: {}", stats.rows_processed);
+    println!("Returned rows: {}", stats.rows_returned);
+    println!("Execution time: {}ms", stats.execution_time_ms);
+    println!("I/O operations: {}", stats.io_operations);
+    println!("Memory operations: {}", stats.memory_operations);
+    println!("Memory used: {} bytes", stats.memory_used_bytes);
     println!();
 
-    // Пример 10: Комбинирование операторов
-    println!("10. Комбинирование операторов:");
+    // Example 10: Combining Operators
+    println!("10. Combining operators:");
     let users_base = TableScanOperator::new(
         "users".to_string(),
         users_page_manager.clone(),
@@ -327,14 +327,14 @@ fn main() -> Result<()> {
         Box::new(emails_base),
         join_condition,
         JoinType::Inner,
-        50, // меньший размер блока для демонстрации
+        50,
     )?;
 
-    println!("   Создана комбинация операторов:");
+    println!("A combination of operators has been created:");
     println!("   TableScan (users) -> NestedLoopJoin <- TableScan (emails)");
-    println!("   Схема: {:?}", combined_join.get_schema()?);
+    println!("Scheme: {:?}", combined_join.get_schema()?);
     println!();
 
-    println!("=== Пример завершен ===");
+    println!("=== Example complete ===");
     Ok(())
 }

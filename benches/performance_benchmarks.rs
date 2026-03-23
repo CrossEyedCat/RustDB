@@ -1,4 +1,4 @@
-//! Бенчмарки производительности RustDB
+//! RustDB performance benchmarks
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rustdb::common::types::PAGE_SIZE;
@@ -15,7 +15,7 @@ use tempfile::TempDir;
 fn bench_block_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("block_operations");
 
-    // Бенчмарк создания блока
+    // Benchmark: block creation
     group.bench_function("create_block", |b| {
         b.iter(|| {
             let block = Block::new(black_box(1), BlockType::Data, PAGE_SIZE as u32);
@@ -23,7 +23,7 @@ fn bench_block_operations(c: &mut Criterion) {
         });
     });
 
-    // Бенчмарк сериализации блока
+    // Benchmark: block serialization
     let block = Block::new(1, BlockType::Data, PAGE_SIZE as u32);
     group.bench_function("serialize_block", |b| {
         b.iter(|| {
@@ -32,7 +32,7 @@ fn bench_block_operations(c: &mut Criterion) {
         });
     });
 
-    // Бенчмарк десериализации блока
+    // Benchmark: block deserialization
     let block_data = block.to_bytes().unwrap();
     group.bench_function("deserialize_block", |b| {
         b.iter(|| {
@@ -50,7 +50,7 @@ fn bench_file_manager_operations(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("file_manager_operations");
 
-    // Бенчмарк создания файлового менеджера
+    // Benchmark: file manager creation
     group.bench_function("create_file_manager", |b| {
         b.iter(|| {
             let temp_dir = TempDir::new().unwrap();
@@ -60,7 +60,7 @@ fn bench_file_manager_operations(c: &mut Criterion) {
         });
     });
 
-    // Бенчмарк создания файла
+    // Benchmark: file creation
     group.bench_function("create_file", |b| {
         b.iter(|| {
             let temp_dir = TempDir::new().unwrap();
@@ -71,7 +71,7 @@ fn bench_file_manager_operations(c: &mut Criterion) {
         });
     });
 
-    // Подготовка данных для бенчмарков записи и чтения
+    // Setup for read/write benchmarks
     let mut file_manager = FileManager::new(temp_path.clone()).unwrap();
     let file_id = file_manager.create_file("test_file.dat").unwrap();
     let test_block_data = vec![0xAB; BLOCK_SIZE];
@@ -88,7 +88,7 @@ fn bench_file_manager_operations(c: &mut Criterion) {
         });
     });
 
-    // Бенчмарк чтения блока
+    // Benchmark: block read
     file_manager
         .write_block(file_id, 1, &test_block_data)
         .unwrap();
@@ -111,7 +111,7 @@ fn bench_advanced_file_manager_operations(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("advanced_file_manager_operations");
 
-    // Бенчмарк создания продвинутого файлового менеджера
+    // Benchmark: advanced file manager creation
     group.bench_function("create_advanced_file_manager", |b| {
         b.iter(|| {
             let temp_dir = TempDir::new().unwrap();
@@ -121,7 +121,7 @@ fn bench_advanced_file_manager_operations(c: &mut Criterion) {
         });
     });
 
-    // Бенчмарк создания файла базы данных
+    // Benchmark: database file creation
     group.bench_function("create_database_file", |b| {
         b.iter(|| {
             let temp_dir = TempDir::new().unwrap();
@@ -139,7 +139,7 @@ fn bench_advanced_file_manager_operations(c: &mut Criterion) {
         });
     });
 
-    // Подготовка данных для остальных бенчмарков
+    // Setup for remaining benchmarks
     let mut manager = AdvancedFileManager::new(temp_path.clone()).unwrap();
     let file_id = manager
         .create_database_file(
@@ -150,34 +150,34 @@ fn bench_advanced_file_manager_operations(c: &mut Criterion) {
         )
         .unwrap();
 
-    // Предварительно выделяем большое количество страниц для тестирования
-    // чтобы последующие выделения использовали свободные страницы
+    // Pre-allocate many pages for benchmarking
+    // so subsequent allocations reuse free pages
     manager.allocate_pages(file_id, 1000).unwrap();
 
     group.bench_function("allocate_pages", |b| {
         let mut allocated = Vec::new();
         b.iter(|| {
-            // Циклически выделяем и освобождаем страницы
+            // Cycle allocate and free pages
             let pages = manager
                 .allocate_pages(black_box(file_id), black_box(10))
                 .unwrap();
             allocated.push(pages);
             black_box(&pages);
 
-            // Освобождаем каждые 50 выделений, чтобы избежать истощения
+            // Free every 50 allocations to avoid exhaustion
             if allocated.len() >= 50 {
                 for page_start in allocated.drain(..) {
                     let _ = manager.free_pages(file_id, page_start, 10);
                 }
             }
         });
-        // Освобождаем оставшиеся страницы
+        // Free remaining pages
         for page_start in allocated {
             let _ = manager.free_pages(file_id, page_start, 10);
         }
     });
 
-    // Бенчмарк записи страниц
+    // Benchmark: page writes
     let pages = manager.allocate_pages(file_id, 100).unwrap();
     let test_data = vec![0xCD; PAGE_SIZE];
 
@@ -189,7 +189,7 @@ fn bench_advanced_file_manager_operations(c: &mut Criterion) {
         });
     });
 
-    // Бенчмарк чтения страниц
+    // Benchmark: page reads
     manager.write_page(file_id, pages, &test_data).unwrap();
 
     group.bench_function("read_page", |b| {
@@ -243,7 +243,7 @@ fn bench_extension_strategies(c: &mut Criterion) {
 fn bench_memory_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_operations");
 
-    // Бенчмарк выделения памяти
+    // Benchmark: memory allocation
     group.bench_function("allocate_memory", |b| {
         b.iter(|| {
             let data = vec![0u8; PAGE_SIZE];
@@ -251,7 +251,7 @@ fn bench_memory_operations(c: &mut Criterion) {
         });
     });
 
-    // Бенчмарк копирования памяти
+    // Benchmark: memory copy
     let source = vec![0xAA; PAGE_SIZE];
     group.bench_function("copy_memory", |b| {
         b.iter(|| {
@@ -261,7 +261,7 @@ fn bench_memory_operations(c: &mut Criterion) {
         });
     });
 
-    // Бенчмарк заполнения памяти
+    // Benchmark: memory fill
     group.bench_function("fill_memory", |b| {
         b.iter(|| {
             let mut data = vec![0u8; PAGE_SIZE];

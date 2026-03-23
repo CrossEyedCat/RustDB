@@ -11,7 +11,7 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Тестирование только на Linux (RustDB не поддерживается на Windows/macOS)
+  # Tests run on Linux only (RustDB is not supported on Windows/macOS).
   test:
     name: Test Suite (${{ matrix.os }}, ${{ matrix.rust }})
     strategy:
@@ -45,7 +45,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
 
-      # Полный прогон (lib + integration + doctests) на cold cache и beta может занимать >10 мин.
+      # Full run (lib + integration + doctests) on cold cache and beta may exceed 10 minutes.
       - name: Run tests
         run: cargo test --verbose ${{ matrix.features }}
         timeout-minutes: 25
@@ -72,7 +72,7 @@ jobs:
         with:
           command: check
 
-  # Покрытие: cargo-llvm-cov → lcov.info → Codecov (см. codecov.yml в корне репозитория)
+  # Coverage: cargo-llvm-cov → lcov.info → Codecov (see codecov.yml at repository root).
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
@@ -105,7 +105,7 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      # Сначала только LCOV (без --fail-under-lines), иначе при провале порога загрузка в Codecov не выполняется.
+      # Generate LCOV first (without --fail-under-lines); otherwise Codecov upload is skipped if the threshold fails.
       - name: cargo llvm-cov (tests + lcov.info)
         run: |
           cargo llvm-cov --workspace --lcov --output-path lcov.info \
@@ -113,7 +113,7 @@ jobs:
           test -s lcov.info
           wc -l lcov.info
 
-      # Только lcov.info; disable_search — иначе CLI подхватывает *_coverage_tests.rs по маске *coverage*
+      # Only lcov.info; disable_search avoids the CLI picking up *_coverage_tests.rs via *coverage*.
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
         env:
@@ -130,7 +130,7 @@ jobs:
           cargo llvm-cov report --fail-under-lines 85 \
             --ignore-filename-regex "$COV_REGEX"
 
-  # После тестов — качество кода и MSRV (параллельно), затем сборка release
+  # After tests: code quality and MSRV (in parallel), then release build.
   format:
     name: Format Check
     runs-on: ubuntu-latest
@@ -187,7 +187,7 @@ jobs:
       - name: Check MSRV
         run: cargo check
 
-  # Проверка сборки в release режиме
+  # Checking the build in release mode
   build:
     name: Build Release
     runs-on: ubuntu-latest
@@ -213,7 +213,7 @@ jobs:
           name: rustdb-linux-x64
           path: target/release/rustdb
 
-  # Рядом со сборкой release: те же prerequisites (format, clippy, msrv), параллельно друг с другом
+  # Alongside the release build: same prerequisites (format, clippy, msrv), in parallel.
   docker:
     name: Docker Build
     runs-on: ubuntu-latest
@@ -289,7 +289,7 @@ jobs:
           publish_dir: ./target/doc
           destination_dir: docs
 
-  # Бенчмарки — параллельно со сборкой release и docker/docs
+  # Benchmarks run in parallel with release build and docker/docs.
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-latest
@@ -350,7 +350,7 @@ jobs:
             benchmark_summary.md
           retention-days: 30
 
-  # Развёртывание в GitHub Releases (покрытие и security — в job test на ubuntu + stable)
+  # Deploy to GitHub Releases (coverage and security run in the test job on ubuntu + stable).
   deploy:
     name: Deploy to GitHub Releases
     runs-on: ubuntu-latest
@@ -409,7 +409,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Уведомления
+  # Notifications
   notify:
     name: Notify
     runs-on: ubuntu-latest

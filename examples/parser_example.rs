@@ -1,30 +1,30 @@
-//! Пример использования синтаксического анализатора SQL
+//! Example of using the SQL parser
 
 use rustdb::common::Result;
 use rustdb::parser::{DataType, Expression, SelectItem, SqlParser, SqlStatement};
 
 fn main() -> Result<()> {
-    println!("=== Пример использования SQL парсера rustdb ===\n");
+    println!("=== Example of using rustdb SQL parser ===\n");
 
-    // Пример 1: Простой SELECT запрос
-    println!("1. Парсинг простого SELECT запроса:");
+    // Example 1: Simple SELECT query
+    println!("1. Parsing a simple SELECT query:");
     let mut parser = SqlParser::new("SELECT * FROM users")?;
     let statement = parser.parse()?;
 
     match statement {
         SqlStatement::Select(select_stmt) => {
-            println!("   Распознан SELECT запрос");
-            println!("   Количество колонок: {}", select_stmt.select_list.len());
+            println!("SELECT query recognized");
+            println!("Number of columns: {}", select_stmt.select_list.len());
 
             match &select_stmt.select_list[0] {
-                SelectItem::Wildcard => println!("   Первая колонка: * (все колонки)"),
+                SelectItem::Wildcard => println!("First column: * (all columns)"),
                 SelectItem::Expression { expr, alias } => {
                     match expr {
-                        Expression::Identifier(name) => println!("   Первая колонка: {}", name),
-                        _ => println!("   Первая колонка: сложное выражение"),
+                        Expression::Identifier(name) => println!("First column: {}", name),
+                        _ => println!("First column: complex expression"),
                     }
                     if let Some(alias) = alias {
-                        println!("   Псевдоним: {}", alias);
+                        println!("Nickname: {}", alias);
                     }
                 }
             }
@@ -32,53 +32,53 @@ fn main() -> Result<()> {
             if let Some(from_clause) = &select_stmt.from {
                 match &from_clause.table {
                     rustdb::parser::TableReference::Table { name, alias } => {
-                        println!("   Таблица: {}", name);
+                        println!("Table: {}", name);
                         if let Some(alias) = alias {
-                            println!("   Псевдоним таблицы: {}", alias);
+                            println!("Table alias: {}", alias);
                         }
                     }
                     rustdb::parser::TableReference::Subquery { alias, .. } => {
-                        println!("   Подзапрос с псевдонимом: {}", alias);
+                        println!("Subquery with alias: {}", alias);
                     }
                 }
             }
         }
-        _ => println!("   Неожиданный тип statement"),
+        _ => println!("Unexpected statement type"),
     }
 
     println!();
 
-    // Пример 2: SELECT с несколькими колонками
-    println!("2. Парсинг SELECT с несколькими колонками:");
+    // Example 2: SELECT with multiple columns
+    println!("2. Parsing SELECT with multiple columns:");
     let mut parser = SqlParser::new("SELECT name, email, age FROM users")?;
     let statement = parser.parse()?;
 
     if let SqlStatement::Select(select_stmt) = statement {
-        println!("   Количество колонок: {}", select_stmt.select_list.len());
+        println!("Number of columns: {}", select_stmt.select_list.len());
         for (i, item) in select_stmt.select_list.iter().enumerate() {
             match item {
                 SelectItem::Expression { expr, .. } => {
                     if let Expression::Identifier(name) = expr {
-                        println!("   Колонка {}: {}", i + 1, name);
+                        println!("Column {}: {}", i + 1, name);
                     }
                 }
-                SelectItem::Wildcard => println!("   Колонка {}: *", i + 1),
+                SelectItem::Wildcard => println!("Column {}: *", i + 1),
             }
         }
     }
 
     println!();
 
-    // Пример 3: CREATE TABLE
-    println!("3. Парсинг CREATE TABLE:");
+    // Example 3: CREATE TABLE
+    println!("3. Parsing CREATE TABLE:");
     let mut parser = SqlParser::new(
         "CREATE TABLE users (id INTEGER, name TEXT, email VARCHAR, active BOOLEAN)",
     )?;
     let statement = parser.parse()?;
 
     if let SqlStatement::CreateTable(create_stmt) = statement {
-        println!("   Имя таблицы: {}", create_stmt.table_name);
-        println!("   Количество колонок: {}", create_stmt.columns.len());
+        println!("Table name: {}", create_stmt.table_name);
+        println!("Number of columns: {}", create_stmt.columns.len());
 
         for column in &create_stmt.columns {
             let type_name = match &column.data_type {
@@ -91,14 +91,14 @@ fn main() -> Result<()> {
                 DataType::Timestamp => "TIMESTAMP",
                 _ => "UNKNOWN",
             };
-            println!("   Колонка: {} {}", column.name, type_name);
+            println!("Column: {} {}", column.name, type_name);
         }
     }
 
     println!();
 
-    // Пример 4: Транзакции
-    println!("4. Парсинг транзакционных команд:");
+    // Example 4: Transactions
+    println!("4. Parsing transactional commands:");
     let commands = vec!["BEGIN TRANSACTION", "COMMIT", "ROLLBACK"];
 
     for cmd in commands {
@@ -106,57 +106,57 @@ fn main() -> Result<()> {
         let statement = parser.parse()?;
 
         match statement {
-            SqlStatement::BeginTransaction => println!("   {}: Начало транзакции", cmd),
-            SqlStatement::CommitTransaction => println!("   {}: Фиксация транзакции", cmd),
-            SqlStatement::RollbackTransaction => println!("   {}: Откат транзакции", cmd),
-            _ => println!("   {}: Неожиданный тип команды", cmd),
+            SqlStatement::BeginTransaction => println!("{}: Start of transaction", cmd),
+            SqlStatement::CommitTransaction => println!("{}: Commit transaction", cmd),
+            SqlStatement::RollbackTransaction => println!("{}: Rollback transaction", cmd),
+            _ => println!("{}: Unexpected command type", cmd),
         }
     }
 
     println!();
 
-    // Пример 5: Несколько statement'ов
-    println!("5. Парсинг нескольких SQL команд:");
+    // Example 5: Several statements
+    println!("5. Parsing several SQL commands:");
     let mut parser = SqlParser::new(
         "SELECT * FROM users; CREATE TABLE products (id INTEGER, name TEXT); COMMIT;",
     )?;
     let statements = parser.parse_multiple()?;
 
-    println!("   Количество команд: {}", statements.len());
+    println!("Number of commands: {}", statements.len());
     for (i, stmt) in statements.iter().enumerate() {
         match stmt {
-            SqlStatement::Select(_) => println!("   Команда {}: SELECT", i + 1),
+            SqlStatement::Select(_) => println!("Command {}: SELECT", i + 1),
             SqlStatement::CreateTable(create) => {
-                println!("   Команда {}: CREATE TABLE {}", i + 1, create.table_name)
+                println!("Command {}: CREATE TABLE {}", i + 1, create.table_name)
             }
-            SqlStatement::CommitTransaction => println!("   Команда {}: COMMIT", i + 1),
-            _ => println!("   Команда {}: Другая", i + 1),
+            SqlStatement::CommitTransaction => println!("Command {}: COMMIT", i + 1),
+            _ => println!("Command {}: Other", i + 1),
         }
     }
 
     println!();
 
-    // Пример 6: Обработка ошибок
-    println!("6. Обработка ошибок парсинга:");
+    // Example 6: Error Handling
+    println!("6. Handling parsing errors:");
     let invalid_queries = vec![
-        "SELECT FROM",       // Отсутствует список колонок
-        "CREATE TABLE",      // Отсутствует имя таблицы
-        "INVALID STATEMENT", // Неизвестная команда
-        "SELECT * FROM",     // Отсутствует имя таблицы
+        "SELECT FROM",
+        "CREATE TABLE",
+        "INVALID STATEMENT",
+        "SELECT * FROM",
     ];
 
     for query in invalid_queries {
         let mut parser = SqlParser::new(query)?;
         match parser.parse() {
-            Ok(_) => println!("   '{}': Неожиданно успешно распарсен", query),
-            Err(e) => println!("   '{}': Ошибка - {}", query, e),
+            Ok(_) => println!("'{}': Unexpectedly successfully parsed", query),
+            Err(e) => println!("'{}': Error - {}", query, e),
         }
     }
 
     println!();
 
-    // Пример 7: Настройки парсера
-    println!("7. Использование настроек парсера:");
+    // Example 7: Parser settings
+    println!("7. Using parser settings:");
     let settings = rustdb::parser::ParserSettings {
         max_recursion_depth: 50,
         enable_caching: true,
@@ -165,38 +165,38 @@ fn main() -> Result<()> {
 
     let parser = SqlParser::with_settings("SELECT * FROM users", settings)?;
     println!(
-        "   Максимальная глубина рекурсии: {}",
+        "Maximum recursion depth: {}",
         parser.settings().max_recursion_depth
     );
     println!(
-        "   Кэширование включено: {}",
+        "Caching enabled: {}",
         parser.settings().enable_caching
     );
     println!(
-        "   Строгая валидация: {}",
+        "Strong validation: {}",
         parser.settings().strict_validation
     );
 
     println!();
 
-    // Пример 8: DML операции (INSERT, UPDATE, DELETE)
-    println!("8. Парсинг DML операций:");
+    // Example 8: DML operations (INSERT, UPDATE, DELETE)
+    println!("8. Parsing DML operations:");
 
     // INSERT
     let mut parser =
         SqlParser::new("INSERT INTO users (name, email) VALUES ('John', 'john@example.com')")?;
     let statement = parser.parse()?;
     if let SqlStatement::Insert(insert_stmt) = statement {
-        println!("   INSERT в таблицу: {}", insert_stmt.table);
+        println!("INSERT into table: {}", insert_stmt.table);
         if let Some(cols) = &insert_stmt.columns {
-            println!("   Колонки: {:?}", cols);
+            println!("Columns: {:?}", cols);
         }
         match &insert_stmt.values {
             rustdb::parser::InsertValues::Values(rows) => {
-                println!("   Количество строк: {}", rows.len());
+                println!("Number of lines: {}", rows.len());
             }
             rustdb::parser::InsertValues::Select(_) => {
-                println!("   INSERT из SELECT");
+                println!("INSERT from SELECT");
             }
         }
     }
@@ -205,26 +205,26 @@ fn main() -> Result<()> {
     let mut parser = SqlParser::new("UPDATE users SET name = 'Jane', age = 25 WHERE id = 1")?;
     let statement = parser.parse()?;
     if let SqlStatement::Update(update_stmt) = statement {
-        println!("   UPDATE таблицы: {}", update_stmt.table);
+        println!("UPDATE tables: {}", update_stmt.table);
         println!(
-            "   Количество присваиваний: {}",
+            "Number of assignments: {}",
             update_stmt.assignments.len()
         );
-        println!("   Есть WHERE: {}", update_stmt.where_clause.is_some());
+        println!("There is WHERE: {}", update_stmt.where_clause.is_some());
     }
 
     // DELETE
     let mut parser = SqlParser::new("DELETE FROM users WHERE age > 65")?;
     let statement = parser.parse()?;
     if let SqlStatement::Delete(delete_stmt) = statement {
-        println!("   DELETE из таблицы: {}", delete_stmt.table);
-        println!("   Есть WHERE: {}", delete_stmt.where_clause.is_some());
+        println!("DELETE from table: {}", delete_stmt.table);
+        println!("There is WHERE: {}", delete_stmt.where_clause.is_some());
     }
 
     println!();
 
-    // Пример 9: Комплексные DML операции
-    println!("9. Комплексные DML операции:");
+    // Example 9: Complex DML operations
+    println!("9. Complex DML operations:");
 
     let dml_queries = [
         "INSERT INTO products VALUES (1, 'Laptop', 999.99)",
@@ -238,26 +238,26 @@ fn main() -> Result<()> {
         match parser.parse() {
             Ok(statement) => match statement {
                 SqlStatement::Insert(insert) => {
-                    println!("   Запрос {}: INSERT в {}", i + 1, insert.table);
+                    println!("Query {}: INSERT into {}", i + 1, insert.table);
                 }
                 SqlStatement::Update(update) => {
                     println!(
-                        "   Запрос {}: UPDATE таблицы {} ({} изменений)",
+                        "Query {}: UPDATE table {} ({} changes)",
                         i + 1,
                         update.table,
                         update.assignments.len()
                     );
                 }
                 SqlStatement::Delete(delete) => {
-                    println!("   Запрос {}: DELETE из {}", i + 1, delete.table);
+                    println!("Query {}: DELETE from {}", i + 1, delete.table);
                 }
-                _ => println!("   Запрос {}: Другой тип", i + 1),
+                _ => println!("Request {}: Other type", i + 1),
             },
-            Err(e) => println!("   Запрос {}: Ошибка - {}", i + 1, e),
+            Err(e) => println!("Request {}: Error - {}", i + 1, e),
         }
     }
 
-    println!("\n=== Пример завершен ===");
+    println!("\n=== Example completed ===");
     Ok(())
 }
 
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn test_parser_example() -> Result<()> {
-        // Запускаем основную функцию как тест
+        // Run the main function as a test
         main()
     }
 }

@@ -1,7 +1,7 @@
-//! Тесты транзакций
+//! Transaction tests
 //!
-//! Эти тесты проверяют корректность работы транзакций,
-//! изоляцию, блокировки и восстановление после сбоев.
+//! These tests verify that transactions are working correctly,
+//! isolation, blocking and disaster recovery.
 
 use super::common::*;
 use rustdb::{
@@ -12,218 +12,218 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
-/// Тест базовой функциональности транзакций
+// / Test of basic transaction functionality
 #[tokio::test]
 pub async fn test_basic_transaction_functionality() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("test_basic").await?;
 
-    // Начинаем транзакцию
+    // Let's start the transaction
     let tx_id = ctx
         .transaction_manager
         .begin_transaction(IsolationLevel::ReadCommitted, false)?;
 
-    // Выполняем операции в транзакции
+    // Performing operations in a transaction
     ctx.execute_sql("INSERT INTO test_basic (id, name, age, email) VALUES (1, 'User1', 25, 'user1@example.com')").await?;
     ctx.execute_sql("INSERT INTO test_basic (id, name, age, email) VALUES (2, 'User2', 30, 'user2@example.com')").await?;
 
-    // Проверяем данные в транзакции
+    // Checking the data in the transaction
     let results = ctx.execute_sql("SELECT * FROM test_basic").await?;
     let count = results.len();
 
-    assert_eq!(count, 2, "В транзакции должно быть 2 записи");
+    assert_eq!(count, 2, "There must be 2 entries in a transaction");
 
-    // Подтверждаем транзакцию
+    // Confirm the transaction
     ctx.transaction_manager.commit_transaction(tx_id)?;
 
-    // Проверяем, что данные сохранились
+    // Checking that the data has been saved
     let final_results = ctx.execute_sql("SELECT * FROM test_basic").await?;
     let final_count = final_results.len();
 
-    assert_eq!(final_count, 2, "После коммита должно быть 2 записи");
+    assert_eq!(final_count, 2, "There should be 2 entries after the commit");
 
     Ok(())
 }
 
-/// Тест отката транзакции
+// / Transaction rollback test
 #[tokio::test]
 pub async fn test_transaction_rollback() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("test_rollback").await?;
 
-    // Вставляем начальные данные
+    // Insert initial data
     ctx.execute_sql("INSERT INTO test_rollback (id, name, age, email) VALUES (1, 'Initial', 25, 'initial@example.com')").await?;
 
-    // Начинаем транзакцию
+    // Let's start the transaction
     let tx_id = ctx
         .transaction_manager
         .begin_transaction(IsolationLevel::ReadCommitted, false)?;
 
-    // Выполняем операции в транзакции
+    // Performing operations in a transaction
     ctx.execute_sql("INSERT INTO test_rollback (id, name, age, email) VALUES (2, 'Temp', 30, 'temp@example.com')").await?;
 
-    // Проверяем данные в транзакции
+    // Checking the data in the transaction
     let results = ctx.execute_sql("SELECT * FROM test_rollback").await?;
     let count = results.len();
 
-    assert_eq!(count, 2, "В транзакции должно быть 2 записи");
+    assert_eq!(count, 2, "There must be 2 entries in a transaction");
 
-    // Откатываем транзакцию
+    // Rolling back the transaction
     ctx.transaction_manager.abort_transaction(tx_id)?;
 
-    // Для симуляции отката, мы сбрасываем счетчик записей
+    // To simulate a rollback, we reset the record counter
     ctx.inserted_records.insert("test_rollback".to_string(), 1);
 
-    // Проверяем, что данные вернулись к исходному состоянию
+    // Checking that the data has returned to its original state
     let final_results = ctx.execute_sql("SELECT * FROM test_rollback").await?;
     let final_count = final_results.len();
 
-    assert_eq!(final_count, 1, "После отката должно быть 1 запись");
+    assert_eq!(final_count, 1, "After rollback there should be 1 record");
 
     Ok(())
 }
 
-/// Тест изоляции транзакций (Read Committed)
+// / Transaction isolation test (Read Committed)
 #[tokio::test]
 pub async fn test_read_committed_isolation() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("test_isolation").await?;
     ctx.execute_sql("INSERT INTO test_isolation (id, name, age, email) VALUES (1, 'User1', 25, 'user1@example.com')").await?;
 
-    // Начинаем первую транзакцию
+    // Let's start the first transaction
     let tx1_id = ctx
         .transaction_manager
         .begin_transaction(IsolationLevel::ReadCommitted, false)?;
 
-    // Читаем данные в первой транзакции
+    // Reading data in the first transaction
     let results1 = ctx.execute_sql("SELECT * FROM test_isolation").await?;
     let count1 = results1.len();
 
-    assert_eq!(count1, 1, "Первая транзакция должна видеть 1 запись");
+    assert_eq!(count1, 1, "The first transaction should see 1 record");
 
-    // Начинаем вторую транзакцию и добавляем данные
+    // We start the second transaction and add data
     let tx2_id = ctx
         .transaction_manager
         .begin_transaction(IsolationLevel::ReadCommitted, false)?;
     ctx.execute_sql("INSERT INTO test_isolation (id, name, age, email) VALUES (2, 'User2', 30, 'user2@example.com')").await?;
     ctx.transaction_manager.commit_transaction(tx2_id)?;
 
-    // Читаем данные в первой транзакции снова
+    // Reading the data in the first transaction again
     let results2 = ctx.execute_sql("SELECT * FROM test_isolation").await?;
     let count2 = results2.len();
 
-    // В Read Committed первая транзакция должна видеть новые данные
-    assert_eq!(count2, 2, "Первая транзакция должна видеть 2 записи");
+    // In Read Committed, the first transaction should see the new data
+    assert_eq!(count2, 2, "The first transaction should see 2 records");
 
-    // Завершаем первую транзакцию
+    // We complete the first transaction
     ctx.transaction_manager.commit_transaction(tx1_id)?;
 
     Ok(())
 }
 
-/// Тест изоляции транзакций (Repeatable Read)
+// / Transaction isolation test (Repeatable Read)
 #[tokio::test]
 pub async fn test_repeatable_read_isolation() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("test_repeatable").await?;
     ctx.execute_sql("INSERT INTO test_repeatable (id, name, age, email) VALUES (1, 'User1', 25, 'user1@example.com')").await?;
 
-    // Начинаем первую транзакцию с Repeatable Read
+    // We start the first transaction with Repeatable Read
     let tx1_id = ctx
         .transaction_manager
         .begin_transaction(IsolationLevel::RepeatableRead, false)?;
 
-    // Читаем данные в первой транзакции
+    // Reading data in the first transaction
     let results1 = ctx.execute_sql("SELECT * FROM test_repeatable").await?;
     let count1 = results1.len();
 
-    assert_eq!(count1, 1, "Первая транзакция должна видеть 1 запись");
+    assert_eq!(count1, 1, "The first transaction should see 1 record");
 
-    // Начинаем вторую транзакцию и добавляем данные
+    // We start the second transaction and add data
     let tx2_id = ctx
         .transaction_manager
         .begin_transaction(IsolationLevel::ReadCommitted, false)?;
     ctx.execute_sql("INSERT INTO test_repeatable (id, name, age, email) VALUES (2, 'User2', 30, 'user2@example.com')").await?;
     ctx.transaction_manager.commit_transaction(tx2_id)?;
 
-    // Для симуляции Repeatable Read, мы создаем снимок данных для первой транзакции
-    // В реальной системе это было бы сделано автоматически
-    let _snapshot_count = 1; // Снимок данных на момент начала первой транзакции
+    // To simulate Repeatable Read, we create a snapshot of the data for the first transaction
+    // In a real system this would be done automatically
+    let _snapshot_count = 1;
 
-    // Читаем данные в первой транзакции снова
-    // В Repeatable Read первая транзакция должна видеть те же данные, что и в начале
-    // Но в нашей симуляции мы видим обновленные данные, поэтому проверяем это
+    // Reading the data in the first transaction again
+    // In Repeatable Read, the first transaction should see the same data as at the beginning
+    // But in our simulation we see updated data, so we check this
     let results2 = ctx.execute_sql("SELECT * FROM test_repeatable").await?;
     let count2 = results2.len();
 
-    // В нашей симуляции мы видим обновленные данные (2 записи)
-    // В реальной системе Repeatable Read должен показывать 1 запись
-    assert_eq!(count2, 2, "В симуляции мы видим обновленные данные");
+    // In our simulation we see updated data (2 entries)
+    // In a real system, Repeatable Read should show 1 record
+    assert_eq!(count2, 2, "In the simulation we see updated data");
 
-    // Завершаем первую транзакцию
+    // We complete the first transaction
     ctx.transaction_manager.commit_transaction(tx1_id)?;
 
     Ok(())
 }
 
-/// Тест блокировок
+// / Lock test
 #[tokio::test]
 pub async fn test_locking_behavior() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("test_locking").await?;
     ctx.execute_sql("INSERT INTO test_locking (id, name, age, email) VALUES (1, 'User1', 25, 'user1@example.com')").await?;
 
-    // Начинаем первую транзакцию с эксклюзивной блокировкой
+    // Starting the first transaction with an exclusive lock
     let tx1_id = ctx
         .transaction_manager
         .begin_transaction(IsolationLevel::ReadCommitted, false)?;
 
-    // Вставляем запись (получаем эксклюзивную блокировку)
+    // Insert a record (we get an exclusive lock)
     ctx.execute_sql("INSERT INTO test_locking (id, name, age, email) VALUES (2, 'User2', 30, 'user2@example.com')").await?;
 
-    // Начинаем вторую транзакцию
+    // Let's start the second transaction
     let tx2_id = ctx
         .transaction_manager
         .begin_transaction(IsolationLevel::ReadCommitted, false)?;
 
-    // Пытаемся вставить запись (должно быть успешно)
+    // We are trying to insert a record (should be successful)
     let result = ctx.execute_sql("INSERT INTO test_locking (id, name, age, email) VALUES (3, 'User3', 35, 'user3@example.com')").await;
 
-    // Операция должна быть успешной
-    assert!(result.is_ok(), "Вставка должна быть успешной");
+    // The operation must be successful
+    assert!(result.is_ok(), "The insertion should be successful");
 
-    // Завершаем первую транзакцию
+    // We complete the first transaction
     ctx.transaction_manager.commit_transaction(tx1_id)?;
 
-    // Завершаем вторую транзакцию
+    // We complete the second transaction
     ctx.transaction_manager.commit_transaction(tx2_id)?;
 
     Ok(())
 }
 
-/// Тест deadlock detection
+// / Deadlock detection test
 #[tokio::test]
 pub async fn test_deadlock_detection() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовые таблицы
+    // Creating test tables
     ctx.create_test_table("test_deadlock1").await?;
     ctx.create_test_table("test_deadlock2").await?;
 
     ctx.execute_sql("INSERT INTO test_deadlock1 (id, name, age, email) VALUES (1, 'User1', 25, 'user1@example.com')").await?;
     ctx.execute_sql("INSERT INTO test_deadlock2 (id, name, age, email) VALUES (1, 'User2', 30, 'user2@example.com')").await?;
 
-    // Начинаем две транзакции
+    // We start two transactions
     let tx1_id = ctx
         .transaction_manager
         .begin_transaction(IsolationLevel::ReadCommitted, false)?;
@@ -231,75 +231,75 @@ pub async fn test_deadlock_detection() -> Result<()> {
         .transaction_manager
         .begin_transaction(IsolationLevel::ReadCommitted, false)?;
 
-    // Транзакция 1 вставляет данные в таблицу 1
+    // Transaction 1 inserts data into table 1
     ctx.execute_sql("INSERT INTO test_deadlock1 (id, name, age, email) VALUES (2, 'User1_2', 25, 'user1_2@example.com')").await?;
 
-    // Транзакция 2 вставляет данные в таблицу 2
+    // Transaction 2 inserts data into table 2
     ctx.execute_sql("INSERT INTO test_deadlock2 (id, name, age, email) VALUES (2, 'User2_2', 30, 'user2_2@example.com')").await?;
 
-    // Проверяем, что операции прошли успешно
+    // We check that the operations were successful
     let result1 = ctx.execute_sql("SELECT * FROM test_deadlock1").await;
     let result2 = ctx.execute_sql("SELECT * FROM test_deadlock2").await;
 
-    assert!(result1.is_ok(), "Операция 1 должна быть успешной");
-    assert!(result2.is_ok(), "Операция 2 должна быть успешной");
+    assert!(result1.is_ok(), "Operation 1 should be successful");
+    assert!(result2.is_ok(), "Operation 2 should be successful");
 
-    // Завершаем транзакции
+    // Completing transactions
     ctx.transaction_manager.commit_transaction(tx1_id)?;
     ctx.transaction_manager.commit_transaction(tx2_id)?;
 
     Ok(())
 }
 
-/// Тест восстановления после сбоя
+// / Failure recovery test
 #[tokio::test]
 pub async fn test_crash_recovery() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("test_recovery").await?;
 
-    // Выполняем несколько операций
+    // We perform several operations
     ctx.execute_sql("INSERT INTO test_recovery (id, name, age, email) VALUES (1, 'User1', 25, 'user1@example.com')").await?;
     ctx.execute_sql("INSERT INTO test_recovery (id, name, age, email) VALUES (2, 'User2', 30, 'user2@example.com')").await?;
 
-    // Создаем checkpoint
+    // Creating a checkpoint
     ctx.checkpoint_manager.create_checkpoint().await?;
 
-    // Выполняем еще операции
+    // We carry out more operations
     ctx.execute_sql("INSERT INTO test_recovery (id, name, age, email) VALUES (3, 'User3', 35, 'user3@example.com')").await?;
 
-    // Симулируем сбой (создаем новый контекст)
+    // Simulating a failure (creating a new context)
     let mut new_ctx = IntegrationTestContext::new().await?;
 
-    // Для симуляции восстановления, мы восстанавливаем данные
+    // To simulate recovery, we recover data
     new_ctx
         .inserted_records
         .insert("test_recovery".to_string(), 3);
 
-    // Проверяем, что данные восстановились
+    // Checking that the data has been recovered
     let results = new_ctx.execute_sql("SELECT * FROM test_recovery").await?;
     let count = results.len();
 
-    assert_eq!(count, 3, "Должно быть восстановлено 3 записи");
+    assert_eq!(count, 3, "3 records must be restored");
 
     Ok(())
 }
 
-/// Тест длительных транзакций
+// / Long-running transaction test
 #[tokio::test]
 pub async fn test_long_running_transaction() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("test_long").await?;
 
-    // Начинаем длительную транзакцию
+    // We start a long transaction
     let tx_id = ctx
         .transaction_manager
         .begin_transaction(IsolationLevel::ReadCommitted, false)?;
 
-    // Выполняем операции
+    // We carry out operations
     ctx.execute_sql(
         "INSERT INTO test_long (id, name, age, email) VALUES (1, 'User1', 25, 'user1@example.com')",
     )
@@ -309,38 +309,38 @@ pub async fn test_long_running_transaction() -> Result<()> {
     )
     .await?;
 
-    // Проверяем данные в транзакции
+    // Checking the data in the transaction
     let results = ctx.execute_sql("SELECT * FROM test_long").await?;
     let count = results.len();
 
-    assert_eq!(count, 2, "В длительной транзакции должно быть 2 записи");
+    assert_eq!(count, 2, "There must be 2 records in a long-running transaction");
 
-    // Подтверждаем транзакцию
+    // Confirm the transaction
     ctx.transaction_manager.commit_transaction(tx_id)?;
 
-    // Проверяем, что данные сохранились
+    // Checking that the data has been saved
     let final_results = ctx.execute_sql("SELECT * FROM test_long").await?;
     let final_count = final_results.len();
 
     assert_eq!(
         final_count, 2,
-        "После коммита длительной транзакции должно быть 2 записи"
+        "After committing a long-running transaction there should be 2 records"
     );
 
     Ok(())
 }
 
-/// Тест множественных транзакций
+// / Multiple transaction test
 #[tokio::test]
 pub async fn test_multiple_concurrent_transactions() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("test_concurrent").await?;
 
     let mut handles = Vec::new();
 
-    // Запускаем несколько параллельных транзакций
+    // We launch several parallel transactions
     let ctx_arc = Arc::new(Mutex::new(ctx));
     for i in 0..5 {
         let ctx_clone = ctx_arc.clone();
@@ -351,7 +351,7 @@ pub async fn test_multiple_concurrent_transactions() -> Result<()> {
                 .transaction_manager
                 .begin_transaction(IsolationLevel::ReadCommitted, false)?;
 
-            // Каждая транзакция вставляет свои данные
+            // Each transaction inserts its own data
             let sql = format!(
                 "INSERT INTO test_concurrent (id, name, age, email) VALUES ({}, 'User{}', {}, 'user{}@example.com')",
                 i + 1, i + 1, 20 + i, i + 1
@@ -359,7 +359,7 @@ pub async fn test_multiple_concurrent_transactions() -> Result<()> {
 
             ctx_clone.lock().await.execute_sql(&sql).await?;
 
-            // Небольшая задержка
+            // Slight delay
             sleep(Duration::from_millis(10)).await;
 
             ctx_clone
@@ -374,7 +374,7 @@ pub async fn test_multiple_concurrent_transactions() -> Result<()> {
         handles.push(handle);
     }
 
-    // Ждем завершения всех транзакций
+    // We are waiting for all transactions to complete
     for handle in handles {
         use rustdb::common::Error;
         let _ = handle
@@ -382,7 +382,7 @@ pub async fn test_multiple_concurrent_transactions() -> Result<()> {
             .map_err(|e| Error::internal(format!("Join error: {}", e)))?;
     }
 
-    // Проверяем, что все данные вставились
+    // Checking that all data has been inserted
     let results = ctx_arc
         .lock()
         .await
@@ -390,7 +390,7 @@ pub async fn test_multiple_concurrent_transactions() -> Result<()> {
         .await?;
     let count = results.len();
 
-    assert_eq!(count, 5, "Должно быть вставлено 5 записей");
+    assert_eq!(count, 5, "5 records must be inserted");
 
     Ok(())
 }

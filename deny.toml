@@ -1,19 +1,19 @@
 # cargo-deny configuration for RustDB
 # https://embarkstudios.github.io/cargo-deny/
 #
-# ВАЖНО: Проверка лицензий (licenses) НЕ влияет на поиск уязвимостей!
-# Уязвимости проверяются отдельно: advisories (cargo-deny) + cargo-audit
+# NOTE: License checks (licenses) do not perform vulnerability scanning.
+# Vulnerabilities are checked separately: advisories (cargo-deny) + cargo-audit.
 
 [advisories]
-# Проверка уязвимостей из RustSec Advisory Database
+# Vulnerability checks using the RustSec Advisory Database.
 ignore = [
-    # RUSTSEC-2025-0141: bincode unmaintained (не уязвимость — команда прекратила разработку).
-    # Проект на bincode-next + legacy(); оригинальный crates.io bincode 1.x без сопровождения (RUSTSEC).
+    # RUSTSEC-2025-0141: bincode unmaintained (not a CVE — upstream maintenance ended).
+    # This project uses bincode-next + legacy(); original crates.io bincode 1.x is unmaintained (RUSTSEC).
     "RUSTSEC-2025-0141",
 ]
 
 [licenses]
-# Разрешённые лицензии (SPDX 3.11). Только пермиссивные, без copyleft.
+# Allowed licenses (SPDX 3.11). Permissive only; no copyleft.
 allow = [
     "MIT",                          # ~40% crates.io
     "Apache-2.0",                   # ~25% crates.io

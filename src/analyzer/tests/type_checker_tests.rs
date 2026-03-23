@@ -1,4 +1,4 @@
-//! Тесты для проверщика типов
+//! Tests for the type checker
 
 use crate::analyzer::{TypeChecker, TypeCompatibility};
 use crate::common::Result;
@@ -17,25 +17,25 @@ fn test_type_checker_creation() {
 fn test_type_compatibility() {
     let checker = TypeChecker::new();
 
-    // Одинаковые типы совместимы
+    // Same types are compatible
     assert_eq!(
         checker.check_compatibility(&DataType::Integer, &DataType::Integer),
         TypeCompatibility::Compatible
     );
 
-    // Integer -> Real с преобразованием
+    // Integer -> Real with conversion
     assert_eq!(
         checker.check_compatibility(&DataType::Integer, &DataType::Real),
         TypeCompatibility::CompatibleWithConversion
     );
 
-    // Real -> Integer с потерей точности
+    // Real -> Integer with loss of precision
     assert_eq!(
         checker.check_compatibility(&DataType::Real, &DataType::Integer),
         TypeCompatibility::CompatibleWithLoss
     );
 
-    // Несовместимые типы
+    // Incompatible types
     assert_eq!(
         checker.check_compatibility(&DataType::Boolean, &DataType::Integer),
         TypeCompatibility::Incompatible
@@ -46,10 +46,10 @@ fn test_type_compatibility() {
 fn test_implicit_conversion() {
     let checker = TypeChecker::new();
 
-    // Integer может быть неявно преобразован в Real
+    // Integer can be implicitly converted to Real
     assert!(checker.can_convert_implicitly(&DataType::Integer, &DataType::Real));
 
-    // Boolean не может быть неявно преобразован в Integer
+    // Boolean cannot be implicitly converted to Integer
     assert!(!checker.can_convert_implicitly(&DataType::Boolean, &DataType::Integer));
 }
 
@@ -99,7 +99,7 @@ fn test_arithmetic_result_types() -> Result<()> {
 fn test_binary_operation_result_types() -> Result<()> {
     let checker = TypeChecker::new();
 
-    // Арифметические операции
+    // Arithmetic operations
     let result = checker.get_binary_operation_result_type(
         &DataType::Integer,
         &DataType::Integer,
@@ -107,7 +107,7 @@ fn test_binary_operation_result_types() -> Result<()> {
     )?;
     assert_eq!(result, DataType::Integer);
 
-    // Операции сравнения
+    // Comparison Operations
     let result = checker.get_binary_operation_result_type(
         &DataType::Integer,
         &DataType::Integer,
@@ -115,7 +115,7 @@ fn test_binary_operation_result_types() -> Result<()> {
     )?;
     assert_eq!(result, DataType::Boolean);
 
-    // Логические операции
+    // Logical operations
     let result = checker.get_binary_operation_result_type(
         &DataType::Boolean,
         &DataType::Boolean,
@@ -130,7 +130,7 @@ fn test_binary_operation_result_types() -> Result<()> {
 fn test_unary_operation_result_types() -> Result<()> {
     let checker = TypeChecker::new();
 
-    // Арифметические унарные операции
+    // Arithmetic unary operations
     let result =
         checker.get_unary_operation_result_type(&DataType::Integer, &UnaryOperator::Minus)?;
     assert_eq!(result, DataType::Integer);
@@ -138,7 +138,7 @@ fn test_unary_operation_result_types() -> Result<()> {
     let result = checker.get_unary_operation_result_type(&DataType::Real, &UnaryOperator::Plus)?;
     assert_eq!(result, DataType::Real);
 
-    // Логические унарные операции
+    // Logical unary operations
     let result =
         checker.get_unary_operation_result_type(&DataType::Boolean, &UnaryOperator::Not)?;
     assert_eq!(result, DataType::Boolean);
@@ -151,19 +151,19 @@ fn test_function_result_types() -> Result<()> {
     let mut checker = TypeChecker::new();
     let mut result = crate::analyzer::TypeCheckResult::new();
 
-    // COUNT всегда возвращает Integer
+    // COUNT always returns Integer
     let count_type = checker.get_function_result_type("COUNT", &[DataType::Text], &mut result)?;
     assert_eq!(count_type, DataType::Integer);
 
-    // SUM возвращает тип аргумента для числовых типов
+    // SUM returns the argument type for numeric types
     let sum_type = checker.get_function_result_type("SUM", &[DataType::Integer], &mut result)?;
     assert_eq!(sum_type, DataType::Integer);
 
-    // AVG всегда возвращает Real
+    // AVG always returns Real
     let avg_type = checker.get_function_result_type("AVG", &[DataType::Integer], &mut result)?;
     assert_eq!(avg_type, DataType::Real);
 
-    // Строковые функции возвращают Text
+    // String functions return Text
     let upper_type = checker.get_function_result_type("UPPER", &[DataType::Text], &mut result)?;
     assert_eq!(upper_type, DataType::Text);
 
@@ -174,7 +174,7 @@ fn test_function_result_types() -> Result<()> {
 fn test_invalid_operations() {
     let checker = TypeChecker::new();
 
-    // Логические операторы с неправильными типами
+    // Logical operators with incorrect types
     let result = checker.get_binary_operation_result_type(
         &DataType::Integer,
         &DataType::Text,
@@ -182,11 +182,11 @@ fn test_invalid_operations() {
     );
     assert!(result.is_err());
 
-    // Арифметические унарные операторы с неправильными типами
+    // Arithmetic unary operators with incorrect types
     let result = checker.get_unary_operation_result_type(&DataType::Text, &UnaryOperator::Minus);
     assert!(result.is_err());
 
-    // NOT с неправильным типом
+    // NOT with the wrong type
     let result = checker.get_unary_operation_result_type(&DataType::Integer, &UnaryOperator::Not);
     assert!(result.is_err());
 }

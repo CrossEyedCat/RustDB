@@ -1,61 +1,61 @@
-//! Тесты полного цикла запросов
+//! Full query cycle tests
 //!
-//! Эти тесты проверяют полный цикл обработки SQL запросов:
-//! парсинг -> планирование -> оптимизация -> выполнение
+//! These tests check the full cycle of SQL query processing:
+//! parsing -> planning -> optimization -> execution
 
 use super::common::*;
 use rustdb::common::Result;
 use rustdb::{ColumnValue, DataType};
 
-/// Тест простого SELECT запроса
+// / Test of a simple SELECT query
 #[tokio::test]
 pub async fn test_simple_select_cycle() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("test_users").await?;
     ctx.insert_test_data("test_users", 10).await?;
 
-    // Выполняем SELECT запрос
+    // Executing a SELECT query
     let results = ctx.execute_sql("SELECT * FROM test_users").await?;
 
-    // Проверяем результаты
-    assert_eq!(results.len(), 10, "Должно быть 10 записей");
+    // Checking the results
+    assert_eq!(results.len(), 10, "There must be 10 entries");
 
-    // Проверяем структуру результата
+    // Checking the structure of the result
     for row in &results {
-        assert_eq!(row.len(), 4, "Каждая строка должна содержать 4 колонки");
+        assert_eq!(row.len(), 4, "Each line must contain 4 columns");
     }
 
     Ok(())
 }
 
-/// Тест INSERT запроса
+// / Test INSERT query
 #[tokio::test]
 pub async fn test_insert_cycle() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("test_insert").await?;
 
-    // Выполняем INSERT запрос
+    // Executing the INSERT request
     ctx.execute_sql("INSERT INTO test_insert (id, name, age, email) VALUES (1, 'Test User', 25, 'test@example.com')").await?;
 
-    // Проверяем, что данные вставились
+    // Checking that the data has been inserted
     let results = ctx.execute_sql("SELECT * FROM test_insert").await?;
 
-    assert_eq!(results.len(), 1, "Должна быть найдена одна запись");
+    assert_eq!(results.len(), 1, "One entry must be found");
 
     let row = &results[0];
-    assert_eq!(row.len(), 4, "Запись должна содержать 4 колонки");
+    assert_eq!(row.len(), 4, "The entry must contain 4 columns");
 
-    // Проверяем значения
+    // Checking the values
     if let ColumnValue {
         data_type: DataType::Integer(id),
         ..
     } = &row[0]
     {
-        assert_eq!(*id, 1, "ID должен быть 1");
+        assert_eq!(*id, 1, "ID must be 1");
     }
 
     if let ColumnValue {
@@ -63,85 +63,85 @@ pub async fn test_insert_cycle() -> Result<()> {
         ..
     } = &row[1]
     {
-        assert_eq!(name, "Test User", "Имя должно быть 'Test User'");
+        assert_eq!(name, "Test User", "The name should be 'Test User'");
     }
 
     Ok(())
 }
 
-/// Тест UPDATE запроса
+// / UPDATE request test
 #[tokio::test]
 pub async fn test_update_cycle() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу и данные
+    // Create a test table and data
     ctx.create_test_table("test_update").await?;
     ctx.insert_test_data("test_update", 5).await?;
 
-    // Выполняем UPDATE запрос (без WHERE для упрощения)
+    // Execute the UPDATE query (without WHERE for simplicity)
     ctx.execute_sql("UPDATE test_update SET age = 99").await?;
 
-    // Проверяем, что данные обновились
+    // Checking that the data has been updated
     let results = ctx.execute_sql("SELECT * FROM test_update").await?;
 
-    assert_eq!(results.len(), 5, "Должно быть 5 записей");
+    assert_eq!(results.len(), 5, "There must be 5 entries");
 
-    // Проверяем, что все записи обновились
+    // Checking that all records have been updated
     for row in &results {
         if let ColumnValue {
             data_type: DataType::Integer(age),
             ..
         } = &row[2]
         {
-            assert_eq!(*age, 99, "Возраст должен быть обновлен до 99");
+            assert_eq!(*age, 99, "Age should be updated to 99");
         }
     }
 
     Ok(())
 }
 
-/// Тест DELETE запроса
+// / Test DELETE request
 #[tokio::test]
 pub async fn test_delete_cycle() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу и данные
+    // Create a test table and data
     ctx.create_test_table("test_delete").await?;
     ctx.insert_test_data("test_delete", 5).await?;
 
-    // Проверяем количество записей до удаления
+    // Checking the number of records before deletion
     let before_results = ctx.execute_sql("SELECT * FROM test_delete").await?;
     let before_count = before_results.len();
 
-    assert_eq!(before_count, 5, "Должно быть 5 записей до удаления");
+    assert_eq!(before_count, 5, "There must be 5 entries before deletion");
 
-    // Выполняем DELETE запрос (без WHERE для упрощения)
+    // Execute the DELETE query (without WHERE for simplicity)
     ctx.execute_sql("DELETE FROM test_delete").await?;
 
-    // Проверяем количество записей после удаления
+    // Checking the number of records after deletion
     let after_results = ctx.execute_sql("SELECT * FROM test_delete").await?;
     let after_count = after_results.len();
 
-    assert_eq!(after_count, 0, "Должно быть 0 записей после удаления");
+    assert_eq!(after_count, 0, "There should be 0 entries after deletion");
 
-    // Проверяем, что все записи удалены
-    assert_eq!(after_count, 0, "Все записи должны быть удалены");
+    // Checking that all entries have been deleted
+    assert_eq!(after_count, 0, "All entries must be deleted");
 
     Ok(())
 }
 
-/// Тест сложного запроса с JOIN
+// / Test a complex query with JOIN
 #[tokio::test]
 pub async fn test_complex_query_cycle() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем простые таблицы
+    // Creating simple tables
     ctx.execute_sql("CREATE TABLE users (id INTEGER, name VARCHAR(100))")
         .await?;
     ctx.execute_sql("CREATE TABLE orders (id INTEGER, user_id INTEGER, amount INTEGER)")
         .await?;
 
-    // Вставляем данные
+    // Inserting data
     ctx.execute_sql("INSERT INTO users (id, name) VALUES (1, 'Alice')")
         .await?;
     ctx.execute_sql("INSERT INTO users (id, name) VALUES (2, 'Bob')")
@@ -151,105 +151,105 @@ pub async fn test_complex_query_cycle() -> Result<()> {
     ctx.execute_sql("INSERT INTO orders (id, user_id, amount) VALUES (2, 2, 200)")
         .await?;
 
-    // Выполняем простой запрос
+    // Running a simple request
     let results = ctx.execute_sql("SELECT * FROM users").await?;
 
-    // Проверяем результаты
-    assert_eq!(results.len(), 2, "Должно быть 2 пользователя");
+    // Checking the results
+    assert_eq!(results.len(), 2, "Must be 2 users");
 
     Ok(())
 }
 
-/// Тест транзакционного запроса
+// / Transactional request test
 #[tokio::test]
 pub async fn test_transactional_query_cycle() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("test_transaction").await?;
 
-    // Выполняем несколько операций
+    // We perform several operations
     ctx.execute_sql("INSERT INTO test_transaction (id, name, age, email) VALUES (1, 'User1', 25, 'user1@example.com')").await?;
     ctx.execute_sql("INSERT INTO test_transaction (id, name, age, email) VALUES (2, 'User2', 30, 'user2@example.com')").await?;
 
-    // Проверяем данные
+    // Checking the data
     let results = ctx.execute_sql("SELECT * FROM test_transaction").await?;
     let count = results.len();
 
-    assert_eq!(count, 2, "Должно быть 2 записи");
+    assert_eq!(count, 2, "There should be 2 entries");
 
-    // Проверяем, что данные сохранились
+    // Checking that the data has been saved
     let final_results = ctx.execute_sql("SELECT * FROM test_transaction").await?;
     let final_count = final_results.len();
 
-    assert_eq!(final_count, 2, "Должно быть 2 записи");
+    assert_eq!(final_count, 2, "There should be 2 entries");
 
     Ok(())
 }
 
-/// Тест отката транзакции
+// / Transaction rollback test
 #[tokio::test]
 pub async fn test_transaction_rollback_cycle() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем тестовую таблицу
+    // Create a test table
     ctx.create_test_table("test_rollback").await?;
 
-    // Вставляем начальные данные
+    // Insert initial data
     ctx.execute_sql("INSERT INTO test_rollback (id, name, age, email) VALUES (1, 'Initial', 25, 'initial@example.com')").await?;
 
-    // Выполняем операции
+    // We carry out operations
     ctx.execute_sql("INSERT INTO test_rollback (id, name, age, email) VALUES (2, 'Temp', 30, 'temp@example.com')").await?;
 
-    // Проверяем данные
+    // Checking the data
     let results = ctx.execute_sql("SELECT * FROM test_rollback").await?;
     let count = results.len();
 
-    assert_eq!(count, 2, "Должно быть 2 записи");
+    assert_eq!(count, 2, "There should be 2 entries");
 
     Ok(())
 }
 
-/// Тест обработки ошибок
+// / Error handling test
 #[tokio::test]
 pub async fn test_error_handling_cycle() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Тест синтаксической ошибки
+    // Syntax error test
     let result = ctx.execute_sql("INVALID SQL SYNTAX").await;
-    assert!(result.is_err(), "Невалидный SQL должен вызывать ошибку");
+    assert!(result.is_err(), "Invalid SQL should cause an error");
 
-    // Тест ошибки несуществующей таблицы
+    // Non-existent table error test
     let result = ctx.execute_sql("SELECT * FROM non_existent_table").await;
     assert!(
         result.is_err(),
-        "Запрос к несуществующей таблице должен вызывать ошибку"
+        "Querying a non-existent table should throw an error"
     );
 
-    // Тест успешного выполнения
+    // Success test
     ctx.create_test_table("test_duplicate").await?;
     ctx.execute_sql("INSERT INTO test_duplicate (id, name, age, email) VALUES (1, 'User1', 25, 'user1@example.com')").await?;
 
     let result = ctx.execute_sql("INSERT INTO test_duplicate (id, name, age, email) VALUES (2, 'User2', 30, 'user2@example.com')").await;
-    assert!(result.is_ok(), "Вставка должна быть успешной");
+    assert!(result.is_ok(), "The insertion should be successful");
 
     Ok(())
 }
 
-/// Тест производительности простых запросов
+// / Performance test of simple queries
 #[tokio::test]
 pub async fn test_simple_query_performance() -> Result<()> {
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем таблицу с данными
+    // Create a table with data
     ctx.create_test_table("perf_test").await?;
     ctx.insert_test_data("perf_test", 100).await?;
 
-    // Выполняем простой SELECT запрос
+    // Executing a simple SELECT query
     let results = ctx.execute_sql("SELECT * FROM perf_test").await?;
 
-    // Проверяем, что запрос выполнился успешно
-    assert_eq!(results.len(), 100, "Должно быть 100 записей");
+    // Checking that the request was completed successfully
+    assert_eq!(results.len(), 100, "There must be 100 entries");
 
     Ok(())
 }

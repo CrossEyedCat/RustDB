@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Сборка документации
+  # Build documentation
   build:
     name: Build Documentation
     runs-on: ubuntu-latest
@@ -47,7 +47,7 @@ jobs:
         with:
           path: ./target/doc
 
-  # Развертывание на GitHub Pages
+  # Deploy to GitHub Pages
   deploy:
     name: Deploy to GitHub Pages
     if: github.ref == 'refs/heads/main'

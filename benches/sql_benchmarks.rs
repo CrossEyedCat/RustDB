@@ -1,6 +1,6 @@
-//! SQL-бенчмарки для RustDB
+//! SQL benchmarks for RustDB
 //!
-//! Измеряет производительность парсера, планировщика и оптимизатора запросов.
+//! Measures parser, planner, and query optimizer performance.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rustdb::{

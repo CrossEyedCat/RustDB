@@ -1,4 +1,4 @@
-//! Тесты для операторов соединения
+//! Tests for connection statements
 
 use super::common;
 use crate::common::Result;
@@ -181,7 +181,7 @@ fn test_nested_loop_join_reset() -> Result<()> {
         100,
     )?;
 
-    // Сбрасываем оператор
+    // Resetting the operator
     join_operator.reset()?;
 
     let statistics = join_operator.get_statistics();
@@ -219,7 +219,7 @@ fn test_hash_join_reset() -> Result<()> {
         1000,
     )?;
 
-    // Сбрасываем оператор
+    // Resetting the operator
     join_operator.reset()?;
 
     let statistics = join_operator.get_statistics();
@@ -255,7 +255,7 @@ fn test_merge_join_reset() -> Result<()> {
         JoinType::Inner,
     )?;
 
-    // Сбрасываем оператор
+    // Resetting the operator
     join_operator.reset()?;
 
     let statistics = join_operator.get_statistics();
@@ -294,7 +294,7 @@ fn test_join_operator_statistics() -> Result<()> {
 
     let statistics = join_operator.get_statistics();
 
-    // Проверяем, что все поля статистики инициализированы
+    // Checking that all statistics fields are initialized
     assert_eq!(statistics.rows_processed, 0);
     assert_eq!(statistics.rows_returned, 0);
     assert_eq!(statistics.execution_time_ms, 0);
@@ -331,7 +331,7 @@ fn test_join_operator_trait_implementation() -> Result<()> {
         100,
     )?);
 
-    // Тестируем методы трейта
+    // Testing trait methods
     let operator_schema = operator.get_schema()?;
     assert_eq!(operator_schema.len(), 4);
 

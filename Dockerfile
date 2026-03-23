@@ -1,7 +1,7 @@
-# Многоэтапная сборка для RustDB
+# Multi-stage build for RustDB
 FROM rust:1.90-slim AS builder
 
-# Установка системных зависимостей
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
@@ -17,38 +17,38 @@ COPY benches ./benches
 
 RUN cargo build --release --bin rustdb
 
-# Финальный образ
+# Final image
 FROM debian:bookworm-slim
 
-# Установка runtime зависимостей
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Создание пользователя для безопасности
+# Create unprivileged user
 RUN groupadd -r rustdb && useradd -r -g rustdb rustdb
 
-# Создание директорий
+# Create directories
 RUN mkdir -p /app/data /app/logs /app/config && \
     chown -R rustdb:rustdb /app
 
-# Копирование бинарного файла
+# Copy binary
 COPY --from=builder /app/target/release/rustdb /usr/local/bin/rustdb
 
-# Копирование конфигурационных файлов
+# Copy configuration files
 COPY config.toml /app/config/
 
-# Переключение на пользователя rustdb
+# Run as rustdb user
 USER rustdb
 
-# Рабочая директория
+# Working directory
 WORKDIR /app
 
-# Открытие портов
+# Exposed ports
 EXPOSE 8080 8081
 
-# Переменные окружения
+# Environment variables
 ENV RUST_LOG=info
 ENV RUSTDB_DATA_DIR=/app/data
 ENV RUSTDB_LOG_DIR=/app/logs
@@ -58,5 +58,5 @@ ENV RUSTDB_CONFIG_DIR=/app/config
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD rustdb --version || exit 1
 
-# Команда по умолчанию
+# Default command
 CMD ["rustdb", "--config", "/app/config/config.toml"]

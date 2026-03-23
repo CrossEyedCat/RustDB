@@ -1,4 +1,4 @@
-//! Тесты для трассировщика запросов
+//! Query Tracer Tests
 
 use crate::debug::query_tracer::*;
 use crate::debug::DebugConfig;
@@ -13,7 +13,7 @@ async fn test_query_tracer_creation() {
 
     let tracer = QueryTracer::new(&config);
     
-    // Проверяем, что трассировщик создался
+    // Checking that the tracer has been created
     let stats = tracer.get_stats();
     assert_eq!(stats.total_queries, 0);
 }
@@ -27,10 +27,10 @@ async fn test_query_trace_lifecycle() {
 
     let tracer = QueryTracer::new(&config);
 
-    // Начинаем трассировку
+    // Let's start tracing
     let query_id = tracer.start_trace("SELECT * FROM users WHERE age > 18");
 
-    // Добавляем события
+    // Adding events
     tracer.add_event(
         &query_id,
         QueryStage::Lexing,
@@ -61,7 +61,7 @@ async fn test_query_trace_lifecycle() {
         Some(100),
     );
 
-    // Завершаем трассировку
+    // Finishing the tracing
     tracer.finish_trace(
         &query_id,
         QueryStatus::Completed,
@@ -70,13 +70,13 @@ async fn test_query_trace_lifecycle() {
         None,
     );
 
-    // Проверяем статистику
+    // Checking the statistics
     let stats = tracer.get_stats();
     assert_eq!(stats.total_queries, 1);
     assert_eq!(stats.completed_queries, 1);
     assert_eq!(stats.failed_queries, 0);
 
-    // Проверяем завершенные трассировки
+    // Checking completed traces
     let completed = tracer.get_completed_traces(10);
     assert_eq!(completed.len(), 1);
     
@@ -86,7 +86,7 @@ async fn test_query_trace_lifecycle() {
     assert_eq!(trace.status, QueryStatus::Completed);
     assert_eq!(trace.rows_returned, Some(100));
     assert_eq!(trace.result_size, Some(8192));
-    assert!(trace.events.len() >= 4); // Начальное + 3 добавленных + финальное
+    assert!(trace.events.len() >= 4);
 }
 
 #[tokio::test]
@@ -140,14 +140,14 @@ async fn test_multiple_query_traces() {
 
     let tracer = QueryTracer::new(&config);
 
-    // Трассируем несколько запросов
+    // Tracing several requests
     let query_ids = vec![
         tracer.start_trace("SELECT * FROM users"),
         tracer.start_trace("INSERT INTO users VALUES (1, 'John')"),
         tracer.start_trace("UPDATE users SET name = 'Jane' WHERE id = 1"),
     ];
 
-    // Завершаем все запросы
+    // We complete all requests
     for (i, query_id) in query_ids.iter().enumerate() {
         tracer.finish_trace(
             query_id,
@@ -178,7 +178,7 @@ async fn test_active_trace_retrieval() {
 
     let query_id = tracer.start_trace("SELECT * FROM large_table");
 
-    // Добавляем событие
+    // Adding an event
     tracer.add_event(
         &query_id,
         QueryStage::Execution,
@@ -189,7 +189,7 @@ async fn test_active_trace_retrieval() {
         Some(1000),
     );
 
-    // Получаем активную трассировку
+    // Getting the active trace
     let active_trace = tracer.get_active_trace(&query_id);
     assert!(active_trace.is_some());
     
@@ -197,9 +197,9 @@ async fn test_active_trace_retrieval() {
     assert_eq!(trace.query_id, query_id);
     assert_eq!(trace.status, QueryStatus::Running);
     assert_eq!(trace.current_stage, QueryStage::Execution);
-    assert!(trace.events.len() >= 2); // Начальное + добавленное
+    assert!(trace.events.len() >= 2);
 
-    // Завершаем трассировку
+    // Finishing the tracing
     tracer.finish_trace(
         &query_id,
         QueryStatus::Completed,
@@ -208,7 +208,7 @@ async fn test_active_trace_retrieval() {
         None,
     );
 
-    // Теперь трассировка должна быть в завершенных
+    // The tracing should now be complete
     let active_trace = tracer.get_active_trace(&query_id);
     assert!(active_trace.is_none());
 
@@ -225,7 +225,7 @@ async fn test_performance_report() {
 
     let tracer = QueryTracer::new(&config);
 
-    // Создаем несколько трассировок с разным временем выполнения
+    // Creating multiple traces with different execution times
     let queries = vec![
         ("SELECT * FROM users", Duration::from_millis(10)),
         ("SELECT * FROM orders", Duration::from_millis(50)),
@@ -235,7 +235,7 @@ async fn test_performance_report() {
     for (sql, duration) in queries {
         let query_id = tracer.start_trace(sql);
         
-        // Симулируем выполнение
+        // Simulating execution
         tokio::time::sleep(duration).await;
         
         tracer.finish_trace(
@@ -248,10 +248,10 @@ async fn test_performance_report() {
     }
 
     let report = tracer.generate_performance_report();
-    assert!(report.contains("Отчет о производительности запросов"));
-    assert!(report.contains("Всего запросов: 3"));
-    assert!(report.contains("Успешно завершенных: 3"));
-    assert!(report.contains("Топ 5 медленных запросов"));
+    assert!(report.contains("Query Performance Report"));
+    assert!(report.contains("Total requests: 3"));
+    assert!(report.contains("Successfully completed: 3"));
+    assert!(report.contains("Top 5 slow queries"));
 }
 
 #[tokio::test]
@@ -263,7 +263,7 @@ async fn test_status_report() {
 
     let tracer = QueryTracer::new(&config);
 
-    // Создаем несколько трассировок
+    // Creating several traces
     let query_id1 = tracer.start_trace("SELECT * FROM users");
     tracer.finish_trace(&query_id1, QueryStatus::Completed, Some(10), Some(1024), None);
 
@@ -271,9 +271,9 @@ async fn test_status_report() {
     tracer.finish_trace(&query_id2, QueryStatus::Failed, None, None, Some("Error".to_string()));
 
     let report = tracer.generate_status_report();
-    assert!(report.contains("Активных трассировок: 0"));
-    assert!(report.contains("Завершенных трассировок: 2"));
-    assert!(report.contains("Всего запросов: 2"));
-    assert!(report.contains("Успешных: 1 (50.0%)"));
-    assert!(report.contains("С ошибками: 1 (50.0%)"));
+    assert!(report.contains("Active traces: 0"));
+    assert!(report.contains("Completed traces: 2"));
+    assert!(report.contains("Total requests: 2"));
+    assert!(report.contains("Successful: 1 (50.0%)"));
+    assert!(report.contains("With errors: 1 (50.0%)"));
 }

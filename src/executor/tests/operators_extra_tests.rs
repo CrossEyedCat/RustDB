@@ -1,4 +1,4 @@
-//! Дополнительное покрытие фабрики сканов и операторов.
+//! Additional coverage of the scan factory and operators.
 
 use super::common;
 use crate::common::types::{ColumnValue, DataType, Row};
@@ -9,7 +9,7 @@ use crate::executor::operators::{
 };
 use std::sync::{Arc, Mutex};
 
-/// Возвращает несколько строк и завершается (без длинного table scan).
+// / Returns multiple rows and completes (without a long table scan).
 struct FewRows {
     idx: u8,
     versions: [u64; 3],

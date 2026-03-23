@@ -1,106 +1,106 @@
-//! Пример использования семантического анализатора rustdb
+//! An example of using the rustdb semantic analyzer
 
 use rustdb::analyzer::{AnalysisContext, SemanticAnalyzer, SemanticAnalyzerSettings};
 use rustdb::common::Result;
 use rustdb::parser::SqlParser;
 
 fn main() -> Result<()> {
-    println!("=== Пример использования семантического анализатора rustdb ===\n");
+    println!("=== Example of using rustdb semantic analyzer ===\n");
 
-    // 1. Создание анализатора с настройками по умолчанию
-    println!("1. Создание семантического анализатора:");
+    // 1. Creating an analyzer with default settings
+    println!("1. Creating a semantic analyzer:");
     let mut analyzer = SemanticAnalyzer::default();
     let settings = analyzer.settings();
     println!(
-        "   Проверка существования объектов: {}",
+        "Checking the existence of objects: {}",
         settings.check_object_existence
     );
-    println!("   Проверка типов: {}", settings.check_types);
-    println!("   Проверка прав доступа: {}", settings.check_access_rights);
+    println!("Type checking: {}", settings.check_types);
+    println!("Permission check: {}", settings.check_access_rights);
     println!(
-        "   Кэширование метаданных: {}",
+        "Metadata caching: {}",
         settings.enable_metadata_cache
     );
 
-    // 2. Анализ простого SELECT запроса
-    println!("\n2. Анализ простого SELECT запроса:");
+    // 2. Analysis of a simple SELECT query
+    println!("\n2. Analysis of a simple SELECT query:");
     let mut parser = SqlParser::new("SELECT * FROM users")?;
     let statement = parser.parse()?;
 
     let context = AnalysisContext::default();
     let result = analyzer.analyze(&statement, &context)?;
 
-    println!("   Запрос валиден: {}", result.is_valid);
-    println!("   Количество ошибок: {}", result.errors.len());
-    println!("   Количество предупреждений: {}", result.warnings.len());
+    println!("The request is valid: {}", result.is_valid);
+    println!("Number of errors: {}", result.errors.len());
+    println!("Number of warnings: {}", result.warnings.len());
     println!(
-        "   Проверено объектов: {}",
+        "Checked objects: {}",
         result.statistics.objects_checked
     );
-    println!("   Проверок типов: {}", result.statistics.type_checks);
+    println!("Type checks: {}", result.statistics.type_checks);
     println!(
-        "   Время анализа: {} мс",
+        "Analysis time: {} ms",
         result.statistics.analysis_time_ms
     );
 
-    // 3. Анализ SELECT с колонками и WHERE
-    println!("\n3. Анализ SELECT с колонками и WHERE:");
+    // 3. SELECT analysis with columns and WHERE
+    println!("\n3. SELECT analysis with columns and WHERE:");
     let mut parser = SqlParser::new("SELECT name, email, age FROM users WHERE active = true")?;
     let statement = parser.parse()?;
 
     let result = analyzer.analyze(&statement, &context)?;
-    println!("   Запрос валиден: {}", result.is_valid);
+    println!("The request is valid: {}", result.is_valid);
     println!(
-        "   Типы результата: {} колонок",
+        "Result types: {} columns",
         result.type_info.result_types.len()
     );
     for (i, data_type) in result.type_info.result_types.iter().enumerate() {
-        println!("     Колонка {}: {:?}", i + 1, data_type);
+        println!("Column {}: {:?}", i + 1, data_type);
     }
 
-    // 4. Анализ INSERT запроса
-    println!("\n4. Анализ INSERT запроса:");
+    // 4. Analysis of the INSERT request
+    println!("\n4. Analysis of the INSERT query:");
     let mut parser = SqlParser::new(
         "INSERT INTO users (name, email, age) VALUES ('Alice', 'alice@example.com', 25)",
     )?;
     let statement = parser.parse()?;
 
     let result = analyzer.analyze(&statement, &context)?;
-    println!("   Запрос валиден: {}", result.is_valid);
+    println!("The request is valid: {}", result.is_valid);
     println!(
-        "   Проверено объектов: {}",
+        "Checked objects: {}",
         result.statistics.objects_checked
     );
-    println!("   Проверок типов: {}", result.statistics.type_checks);
+    println!("Type checks: {}", result.statistics.type_checks);
 
-    // 5. Анализ UPDATE запроса
-    println!("\n5. Анализ UPDATE запроса:");
+    // 5. Analysis of the UPDATE request
+    println!("\n5. Analysis of the UPDATE request:");
     let mut parser = SqlParser::new("UPDATE users SET name = 'Bob', age = age + 1 WHERE id = 1")?;
     let statement = parser.parse()?;
 
     let result = analyzer.analyze(&statement, &context)?;
-    println!("   Запрос валиден: {}", result.is_valid);
+    println!("The request is valid: {}", result.is_valid);
     if !result.warnings.is_empty() {
-        println!("   Предупреждения:");
+        println!("Warnings:");
         for warning in &result.warnings {
             println!("     - {:?}: {}", warning.warning_type, warning.message);
         }
     }
 
-    // 6. Анализ CREATE TABLE запроса
-    println!("\n6. Анализ CREATE TABLE запроса:");
+    // 6. Analysis of the CREATE TABLE query
+    println!("\n6. Analysis of the CREATE TABLE query:");
     let mut parser = SqlParser::new("CREATE TABLE products (id INTEGER, name TEXT)")?;
     let statement = parser.parse()?;
 
     let result = analyzer.analyze(&statement, &context)?;
-    println!("   Запрос валиден: {}", result.is_valid);
+    println!("The request is valid: {}", result.is_valid);
     println!(
-        "   Проверено объектов: {}",
+        "Checked objects: {}",
         result.statistics.objects_checked
     );
 
-    // 7. Анализ множественных запросов
-    println!("\n7. Анализ множественных запросов:");
+    // 7. Analysis of multiple requests
+    println!("\n7. Analysis of multiple requests:");
     let sql_statements = vec![
         "SELECT * FROM users",
         "INSERT INTO users (name) VALUES ('Charlie')",
@@ -115,10 +115,10 @@ fn main() -> Result<()> {
     }
 
     let results = analyzer.analyze_multiple(&statements, &context)?;
-    println!("   Проанализировано запросов: {}", results.len());
+    println!("Queries analyzed: {}", results.len());
     for (i, result) in results.iter().enumerate() {
         println!(
-            "     Запрос {}: валиден={}, ошибок={}, предупреждений={}",
+            "Request {}: valid={}, errors={}, warnings={}",
             i + 1,
             result.is_valid,
             result.errors.len(),
@@ -126,12 +126,12 @@ fn main() -> Result<()> {
         );
     }
 
-    // 8. Создание анализатора с кастомными настройками
-    println!("\n8. Анализатор с кастомными настройками:");
+    // 8. Creating an analyzer with custom settings
+    println!("\n8. Analyzer with custom settings:");
     let custom_settings = SemanticAnalyzerSettings {
         check_object_existence: true,
         check_types: true,
-        check_access_rights: true, // Включаем проверку прав доступа
+        check_access_rights: true,
         enable_metadata_cache: true,
         strict_validation: false,
         max_warnings: 50,
@@ -139,7 +139,7 @@ fn main() -> Result<()> {
 
     let mut custom_analyzer = SemanticAnalyzer::new(custom_settings);
 
-    // Создаем контекст с пользователем
+    // Create a context with the user
     let custom_context = AnalysisContext {
         current_user: Some("test_user".to_string()),
         ..Default::default()
@@ -149,61 +149,61 @@ fn main() -> Result<()> {
     let statement = parser.parse()?;
 
     let result = custom_analyzer.analyze(&statement, &custom_context)?;
-    println!("   Запрос валиден: {}", result.is_valid);
-    println!("   Проверок доступа: {}", result.statistics.access_checks);
+    println!("The request is valid: {}", result.is_valid);
+    println!("Access checks: {}", result.statistics.access_checks);
 
     if !result.errors.is_empty() {
-        println!("   Ошибки:");
+        println!("Errors:");
         for error in &result.errors {
             println!("     - {:?}: {}", error.error_type, error.message);
             if let Some(fix) = &error.suggested_fix {
-                println!("       Предложение: {}", fix);
+                println!("Offer: {}", fix);
             }
         }
     }
 
-    // 9. Статистика кэша
-    println!("\n9. Статистика кэша анализатора:");
+    // 9. Cache statistics
+    println!("\n9. Analyzer cache statistics:");
     let (hits, misses) = analyzer.cache_statistics();
-    println!("   Попадания в кэш: {}", hits);
-    println!("   Промахи кэша: {}", misses);
+    println!("Cache hits: {}", hits);
+    println!("Cache misses: {}", misses);
     if hits + misses > 0 {
         let hit_rate = hits as f64 / (hits + misses) as f64 * 100.0;
-        println!("   Процент попаданий: {:.1}%", hit_rate);
+        println!("Hit percentage: {:.1}%", hit_rate);
     }
 
-    // 10. Обновление настроек анализатора
-    println!("\n10. Обновление настроек анализатора:");
+    // 10. Updating analyzer settings
+    println!("\n10. Updating analyzer settings:");
     let new_settings = SemanticAnalyzerSettings {
-        check_object_existence: false, // Отключаем проверку объектов
+        check_object_existence: false,
         check_types: true,
         check_access_rights: false,
-        enable_metadata_cache: false, // Отключаем кэш
-        strict_validation: true,      // Включаем строгую валидацию
+        enable_metadata_cache: false,
+        strict_validation: true,
         max_warnings: 10,
     };
 
     analyzer.update_settings(new_settings);
     let updated_settings = analyzer.settings();
     println!(
-        "   Проверка объектов: {}",
+        "Checking objects: {}",
         updated_settings.check_object_existence
     );
-    println!("   Кэширование: {}", updated_settings.enable_metadata_cache);
+    println!("Caching: {}", updated_settings.enable_metadata_cache);
     println!(
-        "   Строгая валидация: {}",
+        "Strong validation: {}",
         updated_settings.strict_validation
     );
 
-    // 11. Очистка кэша
-    println!("\n11. Очистка кэша анализатора:");
+    // 11. Clear cache
+    println!("\n11. Clearing the analyzer cache:");
     analyzer.clear_cache();
     let (hits_after, misses_after) = analyzer.cache_statistics();
     println!(
-        "   Кэш очищен. Попадания: {}, промахи: {}",
+        "The cache has been cleared. Hits: {}, Misses: {}",
         hits_after, misses_after
     );
 
-    println!("\n=== Пример завершен ===");
+    println!("\n=== Example completed ===");
     Ok(())
 }

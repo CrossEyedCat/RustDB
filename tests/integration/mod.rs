@@ -1,7 +1,7 @@
-//! Интеграционные тесты для RustBD
+//! Integration tests for RustBD
 //!
-//! Этот модуль содержит тесты, которые проверяют взаимодействие
-//! между различными компонентами системы.
+//! This module contains tests that check interaction
+//! between different system components.
 
 pub mod benchmark_tests;
 pub mod common;

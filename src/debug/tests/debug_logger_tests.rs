@@ -1,4 +1,4 @@
-//! Тесты для детального логгера отладки
+//! Tests for detailed debug logger
 
 use crate::debug::debug_logger::*;
 use crate::debug::DebugConfig;
@@ -14,7 +14,7 @@ async fn test_debug_logger_creation() {
 
     let logger = DebugLogger::new(&config);
     
-    // Проверяем, что логгер создался
+    // Checking that the logger has been created
     let stats = logger.get_stats();
     assert_eq!(stats.total_entries, 0);
 }
@@ -23,13 +23,13 @@ async fn test_debug_logger_creation() {
 async fn test_debug_logging_levels() {
     let config = DebugConfig {
         enable_debug_logging: true,
-        detail_level: 3, // Только до Info уровня
+        detail_level: 3,
         ..Default::default()
     };
 
     let logger = DebugLogger::new(&config);
 
-    // Логируем на разных уровнях
+    // Logging at different levels
     logger.log(LogEntry::new(
         LogLevel::Info,
         LogCategory::System,
@@ -51,11 +51,11 @@ async fn test_debug_logging_levels() {
         "Trace message",
     ));
 
-    // Ждем немного для обработки
+    // Waiting a bit for processing
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let stats = logger.get_stats();
-    // Должны быть только Info сообщения (Debug и Trace отфильтрованы)
+    // There should be only Info messages (Debug and Trace are filtered)
     assert_eq!(stats.total_entries, 1);
 }
 
@@ -69,7 +69,7 @@ async fn test_transaction_logging() {
 
     let logger = DebugLogger::new(&config);
 
-    // Логируем операции с транзакциями
+    // Logging transactions with transactions
     logger.log_transaction_operation(
         LogLevel::Info,
         "BEGIN",
@@ -103,7 +103,7 @@ async fn test_data_operation_logging() {
 
     let logger = DebugLogger::new(&config);
 
-    // Логируем операции с данными
+    // Logging data operations
     logger.log_data_operation(
         LogLevel::Debug,
         "INSERT",
@@ -137,7 +137,7 @@ async fn test_query_operation_logging() {
 
     let logger = DebugLogger::new(&config);
 
-    // Логируем операции с запросами
+    // Logging operations with requests
     logger.log_query_operation(
         LogLevel::Info,
         "EXECUTE",
@@ -171,7 +171,7 @@ async fn test_system_operation_logging() {
 
     let logger = DebugLogger::new(&config);
 
-    // Логируем системные операции
+    // Logging system operations
     logger.log_system_operation(
         LogLevel::Warning,
         "BufferManager",
@@ -258,7 +258,7 @@ async fn test_logger_status_report() {
 
     let logger = DebugLogger::new(&config);
 
-    // Добавляем несколько записей
+    // Adding multiple entries
     logger.log(LogEntry::new(
         LogLevel::Info,
         LogCategory::System,
@@ -276,7 +276,7 @@ async fn test_logger_status_report() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let report = logger.generate_status_report();
-    assert!(report.contains("Общее количество записей"));
-    assert!(report.contains("Записи по уровням"));
-    assert!(report.contains("Записи по категориям"));
+    assert!(report.contains("Total number of records"));
+    assert!(report.contains("Entries by level"));
+    assert!(report.contains("Posts by category"));
 }

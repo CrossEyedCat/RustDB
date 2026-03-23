@@ -1,4 +1,4 @@
-//! Дополнительные тесты планировщика и оптимизатора для покрытия веток.
+//! Additional scheduler and optimizer tests for branch coverage.
 
 use crate::common::Result;
 use crate::parser::SqlParser;
@@ -8,9 +8,9 @@ use crate::planner::{ExecutionPlan, PlanNode, QueryOptimizer, QueryPlanner};
 #[test]
 fn test_planner_multiple_sql_variants() -> Result<()> {
     let mut planner = QueryPlanner::new()?;
-    // UPDATE/DELETE: WHERE парсится как `parse_simple_expression()` — только один литерал/идентификатор,
-    // не полноценное сравнение; для Boolean нужен `true`/`false` (см. parser.rs).
-    // SELECT в упрощённом парсере не читает WHERE — условия не добавляем.
+    // UPDATE/DELETE: WHERE is parsed as `parse_simple_expression()` - only one literal/identifier,
+    // not a full comparison; for Boolean you need `true`/`false` (see parser.rs).
+    // SELECT in the simplified parser does not read WHERE - we do not add conditions.
     let sqls = [
         "SELECT * FROM users",
         "SELECT name FROM users",

@@ -1,6 +1,6 @@
-//! E2E-бенчмарки RustDB с реальным выполнением
+//! RustDB end-to-end benchmarks with real execution
 //!
-//! Измеряет полный цикл: парсинг → планирование → выполнение → WAL → диск.
+//! Measures full pipeline: parse → plan → execute → WAL → disk.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rustdb::{
@@ -17,19 +17,19 @@ use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
-/// Парсит RecordId на page_id и offset (совместимо с PageManager)
+/// Parses RecordId into page_id and offset (PageManager-compatible)
 fn parse_record_id(record_id: RecordId) -> (u64, u16) {
     let page_id = record_id >> 32;
     let offset = (record_id & 0xFFFFFFFF) as u16;
     (page_id, offset)
 }
 
-/// Сериализует значения INSERT в байты для PageManager (компактный формат)
+/// Serializes INSERT values to bytes for PageManager (compact format)
 fn serialize_insert_values(values: &[String]) -> Vec<u8> {
     values.join("\t").into_bytes()
 }
 
-/// Выполняет INSERT-план через PageManager и опционально WAL
+/// Runs INSERT plan via PageManager and optional WAL
 async fn execute_insert_e2e(
     sql: &str,
     page_manager: &Mutex<PageManager>,
@@ -369,7 +369,7 @@ fn bench_e2e_select_scan(c: &mut Criterion) {
 
     let (temp_dir, page_manager, rt, wal) = setup_e2e_env(true);
 
-    // Предзаполняем данными
+    // Pre-fill with data
     rt.block_on(async {
         let tx_id = wal
             .as_ref()

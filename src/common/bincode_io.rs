@@ -1,7 +1,7 @@
 //! Bincode helpers using the **legacy** wire format (compatible with bincode 1.x on-disk data).
 //!
-//! Используется [`bincode_next`](https://crates.io/crates/bincode-next) (форк bincode) с
-//! [`bincode_next::config::legacy()`] для serde-сериализации.
+//! Uses [`bincode_next`](https://crates.io/crates/bincode-next) (bincode fork) with
+//! [`bincode_next::config::legacy()`] for serde serialization.
 
 use bincode_next::config::legacy;
 

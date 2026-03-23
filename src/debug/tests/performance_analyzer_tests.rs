@@ -1,4 +1,4 @@
-//! Тесты для анализатора производительности
+//! Performance Analyzer Tests
 
 use crate::debug::performance_analyzer::*;
 use crate::debug::DebugConfig;
@@ -13,7 +13,7 @@ async fn test_performance_analyzer_creation() {
 
     let analyzer = PerformanceAnalyzer::new(&config);
 
-    // Проверяем, что анализатор создался
+    // Checking that the analyzer has been created
     let stats = analyzer.get_stats();
     assert_eq!(stats.total_analyses, 0);
 }
@@ -27,14 +27,14 @@ async fn test_performance_analysis() {
 
     let analyzer = PerformanceAnalyzer::new(&config);
 
-    // Ждем немного, чтобы накопились анализы
+    // We'll wait a little while for the tests to accumulate.
     tokio::time::sleep(Duration::from_millis(1500)).await;
 
-    // Проверяем статистику
+    // Checking the statistics
     let stats = analyzer.get_stats();
     assert!(stats.total_analyses > 0);
 
-    // Проверяем последний анализ
+    // Checking the latest analysis
     let latest_analysis = analyzer.get_latest_analysis();
     assert!(latest_analysis.is_some());
 
@@ -53,17 +53,17 @@ async fn test_bottleneck_detection() {
 
     let analyzer = PerformanceAnalyzer::new(&config);
 
-    // Ждем накопления анализов
+    // We are waiting for the accumulation of tests
     tokio::time::sleep(Duration::from_millis(1500)).await;
 
     let latest_analysis = analyzer.get_latest_analysis();
     assert!(latest_analysis.is_some());
 
     if let Some(analysis) = latest_analysis {
-        // Проверяем, что анализ содержит метрики
+        // Checking that the analysis contains metrics
         assert!(!analysis.metrics.is_empty());
         
-        // Проверяем, что каждая метрика имеет правильную структуру
+        // We check that each metric has the correct structure
         for metric in &analysis.metrics {
             assert!(!metric.name.is_empty());
             assert!(metric.value >= 0.0);
@@ -87,9 +87,9 @@ async fn test_performance_report() {
     tokio::time::sleep(Duration::from_millis(1500)).await;
 
     let report = analyzer.generate_performance_report();
-    assert!(report.contains("Отчет анализа производительности"));
-    assert!(report.contains("Общая статистика"));
-    assert!(report.contains("Рекомендации по улучшению"));
+    assert!(report.contains("Performance Analysis Report"));
+    assert!(report.contains("General statistics"));
+    assert!(report.contains("Recommendations for improvement"));
 }
 
 #[tokio::test]
@@ -104,10 +104,10 @@ async fn test_status_report() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let report = analyzer.generate_status_report();
-    assert!(report.contains("Анализов в памяти"));
-    assert!(report.contains("Метрик в истории"));
-    assert!(report.contains("Всего анализов"));
-    assert!(report.contains("Интервал сбора метрик"));
+    assert!(report.contains("Analyzes in memory"));
+    assert!(report.contains("Metrics in history"));
+    assert!(report.contains("Total analyzes"));
+    assert!(report.contains("Metrics collection interval"));
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn test_metrics_collection() {
     
     assert!(!metrics.is_empty());
     
-    // Проверяем, что все ожидаемые метрики присутствуют
+    // Checking that all expected metrics are present
     let metric_names: std::collections::HashSet<String> = metrics.iter()
         .map(|m| m.name.clone())
         .collect();
@@ -128,7 +128,7 @@ fn test_metrics_collection() {
     assert!(metric_names.contains("cache_hit_ratio"));
     assert!(metric_names.contains("lock_contention"));
     
-    // Проверяем структуру каждой метрики
+    // Checking the structure of each metric
     for metric in &metrics {
         assert!(!metric.name.is_empty());
         assert!(metric.value >= 0.0);
@@ -144,7 +144,7 @@ fn test_bottleneck_detection_critical() {
     let metrics = vec![
         PerformanceMetric {
             name: "cpu_usage".to_string(),
-            value: 95.0, // Критическое значение
+            value: 95.0,
             unit: "%".to_string(),
             timestamp: 1000,
             component: "System".to_string(),
@@ -152,7 +152,7 @@ fn test_bottleneck_detection_critical() {
         },
         PerformanceMetric {
             name: "memory_usage".to_string(),
-            value: 75.0, // Предупреждающее значение
+            value: 75.0,
             unit: "%".to_string(),
             timestamp: 1000,
             component: "System".to_string(),
@@ -178,7 +178,7 @@ fn test_bottleneck_detection_warning() {
     let metrics = vec![
         PerformanceMetric {
             name: "cpu_usage".to_string(),
-            value: 75.0, // Предупреждающее значение
+            value: 75.0,
             unit: "%".to_string(),
             timestamp: 1000,
             component: "System".to_string(),
@@ -186,7 +186,7 @@ fn test_bottleneck_detection_warning() {
         },
         PerformanceMetric {
             name: "memory_usage".to_string(),
-            value: 50.0, // Нормальное значение
+            value: 50.0,
             unit: "%".to_string(),
             timestamp: 1000,
             component: "System".to_string(),
@@ -212,7 +212,7 @@ fn test_bottleneck_detection_normal() {
     let metrics = vec![
         PerformanceMetric {
             name: "cpu_usage".to_string(),
-            value: 50.0, // Нормальное значение
+            value: 50.0,
             unit: "%".to_string(),
             timestamp: 1000,
             component: "System".to_string(),
@@ -220,7 +220,7 @@ fn test_bottleneck_detection_normal() {
         },
         PerformanceMetric {
             name: "memory_usage".to_string(),
-            value: 40.0, // Нормальное значение
+            value: 40.0,
             unit: "%".to_string(),
             timestamp: 1000,
             component: "System".to_string(),
@@ -238,19 +238,19 @@ fn test_bottleneck_detection_normal() {
 fn test_recommendations() {
     let cpu_recommendations = PerformanceAnalyzer::get_recommendations("cpu_usage", SeverityLevel::Critical);
     assert!(!cpu_recommendations.is_empty());
-    assert!(cpu_recommendations.iter().any(|r| r.contains("оптимизируйте")));
+    assert!(cpu_recommendations.iter().any(|r| r.contains("optimize")));
 
     let memory_recommendations = PerformanceAnalyzer::get_recommendations("memory_usage", SeverityLevel::Warning);
     assert!(!memory_recommendations.is_empty());
-    assert!(memory_recommendations.iter().any(|r| r.contains("память")));
+    assert!(memory_recommendations.iter().any(|r| r.contains("memory")));
 
     let cache_recommendations = PerformanceAnalyzer::get_recommendations("cache_hit_ratio", SeverityLevel::Warning);
     assert!(!cache_recommendations.is_empty());
-    assert!(cache_recommendations.iter().any(|r| r.contains("кэш")));
+    assert!(cache_recommendations.iter().any(|r| r.contains("cache")));
 
     let lock_recommendations = PerformanceAnalyzer::get_recommendations("lock_contention", SeverityLevel::Critical);
     assert!(!lock_recommendations.is_empty());
-    assert!(lock_recommendations.iter().any(|r| r.contains("блокировок")));
+    assert!(lock_recommendations.iter().any(|r| r.contains("blocking")));
 }
 
 #[test]

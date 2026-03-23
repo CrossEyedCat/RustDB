@@ -1,23 +1,23 @@
-//! Пример использования индексов rustdb
+//! Example of using rustdb indexes
 //!
-//! Этот пример демонстрирует использование B+ дерева и хеш-индексов
-//! для быстрого поиска данных.
+//! This example demonstrates the use of a B+ tree and hash indexes
+//! for quick data retrieval.
 
 use rustdb::storage::index::{BPlusTree, Index, SimpleHashIndex};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🌳 Пример использования индексов rustdb");
+    println!("🌳 Example of using rustdb indexes");
 
-    // Демонстрация B+ дерева
-    println!("\n📊 B+ дерево:");
+    // B+ tree demo
+    println!("\n📊 B+ tree:");
     btree_example()?;
 
-    // Демонстрация хеш-индекса
-    println!("\n🔗 Хеш-индекс:");
+    // Hash Index Demonstration
+    println!("\n🔗 Hash index:");
     hash_index_example()?;
 
-    // Сравнение производительности
-    println!("\n⚡ Сравнение производительности:");
+    // Performance Comparison
+    println!("\n⚡ Performance comparison:");
     performance_comparison()?;
 
     Ok(())
@@ -26,36 +26,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn btree_example() -> Result<(), Box<dyn std::error::Error>> {
     let mut btree: BPlusTree<i32, String> = BPlusTree::new_default();
 
-    // Вставляем данные
-    println!("Вставляем данные в B+ дерево...");
+    // Inserting data
+    println!("Inserting data into a B+ tree...");
     for i in [5, 2, 8, 1, 9, 3, 7, 4, 6] {
-        btree.insert(i, format!("Значение {}", i))?;
+        btree.insert(i, format!("Meaning {}", i))?;
     }
 
-    println!("Размер дерева: {} элементов", btree.size());
+    println!("Tree size: {} elements", btree.size());
 
-    // Поиск отдельных элементов
-    println!("Поиск элементов:");
+    // Search for individual elements
+    println!("Search for elements:");
     for key in [1, 5, 9, 10] {
         match btree.search(&key)? {
-            Some(value) => println!("  Ключ {}: {}", key, value),
-            None => println!("  Ключ {} не найден", key),
+            Some(value) => println!("Key {}: {}", key, value),
+            None => println!("Key {} not found", key),
         }
     }
 
-    // Диапазонный поиск
-    println!("Диапазонный поиск (3-7):");
+    // Range search
+    println!("Range search (3-7):");
     let range_results = btree.range_search(&3, &7)?;
     for (key, value) in range_results {
         println!("  {}: {}", key, value);
     }
 
-    // Статистика
+    // Statistics
     let stats = btree.get_statistics();
-    println!("Статистика B+ дерева:");
-    println!("  Операций вставки: {}", stats.insert_operations);
-    println!("  Глубина: {}", stats.depth);
-    println!("  Коэффициент заполнения: {:.2}", stats.fill_factor);
+    println!("B+ tree statistics:");
+    println!("Insert operations: {}", stats.insert_operations);
+    println!("Depth: {}", stats.depth);
+    println!("Fill factor: {:.2}", stats.fill_factor);
 
     Ok(())
 }
@@ -63,8 +63,8 @@ fn btree_example() -> Result<(), Box<dyn std::error::Error>> {
 fn hash_index_example() -> Result<(), Box<dyn std::error::Error>> {
     let mut hash_index: SimpleHashIndex<String, i32> = SimpleHashIndex::new();
 
-    // Вставляем данные
-    println!("Вставляем данные в хеш-индекс...");
+    // Inserting data
+    println!("Inserting data into the hash index...");
     let users = [
         ("alice", 25),
         ("bob", 30),
@@ -77,39 +77,39 @@ fn hash_index_example() -> Result<(), Box<dyn std::error::Error>> {
         hash_index.insert(name.to_string(), age)?;
     }
 
-    println!("Размер индекса: {} элементов", hash_index.size());
+    println!("Index size: {} elements", hash_index.size());
 
-    // Поиск элементов
-    println!("Поиск пользователей:");
+    // Search for elements
+    println!("Search for users:");
     for name in ["alice", "bob", "frank"] {
         match hash_index.search(&name.to_string())? {
-            Some(age) => println!("  {}: {} лет", name, age),
-            None => println!("  {} не найден", name),
+            Some(age) => println!("{}: {} years", name, age),
+            None => println!("{} not found", name),
         }
     }
 
-    // Удаление элемента
-    println!("Удаляем пользователя 'charlie'...");
+    // Removing an element
+    println!("Deleting user 'charlie'...");
     if hash_index.delete(&"charlie".to_string())? {
-        println!("  Пользователь удален");
+        println!("User deleted");
     }
 
-    println!("Размер после удаления: {} элементов", hash_index.size());
+    println!("Size after removal: {} elements", hash_index.size());
 
-    // Обновление значения
-    println!("Обновляем возраст Alice...");
+    // Update value
+    println!("Update Alice's age...");
     hash_index.insert("alice".to_string(), 26)?;
 
     if let Some(age) = hash_index.search(&"alice".to_string())? {
-        println!("  Новый возраст Alice: {} лет", age);
+        println!("Alice's new age: {} years", age);
     }
 
-    // Статистика
+    // Statistics
     let stats = hash_index.get_statistics();
-    println!("Статистика хеш-индекса:");
-    println!("  Операций вставки: {}", stats.insert_operations);
-    println!("  Операций удаления: {}", stats.delete_operations);
-    println!("  Коэффициент заполнения: {:.2}", stats.fill_factor);
+    println!("Hash index statistics:");
+    println!("Insert operations: {}", stats.insert_operations);
+    println!("Delete operations: {}", stats.delete_operations);
+    println!("Fill factor: {:.2}", stats.fill_factor);
 
     Ok(())
 }
@@ -119,7 +119,7 @@ fn performance_comparison() -> Result<(), Box<dyn std::error::Error>> {
 
     const N: i32 = 10000;
 
-    // Тестируем B+ дерево
+    // Testing the B+ tree
     let mut btree: BPlusTree<i32, String> = BPlusTree::new_default();
     let start = Instant::now();
 
@@ -135,7 +135,7 @@ fn performance_comparison() -> Result<(), Box<dyn std::error::Error>> {
     }
     let btree_search_time = start.elapsed();
 
-    // Тестируем хеш-индекс
+    // Testing the hash index
     let mut hash_index: SimpleHashIndex<i32, String> = SimpleHashIndex::with_capacity(N as usize);
     let start = Instant::now();
 
@@ -151,28 +151,28 @@ fn performance_comparison() -> Result<(), Box<dyn std::error::Error>> {
     }
     let hash_search_time = start.elapsed();
 
-    println!("Результаты для {} элементов:", N);
-    println!("B+ дерево:");
-    println!("  Время вставки: {:?}", btree_insert_time);
-    println!("  Время поиска: {:?}", btree_search_time);
-    println!("  Глубина: {}", btree.get_statistics().depth);
+    println!("Results for {} elements:", N);
+    println!("B+ tree:");
+    println!("Insertion time: {:?}", btree_insert_time);
+    println!("Search time: {:?}", btree_search_time);
+    println!("Depth: {}", btree.get_statistics().depth);
 
-    println!("Хеш-индекс:");
-    println!("  Время вставки: {:?}", hash_insert_time);
-    println!("  Время поиска: {:?}", hash_search_time);
+    println!("Hash index:");
+    println!("Insertion time: {:?}", hash_insert_time);
+    println!("Search time: {:?}", hash_search_time);
     println!(
-        "  Коэффициент заполнения: {:.2}",
+        "Fill factor: {:.2}",
         hash_index.get_statistics().fill_factor
     );
 
-    println!("\nВыводы:");
+    println!("\nConclusions:");
     if hash_search_time < btree_search_time {
-        println!("  ✅ Хеш-индекс быстрее для поиска отдельных элементов");
+        println!("✅ Hash index is faster for searching individual elements");
     } else {
-        println!("  ✅ B+ дерево конкурентоспособно для поиска");
+        println!("✅ B+ tree is competitive for search");
     }
-    println!("  📊 B+ дерево поддерживает диапазонные запросы");
-    println!("  🔗 Хеш-индекс оптимален для точного поиска");
+    println!("📊 B+ tree supports range queries");
+    println!("🔗 Hash index is optimal for precise searches");
 
     Ok(())
 }

@@ -1,4 +1,4 @@
-//! Тесты для проверщика существования объектов
+//! Tests for the Object Existence Checker
 
 use crate::analyzer::object_checker::{ObjectMetadata, ObjectType};
 use crate::analyzer::ObjectChecker;
@@ -41,7 +41,7 @@ fn test_index_existence_check() -> Result<()> {
     let mut checker = ObjectChecker::new();
     let result = checker.check_index_exists("idx_users_email", &())?;
 
-    // В тестовом режиме индексы не существуют
+    // In test mode, indexes do not exist
     assert!(!result.exists);
     assert_eq!(result.object_type, ObjectType::Index);
 
@@ -52,11 +52,11 @@ fn test_index_existence_check() -> Result<()> {
 fn test_cache_functionality() -> Result<()> {
     let mut checker = ObjectChecker::new();
 
-    // Первый вызов - добавляет в кэш
+    // First call - adds to cache
     let result1 = checker.check_table_exists("test_table", &())?;
     assert!(result1.exists);
 
-    // Второй вызов - должен использовать кэш
+    // Second call - must use cache
     let result2 = checker.check_table_exists("test_table", &())?;
     assert!(result2.exists);
 
@@ -70,13 +70,13 @@ fn test_cache_functionality() -> Result<()> {
 fn test_cache_disable() -> Result<()> {
     let mut checker = ObjectChecker::new();
 
-    // Отключаем кэш
+    // Disable cache
     checker.set_cache_enabled(false);
 
-    // Выполняем проверку
+    // Performing a check
     let _result = checker.check_table_exists("test_table", &())?;
 
-    // Кэш должен быть пуст
+    // The cache must be empty
     let (cache_size, cache_enabled) = checker.cache_statistics();
     assert_eq!(cache_size, 0);
     assert!(!cache_enabled);
@@ -88,14 +88,14 @@ fn test_cache_disable() -> Result<()> {
 fn test_cache_clear() -> Result<()> {
     let mut checker = ObjectChecker::new();
 
-    // Добавляем записи в кэш
+    // Adding entries to the cache
     let _result1 = checker.check_table_exists("table1", &())?;
     let _result2 = checker.check_table_exists("table2", &())?;
 
     let (cache_size_before, _) = checker.cache_statistics();
     assert!(cache_size_before > 0);
 
-    // Очищаем кэш
+    // Clearing the cache
     checker.clear_cache();
 
     let (cache_size_after, _) = checker.cache_statistics();

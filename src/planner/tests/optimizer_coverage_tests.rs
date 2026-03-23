@@ -1,4 +1,4 @@
-//! Дополнительное покрытие веток `optimizer.rs` (reorder, index registry, filter/join).
+//! Additional coverage of `optimizer.rs` branches (reorder, index registry, filter/join).
 
 use crate::common::Result;
 use crate::parser::SqlParser;
@@ -38,7 +38,7 @@ fn table_scan(name: &str, cost: f64, filter: Option<String>) -> PlanNode {
 #[test]
 fn test_optimizer_join_reorder_swaps_heavy_left() -> Result<()> {
     let mut opt = QueryOptimizer::new()?;
-    // Правая ветка дешевле — reorder_joins_recursive меняет местами left/right
+    // The right branch is cheaper - reorder_joins_recursive swaps left/right
     let join = PlanNode::Join(JoinNode {
         join_type: JoinType::Inner,
         condition: "a.id=b.id".into(),

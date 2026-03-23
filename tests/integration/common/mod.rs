@@ -1,4 +1,4 @@
-//! Общие утилиты для интеграционных тестов
+//! Common utilities for integration tests
 
 use rustdb::{
     common::{types::*, Error, Result},
@@ -13,7 +13,7 @@ use rustdb::{
 use std::sync::Arc;
 use tempfile::TempDir;
 
-/// Конфигурация для интеграционных тестов
+// / Configuration for integration tests
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct IntegrationTestConfig {
@@ -26,10 +26,10 @@ pub struct IntegrationTestConfig {
 }
 
 impl IntegrationTestConfig {
-    /// Создает новую конфигурацию для тестов
+    // / Creates a new configuration for tests
     pub fn new() -> Result<Self> {
         let temp_dir = TempDir::new().map_err(|e| {
-            Error::internal(format!("Не удалось создать временную директорию: {}", e))
+            Error::internal(format!("Failed to create temporary directory: {}", e))
         })?;
 
         let database_path = temp_dir
@@ -54,7 +54,7 @@ impl IntegrationTestConfig {
     }
 }
 
-/// Контекст интеграционного теста
+// / Integration test context
 #[allow(dead_code)]
 pub struct IntegrationTestContext {
     pub config: IntegrationTestConfig,
@@ -70,24 +70,24 @@ pub struct IntegrationTestContext {
     pub planner: QueryPlanner,
     pub optimizer: QueryOptimizer,
     pub prepared_cache: PreparedStatementCache,
-    // Счетчик для имитации данных
+    // Counter for data simulation
     pub inserted_records: std::collections::HashMap<String, usize>,
-    // Флаг обновления данных для симуляции
+    // Simulation Data Update Flag
     pub updated_tables: std::collections::HashSet<String>,
 }
 
 impl IntegrationTestContext {
-    /// Создает новый контекст для интеграционного теста
+    // / Creates a new context for the integration test
     pub async fn new() -> Result<Self> {
         let config = IntegrationTestConfig::new()?;
 
-        // Создаем директории
+        // Creating directories
         std::fs::create_dir_all(&config.database_path)
-            .map_err(|e| Error::internal(format!("Не удалось создать директорию БД: {}", e)))?;
+            .map_err(|e| Error::internal(format!("Failed to create database directory: {}", e)))?;
         std::fs::create_dir_all(&config.log_path)
-            .map_err(|e| Error::internal(format!("Не удалось создать директорию логов: {}", e)))?;
+            .map_err(|e| Error::internal(format!("Failed to create log directory: {}", e)))?;
 
-        // Инициализируем компоненты
+        // Initializing components
         let file_manager = Arc::new(FileManager::new(&config.database_path)?);
         let page_manager = Arc::new(PageManager::new(
             std::path::PathBuf::from(&config.database_path),
@@ -105,7 +105,7 @@ impl IntegrationTestContext {
             log_writer.clone(),
         ));
 
-        // Создаем AcidManager с правильными параметрами
+        // Creating AcidManager with the correct parameters
         let acid_config = rustdb::core::acid_manager::AcidConfig::default();
         let lock_manager = Arc::new(rustdb::core::lock::LockManager::new()?);
         let wal = Arc::new(rustdb::logging::wal::WriteAheadLog::new(Default::default()).await?);
@@ -140,13 +140,13 @@ impl IntegrationTestContext {
         })
     }
 
-    /// Выполняет SQL запрос в контексте транзакции
+    // / Executes an SQL query in the context of a transaction
     pub async fn execute_sql(&mut self, sql: &str) -> Result<Vec<Vec<ColumnValue>>> {
-        // Парсим SQL
+        // Parse SQL
         let mut parser = SqlParser::new(sql)?;
         let statement = parser.parse()?;
 
-        // Обработка PREPARE и EXECUTE
+        // PREPARE and EXECUTE processing
         let statement = match statement {
             SqlStatement::Prepare(prepare_stmt) => {
                 self.prepared_cache.prepare(prepare_stmt)?;
@@ -160,32 +160,32 @@ impl IntegrationTestContext {
 
         match statement {
             SqlStatement::Select(ref select_stmt) => {
-                // Планируем запрос
+                // Planning a request
                 let plan = self.planner.create_plan(&statement)?;
 
-                // Оптимизируем план
+                // Optimizing the plan
                 let _optimized_plan = self.optimizer.optimize(plan)?;
 
-                // Имитация результата для тестов - возвращаем количество записей
+                // Simulating the result for tests - returning the number of records
                 if let Some(from) = &select_stmt.from {
                     let table_name = match &from.table {
                         rustdb::parser::ast::TableReference::Table { name, .. } => name,
                         _ => "unknown",
                     };
 
-                    // Проверяем существование таблицы для тестов
+                    // Checking the existence of a table for tests
                     if !self.inserted_records.contains_key(table_name)
                         && !self.updated_tables.contains(table_name)
                     {
                         return Err(Error::internal(format!(
-                            "Таблица '{}' не существует",
+                            "Table '{}' does not exist",
                             table_name
                         )));
                     }
 
                     let count = self.inserted_records.get(table_name).copied().unwrap_or(0);
 
-                    // Для SELECT * возвращаем количество записей как строки с 4 колонками
+                    // For SELECT * we return the number of records as rows with 4 columns
                     let is_updated = self.updated_tables.contains(table_name);
                     for i in 0..count {
                         results.push(vec![
@@ -196,66 +196,66 @@ impl IntegrationTestContext {
                         ]);
                     }
                 } else {
-                    // Для SELECT без FROM (например, SELECT 1)
+                    // For SELECT without FROM (for example, SELECT 1)
                     results.push(vec![ColumnValue::new(DataType::Integer(1))]);
                 }
             }
             SqlStatement::Insert(ref insert_stmt) => {
-                // Планируем запрос
+                // Planning a request
                 let plan = self.planner.create_plan(&statement)?;
 
-                // Оптимизируем план
+                // Optimizing the plan
                 let _optimized_plan = self.optimizer.optimize(plan)?;
 
-                // Имитация успешного выполнения - увеличиваем счетчик
+                // Simulating successful execution - increasing the counter
                 let table_name = &insert_stmt.table;
                 *self.inserted_records.entry(table_name.clone()).or_insert(0) += 1;
             }
             SqlStatement::Update(ref update_stmt) => {
-                // Планируем запрос
+                // Planning a request
                 let plan = self.planner.create_plan(&statement)?;
 
-                // Оптимизируем план
+                // Optimizing the plan
                 let _optimized_plan = self.optimizer.optimize(plan)?;
 
-                // Имитация успешного выполнения - отмечаем что данные обновлены
+                // Simulate successful execution - note that the data has been updated
                 let table_name = &update_stmt.table;
                 self.updated_tables.insert(table_name.clone());
-                // Для тестов обновления, мы будем симулировать что данные изменились
-                // В реальной системе здесь была бы логика обновления записей
+                // For update tests, we will simulate that the data has changed
+                // In a real system there would be logic for updating records here
             }
             SqlStatement::Delete(ref delete_stmt) => {
-                // Планируем запрос
+                // Planning a request
                 let plan = self.planner.create_plan(&statement)?;
 
-                // Оптимизируем план
+                // Optimizing the plan
                 let _optimized_plan = self.optimizer.optimize(plan)?;
 
-                // Имитация успешного выполнения - сбрасываем счетчик
+                // Simulation of successful execution - reset the counter
                 let table_name = &delete_stmt.table;
                 self.inserted_records.insert(table_name.clone(), 0);
             }
             SqlStatement::CreateTable(ref create_stmt) => {
-                // Создаем схему таблицы
-                // Имитация создания таблицы
+                // Creating a table schema
+                // Simulating table creation
                 println!("Creating table: {:?}", create_stmt);
             }
             SqlStatement::CreateIndex(ref create_idx) => {
-                // Имитация создания индекса
+                // Simulating index creation
                 println!("Creating index: {:?}", create_idx);
             }
             SqlStatement::Prepare(_) | SqlStatement::Execute(_) => {
                 unreachable!("handled above")
             }
             _ => {
-                return Err(Error::internal("Неподдерживаемый тип запроса"));
+                return Err(Error::internal("Unsupported request type"));
             }
         }
 
         Ok(results)
     }
 
-    /// Создает тестовую таблицу
+    // / Creates a test table
     pub async fn create_test_table(&mut self, table_name: &str) -> Result<()> {
         let sql = format!(
             "CREATE TABLE {} (id INTEGER, name VARCHAR(100), age INTEGER, email VARCHAR(255))",
@@ -266,7 +266,7 @@ impl IntegrationTestContext {
         Ok(())
     }
 
-    /// Вставляет тестовые данные
+    // / Inserts test data
     pub async fn insert_test_data(&mut self, table_name: &str, count: usize) -> Result<()> {
         for i in 1..=count {
             let sql = format!(
@@ -281,19 +281,19 @@ impl IntegrationTestContext {
     }
 }
 
-/// Утилиты для создания тестовых данных
+// / Utilities for creating test data
 pub mod test_data {
     use super::*;
 
-    /// Создает тестовую базу данных с таблицами и данными
+    // / Creates a test database with tables and data
     #[allow(dead_code)]
     pub async fn setup_test_database(ctx: &mut IntegrationTestContext) -> Result<()> {
-        // Создаем таблицы
+        // Creating tables
         ctx.create_test_table("users").await?;
         ctx.create_test_table("orders").await?;
         ctx.create_test_table("products").await?;
 
-        // Вставляем тестовые данные
+        // Inserting test data
         ctx.insert_test_data("users", 100).await?;
         ctx.insert_test_data("orders", 50).await?;
         ctx.insert_test_data("products", 25).await?;
@@ -301,7 +301,7 @@ pub mod test_data {
         Ok(())
     }
 
-    /// Создает таблицу для тестов производительности
+    // / Creates a table for performance tests
     #[allow(dead_code)]
     pub async fn setup_performance_test_table(ctx: &mut IntegrationTestContext) -> Result<()> {
         let sql = "CREATE TABLE perf_test (
@@ -313,7 +313,7 @@ pub mod test_data {
 
         ctx.execute_sql(sql).await?;
 
-        // Вставляем большое количество данных
+        // Inserting a large amount of data
         for i in 1..=10000 {
             let sql = format!(
                 "INSERT INTO perf_test (id, data, timestamp, value) VALUES ({}, 'Data{}', {}, {})",
@@ -333,11 +333,11 @@ pub mod test_data {
     }
 }
 
-/// Утилиты для измерения производительности
+// / Utilities for measuring performance
 pub mod performance {
     use std::time::{Duration, Instant};
 
-    /// Измеряет время выполнения функции
+    // / Measures the execution time of a function
     #[allow(dead_code)]
     pub fn measure_time<F, R>(f: F) -> (R, Duration)
     where
@@ -349,7 +349,7 @@ pub mod performance {
         (result, duration)
     }
 
-    /// Измеряет время выполнения асинхронной функции
+    // / Measures the execution time of an asynchronous function
     #[allow(dead_code)]
     pub async fn measure_time_async<F, Fut, R>(f: F) -> (R, Duration)
     where
@@ -362,7 +362,7 @@ pub mod performance {
         (result, duration)
     }
 
-    /// Статистика производительности
+    // / Performance Statistics
     #[derive(Debug, Clone)]
     #[allow(dead_code)]
     pub struct PerformanceStats {
@@ -375,7 +375,7 @@ pub mod performance {
     }
 
     impl PerformanceStats {
-        /// Создает статистику из списка измерений
+        // / Creates statistics from a list of dimensions
         #[allow(dead_code)]
         pub fn from_measurements(measurements: &[Duration]) -> Self {
             if measurements.is_empty() {
@@ -410,16 +410,16 @@ pub mod performance {
             }
         }
 
-        /// Выводит статистику в удобном формате
+        // / Displays statistics in a convenient format
         #[allow(dead_code)]
         pub fn print_summary(&self, test_name: &str) {
             println!("=== {} ===", test_name);
-            println!("Операций: {}", self.operation_count);
-            println!("Общее время: {:?}", self.total_duration);
-            println!("Минимальное время: {:?}", self.min_duration);
-            println!("Максимальное время: {:?}", self.max_duration);
-            println!("Среднее время: {:?}", self.avg_duration);
-            println!("Операций в секунду: {:.2}", self.operations_per_second);
+            println!("Operations: {}", self.operation_count);
+            println!("Total time: {:?}", self.total_duration);
+            println!("Minimum time: {:?}", self.min_duration);
+            println!("Maximum time: {:?}", self.max_duration);
+            println!("Average time: {:?}", self.avg_duration);
+            println!("Operations per second: {:.2}", self.operations_per_second);
             println!();
         }
     }

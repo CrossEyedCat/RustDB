@@ -1,9 +1,9 @@
-# Codecov — конфигурация репозитория
-# Документация: https://docs.codecov.com/docs/codecov-yaml
-# Проверка YAML: curl --data-binary @codecov.yml https://codecov.io/validate
+# Codecov repository configuration
+# Documentation: https://docs.codecov.com/docs/codecov-yaml
+# Validate YAML: curl --data-binary @codecov.yml https://codecov.io/validate
 
 codecov:
-  # Не блокировать обработку отчёта, если другие проверки CI ещё не прошли
+  # Do not block report processing if other CI checks have not completed.
   require_ci_to_pass: false
 
 coverage:

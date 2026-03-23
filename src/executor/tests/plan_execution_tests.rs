@@ -1,4 +1,4 @@
-//! Покрытие `QueryExecutor::execute` для всех поддерживаемых узлов плана.
+//! Coverage of `QueryExecutor::execute` for all supported plan nodes.
 
 use super::common;
 use crate::executor::{QueryExecutor, QueryExecutorConfig};

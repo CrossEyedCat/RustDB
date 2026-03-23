@@ -1,4 +1,4 @@
-//! Тесты для модуля каталога
+//! Tests for the catalog module
 
 pub mod access_tests;
 pub mod schema_tests;

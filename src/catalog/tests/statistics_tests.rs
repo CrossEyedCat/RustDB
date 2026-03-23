@@ -1,4 +1,4 @@
-//! Тесты для менеджера статистики
+//! Tests for the statistics manager
 
 use crate::catalog::statistics::{
     ColumnStatistics, ColumnValue, HistogramBucket, StatisticsManager, StatisticsSettings,
@@ -50,7 +50,7 @@ fn test_table_statistics_collection() {
 fn test_column_statistics_creation() {
     let manager = StatisticsManager::new().unwrap();
 
-    // Тестируем создание статистики для колонки id
+    // Testing the creation of statistics for the id column
     let id_stats = manager.create_column_statistics("id", 10000, 0, 1, 10000);
     assert_eq!(id_stats.column_name, "id");
     assert_eq!(id_stats.distinct_values, 10000);
@@ -60,10 +60,10 @@ fn test_column_statistics_creation() {
 
     match id_stats.value_distribution {
         ValueDistribution::Uniform { step } => assert_eq!(step, 1.0),
-        _ => panic!("Ожидалось равномерное распределение для id"),
+        _ => panic!("Uniform distribution expected for id"),
     }
 
-    // Тестируем создание статистики для колонки age
+    // Testing the creation of statistics for the age column
     let age_stats = manager.create_column_statistics("age", 100, 0, 18, 65);
     assert_eq!(age_stats.column_name, "age");
     assert_eq!(age_stats.distinct_values, 100);
@@ -75,7 +75,7 @@ fn test_column_statistics_creation() {
             assert_eq!(mean, 35.0);
             assert_eq!(std_dev, 10.0);
         }
-        _ => panic!("Ожидалось нормальное распределение для age"),
+        _ => panic!("Normal distribution for age was expected"),
     }
 }
 
@@ -84,7 +84,7 @@ fn test_selectivity_estimation() {
     let mut manager = StatisticsManager::new().unwrap();
     manager.collect_table_statistics("users").unwrap();
 
-    // Тестируем оценку селективности для различных операторов
+    // Testing selectivity assessment for various operators
     let selectivity_eq = manager.estimate_selectivity("users", "id", "=").unwrap();
     assert!(selectivity_eq > 0.0);
     assert!(selectivity_eq <= 1.0);
@@ -115,7 +115,7 @@ fn test_result_rows_estimation() {
     let mut manager = StatisticsManager::new().unwrap();
     manager.collect_table_statistics("users").unwrap();
 
-    // Тестируем оценку количества строк результата
+    // Testing the estimate of the number of result lines
     let rows_eq = manager.estimate_result_rows("users", "id", "=").unwrap();
     assert!(rows_eq > 0);
     assert!(rows_eq <= 10000);
@@ -124,7 +124,7 @@ fn test_result_rows_estimation() {
     assert!(rows_range > 0);
     assert!(rows_range <= 10000);
 
-    // Тестируем случай с несуществующей таблицей
+    // Testing the case with a non-existent table
     let rows_unknown = manager
         .estimate_result_rows("unknown_table", "id", "=")
         .unwrap();
@@ -135,16 +135,16 @@ fn test_result_rows_estimation() {
 fn test_statistics_update() {
     let mut manager = StatisticsManager::new().unwrap();
 
-    // Собираем статистику
+    // Collecting statistics
     let stats1 = manager.collect_table_statistics("users").unwrap();
     let last_updated1 = stats1.last_updated;
 
-    // Обновляем статистику
+    // Update statistics
     manager.update_table_statistics("users").unwrap();
     let stats2 = manager.get_table_statistics("users").unwrap();
     let last_updated2 = stats2.last_updated;
 
-    // Время обновления должно измениться
+    // Update time should change
     assert!(last_updated2 > last_updated1);
 }
 
@@ -152,18 +152,18 @@ fn test_statistics_update() {
 fn test_statistics_cache() {
     let mut manager = StatisticsManager::new().unwrap();
 
-    // Собираем статистику для нескольких таблиц
+    // Collecting statistics for several tables
     manager.collect_table_statistics("users").unwrap();
     manager.collect_table_statistics("orders").unwrap();
 
-    // Проверяем, что статистика сохранена в кэше
+    // Checking that the statistics are saved in the cache
     assert!(manager.get_table_statistics("users").is_some());
     assert!(manager.get_table_statistics("orders").is_some());
 
-    // Очищаем кэш
+    // Clearing the cache
     manager.clear_cache();
 
-    // Проверяем, что кэш очищен
+    // Checking that the cache is cleared
     assert!(manager.get_table_statistics("users").is_none());
     assert!(manager.get_table_statistics("orders").is_none());
 }
@@ -173,7 +173,7 @@ fn test_statistics_settings_update() {
     let mut manager = StatisticsManager::new().unwrap();
     let original_settings = manager.settings().clone();
 
-    // Создаем новые настройки
+    // Creating new settings
     let new_settings = StatisticsSettings {
         auto_update: false,
         update_interval_seconds: 1800,
@@ -181,10 +181,10 @@ fn test_statistics_settings_update() {
         enable_debug_logging: true,
     };
 
-    // Обновляем настройки
+    // Updating the settings
     manager.update_settings(new_settings.clone());
 
-    // Проверяем, что настройки обновились
+    // Checking that the settings have been updated
     assert_eq!(manager.settings().auto_update, new_settings.auto_update);
     assert_eq!(
         manager.settings().update_interval_seconds,
@@ -199,7 +199,7 @@ fn test_statistics_settings_update() {
         new_settings.enable_debug_logging
     );
 
-    // Проверяем, что настройки отличаются от исходных
+    // Checking that the settings differ from the original ones
     assert_ne!(
         manager.settings().auto_update,
         original_settings.auto_update
@@ -214,31 +214,31 @@ fn test_statistics_settings_update() {
 fn test_should_update_statistics() {
     let mut manager = StatisticsManager::new().unwrap();
 
-    // По умолчанию auto_update = true
+    // Default auto_update = true
     assert!(manager.settings().auto_update);
 
-    // Сразу после создания не должно требовать обновления
+    // Immediately after creation it should not require updating
     assert!(!manager.should_update_statistics());
 
-    // Отключаем автообновление
+    // Disable auto-update
     let settings = StatisticsSettings {
         auto_update: false,
         ..Default::default()
     };
     manager.update_settings(settings);
 
-    // При отключенном автообновлении не должно требовать обновления
+    // When auto-update is disabled, it should not require an update
     assert!(!manager.should_update_statistics());
 }
 
 #[test]
 fn test_value_distribution_variants() {
-    // Тестируем все варианты распределения значений
+    // We test all variants of value distribution
 
     let uniform = ValueDistribution::Uniform { step: 2.5 };
     match uniform {
         ValueDistribution::Uniform { step } => assert_eq!(step, 2.5),
-        _ => panic!("Ожидалось равномерное распределение"),
+        _ => panic!("Uniform distribution expected"),
     }
 
     let normal = ValueDistribution::Normal {
@@ -250,7 +250,7 @@ fn test_value_distribution_variants() {
             assert_eq!(mean, 42.0);
             assert_eq!(std_dev, 5.0);
         }
-        _ => panic!("Ожидалось нормальное распределение"),
+        _ => panic!("Normal distribution expected"),
     }
 
     let histogram = ValueDistribution::Histogram {
@@ -269,47 +269,47 @@ fn test_value_distribution_variants() {
             assert_eq!(buckets[0].count, 100);
             assert_eq!(buckets[0].distinct_count, 50);
         }
-        _ => panic!("Ожидалась гистограмма"),
+        _ => panic!("Histogram expected"),
     }
 
     let unknown = ValueDistribution::Unknown;
     match unknown {
         ValueDistribution::Unknown => (), // OK
-        _ => panic!("Ожидалось неизвестное распределение"),
+        _ => panic!("Unknown distribution expected"),
     }
 }
 
 #[test]
 fn test_column_value_variants() {
-    // Тестируем все варианты значений колонок
+    // Testing all variants of column values
 
     let int_val = ColumnValue::Integer(42);
     match int_val {
         ColumnValue::Integer(val) => assert_eq!(val, 42),
-        _ => panic!("Ожидалось целое число"),
+        _ => panic!("Integer expected"),
     }
 
     let float_val = ColumnValue::Float(3.14);
     match float_val {
         ColumnValue::Float(val) => assert_eq!(val, 3.14),
-        _ => panic!("Ожидалось число с плавающей точкой"),
+        _ => panic!("Floating point number expected"),
     }
 
     let string_val = ColumnValue::String("test".to_string());
     match string_val {
         ColumnValue::String(val) => assert_eq!(val, "test"),
-        _ => panic!("Ожидалась строка"),
+        _ => panic!("String expected"),
     }
 
     let bool_val = ColumnValue::Boolean(true);
     match bool_val {
         ColumnValue::Boolean(val) => assert_eq!(val, true),
-        _ => panic!("Ожидалось булево значение"),
+        _ => panic!("Boolean value expected"),
     }
 
     let null_val = ColumnValue::Null;
     match null_val {
         ColumnValue::Null => (), // OK
-        _ => panic!("Ожидалось NULL значение"),
+        _ => panic!("Expected NULL value"),
     }
 }

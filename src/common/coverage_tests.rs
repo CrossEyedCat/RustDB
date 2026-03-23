@@ -1,4 +1,4 @@
-//! Дополнительные unit-тесты для повышения покрытия (ошибки, конфиг, типы).
+//! Additional unit tests to increase coverage (errors, config, types).
 
 use crate::common::config::{
     DatabaseConfig, LoggingConfig, NetworkConfig, PerformanceConfig, StorageConfig,

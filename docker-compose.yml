@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # Основной сервис RustDB
+  # Primary RustDB service
   rustdb:
     build:
       context: .
@@ -31,7 +31,7 @@ services:
       retries: 3
       start_period: 40s
 
-  # Redis для кэширования
+  # Redis for caching
   redis:
     image: redis:7-alpine
     container_name: rustdb-redis
@@ -44,7 +44,7 @@ services:
     restart: unless-stopped
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
 
-  # Prometheus для мониторинга
+  # Prometheus for metrics
   prometheus:
     image: prom/prometheus:latest
     container_name: rustdb-prometheus
@@ -64,7 +64,7 @@ services:
       - '--storage.tsdb.retention.time=200h'
       - '--web.enable-lifecycle'
 
-  # Grafana для визуализации
+  # Grafana for dashboards
   grafana:
     image: grafana/grafana:latest
     container_name: rustdb-grafana
@@ -81,7 +81,7 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin123
       - GF_USERS_ALLOW_SIGN_UP=false
 
-  # Nginx для load balancing
+  # Nginx for load balancing
   nginx:
     image: nginx:alpine
     container_name: rustdb-nginx
@@ -97,7 +97,7 @@ services:
     depends_on:
       - rustdb
 
-  # Jaeger для трассировки
+  # Jaeger for tracing
   jaeger:
     image: jaegertracing/all-in-one:latest
     container_name: rustdb-jaeger

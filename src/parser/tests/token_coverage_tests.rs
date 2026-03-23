@@ -1,4 +1,4 @@
-//! Покрытие `token.rs`: Position, Token, все варианты `TokenType`, `keyword_map`.
+//! Coverage `token.rs`: Position, Token, all variants of `TokenType`, `keyword_map`.
 
 use crate::parser::token::{keyword_map, Position, Token, TokenType};
 
@@ -20,7 +20,7 @@ fn test_token_display() {
     assert!(d.contains("SELECT"));
 }
 
-/// Вызывает `Display`, `is_keyword`, `is_literal`, `is_operator`, `is_delimiter`, `should_skip`, `precedence` для каждого варианта.
+// / Calls `Display`, `is_keyword`, `is_literal`, `is_operator`, `is_delimiter`, `should_skip`, `precedence` for each option.
 #[test]
 fn test_token_type_all_variants_exercised() {
     macro_rules! exercise {

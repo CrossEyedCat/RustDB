@@ -1,4 +1,4 @@
-//! Тесты для кэша метаданных
+//! Metadata Cache Tests
 
 use crate::analyzer::metadata_cache::{CacheData, CacheSettings, ColumnInfo, EvictionStrategy};
 use crate::analyzer::MetadataCache;
@@ -26,15 +26,15 @@ fn test_cache_basic_operations() {
         exists: true,
     };
 
-    // Добавляем запись
+    // Adding an entry
     cache.put("test_key".to_string(), data);
     assert!(cache.contains("test_key"));
 
-    // Получаем запись
+    // We receive the recording
     let retrieved = cache.get("test_key");
     assert!(retrieved.is_some());
 
-    // Удаляем запись
+    // Deleting an entry
     assert!(cache.remove("test_key"));
     assert!(!cache.contains("test_key"));
 }
@@ -50,13 +50,13 @@ fn test_cache_statistics() {
         exists: true,
     };
 
-    // Добавляем запись
+    // Adding an entry
     cache.put("test_key".to_string(), data);
 
-    // Попадание в кэш
+    // Hit the cache
     cache.get("test_key");
 
-    // Промах кэша
+    // Cache miss
     cache.get("nonexistent_key");
 
     let (hits, misses) = cache.statistics();
@@ -75,10 +75,10 @@ fn test_disabled_cache() {
         exists: true,
     };
 
-    // Попытка добавить в отключенный кэш
+    // Trying to add to a disabled cache
     cache.put("test_key".to_string(), data);
 
-    // Запись не должна быть добавлена
+    // The entry should not be added
     assert!(!cache.contains("test_key"));
     assert!(cache.get("test_key").is_none());
 }
@@ -102,16 +102,16 @@ fn test_cache_ttl() {
         exists: true,
     };
 
-    // Добавляем запись
+    // Adding an entry
     cache.put("test_key".to_string(), data);
 
-    // Ждем истечения TTL
+    // Waiting for TTL to expire
     std::thread::sleep(Duration::from_millis(2));
 
-    // Выполняем очистку
+    // We carry out cleaning
     cache.cleanup();
 
-    // Запись должна быть удалена
+    // The entry must be deleted
     assert!(!cache.contains("test_key"));
 }
 
@@ -119,10 +119,10 @@ fn test_cache_ttl() {
 fn test_convenience_methods() {
     let mut cache = MetadataCache::new(true);
 
-    // Кэшируем информацию о таблице
+    // Cache information about the table
     cache.cache_table_info("users", Vec::new(), Vec::new(), true);
 
-    // Получаем информацию о таблице
+    // Getting information about the table
     let table_info = cache.get_table_info("users");
     assert!(table_info.is_some());
 
@@ -136,10 +136,10 @@ fn test_convenience_methods() {
 fn test_column_info_caching() {
     let mut cache = MetadataCache::new(true);
 
-    // Кэшируем информацию о колонке
+    // Cache column information
     cache.cache_column_info("users", "name", DataType::Text, false, false, true);
 
-    // Получаем информацию о колонке
+    // Getting information about the column
     let column_info = cache.get_column_info("users", "name");
     assert!(column_info.is_some());
 
@@ -154,10 +154,10 @@ fn test_column_info_caching() {
 fn test_type_check_caching() {
     let mut cache = MetadataCache::new(true);
 
-    // Кэшируем результат проверки типов
+    // Cache the type check result
     cache.cache_type_check("1 + 2", DataType::Integer, true);
 
-    // Получаем результат проверки типов
+    // We get the result of the type check
     let type_check = cache.get_type_check("1 + 2");
     assert!(type_check.is_some());
 
@@ -170,7 +170,7 @@ fn test_type_check_caching() {
 fn test_cache_clear() {
     let mut cache = MetadataCache::new(true);
 
-    // Добавляем несколько записей
+    // Adding multiple entries
     let data = CacheData::TableInfo {
         name: "users".to_string(),
         columns: Vec::new(),
@@ -181,14 +181,14 @@ fn test_cache_clear() {
     cache.put("key1".to_string(), data.clone());
     cache.put("key2".to_string(), data);
 
-    // Проверяем, что записи есть
+    // Checking that there are records
     assert!(cache.contains("key1"));
     assert!(cache.contains("key2"));
 
-    // Очищаем кэш
+    // Clearing the cache
     cache.clear();
 
-    // Проверяем, что кэш пуст
+    // Checking that the cache is empty
     assert!(!cache.contains("key1"));
     assert!(!cache.contains("key2"));
 }
@@ -204,19 +204,19 @@ fn test_cache_enable_disable() {
         exists: true,
     };
 
-    // Добавляем запись в включенный кэш
+    // Adding an entry to the enabled cache
     cache.put("test_key".to_string(), data.clone());
     assert!(cache.contains("test_key"));
 
-    // Отключаем кэш
+    // Disable cache
     cache.set_enabled(false);
     assert!(!cache.is_enabled());
 
-    // Попытка добавить в отключенный кэш
+    // Trying to add to a disabled cache
     cache.put("test_key2".to_string(), data);
     assert!(!cache.contains("test_key2"));
 
-    // Включаем кэш обратно
+    // Turning the cache back on
     cache.set_enabled(true);
     assert!(cache.is_enabled());
 }

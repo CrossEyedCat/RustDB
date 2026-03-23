@@ -1,53 +1,53 @@
-//! Пример использования менеджера страниц rustdb
+//! Example of using rustdb page manager
 //!
-//! Демонстрирует основные возможности PageManager:
-//! - Создание и открытие менеджера страниц
-//! - CRUD операции (вставка, чтение, обновление, удаление)
-//! - Batch операции
-//! - Дефрагментация страниц
-//! - Мониторинг статистики
+//! Demonstrates the main features of PageManager:
+//! - Creating and opening a page manager
+//! - CRUD operations (insert, read, update, delete)
+//! - Batch operations
+//! - Page defragmentation
+//! - Statistics monitoring
 
 use rustdb::storage::page_manager::{PageManager, PageManagerConfig};
 use std::path::Path;
 use tempfile::TempDir;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🗄️  Пример использования PageManager rustdb");
+    println!("🗄️ Example of using PageManager rustdb");
     println!("{}", "=".repeat(50));
 
-    // Создаем временную директорию для примера
+    // Create a temporary directory for example
     let temp_dir = TempDir::new()?;
     let data_dir = temp_dir.path().to_path_buf();
-    println!("📁 Рабочая директория: {:?}", data_dir);
+    println!("📁 Working directory: {:?}", data_dir);
 
-    // Демонстрируем создание PageManager
+    // Demonstrating the creation of PageManager
     demo_create_page_manager(&data_dir)?;
 
-    // Демонстрируем CRUD операции
+    // Demonstrating CRUD operations
     demo_crud_operations(&data_dir)?;
 
-    // Демонстрируем batch операции
+    // Demonstrating batch operations
     demo_batch_operations(&data_dir)?;
 
-    // Демонстрируем дефрагментацию
+    // Demonstrating defragmentation
     demo_defragmentation(&data_dir)?;
 
-    // Демонстрируем открытие существующего менеджера
+    // Demonstrating the opening of an existing manager
     demo_open_existing_manager(&data_dir)?;
 
-    println!("\n✅ Все демонстрации завершены успешно!");
+    println!("\n✅ All demos completed successfully!");
 
     Ok(())
 }
 
-/// Демонстрирует создание PageManager с различными конфигурациями
+// / Demonstrates creating a PageManager with various configurations
 fn demo_create_page_manager(data_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n🔧 Демонстрация создания PageManager");
+    println!("\n🔧 Demonstration of creating a PageManager");
     println!("{}", "-".repeat(30));
 
-    // Создаем менеджер с конфигурацией по умолчанию
+    // Create a manager with default configuration
     let default_config = PageManagerConfig::default();
-    println!("📊 Конфигурация по умолчанию:");
+    println!("📊 Default configuration:");
     println!("   - max_fill_factor: {}", default_config.max_fill_factor);
     println!("   - min_fill_factor: {}", default_config.min_fill_factor);
     println!(
@@ -63,15 +63,15 @@ fn demo_create_page_manager(data_dir: &Path) -> Result<(), Box<dyn std::error::E
     let manager_result = PageManager::new(data_dir.to_path_buf(), "demo_table", default_config);
     match manager_result {
         Ok(_manager) => {
-            println!("✅ PageManager создан успешно");
+            println!("✅ PageManager created successfully");
         }
         Err(e) => {
-            println!("❌ Ошибка создания PageManager: {}", e);
-            return Ok(()); // Продолжаем выполнение даже при ошибке
+            println!("❌ Error creating PageManager: {}", e);
+            return Ok(());
         }
     }
 
-    // Создаем менеджер с кастомной конфигурацией
+    // Creating a manager with a custom configuration
     let custom_config = PageManagerConfig {
         max_fill_factor: 0.85,
         min_fill_factor: 0.25,
@@ -86,7 +86,7 @@ fn demo_create_page_manager(data_dir: &Path) -> Result<(), Box<dyn std::error::E
         flush_interval_ms: 0,
     };
 
-    println!("\n📊 Кастомная конфигурация:");
+    println!("\n📊 Custom configuration:");
     println!("   - max_fill_factor: {}", custom_config.max_fill_factor);
     println!("   - min_fill_factor: {}", custom_config.min_fill_factor);
     println!(
@@ -103,19 +103,19 @@ fn demo_create_page_manager(data_dir: &Path) -> Result<(), Box<dyn std::error::E
         PageManager::new(data_dir.to_path_buf(), "custom_table", custom_config);
     match custom_manager_result {
         Ok(_manager) => {
-            println!("✅ PageManager с кастомной конфигурацией создан успешно");
+            println!("✅ PageManager with custom configuration created successfully");
         }
         Err(e) => {
-            println!("❌ Ошибка создания кастомного PageManager: {}", e);
+            println!("❌ Error creating custom PageManager: {}", e);
         }
     }
 
     Ok(())
 }
 
-/// Демонстрирует CRUD операции
+// / Demonstrates CRUD operations
 fn demo_crud_operations(data_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n📝 Демонстрация CRUD операций");
+    println!("\n📝Demonstration of CRUD operations");
     println!("{}", "-".repeat(30));
 
     let config = PageManagerConfig::default();
@@ -124,13 +124,13 @@ fn demo_crud_operations(data_dir: &Path) -> Result<(), Box<dyn std::error::Error
     let mut manager = match manager_result {
         Ok(mgr) => mgr,
         Err(e) => {
-            println!("❌ Не удалось создать PageManager: {}", e);
+            println!("❌ Failed to create PageManager: {}", e);
             return Ok(());
         }
     };
 
-    // CREATE (INSERT) операции
-    println!("📥 Вставка записей:");
+    // CREATE (INSERT) operations
+    println!("📥 Inserting records:");
     let records = [
         "Alice Johnson - Software Engineer".as_bytes(),
         "Bob Smith - Data Analyst".as_bytes(),
@@ -143,7 +143,7 @@ fn demo_crud_operations(data_dir: &Path) -> Result<(), Box<dyn std::error::Error
         match manager.insert(record) {
             Ok(insert_result) => {
                 println!(
-                    "   ✅ Запись {}: ID {}, Страница {}",
+                    "✅ Post {}: ID {}, Page {}",
                     i + 1,
                     insert_result.record_id,
                     insert_result.page_id
@@ -151,111 +151,111 @@ fn demo_crud_operations(data_dir: &Path) -> Result<(), Box<dyn std::error::Error
                 record_ids.push(insert_result.record_id);
             }
             Err(e) => {
-                println!("   ❌ Ошибка вставки записи {}: {}", i + 1, e);
+                println!("❌ Error inserting record {}: {}", i + 1, e);
             }
         }
     }
 
-    // READ (SELECT) операции
-    println!("\n📤 Чтение всех записей:");
+    // READ (SELECT) operations
+    println!("\n📤 Reading all entries:");
     match manager.select(None) {
         Ok(all_records) => {
-            println!("   📊 Найдено {} записей:", all_records.len());
+            println!("📊 {} records found:", all_records.len());
             for (i, (record_id, data)) in all_records.iter().enumerate() {
                 let data_str = String::from_utf8_lossy(data);
-                println!("   {} - ID: {}, Данные: {}", i + 1, record_id, data_str);
+                println!("{} - ID: {}, Data: {}", i + 1, record_id, data_str);
             }
         }
         Err(e) => {
-            println!("   ❌ Ошибка чтения записей: {}", e);
+            println!("❌ Error reading records: {}", e);
         }
     }
 
-    // Чтение с условием
-    println!("\n🔍 Чтение записей с фильтром (содержат 'Engineer'):");
+    // Conditional Reading
+    println!("\n🔍 Reading entries with filter (contain 'Engineer'):");
     let condition = Box::new(|data: &[u8]| String::from_utf8_lossy(data).contains("Engineer"));
 
     match manager.select(Some(condition)) {
         Ok(filtered_records) => {
             println!(
-                "   📊 Найдено {} записей с 'Engineer':",
+                "📊 Found {} records with 'Engineer':",
                 filtered_records.len()
             );
             for (i, (record_id, data)) in filtered_records.iter().enumerate() {
                 let data_str = String::from_utf8_lossy(data);
-                println!("   {} - ID: {}, Данные: {}", i + 1, record_id, data_str);
+                println!("{} - ID: {}, Data: {}", i + 1, record_id, data_str);
             }
         }
         Err(e) => {
-            println!("   ❌ Ошибка фильтрованного чтения: {}", e);
+            println!("❌ Filtered read error: {}", e);
         }
     }
 
-    // UPDATE операции
+    // UPDATE operations
     if !record_ids.is_empty() {
-        println!("\n✏️  Обновление записи:");
+        println!("\n✏️ Post update:");
         let record_to_update = record_ids[0];
         let new_data = "Alice Johnson - Senior Software Engineer (Updated)".as_bytes();
 
         match manager.update(record_to_update, new_data) {
             Ok(update_result) => {
-                println!("   ✅ Запись {} обновлена", record_to_update);
+                println!("✅ Entry {} updated", record_to_update);
                 if update_result.in_place {
-                    println!("   📍 Обновление выполнено на месте");
+                    println!("📍 Upgrade done on site");
                 } else {
                     println!(
-                        "   🔄 Запись перемещена на страницу {:?}",
+                        "🔄 Post moved to page {:?}",
                         update_result.new_page_id
                     );
                 }
             }
             Err(e) => {
-                println!("   ❌ Ошибка обновления: {}", e);
+                println!("❌ Update error: {}", e);
             }
         }
     }
 
-    // DELETE операции
+    // DELETE operations
     if record_ids.len() > 1 {
-        println!("\n🗑️  Удаление записи:");
+        println!("\n🗑️ Deleting an entry:");
         let record_to_delete = record_ids[1];
 
         match manager.delete(record_to_delete) {
             Ok(delete_result) => {
-                println!("   ✅ Запись {} удалена", record_to_delete);
+                println!("✅ Entry {} deleted", record_to_delete);
                 if delete_result.physical_delete {
-                    println!("   🗑️  Физическое удаление");
+                    println!("🗑️ Physical removal");
                 } else {
-                    println!("   👻 Логическое удаление");
+                    println!("👻 Logical removal");
                 }
                 if delete_result.page_merge {
-                    println!("   🔄 Выполнено объединение страниц");
+                    println!("🔄 Pages merged");
                 }
             }
             Err(e) => {
-                println!("   ❌ Ошибка удаления: {}", e);
+                println!("❌ Deletion error: {}", e);
             }
         }
     }
 
-    // Показываем статистику
+    // Showing statistics
     let stats = manager.get_statistics();
-    println!("\n📈 Статистика операций:");
-    println!("   - Вставки: {}", stats.insert_operations);
-    println!("   - Чтения: {}", stats.select_operations);
-    println!("   - Обновления: {}", stats.update_operations);
-    println!("   - Удаления: {}", stats.delete_operations);
+    println!("\n📈 Operation statistics:");
+    println!("- Inserts: {}", stats.insert_operations);
+    println!("- Readings: {}", stats.select_operations);
+    println!("- Updates: {}", stats.update_operations);
+    println!("- Deletions: {}", stats.delete_operations);
 
     Ok(())
 }
 
-/// Демонстрирует batch операции
+// / Demonstrates batch operations
 fn demo_batch_operations(data_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n📦 Демонстрация batch операций");
+    println!("\n📦 Demonstration of batch operations");
     println!("{}", "-".repeat(30));
 
     let config = PageManagerConfig {
-        batch_size: 10, // Небольшой размер batch для демонстрации
+        batch_size: 10,
         ..PageManagerConfig::default()
     };
 
@@ -263,21 +263,21 @@ fn demo_batch_operations(data_dir: &Path) -> Result<(), Box<dyn std::error::Erro
     let mut manager = match manager_result {
         Ok(mgr) => mgr,
         Err(e) => {
-            println!("❌ Не удалось создать PageManager: {}", e);
+            println!("❌ Failed to create PageManager: {}", e);
             return Ok(());
         }
     };
 
-    // Подготавливаем данные для batch вставки
+    // Preparing data for batch insertion
     let batch_data: Vec<Vec<u8>> = (1..=25)
         .map(|i| format!("Batch Record #{:03} - Generated Data", i).into_bytes())
         .collect();
 
-    println!("📥 Batch вставка {} записей:", batch_data.len());
+    println!("📥 Batch insert {} records:", batch_data.len());
 
     match manager.batch_insert(batch_data.clone()) {
         Ok(results) => {
-            println!("   ✅ Успешно обработано {} записей", results.len());
+            println!("✅ {} records successfully processed", results.len());
 
             let mut page_splits = 0;
             for result in &results {
@@ -287,14 +287,14 @@ fn demo_batch_operations(data_dir: &Path) -> Result<(), Box<dyn std::error::Erro
             }
 
             if page_splits > 0 {
-                println!("   🔄 Произошло {} разделений страниц", page_splits);
+                println!("🔄 {} page splits occurred", page_splits);
             }
 
-            // Показываем первые несколько записей
-            println!("   📋 Первые записи:");
+            // Showing the first few entries
+            println!("📋 First entries:");
             for (i, result) in results.iter().take(5).enumerate() {
                 println!(
-                    "     {} - ID: {}, Страница: {}",
+                    "{} - ID: {}, Page: {}",
                     i + 1,
                     result.record_id,
                     result.page_id
@@ -302,38 +302,38 @@ fn demo_batch_operations(data_dir: &Path) -> Result<(), Box<dyn std::error::Erro
             }
 
             if results.len() > 5 {
-                println!("     ... и еще {} записей", results.len() - 5);
+                println!("... and {} more entries", results.len() - 5);
             }
         }
         Err(e) => {
-            println!("   ❌ Ошибка batch вставки: {}", e);
+            println!("❌ Batch insert error: {}", e);
         }
     }
 
-    // Проверяем результат
+    // Checking the result
     match manager.select(None) {
         Ok(all_records) => {
             println!(
-                "   📊 Общее количество записей в таблице: {}",
+                "📊 Total number of records in the table: {}",
                 all_records.len()
             );
         }
         Err(e) => {
-            println!("   ❌ Ошибка проверки записей: {}", e);
+            println!("❌ Error checking records: {}", e);
         }
     }
 
     let stats = manager.get_statistics();
-    println!("   📈 Статистика batch операций:");
-    println!("     - Всего вставок: {}", stats.insert_operations);
-    println!("     - Разделений страниц: {}", stats.page_splits);
+    println!("📈 Statistics of batch operations:");
+    println!("- Total insertions: {}", stats.insert_operations);
+    println!("- Page divisions: {}", stats.page_splits);
 
     Ok(())
 }
 
-/// Демонстрирует дефрагментацию страниц
+// / Demonstrates page defragmentation
 fn demo_defragmentation(data_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n🔧 Демонстрация дефрагментации");
+    println!("\n🔧Demonstration of defragmentation");
     println!("{}", "-".repeat(30));
 
     let config = PageManagerConfig::default();
@@ -341,13 +341,13 @@ fn demo_defragmentation(data_dir: &Path) -> Result<(), Box<dyn std::error::Error
     let mut manager = match manager_result {
         Ok(mgr) => mgr,
         Err(e) => {
-            println!("❌ Не удалось создать PageManager: {}", e);
+            println!("❌ Failed to create PageManager: {}", e);
             return Ok(());
         }
     };
 
-    // Вставляем записи
-    println!("📥 Создание записей для демонстрации фрагментации:");
+    // Inserting records
+    println!("📥Create entries to demonstrate fragmentation:");
     let mut record_ids = Vec::new();
 
     for i in 1..=15 {
@@ -357,80 +357,80 @@ fn demo_defragmentation(data_dir: &Path) -> Result<(), Box<dyn std::error::Error
                 record_ids.push(result.record_id);
             }
             Err(e) => {
-                println!("   ❌ Ошибка вставки записи {}: {}", i, e);
+                println!("❌ Error inserting record {}: {}", i, e);
             }
         }
     }
 
-    println!("   ✅ Создано {} записей", record_ids.len());
+    println!("✅ {} records created", record_ids.len());
 
-    // Удаляем каждую вторую запись для создания фрагментации
-    println!("\n🗑️  Удаление каждой второй записи (создание фрагментации):");
+    // Deleting every second record to create fragmentation
+    println!("\n🗑️ Deleting every second record (creating fragmentation):");
     let mut deleted_count = 0;
 
     for (i, &record_id) in record_ids.iter().enumerate() {
         if i % 2 == 1 {
-            // Удаляем записи с нечетными индексами
+            // Deleting records with odd indices
             match manager.delete(record_id) {
                 Ok(_) => {
                     deleted_count += 1;
                 }
                 Err(e) => {
-                    println!("   ❌ Ошибка удаления записи {}: {}", record_id, e);
+                    println!("❌ Error deleting entry {}: {}", record_id, e);
                 }
             }
         }
     }
 
-    println!("   ✅ Удалено {} записей", deleted_count);
+    println!("✅ {} entries removed", deleted_count);
 
-    // Показываем статистику до дефрагментации
+    // Showing statistics before defragmentation
     let stats_before = manager.get_statistics();
-    println!("\n📊 Статистика до дефрагментации:");
+    println!("\n📊 Statistics before defragmentation:");
     println!(
-        "   - Операций дефрагментации: {}",
+        "- Defragmentation operations: {}",
         stats_before.defragmentation_operations
     );
 
-    // Выполняем дефрагментацию
-    println!("\n🔧 Выполнение дефрагментации:");
+    // Performing defragmentation
+    println!("\n🔧 Performing defragmentation:");
     match manager.defragment() {
         Ok(defragmented_count) => {
-            println!("   ✅ Дефрагментировано страниц: {}", defragmented_count);
+            println!("✅ Defragmented pages: {}", defragmented_count);
         }
         Err(e) => {
-            println!("   ❌ Ошибка дефрагментации: {}", e);
+            println!("❌ Defragmentation error: {}", e);
         }
     }
 
-    // Показываем статистику после дефрагментации
+    // Showing statistics after defragmentation
     let stats_after = manager.get_statistics();
-    println!("\n📊 Статистика после дефрагментации:");
+    println!("\n📊 Statistics after defragmentation:");
     println!(
-        "   - Операций дефрагментации: {}",
+        "- Defragmentation operations: {}",
         stats_after.defragmentation_operations
     );
-    println!("   - Всего вставок: {}", stats_after.insert_operations);
-    println!("   - Всего удалений: {}", stats_after.delete_operations);
+    println!("- Total insertions: {}", stats_after.insert_operations);
+    println!("- Total deletions: {}", stats_after.delete_operations);
 
     Ok(())
 }
 
-/// Демонстрирует открытие существующего менеджера
+// / Demonstrates opening an existing manager
 fn demo_open_existing_manager(data_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n🔓 Демонстрация открытия существующего менеджера");
+    println!("\n🔓 Demonstration of opening an existing manager");
     println!("{}", "-".repeat(30));
 
     let table_name = "persistent_table";
     let config = PageManagerConfig::default();
 
-    // Создаем менеджер и добавляем данные
-    println!("📝 Создание нового менеджера и добавление данных:");
+    // Create a manager and add data
+    println!("📝 Creating a new manager and adding data:");
     {
         let manager_result = PageManager::new(data_dir.to_path_buf(), table_name, config.clone());
         match manager_result {
             Ok(mut manager) => {
-                // Добавляем несколько записей
+                // Adding multiple entries
                 let persistent_data = [
                     "Persistent Record 1 - Will survive restart".as_bytes(),
                     "Persistent Record 2 - Stored on disk".as_bytes(),
@@ -440,56 +440,56 @@ fn demo_open_existing_manager(data_dir: &Path) -> Result<(), Box<dyn std::error:
                 for (i, data) in persistent_data.iter().enumerate() {
                     match manager.insert(data) {
                         Ok(result) => {
-                            println!("   ✅ Запись {}: ID {}", i + 1, result.record_id);
+                            println!("✅ Record {}: ID {}", i + 1, result.record_id);
                         }
                         Err(e) => {
-                            println!("   ❌ Ошибка записи {}: {}", i + 1, e);
+                            println!("❌ Write error {}: {}", i + 1, e);
                         }
                     }
                 }
 
                 let stats = manager.get_statistics();
-                println!("   📊 Вставлено записей: {}", stats.insert_operations);
+                println!("📊 Inserted records: {}", stats.insert_operations);
             }
             Err(e) => {
-                println!("   ❌ Не удалось создать менеджер: {}", e);
+                println!("❌ Failed to create manager: {}", e);
                 return Ok(());
             }
         }
-    } // manager выходит из области видимости и закрывается
+    }
 
-    // Открываем существующий менеджер
-    println!("\n🔓 Открытие существующего менеджера:");
+    // Open an existing manager
+    println!("\n🔓 Opening an existing manager:");
     match PageManager::open(data_dir.to_path_buf(), table_name, config) {
         Ok(mut manager) => {
-            println!("   ✅ Менеджер успешно открыт");
+            println!("✅ Manager successfully opened");
 
-            // Проверяем, что данные сохранились
+            // Checking that the data has been saved
             match manager.select(None) {
                 Ok(records) => {
-                    println!("   📊 Найдено {} сохраненных записей:", records.len());
+                    println!("📊 Found {} saved entries:", records.len());
                     for (i, (record_id, data)) in records.iter().enumerate() {
                         let data_str = String::from_utf8_lossy(data);
-                        println!("     {} - ID: {}, Данные: {}", i + 1, record_id, data_str);
+                        println!("{} - ID: {}, Data: {}", i + 1, record_id, data_str);
                     }
                 }
                 Err(e) => {
-                    println!("   ❌ Ошибка чтения сохраненных данных: {}", e);
+                    println!("❌ Error reading saved data: {}", e);
                 }
             }
 
-            // Добавляем новую запись
+            // Add a new entry
             match manager.insert("New Record - Added after reopen".as_bytes()) {
                 Ok(result) => {
-                    println!("   ✅ Новая запись добавлена: ID {}", result.record_id);
+                    println!("✅ New entry added: ID {}", result.record_id);
                 }
                 Err(e) => {
-                    println!("   ❌ Ошибка добавления новой записи: {}", e);
+                    println!("❌ Error adding a new entry: {}", e);
                 }
             }
         }
         Err(e) => {
-            println!("   ❌ Не удалось открыть существующий менеджер: {}", e);
+            println!("❌ Failed to open existing manager: {}", e);
         }
     }
 

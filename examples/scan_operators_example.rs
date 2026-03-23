@@ -1,4 +1,4 @@
-//! Пример использования операторов сканирования
+//! Example of using scan operators
 
 use rustdb::executor::{
     ConditionalScanOperator, IndexCondition, IndexOperator, IndexScanOperator, Operator,
@@ -12,9 +12,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 fn main() -> Result<()> {
-    println!("=== Пример использования операторов сканирования ===\n");
+    println!("=== Example of using scan operators ===\n");
 
-    // Создаем менеджер страниц
+    // Creating a page manager
     let page_manager = Arc::new(Mutex::new(PageManager::new(
         PathBuf::from("./data"),
         "users",
@@ -22,8 +22,8 @@ fn main() -> Result<()> {
     )?));
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
 
-    // Пример 1: TableScan оператор
-    println!("1. TableScan оператор:");
+    // Example 1: TableScan operator
+    println!("1. TableScan operator:");
     let table_scan = TableScanOperator::new(
         "users".to_string(),
         page_manager.clone(),
@@ -31,13 +31,13 @@ fn main() -> Result<()> {
         schema.clone(),
     )?;
 
-    println!("   Создан TableScan оператор для таблицы 'users'");
-    println!("   Схема: {:?}", table_scan.get_schema()?);
-    println!("   Статистика: {:?}", table_scan.get_statistics());
+    println!("Created TableScan operator for table 'users'");
+    println!("Scheme: {:?}", table_scan.get_schema()?);
+    println!("Statistics: {:?}", table_scan.get_statistics());
     println!();
 
-    // Пример 2: TableScan с фильтром
-    println!("2. TableScan с фильтром:");
+    // Example 2: TableScan with filter
+    println!("2. TableScan with filter:");
     let table_scan_filtered = TableScanOperator::new(
         "users".to_string(),
         page_manager.clone(),
@@ -45,12 +45,12 @@ fn main() -> Result<()> {
         schema.clone(),
     )?;
 
-    println!("   Создан TableScan оператор с фильтром 'age > 18'");
-    println!("   Схема: {:?}", table_scan_filtered.get_schema()?);
+    println!("Created TableScan operator with filter 'age > 18'");
+    println!("Scheme: {:?}", table_scan_filtered.get_schema()?);
     println!();
 
-    // Пример 3: IndexScan оператор
-    println!("3. IndexScan оператор:");
+    // Example 3: IndexScan operator
+    println!("3. IndexScan operator:");
     let index = Arc::new(Mutex::new(BPlusTree::new(4)));
     let search_conditions = vec![IndexCondition {
         column: "id".to_string(),
@@ -67,13 +67,13 @@ fn main() -> Result<()> {
         schema.clone(),
     )?;
 
-    println!("   Создан IndexScan оператор для индекса 'idx_users_id'");
-    println!("   Условие поиска: id = 1");
-    println!("   Схема: {:?}", index_scan.get_schema()?);
+    println!("Created IndexScan operator for index 'idx_users_id'");
+    println!("Search condition: id = 1");
+    println!("Scheme: {:?}", index_scan.get_schema()?);
     println!();
 
-    // Пример 4: RangeScan оператор
-    println!("4. RangeScan оператор:");
+    // Example 4: RangeScan operator
+    println!("4. RangeScan operator:");
     let base_operator = TableScanOperator::new(
         "users".to_string(),
         page_manager.clone(),
@@ -87,12 +87,12 @@ fn main() -> Result<()> {
         Some("10".to_string()),
     )?;
 
-    println!("   Создан RangeScan оператор для диапазона [1, 10]");
-    println!("   Схема: {:?}", range_scan.get_schema()?);
+    println!("Created a RangeScan operator for the range [1, 10]");
+    println!("Scheme: {:?}", range_scan.get_schema()?);
     println!();
 
-    // Пример 5: ConditionalScan оператор
-    println!("5. ConditionalScan оператор:");
+    // Example 5: ConditionalScan operator
+    println!("5. ConditionalScan operator:");
     let base_operator_cond = TableScanOperator::new(
         "users".to_string(),
         page_manager.clone(),
@@ -105,24 +105,24 @@ fn main() -> Result<()> {
         "name LIKE 'John%'".to_string(),
     )?;
 
-    println!("   Создан ConditionalScan оператор с условием 'name LIKE John%'");
-    println!("   Схема: {:?}", conditional_scan.get_schema()?);
+    println!("Created a ConditionalScan operator with the condition 'name LIKE John%'");
+    println!("Scheme: {:?}", conditional_scan.get_schema()?);
     println!();
 
-    // Пример 6: Фабрика операторов
-    println!("6. Фабрика операторов:");
+    // Example 6: Operator Factory
+    println!("6. Factory operators:");
     let mut factory = ScanOperatorFactory::new(page_manager.clone());
 
-    // Добавляем индекс
+    // Adding an index
     let index_for_factory = Arc::new(Mutex::new(BPlusTree::new_default()));
     factory.add_index("users", "idx_users_id", index_for_factory);
 
-    // Создаем операторы через фабрику
+    // Creating operators through a factory
     let table_scan_from_factory =
         factory.create_table_scan("users".to_string(), None, schema.clone())?;
 
-    println!("   Создан TableScan через фабрику");
-    println!("   Схема: {:?}", table_scan_from_factory.get_schema()?);
+    println!("Created TableScan via factory");
+    println!("Scheme: {:?}", table_scan_from_factory.get_schema()?);
 
     let range_scan_from_factory = factory.create_range_scan(
         table_scan_from_factory,
@@ -130,12 +130,12 @@ fn main() -> Result<()> {
         Some("5".to_string()),
     )?;
 
-    println!("   Создан RangeScan через фабрику");
-    println!("   Схема: {:?}", range_scan_from_factory.get_schema()?);
+    println!("Created RangeScan via factory");
+    println!("Scheme: {:?}", range_scan_from_factory.get_schema()?);
     println!();
 
-    // Пример 7: Работа с операторами через трейт
-    println!("7. Работа с операторами через трейт Operator:");
+    // Example 7: Working with operators through traits
+    println!("7. Working with operators using the Operator trait:");
     let mut operator: Box<dyn Operator> = Box::new(TableScanOperator::new(
         "users".to_string(),
         page_manager.clone(),
@@ -143,18 +143,18 @@ fn main() -> Result<()> {
         schema.clone(),
     )?);
 
-    println!("   Создан оператор через трейт");
-    println!("   Схема: {:?}", operator.get_schema()?);
-    println!("   Статистика: {:?}", operator.get_statistics());
+    println!("An operator via trait has been created");
+    println!("Scheme: {:?}", operator.get_schema()?);
+    println!("Statistics: {:?}", operator.get_statistics());
 
-    // Сбрасываем оператор
+    // Resetting the operator
     operator.reset()?;
-    println!("   Оператор сброшен");
-    println!("   Новая статистика: {:?}", operator.get_statistics());
+    println!("Operator reset");
+    println!("New statistics: {:?}", operator.get_statistics());
     println!();
 
-    // Пример 8: Различные типы условий индекса
-    println!("8. Различные типы условий индекса:");
+    // Example 8: Different Types of Index Conditions
+    println!("8. Different types of index conditions:");
     let conditions = [
         IndexCondition {
             column: "id".to_string(),
@@ -180,7 +180,7 @@ fn main() -> Result<()> {
 
     for (i, condition) in conditions.iter().enumerate() {
         println!(
-            "   Условие {}: {} {} {}",
+            "Condition {}: {} {} {}",
             i + 1,
             condition.column,
             match condition.operator {
@@ -197,22 +197,22 @@ fn main() -> Result<()> {
     }
     println!();
 
-    // Пример 9: Статистика выполнения
-    println!("9. Статистика выполнения:");
+    // Example 9: Execution Statistics
+    println!("9. Execution statistics:");
     let operator_for_stats =
         TableScanOperator::new("users".to_string(), page_manager.clone(), None, schema)?;
 
     let stats = operator_for_stats.get_statistics();
-    println!("   Обработанных строк: {}", stats.rows_processed);
-    println!("   Возвращенных строк: {}", stats.rows_returned);
-    println!("   Время выполнения: {} мс", stats.execution_time_ms);
-    println!("   I/O операций: {}", stats.io_operations);
-    println!("   Операций с памятью: {}", stats.memory_operations);
-    println!("   Использовано памяти: {} байт", stats.memory_used_bytes);
+    println!("Rows processed: {}", stats.rows_processed);
+    println!("Returned rows: {}", stats.rows_returned);
+    println!("Execution time: {}ms", stats.execution_time_ms);
+    println!("I/O operations: {}", stats.io_operations);
+    println!("Memory operations: {}", stats.memory_operations);
+    println!("Memory used: {} bytes", stats.memory_used_bytes);
     println!();
 
-    // Пример 10: Комбинирование операторов
-    println!("10. Комбинирование операторов:");
+    // Example 10: Combining Operators
+    println!("10. Combining operators:");
     let base = TableScanOperator::new(
         "users".to_string(),
         page_manager.clone(),
@@ -229,11 +229,11 @@ fn main() -> Result<()> {
     let final_operator =
         ConditionalScanOperator::new(Box::new(range_filtered), "age > 18".to_string())?;
 
-    println!("   Создана цепочка операторов:");
+    println!("A chain of operators has been created:");
     println!("   TableScan -> RangeScan -> ConditionalScan");
-    println!("   Схема: {:?}", final_operator.get_schema()?);
+    println!("Scheme: {:?}", final_operator.get_schema()?);
     println!();
 
-    println!("=== Пример завершен ===");
+    println!("=== Example complete ===");
     Ok(())
 }

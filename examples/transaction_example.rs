@@ -1,10 +1,10 @@
-//! Пример использования менеджера транзакций rustdb
+//! An example of using the rustdb transaction manager
 //!
-//! Демонстрирует основные возможности системы транзакций:
-//! - Создание и управление транзакциями
-//! - Работа с блокировками
-//! - Обработка конкурентного доступа
-//! - Статистика и мониторинг
+//! Demonstrates the main capabilities of the transaction system:
+//! - Creation and management of transactions
+//! - Working with blocking
+//! - Handling concurrent access
+//! - Statistics and monitoring
 
 use rustdb::core::{
     IsolationLevel, LockMode, LockType, TransactionManager, TransactionManagerConfig,
@@ -14,51 +14,51 @@ use std::thread;
 use std::time::Duration;
 
 fn main() {
-    println!("🚀 Демонстрация менеджера транзакций rustdb\n");
+    println!("🚀 Demonstration of the rustdb transaction manager\n");
 
-    // Демонстрация базовых операций
+    // Demonstration of basic operations
     basic_transaction_operations();
 
-    // Демонстрация работы с блокировками
+    // Demonstration of working with locks
     lock_operations_demo();
 
-    // Демонстрация конкурентного доступа
+    // Demonstration of concurrent access
     concurrent_transactions_demo();
 
-    // Демонстрация различных уровней изоляции
+    // Demonstration of different levels of insulation
     isolation_levels_demo();
 
-    // Демонстрация статистики
+    // Statistics demonstration
     statistics_demo();
 
-    println!("✅ Демонстрация завершена успешно!");
+    println!("✅ Demonstration completed successfully!");
 }
 
 fn basic_transaction_operations() {
-    println!("📋 1. Базовые операции с транзакциями");
+    println!("📋 1. Basic operations with transactions");
     println!("=====================================");
 
     let tm = TransactionManager::new().unwrap();
 
-    // Создание транзакции
+    // Creating a transaction
     let txn_id = tm
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
-    println!("   ✓ Создана транзакция: {}", txn_id);
+    println!("✓ Transaction created: {}", txn_id);
 
-    // Получение информации о транзакции
+    // Retrieving transaction information
     let info = tm.get_transaction_info(txn_id).unwrap().unwrap();
-    println!("   ✓ Уровень изоляции: {:?}", info.isolation_level);
-    println!("   ✓ Только для чтения: {}", info.read_only);
-    println!("   ✓ Состояние: {:?}", info.state);
+    println!("✓ Isolation level: {:?}", info.isolation_level);
+    println!("✓ Read-only: {}", info.read_only);
+    println!("✓ Status: {:?}", info.state);
 
-    // Фиксация транзакции
+    // Committing a transaction
     tm.commit_transaction(txn_id).unwrap();
-    println!("   ✓ Транзакция зафиксирована\n");
+    println!("✓ Transaction committed\n");
 }
 
 fn lock_operations_demo() {
-    println!("🔒 2. Операции с блокировками");
+    println!("🔒 2. Operations with locks");
     println!("=============================");
 
     let tm = TransactionManager::new().unwrap();
@@ -66,7 +66,7 @@ fn lock_operations_demo() {
         .begin_transaction(IsolationLevel::ReadCommitted, false)
         .unwrap();
 
-    // Получение различных типов блокировок
+    // Obtaining different types of locks
     let resources = vec![
         (
             "users_table",
@@ -94,47 +94,47 @@ fn lock_operations_demo() {
             lock_mode.clone(),
         )
         .unwrap();
-        println!("   ✓ Получена блокировка {:?} на {}", lock_mode, name);
+        println!("✓ Lock received {:?} on {}", lock_mode, name);
     }
 
-    // Проверка заблокированных ресурсов
+    // Checking blocked resources
     let info = tm.get_transaction_info(txn_id).unwrap().unwrap();
     println!(
-        "   ✓ Всего заблокировано ресурсов: {}",
+        "✓ Total blocked resources: {}",
         info.locked_resources.len()
     );
 
-    // Освобождение одной блокировки
+    // Release one lock
     tm.release_lock(txn_id, "temp_resource".to_string())
         .unwrap();
-    println!("   ✓ Освобождена блокировка temp_resource");
+    println!("✓ The temp_resource lock has been released");
 
-    // При фиксации все остальные блокировки освобождаются автоматически
+    // When committed, all other locks are released automatically
     tm.commit_transaction(txn_id).unwrap();
-    println!("   ✓ Все блокировки освобождены при фиксации\n");
+    println!("✓ All locks are released when commit\n");
 }
 
 fn concurrent_transactions_demo() {
-    println!("🔄 3. Конкурентные транзакции");
+    println!("🔄 3. Competitive transactions");
     println!("=============================");
 
     let tm = Arc::new(TransactionManager::new().unwrap());
     let mut handles = vec![];
 
-    // Запускаем несколько параллельных транзакций
+    // We launch several parallel transactions
     for i in 0..4 {
         let tm_clone = Arc::clone(&tm);
         let handle = thread::spawn(move || {
             let txn_id = tm_clone
                 .begin_transaction(IsolationLevel::ReadCommitted, false)
                 .unwrap();
-            println!("   🔵 Поток {}: Начата транзакция {}", i, txn_id);
+            println!("🔵 Thread {}: Transaction {} started", i, txn_id);
 
-            // Каждая транзакция работает со своими ресурсами
+            // Each transaction works with its own resources
             let shared_resource = "shared_data".to_string();
             let unique_resource = format!("data_partition_{}", i);
 
-            // Получаем разделяемую блокировку на общий ресурс
+            // Obtaining a shared lock on a shared resource
             tm_clone
                 .acquire_lock(
                     txn_id,
@@ -144,7 +144,7 @@ fn concurrent_transactions_demo() {
                 )
                 .unwrap();
 
-            // Получаем исключительную блокировку на уникальный ресурс
+            // We obtain an exclusive lock on a unique resource
             tm_clone
                 .acquire_lock(
                     txn_id,
@@ -154,28 +154,28 @@ fn concurrent_transactions_demo() {
                 )
                 .unwrap();
 
-            println!("   🟢 Поток {}: Получены блокировки", i);
+            println!("🟢 Thread {}: Locks acquired", i);
 
-            // Имитируем работу
+            // We imitate work
             thread::sleep(Duration::from_millis(100));
 
-            // Фиксируем транзакцию
+            // We fix the transaction
             tm_clone.commit_transaction(txn_id).unwrap();
-            println!("   ✅ Поток {}: Транзакция зафиксирована", i);
+            println!("✅ Flow {}: Transaction committed", i);
         });
         handles.push(handle);
     }
 
-    // Ждем завершения всех потоков
+    // Waiting for all threads to complete
     for handle in handles {
         handle.join().unwrap();
     }
 
-    println!("   ✓ Все конкурентные транзакции завершены\n");
+    println!("✓ All competitive transactions are completed\n");
 }
 
 fn isolation_levels_demo() {
-    println!("🎯 4. Уровни изоляции");
+    println!("🎯 4. Insulation levels");
     println!("====================");
 
     let tm = TransactionManager::new().unwrap();
@@ -183,21 +183,21 @@ fn isolation_levels_demo() {
     let levels = vec![
         (
             IsolationLevel::ReadUncommitted,
-            "Чтение незафиксированных данных",
+            "Reading Uncommitted Data",
         ),
         (
             IsolationLevel::ReadCommitted,
-            "Чтение зафиксированных данных",
+            "Reading Captured Data",
         ),
-        (IsolationLevel::RepeatableRead, "Повторяемое чтение"),
-        (IsolationLevel::Serializable, "Сериализуемость"),
+        (IsolationLevel::RepeatableRead, "Repeatable reading"),
+        (IsolationLevel::Serializable, "Serializability"),
     ];
 
     for (level, description) in levels {
         let txn_id = tm.begin_transaction(level.clone(), false).unwrap();
         println!("   ✓ {:?}: {}", level, description);
 
-        // Получаем блокировку (поведение может отличаться в зависимости от уровня)
+        // We get a lock (behavior may differ depending on the level)
         tm.acquire_lock(
             txn_id,
             format!("resource_{:?}", level),
@@ -209,14 +209,14 @@ fn isolation_levels_demo() {
         tm.commit_transaction(txn_id).unwrap();
     }
 
-    println!("   ✓ Продемонстрированы все уровни изоляции\n");
+    println!("✓ All insulation levels are demonstrated\n");
 }
 
 fn statistics_demo() {
-    println!("📊 5. Статистика и мониторинг");
+    println!("📊 5. Statistics and monitoring");
     println!("=============================");
 
-    // Создаем менеджер с ограниченной конфигурацией для демонстрации
+    // Creating a manager with limited configuration for demonstration
     let config = TransactionManagerConfig {
         max_concurrent_transactions: 10,
         lock_timeout_ms: 5000,
@@ -227,22 +227,22 @@ fn statistics_demo() {
 
     let tm = TransactionManager::with_config(config).unwrap();
 
-    println!("   📋 Конфигурация:");
+    println!("📋 Configuration:");
     let cfg = tm.get_config();
     println!(
-        "      • Макс. одновременных транзакций: {}",
+        "• Max. simultaneous transactions: {}",
         cfg.max_concurrent_transactions
     );
-    println!("      • Таймаут блокировки: {} мс", cfg.lock_timeout_ms);
+    println!("• Lock timeout: {} ms", cfg.lock_timeout_ms);
     println!(
-        "      • Обнаружение дедлоков: {}",
+        "• Deadlock detection: {}",
         cfg.enable_deadlock_detection
     );
 
-    // Выполняем несколько операций для сбора статистики
+    // We perform several operations to collect statistics
     let mut transaction_ids = Vec::new();
 
-    // Создаем несколько транзакций
+    // Create several transactions
     for i in 0..5 {
         let read_only = i % 2 == 0;
         let txn_id = tm
@@ -250,7 +250,7 @@ fn statistics_demo() {
             .unwrap();
         transaction_ids.push(txn_id);
 
-        // Получаем блокировки
+        // Getting blocked
         tm.acquire_lock(
             txn_id,
             format!("resource_{}", i),
@@ -260,7 +260,7 @@ fn statistics_demo() {
         .unwrap();
     }
 
-    // Фиксируем часть транзакций, отменяем остальные
+    // We fix some transactions and cancel the rest
     for (i, &txn_id) in transaction_ids.iter().enumerate() {
         if i % 2 == 0 {
             tm.commit_transaction(txn_id).unwrap();
@@ -269,21 +269,21 @@ fn statistics_demo() {
         }
     }
 
-    // Показываем статистику
+    // Showing statistics
     let stats = tm.get_statistics().unwrap();
-    println!("\n   📈 Статистика:");
-    println!("      • Всего транзакций: {}", stats.total_transactions);
-    println!("      • Активных транзакций: {}", stats.active_transactions);
-    println!("      • Зафиксированных: {}", stats.committed_transactions);
-    println!("      • Отмененных: {}", stats.aborted_transactions);
-    println!("      • Операций блокирования: {}", stats.lock_operations);
+    println!("\n 📈 Statistics:");
+    println!("• Total transactions: {}", stats.total_transactions);
+    println!("• Active transactions: {}", stats.active_transactions);
+    println!("• Fixed: {}", stats.committed_transactions);
+    println!("• Canceled: {}", stats.aborted_transactions);
+    println!("• Blocking operations: {}", stats.lock_operations);
     println!(
-        "      • Операций разблокирования: {}",
+        "• Unlock operations: {}",
         stats.unlock_operations
     );
-    println!("      • Обнаружено дедлоков: {}", stats.deadlocks_detected);
+    println!("• Deadlocks detected: {}", stats.deadlocks_detected);
 
-    println!("\n   ✓ Статистика собрана и отображена\n");
+    println!("\n ✓ Statistics collected and displayed\n");
 }
 
 #[cfg(test)]
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_example_runs_without_panic() {
-        // Проверяем, что пример выполняется без паники
+        // Checking that the example runs without panic
         basic_transaction_operations();
         lock_operations_demo();
         isolation_levels_demo();

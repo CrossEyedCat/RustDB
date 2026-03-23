@@ -1,4 +1,4 @@
-//! Тесты для семантического анализатора
+//! Tests for the semantic analyzer
 
 pub mod access_checker_tests;
 pub mod metadata_cache_tests;

@@ -1,11 +1,11 @@
-//! Пример использования оптимизации I/O в rustdb
+//! An example of using I/O optimization in rustdb
 //!
-//! Этот пример демонстрирует:
-//! - Буферизованные операции записи
-//! - Асинхронные операции чтения/записи
-//! - Кэширование страниц с LRU политикой
-//! - Предвыборку данных
-//! - Мониторинг производительности
+//! This example demonstrates:
+//! - Buffered writes
+//! - Asynchronous read/write operations
+//! - Caching pages with LRU policy
+//! - Data prefetching
+//! - Performance monitoring
 
 use rustdb::common::Result;
 use rustdb::storage::{
@@ -19,28 +19,28 @@ use tokio::time::sleep;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("=== Пример оптимизации I/O операций rustdb ===\n");
+    println!("=== Example of optimization of I/O operations rustdb ===\n");
 
-    // Демонстрация буферизованного I/O менеджера
+    // Demonstration of a buffered I/O manager
     demonstrate_buffered_io().await?;
 
-    // Демонстрация оптимизированного менеджера файлов
+    // Optimized file manager demo
     demonstrate_optimized_file_manager().await?;
 
-    // Демонстрация производительности кэша (упрощенная версия)
+    // Cache performance demo (lite version)
     demonstrate_cache_performance_simple().await?;
 
-    // Демонстрация мониторинга и статистики
+    // Demonstration of monitoring and statistics
     demonstrate_monitoring().await?;
 
-    println!("\n🎉 Пример успешно завершен!");
+    println!("\n🎉 Example completed successfully!");
     Ok(())
 }
 
 async fn demonstrate_buffered_io() -> Result<()> {
-    println!("💾 === Демонстрация буферизованного I/O ===");
+    println!("💾 === Demonstration of buffered I/O ===");
 
-    // Создаем конфигурацию с настройками производительности
+    // Creating a configuration with performance settings
     let config = IoBufferConfig {
         max_write_buffer_size: 500,
         max_buffer_time: Duration::from_millis(50),
@@ -50,27 +50,27 @@ async fn demonstrate_buffered_io() -> Result<()> {
         ..Default::default()
     };
 
-    println!("📋 Конфигурация I/O:");
+    println!("📋 I/O configuration:");
     println!(
-        "   - Размер буфера записи: {} операций",
+        "- Write buffer size: {} operations",
         config.max_write_buffer_size
     );
-    println!("   - Время буферизации: {:?}", config.max_buffer_time);
+    println!("- Buffering time: {:?}", config.max_buffer_time);
     println!(
-        "   - Размер кэша страниц: {} страниц",
+        "- Page cache size: {} pages",
         config.page_cache_size
     );
     println!(
-        "   - Предвыборка: {} (окно: {})",
+        "- Prefetch: {} (window: {})",
         config.enable_prefetch, config.prefetch_window_size
     );
 
     let manager = BufferedIoManager::new(config);
 
-    println!("\n📝 Выполняем операции записи...");
+    println!("\n📝 Performing write operations...");
     let start_time = Instant::now();
 
-    // Выполняем пакет операций записи
+    // Performing a batch of write operations
     for i in 0..100 {
         let data = vec![(i % 256) as u8; BLOCK_SIZE];
         manager.write_page_async(1, i, data).await?;
@@ -81,12 +81,12 @@ async fn demonstrate_buffered_io() -> Result<()> {
     }
 
     let write_time = start_time.elapsed();
-    println!("\n   ✅ Записано 100 страниц за {:?}", write_time);
+    println!("\n ✅ 100 pages recorded in {:?}", write_time);
 
-    println!("\n📖 Выполняем операции чтения...");
+    println!("\n📖 Performing read operations...");
     let start_time = Instant::now();
 
-    // Читаем данные (должны попадать в кэш)
+    // Reading data (must go into cache)
     for i in 0..100 {
         let _data = manager.read_page_async(1, i).await?;
 
@@ -96,44 +96,44 @@ async fn demonstrate_buffered_io() -> Result<()> {
     }
 
     let read_time = start_time.elapsed();
-    println!("\n   ✅ Прочитано 100 страниц за {:?}", read_time);
+    println!("\n ✅ Read 100 pages in {:?}", read_time);
 
-    // Получаем статистику
+    // Getting statistics
     let stats = manager.get_statistics();
-    println!("\n📊 Статистика I/O:");
-    println!("   - Всего операций: {}", stats.total_operations);
-    println!("   - Операций записи: {}", stats.write_operations);
-    println!("   - Операций чтения: {}", stats.read_operations);
-    println!("   - Попаданий в кэш: {}", stats.cache_hits);
-    println!("   - Промахов кэша: {}", stats.cache_misses);
+    println!("\n📊 I/O statistics:");
+    println!("- Total operations: {}", stats.total_operations);
+    println!("- Write operations: {}", stats.write_operations);
+    println!("- Read operations: {}", stats.read_operations);
+    println!("- Cache hits: {}", stats.cache_hits);
+    println!("- Cache misses: {}", stats.cache_misses);
     println!(
-        "   - Коэффициент попаданий: {:.2}%",
+        "- Hit Rate: {:.2}%",
         stats.cache_hit_ratio * 100.0
     );
 
     let (buffer_used, buffer_max, cache_size) = manager.get_buffer_info();
-    println!("   - Использование буфера: {}/{}", buffer_used, buffer_max);
-    println!("   - Размер кэша: {} страниц", cache_size);
+    println!("- Buffer usage: {}/{}", buffer_used, buffer_max);
+    println!("- Cache size: {} pages", cache_size);
 
     Ok(())
 }
 
 async fn demonstrate_optimized_file_manager() -> Result<()> {
-    println!("\n🚀 === Демонстрация оптимизированного менеджера файлов ===");
+    println!("\n🚀 === Demonstration of an optimized file manager ===");
 
     let temp_dir = tempfile::TempDir::new().unwrap();
     let manager = OptimizedFileManager::new(temp_dir.path())?;
 
-    // Создаем файлы с разными стратегиями расширения
+    // Creating files with different expansion strategies
     let strategies = [
-        ("Фиксированная", ExtensionStrategy::Fixed),
-        ("Линейная", ExtensionStrategy::Linear),
-        ("Экспоненциальная", ExtensionStrategy::Exponential),
-        ("Адаптивная", ExtensionStrategy::Adaptive),
+        ("Fixed", ExtensionStrategy::Fixed),
+        ("Linear", ExtensionStrategy::Linear),
+        ("Exponential", ExtensionStrategy::Exponential),
+        ("Adaptive", ExtensionStrategy::Adaptive),
     ];
 
     for (name, strategy) in &strategies {
-        println!("\n📁 Создаем файл со стратегией: {}", name);
+        println!("\n📁 Create a file with the strategy: {}", name);
 
         let file_id = manager
             .create_database_file(
@@ -144,11 +144,11 @@ async fn demonstrate_optimized_file_manager() -> Result<()> {
             )
             .await?;
 
-        // Выделяем страницы
+        // Selecting pages
         let start_page = manager.allocate_pages(file_id, 50).await?;
-        println!("   ✅ Выделено 50 страниц, начиная с {}", start_page);
+        println!("✅ 50 pages allocated, starting from {}", start_page);
 
-        // Записываем данные
+        // Recording data
         let test_data = vec![42u8; BLOCK_SIZE];
         let start_time = Instant::now();
 
@@ -159,9 +159,9 @@ async fn demonstrate_optimized_file_manager() -> Result<()> {
         }
 
         let write_time = start_time.elapsed();
-        println!("   ✅ Записано 50 страниц за {:?}", write_time);
+        println!("✅ 50 pages recorded in {:?}", write_time);
 
-        // Читаем данные
+        // Reading the data
         let start_time = Instant::now();
 
         for i in 0..50 {
@@ -169,20 +169,20 @@ async fn demonstrate_optimized_file_manager() -> Result<()> {
         }
 
         let read_time = start_time.elapsed();
-        println!("   ✅ Прочитано 50 страниц за {:?}", read_time);
+        println!("✅ Read 50 pages in {:?}", read_time);
 
-        // Получаем информацию о файле
+        // Getting information about the file
         if let Some(file_info) = manager.get_file_info(file_id).await {
-            println!("   📊 Информация о файле:");
-            println!("      - Всего страниц: {}", file_info.total_pages);
-            println!("      - Используемых страниц: {}", file_info.used_pages);
-            println!("      - Свободных страниц: {}", file_info.free_pages);
+            println!("📊 File information:");
+            println!("- Total pages: {}", file_info.total_pages);
+            println!("- Pages used: {}", file_info.used_pages);
+            println!("- Free pages: {}", file_info.free_pages);
             println!(
-                "      - Коэффициент использования: {:.1}%",
+                "- Usage rate: {:.1}%",
                 file_info.utilization_ratio * 100.0
             );
             println!(
-                "      - Коэффициент фрагментации: {:.1}%",
+                "- Fragmentation rate: {:.1}%",
                 file_info.fragmentation_ratio * 100.0
             );
         }
@@ -192,7 +192,7 @@ async fn demonstrate_optimized_file_manager() -> Result<()> {
 }
 
 async fn demonstrate_cache_performance_simple() -> Result<()> {
-    println!("\n🔄 === Демонстрация производительности кэша ===");
+    println!("\n🔄 === Demonstration of cache performance ===");
 
     let temp_dir = tempfile::TempDir::new().unwrap();
     let manager = OptimizedFileManager::new(temp_dir.path())?;
@@ -206,11 +206,11 @@ async fn demonstrate_cache_performance_simple() -> Result<()> {
         )
         .await?;
 
-    // Подготавливаем тестовые данные
+    // Preparing test data
     let page_count = 200;
     let start_page = manager.allocate_pages(file_id, page_count).await?;
 
-    println!("📝 Записываем {} страниц...", page_count);
+    println!("📝 We record {} pages...", page_count);
     for i in 0..page_count {
         let data = vec![(i % 256) as u8; BLOCK_SIZE];
         manager
@@ -218,16 +218,16 @@ async fn demonstrate_cache_performance_simple() -> Result<()> {
             .await?;
     }
 
-    // Тестируем простые паттерны доступа
+    // Testing simple access patterns
     let access_patterns = [
-        ("Последовательный", (0..page_count).collect::<Vec<_>>()),
-        ("Обратный", (0..page_count).rev().collect::<Vec<_>>()),
+        ("Consistent", (0..page_count).collect::<Vec<_>>()),
+        ("Back", (0..page_count).rev().collect::<Vec<_>>()),
     ];
 
     for (pattern_name, pattern) in &access_patterns {
-        println!("\n🔍 Тестируем паттерн: {}", pattern_name);
+        println!("\n🔍 Testing the pattern: {}", pattern_name);
 
-        // Очищаем кэш для чистого теста
+        // Clearing the cache for a clean test
         manager.clear_io_cache().await;
 
         let start_time = Instant::now();
@@ -241,28 +241,28 @@ async fn demonstrate_cache_performance_simple() -> Result<()> {
         let access_time = start_time.elapsed();
         let stats = manager.get_io_statistics();
 
-        println!("   ⏱️  Время доступа: {:?}", access_time);
+        println!("⏱️ Access time: {:?}", access_time);
         println!(
-            "   📊 Попаданий в кэш: {} ({:.1}%)",
+            "📊 Cache hits: {} ({:.1}%)",
             stats.cache_hits,
             stats.cache_hit_ratio * 100.0
         );
-        println!("   📊 Промахов кэша: {}", stats.cache_misses);
+        println!("📊 Cache misses: {}", stats.cache_misses);
 
         let avg_time_per_op = access_time.as_nanos() / pattern.len() as u128;
-        println!("   ⚡ Среднее время на операцию: {} нс", avg_time_per_op);
+        println!("⚡ Average time per operation: {} ns", avg_time_per_op);
     }
 
     Ok(())
 }
 
 async fn demonstrate_monitoring() -> Result<()> {
-    println!("\n📈 === Демонстрация мониторинга и статистики ===");
+    println!("\n📈 === Demonstration of monitoring and statistics ===");
 
     let temp_dir = tempfile::TempDir::new().unwrap();
     let manager = OptimizedFileManager::new(temp_dir.path())?;
 
-    // Создаем несколько файлов
+    // Create several files
     let mut file_ids = Vec::new();
     for i in 0..3 {
         let file_id = manager
@@ -276,19 +276,19 @@ async fn demonstrate_monitoring() -> Result<()> {
         file_ids.push(file_id);
     }
 
-    println!("🏃 Выполняем интенсивную нагрузку...");
+    println!("🏃 We perform intensive work...");
 
-    // Симулируем рабочую нагрузку
+    // Simulating the workload
     let workload_start = Instant::now();
 
     for round in 0..5 {
-        println!("   Раунд {}/5", round + 1);
+        println!("Round {}/5", round + 1);
 
         for &file_id in &file_ids {
-            // Выделяем страницы
+            // Selecting pages
             let start_page = manager.allocate_pages(file_id, 20).await?;
 
-            // Записываем данные
+            // Recording data
             for i in 0..20 {
                 let data = vec![(round * 20 + i) as u8; BLOCK_SIZE];
                 manager
@@ -296,12 +296,12 @@ async fn demonstrate_monitoring() -> Result<()> {
                     .await?;
             }
 
-            // Читаем данные (смесь новых и старых)
+            // Reading data (mixture of new and old)
             for i in 0..30 {
                 let page_id = if i < 20 {
                     start_page + i as u64
                 } else {
-                    // Читаем старые данные
+                    // Reading old data
                     if start_page > 0 {
                         start_page / 2
                     } else {
@@ -312,11 +312,11 @@ async fn demonstrate_monitoring() -> Result<()> {
             }
         }
 
-        // Периодическое обслуживание
+        // Periodic Maintenance
         if round % 2 == 0 {
             let extended_files = manager.maintenance_check().await?;
             if !extended_files.is_empty() {
-                println!("   🔧 Расширено файлов: {}", extended_files.len());
+                println!("🔧 File extension: {}", extended_files.len());
             }
         }
 
@@ -324,70 +324,70 @@ async fn demonstrate_monitoring() -> Result<()> {
     }
 
     let workload_time = workload_start.elapsed();
-    println!("   ✅ Нагрузка завершена за {:?}", workload_time);
+    println!("✅ Load completed in {:?}", workload_time);
 
-    // Получаем комбинированную статистику
+    // We get combined statistics
     let stats = manager.get_combined_statistics().await;
 
-    println!("\n📊 Комбинированная статистика:");
-    println!("   - Всего файлов: {}", stats.total_files);
-    println!("   - Всего страниц: {}", stats.total_pages);
-    println!("   - Операций чтения: {}", stats.total_reads);
-    println!("   - Операций записи: {}", stats.total_writes);
+    println!("\n📊 Combined statistics:");
+    println!("- Total files: {}", stats.total_files);
+    println!("- Total pages: {}", stats.total_pages);
+    println!("- Read operations: {}", stats.total_reads);
+    println!("- Write operations: {}", stats.total_writes);
     println!(
-        "   - Коэффициент попаданий в кэш: {:.1}%",
+        "- Cache hit rate: {:.1}%",
         stats.cache_hit_ratio * 100.0
     );
     println!(
-        "   - Средняя утилизация: {:.1}%",
+        "- Average utilization: {:.1}%",
         stats.average_utilization * 100.0
     );
     println!(
-        "   - Средняя фрагментация: {:.1}%",
+        "- Average fragmentation: {:.1}%",
         stats.average_fragmentation * 100.0
     );
     println!(
-        "   - Использование буфера: {:.1}%",
+        "- Buffer usage: {:.1}%",
         stats.buffer_usage * 100.0
     );
-    println!("   - Размер кэша: {} страниц", stats.cache_usage);
+    println!("- Cache size: {} pages", stats.cache_usage);
 
     if stats.read_throughput > 0.0 {
         println!(
-            "   - Пропускная способность чтения: {:.1} МБ/с",
+            "- Read throughput: {:.1} MB/s",
             stats.read_throughput / 1_000_000.0
         );
     }
     if stats.write_throughput > 0.0 {
         println!(
-            "   - Пропускная способность записи: {:.1} МБ/с",
+            "- Write Bandwidth: {:.1} MB/s",
             stats.write_throughput / 1_000_000.0
         );
     }
 
-    // Оценка производительности
+    // Performance Evaluation
     let performance_score = stats.performance_score();
     println!(
-        "\n⭐ Оценка производительности: {:.1}% ({})",
+        "\n⭐ Performance Rating: {:.1}% ({})",
         performance_score * 100.0,
         match performance_score {
-            s if s >= 0.9 => "Отлично",
-            s if s >= 0.8 => "Хорошо",
-            s if s >= 0.7 => "Удовлетворительно",
-            s if s >= 0.6 => "Требует внимания",
-            _ => "Требует оптимизации",
+            s if s >= 0.9 => "Great",
+            s if s >= 0.8 => "Fine",
+            s if s >= 0.7 => "Satisfactorily",
+            s if s >= 0.6 => "Needs attention",
+            _ => "Needs optimization",
         }
     );
 
-    // Рекомендации по оптимизации
+    // Optimization recommendations
     let recommendations = stats.get_recommendations();
-    println!("\n💡 Рекомендации по оптимизации:");
+    println!("\n💡 Recommendations for optimization:");
     for (i, recommendation) in recommendations.iter().enumerate() {
         println!("   {}. {}", i + 1, recommendation);
     }
 
-    // Проверка целостности
-    println!("\n🔍 Проверка целостности файлов...");
+    // Integrity check
+    println!("\n🔍 Checking file integrity...");
     let validation_results = manager.validate_all().await?;
 
     let mut valid_files = 0;
@@ -397,21 +397,21 @@ async fn demonstrate_monitoring() -> Result<()> {
         match result {
             Ok(_) => {
                 valid_files += 1;
-                println!("   ✅ Файл {} корректен", file_id);
+                println!("✅ File {} is correct", file_id);
             }
             Err(e) => {
                 invalid_files += 1;
-                println!("   ❌ Файл {} поврежден: {}", file_id, e);
+                println!("❌ File {} is corrupted: {}", file_id, e);
             }
         }
     }
 
-    println!("\n📋 Результат проверки:");
-    println!("   - Корректных файлов: {}", valid_files);
-    println!("   - Поврежденных файлов: {}", invalid_files);
+    println!("\n📋 Check result:");
+    println!("- Correct files: {}", valid_files);
+    println!("- Damaged files: {}", invalid_files);
 
     if invalid_files == 0 {
-        println!("   🎉 Все файлы прошли проверку целостности!");
+        println!("🎉 All files have passed the integrity check!");
     }
 
     Ok(())
@@ -423,7 +423,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_io_optimization_example() -> Result<()> {
-        // Запускаем основную функцию как тест
+        // Run the main function as a test
         main()
     }
 
@@ -431,7 +431,7 @@ mod tests {
     async fn test_performance_comparison() -> Result<()> {
         let temp_dir = tempfile::TempDir::new().unwrap();
 
-        // Тестируем обычный менеджер vs оптимизированный
+        // Testing a regular manager vs an optimized one
         let optimized_manager = OptimizedFileManager::new(temp_dir.path())?;
 
         let file_id = optimized_manager
@@ -446,7 +446,7 @@ mod tests {
         let data = vec![123u8; BLOCK_SIZE];
         let operations = 100;
 
-        // Тестируем оптимизированный менеджер
+        // Testing the optimized manager
         let start_time = Instant::now();
 
         let start_page = optimized_manager
@@ -467,24 +467,24 @@ mod tests {
 
         let optimized_time = start_time.elapsed();
 
-        // Получаем статистику
+        // Getting statistics
         let stats = optimized_manager.get_combined_statistics().await;
 
-        println!("Оптимизированный менеджер:");
-        println!("  Время: {:?}", optimized_time);
+        println!("Optimized manager:");
+        println!("Time: {:?}", optimized_time);
         println!(
-            "  Коэффициент попаданий в кэш: {:.1}%",
+            "Cache hit rate: {:.1}%",
             stats.cache_hit_ratio * 100.0
         );
         println!(
-            "  Оценка производительности: {:.1}%",
+            "Performance Rating: {:.1}%",
             stats.performance_score() * 100.0
         );
 
-        // Проверяем, что производительность приемлемая
+        // Checking that performance is acceptable
         assert!(
             stats.performance_score() > 0.5,
-            "Производительность слишком низкая"
+            "Performance is too low"
         );
 
         Ok(())

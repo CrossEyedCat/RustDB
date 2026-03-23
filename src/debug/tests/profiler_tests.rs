@@ -1,4 +1,4 @@
-//! Тесты для профилировщика
+//! Profiler tests
 
 use crate::debug::profiler::*;
 use crate::debug::DebugConfig;
@@ -14,7 +14,7 @@ async fn test_profiler_creation() {
 
     let profiler = Profiler::new(&config);
 
-    // Проверяем, что профилировщик создался
+    // Checking that the profiler has been created
     let stats = profiler.get_stats();
     assert_eq!(stats.total_snapshots, 0);
 }
@@ -29,19 +29,19 @@ async fn test_profiler_data_collection() {
 
     let profiler = Profiler::new(&config);
 
-    // Ждем немного, чтобы накопились снимки
+    // We'll wait a bit for the pictures to accumulate.
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Проверяем статистику
+    // Checking the statistics
     let stats = profiler.get_stats();
     assert!(stats.total_snapshots > 0);
     assert!(stats.profiling_duration_seconds > 0);
 
-    // Проверяем снимки
+    // Checking the pictures
     let snapshots = profiler.get_snapshots(10);
     assert!(!snapshots.is_empty());
 
-    // Проверяем, что снимки содержат ожидаемые данные
+    // Checking that the images contain the expected data
     for snapshot in &snapshots {
         assert!(snapshot.timestamp > 0);
         
@@ -68,23 +68,23 @@ async fn test_profiler_start_stop() {
 
     let mut profiler = Profiler::new(&config);
 
-    // Ждем немного для сбора данных
+    // We wait a little to collect data
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let stats_before = profiler.get_stats();
     assert!(stats_before.total_snapshots > 0);
 
-    // Останавливаем профилирование
+    // Stopping profiling
     profiler.stop_profiling();
     
     let is_profiling = *profiler.is_profiling.read().unwrap();
     assert!(!is_profiling);
 
-    // Ждем еще немного
+    // We'll wait a little longer
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let stats_after = profiler.get_stats();
-    // Количество снимков не должно увеличиться после остановки
+    // The number of shots should not increase after stopping
     assert_eq!(stats_before.total_snapshots, stats_after.total_snapshots);
 }
 
@@ -143,11 +143,11 @@ async fn test_performance_report() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let report = profiler.generate_performance_report();
-    assert!(report.contains("Отчет о производительности системы"));
-    assert!(report.contains("Общая информация"));
-    assert!(report.contains("CPU статистика"));
-    assert!(report.contains("Memory статистика"));
-    assert!(report.contains("Рекомендации"));
+    assert!(report.contains("System Performance Report"));
+    assert!(report.contains("General information"));
+    assert!(report.contains("CPU statistics"));
+    assert!(report.contains("Memory statistics"));
+    assert!(report.contains("Recommendations"));
 }
 
 #[tokio::test]
@@ -163,10 +163,10 @@ async fn test_status_report() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let report = profiler.generate_status_report();
-    assert!(report.contains("Профилирование активно: true"));
-    assert!(report.contains("CPU профилирование: true"));
-    assert!(report.contains("Memory профилирование: true"));
-    assert!(report.contains("Длительность профилирования"));
+    assert!(report.contains("Profiling active: true"));
+    assert!(report.contains("CPU profiling: true"));
+    assert!(report.contains("Memory profiling: true"));
+    assert!(report.contains("Profiling duration"));
 }
 
 #[test]
@@ -203,7 +203,7 @@ fn test_performance_snapshot_creation() {
 
 #[test]
 fn test_trend_analysis() {
-    // Создаем тестовые снимки с растущим трендом
+    // We create test images with a growing trend
     let snapshots = vec![
         PerformanceSnapshot {
             timestamp: 1000,
@@ -248,12 +248,12 @@ fn test_trend_analysis() {
 
     let trend = Profiler::analyze_trend(&snapshots, |s| s.cpu.as_ref().map(|c| c.cpu_usage));
     assert!(trend.is_some());
-    assert!(trend.unwrap().contains("Растущий"));
+    assert!(trend.unwrap().contains("Growing"));
 }
 
 #[test]
 fn test_trend_analysis_stable() {
-    // Создаем тестовые снимки со стабильным трендом
+    // We create test images with a stable trend
     let snapshots = vec![
         PerformanceSnapshot {
             timestamp: 1000,
@@ -298,5 +298,5 @@ fn test_trend_analysis_stable() {
 
     let trend = Profiler::analyze_trend(&snapshots, |s| s.cpu.as_ref().map(|c| c.cpu_usage));
     assert!(trend.is_some());
-    assert!(trend.unwrap().contains("Стабильный"));
+    assert!(trend.unwrap().contains("Stable"));
 }

@@ -1,4 +1,4 @@
-//! Бенчмарки для измерения производительности I/O операций rustdb
+//! I/O performance benchmarks for rustdb
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use rustdb::common::types::PAGE_SIZE;
@@ -9,12 +9,12 @@ use rustdb::storage::{
 };
 use tempfile::TempDir;
 
-/// Бенчмарк базовых операций I/O
+/// Benchmark: basic I/O
 fn bench_basic_io_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("basic_io");
     group.throughput(Throughput::Bytes(PAGE_SIZE as u64));
 
-    // Тестируем различные размеры кэша
+    // Vary cache sizes
     for cache_size in [1000, 5000, 10000].iter() {
         let config = IoBufferConfig {
             page_cache_size: *cache_size,
@@ -50,7 +50,7 @@ fn bench_basic_io_operations(c: &mut Criterion) {
     group.finish();
 }
 
-/// Бенчмарк операций с буферизованным I/O
+/// Benchmark: buffered I/O
 fn bench_buffered_io_operations(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     let _temp_path = temp_dir.path().join("buffered_test.db");
@@ -58,7 +58,7 @@ fn bench_buffered_io_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("buffered_io");
     group.throughput(Throughput::Bytes(PAGE_SIZE as u64));
 
-    // Тестируем различные конфигурации буфера
+    // Vary buffer configurations
     let configs = vec![
         (
             "small",
@@ -105,7 +105,7 @@ fn bench_buffered_io_operations(c: &mut Criterion) {
     group.finish();
 }
 
-/// Бенчмарк операций с оптимизированным файловым менеджером
+/// Benchmark: optimized file manager
 fn bench_optimized_file_manager_operations(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     let temp_path = temp_dir.path().join("optimized_test.db");
@@ -113,7 +113,7 @@ fn bench_optimized_file_manager_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("optimized_file_manager");
     group.throughput(Throughput::Bytes(PAGE_SIZE as u64));
 
-    // Создаем оптимизированный файловый менеджер
+    // Create optimized file manager
     let manager = OptimizedFileManager::new(temp_path.clone()).unwrap();
     let data = vec![0xCD; PAGE_SIZE];
 
@@ -146,7 +146,7 @@ fn bench_optimized_file_manager_operations(c: &mut Criterion) {
     group.finish();
 }
 
-/// Бенчмарк операций с различными паттернами доступа
+/// Benchmark: access patterns
 fn bench_access_patterns(c: &mut Criterion) {
     let mut group = c.benchmark_group("access_patterns");
     group.throughput(Throughput::Bytes(PAGE_SIZE as u64));
@@ -154,7 +154,7 @@ fn bench_access_patterns(c: &mut Criterion) {
     let manager = BufferedIoManager::new(IoBufferConfig::default());
     let data = vec![0xEF; PAGE_SIZE];
 
-    // Последовательный доступ
+    // Sequential access
     group.bench_function("sequential_access", |b| {
         b.iter(|| {
             for i in 0..10 {
@@ -164,7 +164,7 @@ fn bench_access_patterns(c: &mut Criterion) {
         });
     });
 
-    // Случайный доступ (упрощенная версия)
+    // Random access (simplified)
     group.bench_function("random_access", |b| {
         b.iter(|| {
             let pages = [1, 5, 3, 8, 2, 9, 4, 7, 6, 0];
@@ -178,7 +178,7 @@ fn bench_access_patterns(c: &mut Criterion) {
     group.finish();
 }
 
-/// Бенчмарк операций с различными соотношениями чтения/записи
+/// Benchmark: read/write ratios
 fn bench_read_write_ratios(c: &mut Criterion) {
     let mut group = c.benchmark_group("read_write_ratios");
     group.throughput(Throughput::Bytes(PAGE_SIZE as u64));
@@ -186,7 +186,7 @@ fn bench_read_write_ratios(c: &mut Criterion) {
     let manager = BufferedIoManager::new(IoBufferConfig::default());
     let data = vec![0x12; PAGE_SIZE];
 
-    // 90% чтения, 10% записи
+    // 90% read, 10% write
     group.bench_function("90_read_10_write", |b| {
         b.iter(|| {
             for i in 0..10 {
@@ -201,7 +201,7 @@ fn bench_read_write_ratios(c: &mut Criterion) {
         });
     });
 
-    // 50% чтения, 50% записи
+    // 50% read, 50% write
     group.bench_function("50_read_50_write", |b| {
         b.iter(|| {
             for i in 0..10 {
@@ -216,7 +216,7 @@ fn bench_read_write_ratios(c: &mut Criterion) {
         });
     });
 
-    // 10% чтения, 90% записи
+    // 10% read, 90% write
     group.bench_function("10_read_90_write", |b| {
         b.iter(|| {
             for i in 0..10 {

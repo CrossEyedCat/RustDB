@@ -1,4 +1,4 @@
-//! Тесты для проверщика прав доступа
+//! Permission Checker Tests
 
 use crate::analyzer::access_checker::{Permission, Role, User};
 use crate::analyzer::AccessChecker;
@@ -10,7 +10,7 @@ fn test_access_checker_creation() {
 
     assert!(checker.is_enabled());
 
-    // Должен существовать пользователь admin
+    // The user admin must exist
     assert!(checker.get_user("admin").is_some());
 }
 
@@ -70,11 +70,11 @@ fn test_admin_user_permissions() {
 fn test_permission_grant_revoke() {
     let mut checker = AccessChecker::new();
 
-    // Предоставляем разрешение
+    // We grant permission
     checker.grant_permission("users", "alice", Permission::Select);
     assert!(checker.check_permission("users", "alice", &Permission::Select));
 
-    // Отзываем разрешение
+    // Revoking permission
     checker.revoke_permission("users", "alice", &Permission::Select);
     assert!(!checker.check_permission("users", "alice", &Permission::Select));
 }
@@ -83,7 +83,7 @@ fn test_permission_grant_revoke() {
 fn test_admin_always_has_permissions() {
     let checker = AccessChecker::new();
 
-    // Администратор должен иметь все права на любые объекты
+    // The administrator must have full rights to any objects
     assert!(checker.check_permission("any_table", "admin", &Permission::Select));
     assert!(checker.check_permission("any_table", "admin", &Permission::Insert));
     assert!(checker.check_permission("any_table", "admin", &Permission::CreateTable));
@@ -96,7 +96,7 @@ fn test_disabled_access_checker() {
 
     assert!(!checker.is_enabled());
 
-    // Когда проверка отключена, все разрешения должны проходить
+    // When verification is disabled, all permissions must pass
     assert!(checker.check_permission("any_table", "anyone", &Permission::Select));
     assert!(checker.check_permission("any_table", "anyone", &Permission::DropTable));
 }
@@ -105,7 +105,7 @@ fn test_disabled_access_checker() {
 fn test_permissive_access_checker() {
     let checker = AccessChecker::permissive();
 
-    // В разрешающем режиме неизвестные пользователи должны иметь доступ
+    // In permissive mode, unknown users should have access
     assert!(checker.check_permission("any_table", "unknown_user", &Permission::Select));
 }
 
@@ -113,7 +113,7 @@ fn test_permissive_access_checker() {
 fn test_user_management() {
     let mut checker = AccessChecker::new();
 
-    // Создаем нового пользователя
+    // Create a new user
     let role = Role::new("editor".to_string())
         .with_permission(Permission::Select)
         .with_permission(Permission::Insert)
@@ -122,10 +122,10 @@ fn test_user_management() {
     let user = User::new("editor_user".to_string()).with_role(role);
     checker.add_user(user);
 
-    // Проверяем, что пользователь добавлен
+    // Checking that the user has been added
     assert!(checker.get_user("editor_user").is_some());
 
-    // Проверяем права пользователя
+    // Checking user rights
     assert!(checker.check_permission("any_table", "editor_user", &Permission::Select));
     assert!(checker.check_permission("any_table", "editor_user", &Permission::Insert));
     assert!(!checker.check_permission("any_table", "editor_user", &Permission::Delete));

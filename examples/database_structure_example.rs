@@ -1,10 +1,10 @@
-//! Пример использования структуры файлов базы данных RustDB
+//! Example of using the RustDB database file structure
 //!
-//! Этот пример демонстрирует:
-//! - Работу с расширенными заголовками файлов БД
-//! - Управление картой свободных страниц
-//! - Различные стратегии расширения файлов
-//! - Мониторинг и статистику использования
+//! This example demonstrates:
+//! - Work with extended database file headers
+//! - Management of the map of free pages
+//! - Various file expansion strategies
+//! - Monitoring and usage statistics
 
 use rustdb::common::Result;
 use rustdb::storage::database_file::{
@@ -13,93 +13,93 @@ use rustdb::storage::database_file::{
 };
 
 fn main() -> Result<()> {
-    println!("=== Пример структуры файлов базы данных RustDB ===\n");
+    println!("=== Example of RustDB database file structure ===\n");
 
-    // Демонстрация работы с заголовком файла БД
+    // Demonstration of working with database file header
     demonstrate_database_header()?;
 
-    // Демонстрация карты свободных страниц
+    // Demonstration of the map of free pages
     demonstrate_free_page_map()?;
 
-    // Демонстрация менеджера расширения файлов
+    // File extension manager demo
     demonstrate_extension_manager()?;
 
-    println!("\n🎉 Пример успешно завершен!");
+    println!("\n🎉 Example completed successfully!");
     Ok(())
 }
 
 fn demonstrate_database_header() -> Result<()> {
-    println!("📋 === Демонстрация заголовка файла БД ===");
+    println!("📋 === Demonstration of the database file header ===");
 
-    // Создаем заголовок для файла данных
+    // Creating a header for the data file
     let mut data_header = DatabaseFileHeader::new(DatabaseFileType::Data, 12345);
     data_header.file_sequence = 1;
-    data_header.max_pages = 1000000; // Ограничение в 1 миллион страниц
-    data_header.extension_size = 512; // Расширяем по 512 страниц (2MB)
+    data_header.max_pages = 1000000;
+    data_header.extension_size = 512;
 
-    println!("🗄️ Создан заголовок файла данных:");
-    println!("   - Тип файла: {}", data_header.type_description());
-    println!("   - Состояние: {}", data_header.state_description());
-    println!("   - ID базы данных: {}", data_header.database_id);
+    println!("🗄️ Data file header created:");
+    println!("- File type: {}", data_header.type_description());
+    println!("- State: {}", data_header.state_description());
+    println!("- Database ID: {}", data_header.database_id);
     println!(
-        "   - Версия формата: {}.{}",
+        "- Format version: {}.{}",
         data_header.version, data_header.subversion
     );
-    println!("   - Размер страницы: {} байт", data_header.page_size);
-    println!("   - Максимум страниц: {}", data_header.max_pages);
+    println!("- Page size: {} bytes", data_header.page_size);
+    println!("- Maximum pages: {}", data_header.max_pages);
     println!(
-        "   - Размер расширения: {} страниц",
+        "- Extension size: {} pages",
         data_header.extension_size
     );
 
-    // Демонстрируем работу с флагами
+    // Demonstrating how to work with flags
     data_header.set_flag(DatabaseFileHeader::FLAG_COMPRESSED);
     data_header.set_flag(DatabaseFileHeader::FLAG_DEBUG_MODE);
 
-    println!("   - Флаги:");
+    println!("- Flags:");
     println!(
-        "     * Сжатие: {}",
+        "* Compression: {}",
         data_header.has_flag(DatabaseFileHeader::FLAG_COMPRESSED)
     );
     println!(
-        "     * Шифрование: {}",
+        "* Encryption: {}",
         data_header.has_flag(DatabaseFileHeader::FLAG_ENCRYPTED)
     );
     println!(
-        "     * Контрольные суммы: {}",
+        "* Checksums: {}",
         data_header.has_flag(DatabaseFileHeader::FLAG_CHECKSUM_ENABLED)
     );
     println!(
-        "     * Режим отладки: {}",
+        "* Debug mode: {}",
         data_header.has_flag(DatabaseFileHeader::FLAG_DEBUG_MODE)
     );
 
-    // Обновляем статистику
+    // Update statistics
     data_header.total_pages = 1000;
     data_header.used_pages = 750;
     data_header.free_pages = 250;
     data_header.increment_write_count();
     data_header.increment_read_count();
 
-    // Проверяем контрольную сумму
+    // Checking the checksum
     data_header.update_checksum();
-    println!("   - Контрольная сумма: 0x{:08X}", data_header.checksum);
-    println!("   - Заголовок корректен: {}", data_header.is_valid());
+    println!("- Checksum: 0x{:08X}", data_header.checksum);
+    println!("- The title is correct: {}", data_header.is_valid());
 
-    // Создаем заголовок для файла индексов
+    // Creating a header for the index file
     let mut index_header = DatabaseFileHeader::new(DatabaseFileType::Index, 12345);
     index_header.file_sequence = 2;
-    index_header.catalog_root_page = Some(1); // Корневая страница каталога
+    index_header.catalog_root_page = Some(1);
     index_header.update_checksum();
 
-    println!("\n📊 Создан заголовок файла индексов:");
-    println!("   - Тип файла: {}", index_header.type_description());
+    println!("\n📊 Index file header created:");
+    println!("- File type: {}", index_header.type_description());
     println!(
-        "   - Корневая страница каталога: {:?}",
+        "- Directory root page: {:?}",
         index_header.catalog_root_page
     );
     println!(
-        "   - Последовательность файла: {}",
+        "- File sequence: {}",
         index_header.file_sequence
     );
 
@@ -107,135 +107,135 @@ fn demonstrate_database_header() -> Result<()> {
 }
 
 fn demonstrate_free_page_map() -> Result<()> {
-    println!("\n🗺️ === Демонстрация карты свободных страниц ===");
+    println!("\n🗺️ === Demonstration of the map of free pages ===");
 
     let mut free_map = FreePageMap::new();
 
-    println!("📍 Добавляем свободные блоки:");
+    println!("📍 Add free blocks:");
 
-    // Добавляем различные блоки свободных страниц
-    free_map.add_free_block(100, 50)?; // 50 страниц начиная с 100
-    println!("   ✅ Добавлен блок: страницы 100-149 (50 страниц)");
+    // Adding various blocks of free pages
+    free_map.add_free_block(100, 50)?;
+    println!("✅ Added block: pages 100-149 (50 pages)");
 
-    free_map.add_free_block(200, 25)?; // 25 страниц начиная с 200
-    println!("   ✅ Добавлен блок: страницы 200-224 (25 страниц)");
+    free_map.add_free_block(200, 25)?;
+    println!("✅ Added block: pages 200-224 (25 pages)");
 
-    free_map.add_free_block(300, 75)?; // 75 страниц начиная с 300
-    println!("   ✅ Добавлен блок: страницы 300-374 (75 страниц)");
+    free_map.add_free_block(300, 75)?;
+    println!("✅ Added block: pages 300-374 (75 pages)");
 
-    // Пытаемся добавить соседний блок (должен объединиться)
-    free_map.add_free_block(150, 20)?; // Соседний с первым блоком
+    // We are trying to add a neighboring block (must merge)
+    free_map.add_free_block(150, 20)?;
     println!(
-        "   ✅ Добавлен соседний блок: страницы 150-169 (20 страниц) - объединен с предыдущим"
+        "✅ Added adjacent block: pages 150-169 (20 pages) - merged with the previous one"
     );
 
-    println!("\n📊 Статистика карты свободных страниц:");
+    println!("\n📊 Free pages map statistics:");
     println!(
-        "   - Общее количество записей: {}",
+        "- Total number of entries: {}",
         free_map.header.total_entries
     );
-    println!("   - Активных записей: {}", free_map.header.active_entries);
+    println!("- Active entries: {}", free_map.header.active_entries);
     println!(
-        "   - Всего свободных страниц: {}",
+        "- Total free pages: {}",
         free_map.total_free_pages()
     );
     println!(
-        "   - Наибольший свободный блок: {} страниц",
+        "- Largest free block: {} pages",
         free_map.find_largest_free_block()
     );
 
-    println!("\n💾 Выделяем страницы:");
+    println!("\n💾 Select pages:");
 
-    // Выделяем страницы различного размера
+    // Selecting pages of different sizes
     if let Some(allocated) = free_map.allocate_pages(30) {
         println!(
-            "   ✅ Выделено 30 страниц, начиная с страницы {}",
+            "✅ 30 pages allocated, starting from page {}",
             allocated
         );
     }
 
     if let Some(allocated) = free_map.allocate_pages(10) {
         println!(
-            "   ✅ Выделено 10 страниц, начиная с страницы {}",
+            "✅ 10 pages allocated, starting from page {}",
             allocated
         );
     }
 
     if let Some(allocated) = free_map.allocate_pages(100) {
         println!(
-            "   ✅ Выделено 100 страниц, начиная с страницы {}",
+            "✅ 100 pages allocated, starting from page {}",
             allocated
         );
     } else {
-        println!("   ❌ Не удалось выделить 100 страниц (недостаточно места)");
+        println!("❌ Failed to allocate 100 pages (not enough space)");
     }
 
-    println!("\n📊 Обновленная статистика:");
+    println!("\n📊 Updated statistics:");
     println!(
-        "   - Всего свободных страниц: {}",
+        "- Total free pages: {}",
         free_map.total_free_pages()
     );
     println!(
-        "   - Наибольший свободный блок: {} страниц",
+        "- Largest free block: {} pages",
         free_map.find_largest_free_block()
     );
 
-    // Освобождаем некоторые страницы
-    println!("\n🔄 Освобождаем страницы:");
-    free_map.free_pages(50, 15)?; // Освобождаем 15 страниц начиная с 50
-    println!("   ✅ Освобождено 15 страниц, начиная с страницы 50");
+    // Freeing up some pages
+    println!("\n🔄 Freeing pages:");
+    free_map.free_pages(50, 15)?;
+    println!("✅ 15 pages freed, starting from page 50");
 
-    // Дефрагментируем карту
-    println!("\n🔧 Дефрагментируем карту...");
+    // Defragment the map
+    println!("\n🔧 Let's defragment the map...");
     free_map.defragment();
-    println!("   ✅ Дефрагментация завершена");
+    println!("✅ Defragmentation completed");
     println!(
-        "   - Записей после дефрагментации: {}",
+        "- Entries after defragmentation: {}",
         free_map.entries.len()
     );
 
-    // Проверяем целостность
+    // Checking integrity
     match free_map.validate() {
-        Ok(_) => println!("   ✅ Карта свободных страниц корректна"),
-        Err(e) => println!("   ❌ Ошибка валидации карты: {}", e),
+        Ok(_) => println!("✅ The map of free pages is correct"),
+        Err(e) => println!("❌ Card validation error: {}", e),
     }
 
     Ok(())
 }
 
 fn demonstrate_extension_manager() -> Result<()> {
-    println!("\n📈 === Демонстрация менеджера расширения файлов ===");
+    println!("\n📈 === File extension manager demonstration ===");
 
-    // Демонстрируем различные стратегии расширения
+    // We demonstrate various expansion strategies
     let strategies = vec![
-        ("Фиксированная", ExtensionStrategy::Fixed),
-        ("Линейная", ExtensionStrategy::Linear),
-        ("Экспоненциальная", ExtensionStrategy::Exponential),
-        ("Адаптивная", ExtensionStrategy::Adaptive),
+        ("Fixed", ExtensionStrategy::Fixed),
+        ("Linear", ExtensionStrategy::Linear),
+        ("Exponential", ExtensionStrategy::Exponential),
+        ("Adaptive", ExtensionStrategy::Adaptive),
     ];
 
     for (name, strategy) in strategies {
-        println!("\n🔧 Стратегия расширения: {}", name);
+        println!("\n🔧 Expansion strategy: {}", name);
 
         let mut manager = FileExtensionManager::new(strategy);
         manager.min_extension_size = 32; // 128KB
         manager.max_extension_size = 1024; // 4MB
         manager.growth_factor = 1.5;
 
-        let current_size = 1000u64; // Текущий размер файла
+        let current_size = 1000u64;
 
-        // Вычисляем размеры расширения для различных требований
+        // Calculating expansion sizes for various requirements
         let sizes = vec![10, 50, 100, 500];
 
         for required_size in sizes {
             let extension_size = manager.calculate_extension_size(current_size, required_size);
             println!(
-                "   - Требуется {} страниц → расширение на {} страниц",
+                "- Requires {} pages → extension to {} pages",
                 required_size, extension_size
             );
         }
 
-        // Симулируем несколько расширений
+        // Simulating several extensions
         let mut file_size = current_size;
         for i in 1..=3 {
             let old_size = file_size;
@@ -245,32 +245,32 @@ fn demonstrate_extension_manager() -> Result<()> {
             manager.record_extension(old_size, file_size, ExtensionReason::OutOfSpace);
 
             println!(
-                "   - Расширение #{}: {} → {} страниц (+{})",
+                "- Extension #{}: {} → {} pages (+{})",
                 i, old_size, file_size, extension
             );
         }
 
-        // Получаем статистику
+        // Getting statistics
         let stats = manager.get_statistics();
-        println!("   - Всего расширений: {}", stats.total_extensions);
+        println!("- Total extensions: {}", stats.total_extensions);
         println!(
-            "   - Средний размер расширения: {:.1} страниц",
+            "- Average extension size: {:.1} pages",
             stats.average_extension_size
         );
 
-        // Проверяем рекомендации по предварительному расширению
+        // Checking recommendations for preliminary expansion
         let should_preextend = manager.should_preextend(file_size, 100, file_size);
         println!(
-            "   - Рекомендуется предварительное расширение: {}",
+            "- Pre-extension recommended: {}",
             should_preextend
         );
     }
 
-    // Демонстрируем адаптивную стратегию с историей
-    println!("\n🧠 Демонстрация адаптивной стратегии:");
+    // Demonstrating an adaptive strategy with history
+    println!("\n🧠Demonstration of adaptive strategy:");
     let mut adaptive_manager = FileExtensionManager::new(ExtensionStrategy::Adaptive);
 
-    // Симулируем активное использование (много расширений)
+    // Simulating active use (many extensions)
     let mut file_size = 500u64;
     for i in 1..=8 {
         let old_size = file_size;
@@ -286,16 +286,16 @@ fn demonstrate_extension_manager() -> Result<()> {
         adaptive_manager.record_extension(old_size, file_size, reason);
 
         println!(
-            "   - Адаптивное расширение #{}: +{} страниц (причина: {:?})",
+            "- Adaptive expansion #{}: +{} pages (reason: {:?})",
             i, extension, reason
         );
     }
 
     let final_stats = adaptive_manager.get_statistics();
-    println!("   - Итоговая статистика:");
-    println!("     * Всего расширений: {}", final_stats.total_extensions);
+    println!("- Final statistics:");
+    println!("* Total extensions: {}", final_stats.total_extensions);
     println!(
-        "     * Средний размер: {:.1} страниц",
+        "* Average size: {:.1} pages",
         final_stats.average_extension_size
     );
 
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn test_database_structure_example() -> Result<()> {
-        // Запускаем основную функцию как тест
+        // Run the main function as a test
         main()
     }
 
@@ -316,19 +316,19 @@ mod tests {
     fn test_header_operations() -> Result<()> {
         let mut header = DatabaseFileHeader::new(DatabaseFileType::Data, 999);
 
-        // Тестируем базовые операции
+        // Testing basic operations
         assert_eq!(header.database_id, 999);
         assert_eq!(header.file_type, DatabaseFileType::Data);
         assert_eq!(header.file_state, DatabaseFileState::Creating);
 
-        // Тестируем флаги
+        // Testing flags
         header.set_flag(DatabaseFileHeader::FLAG_COMPRESSED);
         assert!(header.has_flag(DatabaseFileHeader::FLAG_COMPRESSED));
 
         header.clear_flag(DatabaseFileHeader::FLAG_COMPRESSED);
         assert!(!header.has_flag(DatabaseFileHeader::FLAG_COMPRESSED));
 
-        // Тестируем валидацию
+        // Testing validation
         header.update_checksum();
         assert!(header.is_valid());
 
@@ -339,20 +339,20 @@ mod tests {
     fn test_free_page_map_operations() -> Result<()> {
         let mut map = FreePageMap::new();
 
-        // Добавляем блоки
+        // Adding blocks
         map.add_free_block(10, 5)?;
         map.add_free_block(20, 10)?;
 
         assert_eq!(map.total_free_pages(), 15);
         assert_eq!(map.find_largest_free_block(), 10);
 
-        // Выделяем страницы
+        // Selecting pages
         let allocated = map.allocate_pages(3);
-        assert_eq!(allocated, Some(10)); // Должен выделить из первого подходящего блока (first-fit)
+        assert_eq!(allocated, Some(10));
 
         assert_eq!(map.total_free_pages(), 12);
 
-        // Освобождаем страницы
+        // Freeing up pages
         map.free_pages(50, 5)?;
         assert_eq!(map.total_free_pages(), 17);
 
@@ -372,10 +372,10 @@ mod tests {
         let linear_ext = linear.calculate_extension_size(current_size, required);
         let exp_ext = exponential.calculate_extension_size(current_size, required);
 
-        // Фиксированная стратегия должна давать минимальный размер
+        // A fixed strategy should give a minimum size
         assert!(fixed_ext >= required as u32);
 
-        // Другие стратегии должны учитывать размер файла
+        // Other strategies must take file size into account
         assert!(linear_ext >= fixed_ext);
         assert!(exp_ext >= fixed_ext);
     }

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Скрипт для запуска pgbench и сравнения с RustDB
-# Требует: PostgreSQL, pgbench, созданную БД
+# Run pgbench against PostgreSQL for comparison with RustDB.
+# Requires: PostgreSQL, pgbench, and a database.
 
 set -e
 
@@ -14,7 +14,7 @@ echo "=== PostgreSQL pgbench ==="
 echo "DB: $DB_NAME, scale: $SCALE, clients: $CLIENTS, jobs: $JOBS, duration: ${DURATION}s"
 echo ""
 
-# Инициализация (если БД не существует)
+# Initialize if the database does not exist
 if ! psql -lqt | cut -d \| -f 1 | grep -qw "$DB_NAME"; then
     echo "Creating database and initializing pgbench..."
     createdb "$DB_NAME" 2>/dev/null || true

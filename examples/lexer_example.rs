@@ -1,24 +1,24 @@
-//! Пример использования лексического анализатора rustdb
+//! An example of using the rustdb lexical analyzer
 
 use rustdb::parser::Lexer;
 
 fn main() {
-    println!("🔍 Демонстрация лексического анализатора rustdb\n");
+    println!("🔍 Demonstration of the rustdb lexical analyzer\n");
 
-    // Тест 1: Базовые ключевые слова
+    // Test 1: Basic Keywords
     test_basic_keywords();
 
-    // Тест 2: Составные ключевые слова
+    // Test 2: Compound Keywords
     test_compound_keywords();
 
-    // Тест 3: Комплексный SQL запрос
+    // Test 3: Complex SQL query
     test_complex_query();
 
-    println!("✅ Демонстрация завершена успешно!");
+    println!("✅ Demonstration completed successfully!");
 }
 
 fn test_basic_keywords() {
-    println!("📝 1. Базовые ключевые слова");
+    println!("📝 1. Basic keywords");
     println!("============================");
 
     let sql = "SELECT FROM WHERE INSERT UPDATE DELETE";
@@ -34,7 +34,7 @@ fn test_basic_keywords() {
 }
 
 fn test_compound_keywords() {
-    println!("🔗 2. Составные ключевые слова");
+    println!("🔗 2. Compound keywords");
     println!("==============================");
 
     let sql = "IS NULL IS NOT NULL NOT NULL GROUP BY ORDER BY INNER JOIN";
@@ -49,12 +49,12 @@ fn test_compound_keywords() {
     }
     println!();
 
-    // Тест операторов
-    println!("🔧 Тест операторов:");
+    // Operator test
+    println!("🔧 Operator test:");
     let mut lexer2 = rustdb::parser::Lexer::new("+ - * / % = <> < > <= >= != :=").unwrap();
     let tokens = lexer2.tokenize().unwrap();
 
-    println!("   Всего токенов: {}", tokens.len());
+    println!("Total tokens: {}", tokens.len());
     for (i, token) in tokens.iter().enumerate() {
         println!("   {}: {:?} = '{}'", i, token.token_type, token.value);
     }
@@ -62,7 +62,7 @@ fn test_compound_keywords() {
 }
 
 fn test_complex_query() {
-    println!("🗃️  3. Комплексный SQL запрос");
+    println!("🗃️ 3. Complex SQL query");
     println!("=============================");
 
     let sql = r#"
@@ -80,15 +80,15 @@ fn test_complex_query() {
     let mut lexer = Lexer::new(sql).unwrap();
     let tokens = lexer.tokenize().unwrap();
 
-    println!("   Всего токенов: {}", tokens.len());
+    println!("Total tokens: {}", tokens.len());
 
-    // Показываем только ключевые слова
+    // Show only keywords
     let keywords: Vec<_> = tokens
         .iter()
         .filter(|t| t.token_type.is_keyword())
         .collect();
 
-    println!("   Ключевые слова:");
+    println!("Key words:");
     for token in keywords {
         println!("     {:?}", token.token_type);
     }

@@ -1,4 +1,4 @@
-//! Тесты для структуры Row
+//! Tests for the Row structure
 
 use crate::storage::row::{Row, RowHeader, RowStatus};
 use crate::common::types::{PageId, ColumnValue};
@@ -29,18 +29,18 @@ fn test_row_header() {
 fn test_row_data_operations() {
     let mut row = Row::new(1, PageId(1), 0);
     
-    // Добавляем данные в строку
+    // Adding data to a row
     row.add_column_value(ColumnValue::Integer(42));
     row.add_column_value(ColumnValue::Text("Hello".to_string()));
     row.add_column_value(ColumnValue::Boolean(true));
     
     assert_eq!(row.get_column_count(), 3);
     
-    // Проверяем значения колонок
+    // Checking column values
     assert_eq!(row.get_column_value(0), Some(&ColumnValue::Integer(42)));
     assert_eq!(row.get_column_value(1), Some(&ColumnValue::Text("Hello".to_string())));
     assert_eq!(row.get_column_value(2), Some(&ColumnValue::Boolean(true)));
-    assert_eq!(row.get_column_value(3), None); // Несуществующая колонка
+    assert_eq!(row.get_column_value(3), None);
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn test_row_update_column() {
     row.add_column_value(ColumnValue::Integer(10));
     row.add_column_value(ColumnValue::Text("Old".to_string()));
     
-    // Обновляем значения колонок
+    // Updating column values
     let result1 = row.update_column_value(0, ColumnValue::Integer(20));
     let result2 = row.update_column_value(1, ColumnValue::Text("New".to_string()));
     
@@ -66,7 +66,7 @@ fn test_row_update_invalid_column() {
     let mut row = Row::new(1, PageId(1), 0);
     row.add_column_value(ColumnValue::Integer(1));
     
-    // Попытка обновить несуществующую колонку
+    // Trying to update a non-existent column
     let result = row.update_column_value(5, ColumnValue::Integer(2));
     assert!(result.is_err());
 }
@@ -77,12 +77,12 @@ fn test_row_status_changes() {
     
     assert_eq!(row.get_status(), RowStatus::Active);
     
-    // Помечаем строку как удаленную
+    // Mark the line as deleted
     row.mark_deleted();
     assert_eq!(row.get_status(), RowStatus::Deleted);
     assert!(row.is_dirty());
     
-    // Восстанавливаем строку
+    // Restoring the line
     row.mark_active();
     assert_eq!(row.get_status(), RowStatus::Active);
     assert!(row.is_dirty());
@@ -97,11 +97,11 @@ fn test_row_serialization() {
     row.add_column_value(ColumnValue::Float(3.14));
     row.add_column_value(ColumnValue::Boolean(false));
     
-    // Сериализуем строку
+    // Serialize a string
     let serialized = row.serialize();
     assert!(!serialized.is_empty());
     
-    // Десериализуем строку
+    // Deserialize the string
     let deserialized = Row::deserialize(&serialized);
     assert!(deserialized.is_ok());
     
@@ -111,7 +111,7 @@ fn test_row_serialization() {
     assert_eq!(new_row.get_offset(), 500);
     assert_eq!(new_row.get_column_count(), 4);
     
-    // Проверяем данные
+    // Checking the data
     assert_eq!(new_row.get_column_value(0), Some(&ColumnValue::Integer(123)));
     assert_eq!(new_row.get_column_value(1), Some(&ColumnValue::Text("Serialization test".to_string())));
     assert_eq!(new_row.get_column_value(2), Some(&ColumnValue::Float(3.14)));
@@ -122,12 +122,12 @@ fn test_row_serialization() {
 fn test_row_different_data_types() {
     let mut row = Row::new(1, PageId(1), 0);
     
-    // Тестируем различные типы данных
+    // Testing different types of data
     row.add_column_value(ColumnValue::Integer(i64::MAX));
     row.add_column_value(ColumnValue::Integer(i64::MIN));
     row.add_column_value(ColumnValue::Float(f64::MAX));
     row.add_column_value(ColumnValue::Float(f64::MIN));
-    row.add_column_value(ColumnValue::Text("".to_string())); // Пустая строка
+    row.add_column_value(ColumnValue::Text("".to_string()));
     row.add_column_value(ColumnValue::Text("🦀 Rust is awesome! 🚀".to_string())); // Unicode
     row.add_column_value(ColumnValue::Boolean(true));
     row.add_column_value(ColumnValue::Boolean(false));
@@ -135,7 +135,7 @@ fn test_row_different_data_types() {
     
     assert_eq!(row.get_column_count(), 9);
     
-    // Проверяем все значения
+    // Checking all values
     assert_eq!(row.get_column_value(0), Some(&ColumnValue::Integer(i64::MAX)));
     assert_eq!(row.get_column_value(1), Some(&ColumnValue::Integer(i64::MIN)));
     assert_eq!(row.get_column_value(2), Some(&ColumnValue::Float(f64::MAX)));
@@ -151,41 +151,41 @@ fn test_row_different_data_types() {
 fn test_row_large_data() {
     let mut row = Row::new(1, PageId(1), 0);
     
-    // Добавляем большую строку
-    let large_text = "A".repeat(100000); // 100KB текста
+    // Add a big line
+    let large_text = "A".repeat(100000);
     row.add_column_value(ColumnValue::Text(large_text.clone()));
     
     assert_eq!(row.get_column_count(), 1);
     assert_eq!(row.get_column_value(0), Some(&ColumnValue::Text(large_text)));
     
-    // Проверяем размер строки
+    // Checking the string size
     let size = row.calculate_size();
-    assert!(size > 100000); // Должен быть больше размера данных из-за метаданных
+    assert!(size > 100000);
 }
 
 #[test]
 fn test_row_dirty_flag() {
     let mut row = Row::new(1, PageId(1), 0);
-    assert!(row.is_dirty()); // Новая строка помечена как грязная
+    assert!(row.is_dirty());
     
     row.mark_clean();
     assert!(!row.is_dirty());
     
-    // Добавление колонки должно помечать строку как грязную
+    // Adding a column should mark the row as dirty
     row.add_column_value(ColumnValue::Integer(1));
     assert!(row.is_dirty());
     
     row.mark_clean();
     assert!(!row.is_dirty());
     
-    // Обновление колонки должно помечать строку как грязную
+    // Updating a column should mark the row as dirty
     row.update_column_value(0, ColumnValue::Integer(2)).unwrap();
     assert!(row.is_dirty());
     
     row.mark_clean();
     assert!(!row.is_dirty());
     
-    // Изменение статуса должно помечать строку как грязную
+    // Changing the status should mark the line as dirty
     row.mark_deleted();
     assert!(row.is_dirty());
 }
@@ -215,7 +215,7 @@ fn test_row_equality() {
     let mut row2 = Row::new(1, PageId(1), 0);
     row2.add_column_value(ColumnValue::Integer(42));
     
-    let mut row3 = Row::new(2, PageId(1), 0); // Другой ID
+    let mut row3 = Row::new(2, PageId(1), 0);
     row3.add_column_value(ColumnValue::Integer(42));
     
     assert_eq!(row1, row2);
@@ -227,25 +227,25 @@ fn test_row_move_to_different_page() {
     let mut row = Row::new(1, PageId(1), 100);
     row.add_column_value(ColumnValue::Text("Moving row".to_string()));
     
-    // Перемещаем строку на другую страницу
+    // Move a line to another page
     row.set_page_id(PageId(2));
     row.set_offset(200);
     
     assert_eq!(row.get_page_id(), PageId(2));
     assert_eq!(row.get_offset(), 200);
-    assert!(row.is_dirty()); // Перемещение должно помечать строку как грязную
+    assert!(row.is_dirty());
     
-    // Данные должны остаться неизменными
+    // Data must remain unchanged
     assert_eq!(row.get_column_value(0), Some(&ColumnValue::Text("Moving row".to_string())));
 }
 
 #[test]
 fn test_row_status_enum() {
-    // Проверяем различные статусы строк
+    // Checking various row statuses
     assert_eq!(RowStatus::Active as u8, 0);
     assert_eq!(RowStatus::Deleted as u8, 1);
     
-    // Проверяем сериализацию статусов
+    // Checking status serialization
     let statuses = vec![RowStatus::Active, RowStatus::Deleted];
     
     for status in statuses {
@@ -257,14 +257,14 @@ fn test_row_status_enum() {
 
 #[test]
 fn test_row_boundary_conditions() {
-    // Тест с максимальными значениями
+    // Test with maximum values
     let mut row = Row::new(u32::MAX, PageId(u64::MAX), usize::MAX);
     
     assert_eq!(row.get_id(), u32::MAX);
     assert_eq!(row.get_page_id(), PageId(u64::MAX));
     assert_eq!(row.get_offset(), usize::MAX);
     
-    // Добавляем максимальное количество колонок (ограничено памятью)
+    // Add the maximum number of columns (limited by memory)
     for i in 0..1000 {
         row.add_column_value(ColumnValue::Integer(i));
     }
@@ -279,8 +279,8 @@ fn test_row_memory_efficiency() {
     let row = Row::new(1, PageId(1), 0);
     let size = mem::size_of_val(&row);
     
-    // Строка должна иметь разумный размер в памяти
-    assert!(size < 1024); // Менее 1KB для пустой строки
+    // The string must be a reasonable size in memory
+    assert!(size < 1024);
 }
 
 #[test]
@@ -292,20 +292,20 @@ fn test_row_persistence() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test_row.dat");
     
-    // Создаем строку с данными
+    // Create a row with data
     let mut original_row = Row::new(42, PageId(10), 500);
     original_row.add_column_value(ColumnValue::Integer(123));
     original_row.add_column_value(ColumnValue::Text("Persistent row".to_string()));
-    original_row.mark_deleted(); // Изменяем статус
+    original_row.mark_deleted();
     
-    // Записываем в файл
+    // Write to file
     {
         let mut file = File::create(&file_path).unwrap();
         let serialized = original_row.serialize();
         file.write_all(&serialized).unwrap();
     }
     
-    // Читаем из файла
+    // Reading from a file
     {
         let mut file = File::open(&file_path).unwrap();
         let mut buffer = Vec::new();
@@ -331,7 +331,7 @@ fn test_row_concurrent_access_simulation() {
     let row = Arc::new(Mutex::new(Row::new(1, PageId(1), 0)));
     let mut handles = vec![];
     
-    // Симулируем конкурентный доступ
+    // Simulating competitive access
     for i in 0..10 {
         let row_clone = Arc::clone(&row);
         let handle = thread::spawn(move || {
@@ -341,7 +341,7 @@ fn test_row_concurrent_access_simulation() {
         handles.push(handle);
     }
     
-    // Ждем завершения всех потоков
+    // Waiting for all threads to complete
     for handle in handles {
         handle.join().unwrap();
     }
@@ -354,16 +354,16 @@ fn test_row_concurrent_access_simulation() {
 fn test_row_validation() {
     let mut row = Row::new(1, PageId(1), 0);
     
-    // Добавляем корректные данные
+    // Adding correct data
     row.add_column_value(ColumnValue::Integer(42));
     row.add_column_value(ColumnValue::Text("Valid".to_string()));
     
-    // Проверяем, что строка валидна
+    // Checking that the string is valid
     assert!(row.validate().is_ok());
     
-    // Помечаем строку как удаленную
+    // Mark the line as deleted
     row.mark_deleted();
     
-    // Строка все еще должна быть валидна
+    // The string must still be valid
     assert!(row.validate().is_ok());
 }

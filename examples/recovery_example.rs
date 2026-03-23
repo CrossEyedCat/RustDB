@@ -1,4 +1,4 @@
-//! Пример восстановления базы данных после сбоя
+//! Example of database recovery after a failure
 
 use rustdb::core::{AdvancedRecoveryManager, RecoveryConfig};
 // removed unused LogRecord import
@@ -6,10 +6,10 @@ use std::path::Path;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Пример системы восстановления базы данных ===\n");
+    println!("=== Example of a database recovery system ===\n");
 
-    // 1. Создание менеджера восстановления
-    println!("1. Создание менеджера восстановления");
+    // 1. Create a recovery manager
+    println!("1. Create a recovery manager");
     let config = RecoveryConfig {
         max_recovery_time: Duration::from_secs(300),
         enable_parallel: true,
@@ -19,107 +19,107 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut manager = AdvancedRecoveryManager::new(config);
-    println!("   ✓ Менеджер восстановления создан\n");
+    println!("✓ Recovery manager has been created\n");
 
-    // 2. Проверка необходимости восстановления
-    println!("2. Проверка необходимости восстановления");
+    // 2. Checking the need for restoration
+    println!("2. Checking the need for restoration");
     let log_dir = Path::new("./logs");
     let needs_recovery = manager.needs_recovery(log_dir);
 
     if needs_recovery {
-        println!("   ⚠️  Обнаружены незавершённые транзакции");
-        println!("   🔄 Требуется восстановление\n");
+        println!("⚠️ Incomplete transactions detected");
+        println!("🔄Recovery required\n");
     } else {
-        println!("   ✅ Восстановление не требуется");
-        println!("   (нет лог-файлов или все транзакции завершены)\n");
+        println!("✅ No recovery required");
+        println!("(no log files or all transactions completed)\n");
     }
 
-    // 3. Создание резервной копии (если нужно)
-    println!("3. Создание резервной копии перед восстановлением");
+    // 3. Create a backup (if necessary)
+    println!("3. Create a backup before restoring");
     let data_dir = Path::new("./data");
     let backup_dir = Path::new("./backup");
 
     match manager.create_backup(data_dir, backup_dir) {
-        Ok(_) => println!("   ✓ Резервная копия создана в ./backup\n"),
-        Err(_) => println!("   ℹ️  Резервная копия не создана (нет данных)\n"),
+        Ok(_) => println!("✓ The backup was created in ./backup\n"),
+        Err(_) => println!("ℹ️ Backup not created (no data)\n"),
     }
 
-    // 4. Симуляция восстановления
-    println!("4. Симуляция процесса восстановления");
-    println!("   Процесс восстановления включает:");
-    println!("   📊 Этап 1: Анализ логов");
-    println!("      - Чтение всех лог-файлов");
-    println!("      - Определение активных транзакций");
-    println!("      - Построение графа зависимостей");
-    println!("      - Поиск контрольных точек");
+    // 4. Simulation of recovery
+    println!("4. Simulation of the recovery process");
+    println!("The recovery process includes:");
+    println!("📊 Stage 1: Log analysis");
+    println!("- Read all log files");
+    println!("- Determination of active transactions");
+    println!("- Building a dependency graph");
+    println!("- Search for control points");
     println!();
-    println!("   🔄 Этап 2: REDO операции");
-    println!("      - Повторение зафиксированных транзакций");
-    println!("      - Восстановление изменённых страниц");
-    println!("      - Применение в порядке LSN");
+    println!("🔄 Stage 2: REDO operations");
+    println!("- Repetition of recorded transactions");
+    println!("- Restoring modified pages");
+    println!("- Application in LSN order");
     println!();
-    println!("   ↩️  Этап 3: UNDO операции");
-    println!("      - Откат незавершённых транзакций");
-    println!("      - Восстановление старых данных");
-    println!("      - Применение в обратном порядке");
+    println!("↩️ Stage 3: UNDO operations");
+    println!("- Rollback of pending transactions");
+    println!("- Recover old data");
+    println!("- Application in reverse order");
     println!();
-    println!("   🔍 Этап 4: Валидация");
-    println!("      - Проверка целостности данных");
-    println!("      - Верификация транзакций");
+    println!("🔍 Stage 4: Validation");
+    println!("- Data integrity check");
+    println!("- Transaction verification");
     println!();
 
-    // 5. Выполнение восстановления (если нужно)
+    // 5. Perform recovery (if necessary)
     if needs_recovery {
-        println!("5. Выполнение восстановления");
+        println!("5. Performing a restore");
         match manager.recover(log_dir) {
             Ok(stats) => {
-                println!("   ✅ Восстановление завершено успешно!");
-                println!("\n6. Статистика восстановления:");
-                println!("   Обработано лог-файлов: {}", stats.log_files_processed);
-                println!("   Всего записей: {}", stats.total_records);
-                println!("   Операций REDO: {}", stats.redo_operations);
-                println!("   Операций UNDO: {}", stats.undo_operations);
+                println!("✅ Recovery completed successfully!");
+                println!("\n6. Recovery statistics:");
+                println!("Log files processed: {}", stats.log_files_processed);
+                println!("Total entries: {}", stats.total_records);
+                println!("REDO operations: {}", stats.redo_operations);
+                println!("UNDO operations: {}", stats.undo_operations);
                 println!(
-                    "   Восстановлено транзакций: {}",
+                    "Transactions recovered: {}",
                     stats.recovered_transactions
                 );
-                println!("   Откачено транзакций: {}", stats.rolled_back_transactions);
-                println!("   Восстановлено страниц: {}", stats.recovered_pages);
-                println!("   Время восстановления: {} мс", stats.recovery_time_ms);
-                println!("   Ошибок: {}", stats.recovery_errors);
+                println!("Transactions rolled back: {}", stats.rolled_back_transactions);
+                println!("Pages recovered: {}", stats.recovered_pages);
+                println!("Recovery Time: {}ms", stats.recovery_time_ms);
+                println!("Errors: {}", stats.recovery_errors);
             }
             Err(e) => {
-                println!("   ⚠️  Ошибка восстановления: {}", e);
+                println!("⚠️ Restore error: {}", e);
             }
         }
     } else {
-        println!("5. Восстановление не требуется");
-        println!("   База данных в консистентном состоянии");
+        println!("5. No recovery required");
+        println!("Database in a consistent state");
     }
 
-    // 7. Описание алгоритма
-    println!("\n7. Алгоритм восстановления (ARIES)");
+    // 7. Description of the algorithm
+    println!("\n7. Recovery algorithm (ARIES)");
     println!("   ARIES = Algorithm for Recovery and Isolation Exploiting Semantics");
     println!();
-    println!("   Фазы:");
-    println!("   1️⃣  Analysis  - анализ логов, определение состояния");
-    println!("   2️⃣  REDO      - повторение всех изменений");
-    println!("   3️⃣  UNDO      - откат незавершённых транзакций");
+    println!("Phases:");
+    println!("1️⃣ Analysis - log analysis, state determination");
+    println!("2️⃣ REDO - repeat all changes");
+    println!("3️⃣ UNDO - rollback of unfinished transactions");
     println!();
-    println!("   Гарантии:");
-    println!("   ✓ Atomicity   - транзакция либо полностью применена, либо откачена");
-    println!("   ✓ Durability  - зафиксированные данные не теряются");
-    println!("   ✓ Consistency - БД остаётся в консистентном состоянии");
+    println!("Guarantees:");
+    println!("✓ Atomicity - the transaction is either fully applied or rolled back");
+    println!("✓ Durability - recorded data is not lost");
+    println!("✓ Consistency - the database remains in a consistent state");
 
-    // 8. Рекомендации
-    println!("\n8. Рекомендации по использованию");
-    println!("   ✓ Регулярно создавайте контрольные точки");
-    println!("   ✓ Настройте автоматическую архивацию логов");
-    println!("   ✓ Мониторьте размер лог-файлов");
-    println!("   ✓ Тестируйте процесс восстановления");
-    println!("   ✓ Создавайте резервные копии перед восстановлением");
+    // 8. Recommendations
+    println!("\n8. Recommendations for use");
+    println!("✓ Create checkpoints regularly");
+    println!("✓ Set up automatic log archiving");
+    println!("✓ Monitor the size of log files");
+    println!("✓ Test the recovery process");
+    println!("✓ Create backups before restoring");
 
-    println!("\n=== Пример завершён успешно ===");
+    println!("\n=== Example completed successfully ===");
 
     Ok(())
 }

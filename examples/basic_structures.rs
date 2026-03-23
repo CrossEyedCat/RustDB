@@ -1,4 +1,4 @@
-//! Примеры использования базовых структур данных RustDB
+//! Examples of using basic RustDB data structures
 
 use rustdb::common::types::{Column, ColumnValue, DataType};
 use rustdb::core::buffer::{BufferManager, EvictionStrategy};
@@ -11,42 +11,42 @@ use rustdb::storage::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Примеры использования базовых структур данных RustDB ===\n");
+    println!("=== Examples of using basic RustDB data structures ===\n");
 
-    // Пример 1: Работа со страницами
+    // Example 1: Working with pages
     example_pages()?;
 
-    // Пример 2: Работа с блоками
+    // Example 2: Working with blocks
     example_blocks()?;
 
-    // Пример 3: Работа с кортежами и схемами
+    // Example 3: Working with Tuples and Schemas
     example_tuples_and_schemas()?;
 
-    // Пример 4: Работа со строками и таблицами
+    // Example 4: Working with Rows and Tables
     example_rows_and_tables()?;
 
-    // Пример 5: Работа с менеджером буферов
+    // Example 5: Working with the Buffer Manager
     example_buffer_manager()?;
 
-    // Пример 6: Работа с менеджером схем
+    // Example 6: Working with the Schema Manager
     example_schema_manager()?;
 
-    println!("Все примеры выполнены успешно!");
+    println!("All examples completed successfully!");
     Ok(())
 }
 
-/// Пример работы со страницами
+// / Example of working with pages
 fn example_pages() -> Result<(), Box<dyn std::error::Error>> {
-    println!("1. Работа со страницами:");
+    println!("1. Working with pages:");
 
-    // Создаем новую страницу
+    // Create a new page
     let mut page = Page::new(1);
     println!(
-        "  - Создана страница ID: {}, тип: {:?}",
+        "- Created page ID: {}, type: {:?}",
         page.header.page_id, page.header.page_type
     );
 
-    // Добавляем записи на страницу
+    // Adding posts to the page
     let record1 = b"Hello, World!";
     let record2 = b"RustDB is awesome!";
 
@@ -54,96 +54,96 @@ fn example_pages() -> Result<(), Box<dyn std::error::Error>> {
     let offset2 = page.add_record(record2, 2)?;
 
     println!(
-        "  - Добавлены записи: ID 1 (смещение {}), ID 2 (смещение {})",
+        "- Added entries: ID 1 (offset {}), ID 2 (offset {})",
         offset1, offset2
     );
-    println!("  - Количество записей: {}", page.record_count());
-    println!("  - Свободное место: {} байт", page.free_space());
+    println!("- Number of entries: {}", page.record_count());
+    println!("- Free space: {} bytes", page.free_space());
 
-    // Получаем записи
+    // Getting records
     let retrieved1 = page.get_record(1).unwrap();
     let retrieved2 = page.get_record(2).unwrap();
 
     println!(
-        "  - Получена запись 1: {}",
+        "- Record 1 received: {}",
         String::from_utf8_lossy(retrieved1)
     );
     println!(
-        "  - Получена запись 2: {}",
+        "- Record 2 received: {}",
         String::from_utf8_lossy(retrieved2)
     );
 
-    // Удаляем запись
+    // Deleting an entry
     page.delete_record(1)?;
-    println!("  - Запись 1 удалена");
+    println!("- Entry 1 deleted");
 
-    // Проверяем, что запись удалена
+    // Checking that the entry has been deleted
     assert!(page.get_record(1).is_none());
-    println!("  - Запись 1 больше не доступна");
+    println!("- Entry 1 is no longer available");
 
-    // Создаем менеджер страниц
+    // Creating a page manager
     let mut page_manager = PageManager::new(10);
     page_manager.add_page(page);
-    println!("  - Страница добавлена в менеджер");
+    println!("- The page has been added to the manager");
 
-    println!("  ✓ Страницы работают корректно\n");
+    println!("✓ Pages work correctly\n");
     Ok(())
 }
 
-/// Пример работы с блоками
+// / Example of working with blocks
 fn example_blocks() -> Result<(), Box<dyn std::error::Error>> {
-    println!("2. Работа с блоками:");
+    println!("2. Working with blocks:");
 
-    // Создаем новый блок
+    // Create a new block
     let mut block = Block::new(1, BlockType::Data, 1024);
     println!(
-        "  - Создан блок ID: {}, тип: {:?}, размер: {} байт",
+        "- Created block ID: {}, type: {:?}, size: {} bytes",
         block.header.block_id, block.header.block_type, block.header.size
     );
 
-    // Добавляем страницы в блок
+    // Adding pages to a block
     let page_data1 = vec![1, 2, 3, 4, 5];
     let page_data2 = vec![6, 7, 8, 9, 10];
 
     block.add_page(1, page_data1.clone())?;
     block.add_page(2, page_data2.clone())?;
 
-    println!("  - Добавлены страницы: ID 1, ID 2");
-    println!("  - Количество страниц в блоке: {}", block.page_count());
+    println!("- Added pages: ID 1, ID 2");
+    println!("- Number of pages in a block: {}", block.page_count());
 
-    // Получаем страницы
+    // Getting pages
     let retrieved1 = block.get_page(1).unwrap();
     let retrieved2 = block.get_page(2).unwrap();
 
-    println!("  - Получена страница 1: {:?}", retrieved1);
-    println!("  - Получена страница 2: {:?}", retrieved2);
+    println!("- Received page 1: {:?}", retrieved1);
+    println!("- Received page 2: {:?}", retrieved2);
 
-    // Устанавливаем связи между блоками
+    // Establishing connections between blocks
     block.links.set_next(2);
     block.links.set_prev(0);
 
     println!(
-        "  - Установлены связи: next={:?}, prev={:?}",
+        "- Connections established: next={:?}, prev={:?}",
         block.links.next_block, block.links.prev_block
     );
 
-    // Создаем менеджер блоков
+    // Creating a block manager
     let mut block_manager = BlockManager::new(5);
     block_manager.add_block(block);
-    println!("  - Блок добавлен в менеджер");
+    println!("- Block added to manager");
 
-    println!("  ✓ Блоки работают корректно\n");
+    println!("✓ Blocks work correctly\n");
     Ok(())
 }
 
-/// Пример работы с кортежами и схемами
+// / Example of working with tuples and schemas
 fn example_tuples_and_schemas() -> Result<(), Box<dyn std::error::Error>> {
-    println!("3. Работа с кортежами и схемами:");
+    println!("3. Working with tuples and schemas:");
 
-    // Создаем схему таблицы пользователей
+    // Creating a user table schema
     let mut schema = Schema::new("users".to_string());
 
-    // Добавляем колонки
+    // Adding columns
     schema = schema
         .add_column(Column::new("id".to_string(), DataType::Integer(0)).not_null())
         .add_column(Column::new(
@@ -156,24 +156,24 @@ fn example_tuples_and_schemas() -> Result<(), Box<dyn std::error::Error>> {
             DataType::Varchar("".to_string()),
         ));
 
-    // Устанавливаем первичный ключ
+    // Setting the primary key
     schema = schema.primary_key(vec!["id".to_string()]);
 
-    // Добавляем уникальное ограничение
+    // Adding a unique constraint
     schema = schema.unique(vec!["email".to_string()]);
 
-    println!("  - Создана схема таблицы 'users'");
+    println!("- Created table schema 'users'");
     println!(
-        "  - Колонки: {:?}",
+        "- Columns: {:?}",
         schema
             .get_columns()
             .iter()
             .map(|c| &c.name)
             .collect::<Vec<_>>()
     );
-    println!("  - Первичный ключ: {:?}", schema.base.primary_key);
+    println!("- Primary key: {:?}", schema.base.primary_key);
 
-    // Создаем кортеж
+    // Create a tuple
     let mut tuple = Tuple::new(1);
     tuple.set_value("id", ColumnValue::new(DataType::Integer(1)));
     tuple.set_value(
@@ -186,32 +186,32 @@ fn example_tuples_and_schemas() -> Result<(), Box<dyn std::error::Error>> {
         ColumnValue::new(DataType::Varchar("john@example.com".to_string())),
     );
 
-    println!("  - Создан кортеж с ID: {}", tuple.id);
+    println!("- Created a tuple with ID: {}", tuple.id);
     println!(
-        "  - Значения: id={:?}, name={:?}, age={:?}, email={:?}",
+        "- Values: id={:?}, name={:?}, age={:?}, email={:?}",
         tuple.get_value("id"),
         tuple.get_value("name"),
         tuple.get_value("age"),
         tuple.get_value("email")
     );
 
-    // Валидируем кортеж против схемы
+    // Validating a tuple against a schema
     schema.validate_tuple(&tuple)?;
-    println!("  - Кортеж прошел валидацию схемы");
+    println!("- The tuple has passed schema validation");
 
-    // Создаем новую версию кортежа
+    // Create a new version of the tuple
     let new_tuple = tuple.create_new_version();
-    println!("  - Создана новая версия кортежа: {}", new_tuple.version);
+    println!("- A new version of the tuple has been created: {}", new_tuple.version);
 
-    println!("  ✓ Кортежи и схемы работают корректно\n");
+    println!("✓ Tuples and schemas work correctly\n");
     Ok(())
 }
 
-/// Пример работы со строками и таблицами
+// / Example of working with rows and tables
 fn example_rows_and_tables() -> Result<(), Box<dyn std::error::Error>> {
-    println!("4. Работа со строками и таблицами:");
+    println!("4. Working with rows and tables:");
 
-    // Создаем схему и таблицу
+    // Create a diagram and table
     let schema = Schema::new("products".to_string())
         .add_column(Column::new("id".to_string(), DataType::Integer(0)).not_null())
         .add_column(Column::new(
@@ -222,9 +222,9 @@ fn example_rows_and_tables() -> Result<(), Box<dyn std::error::Error>> {
         .primary_key(vec!["id".to_string()]);
 
     let mut table = Table::new("products".to_string(), schema);
-    println!("  - Создана таблица 'products'");
+    println!("- The 'products' table has been created");
 
-    // Создаем и добавляем строки
+    // Create and add lines
     let mut tuple1 = Tuple::new(1);
     tuple1.set_value("id", ColumnValue::new(DataType::Integer(1)));
     tuple1.set_value(
@@ -247,19 +247,19 @@ fn example_rows_and_tables() -> Result<(), Box<dyn std::error::Error>> {
     table.insert_row(row1)?;
     table.insert_row(row2)?;
 
-    println!("  - Добавлены строки с ID: 1, 2");
-    println!("  - Количество строк в таблице: {}", table.row_count());
+    println!("- Added lines with ID: 1, 2");
+    println!("- Number of rows in the table: {}", table.row_count());
 
-    // Получаем строку
+    // We get the string
     let row = table.get_row(1).unwrap();
     println!(
-        "  - Получена строка 1: id={:?}, name={:?}, price={:?}",
+        "- Received line 1: id={:?}, name={:?}, price={:?}",
         row.get_value("id"),
         row.get_value("name"),
         row.get_value("price")
     );
 
-    // Обновляем строку
+    // Update the line
     let mut new_values = std::collections::HashMap::new();
     new_values.insert(
         "price".to_string(),
@@ -267,71 +267,71 @@ fn example_rows_and_tables() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     table.update_row(1, new_values)?;
-    println!("  - Обновлена цена продукта 1");
+    println!("- Updated price of product 1");
 
-    // Проверяем обновление
+    // Checking the update
     let updated_row = table.get_row(1).unwrap();
     println!(
-        "  - Новая цена продукта 1: {:?}",
+        "- New price for product 1: {:?}",
         updated_row.get_value("price")
     );
 
-    // Удаляем строку
+    // Delete a line
     table.delete_row(2)?;
-    println!("  - Строка 2 удалена");
-    println!("  - Количество строк в таблице: {}", table.row_count());
+    println!("- Line 2 deleted");
+    println!("- Number of rows in the table: {}", table.row_count());
 
-    println!("  ✓ Строки и таблицы работают корректно\n");
+    println!("✓ Rows and tables work correctly\n");
     Ok(())
 }
 
-/// Пример работы с менеджером буферов
+// / Example of working with the buffer manager
 fn example_buffer_manager() -> Result<(), Box<dyn std::error::Error>> {
-    println!("5. Работа с менеджером буферов:");
+    println!("5. Working with the buffer manager:");
 
-    // Создаем менеджер буферов с LRU стратегией
+    // Creating a buffer manager with an LRU strategy
     let mut buffer_manager = BufferManager::new(3, EvictionStrategy::LRU);
-    println!("  - Создан менеджер буферов с максимальным размером: 3 страницы");
+    println!("- Created a buffer manager with a maximum size of 3 pages");
 
-    // Создаем страницы
+    // Creating pages
     let page1 = Page::new(1);
     let page2 = Page::new(2);
     let page3 = Page::new(3);
     let page4 = Page::new(4);
 
-    // Добавляем страницы в буфер
+    // Adding pages to the buffer
     buffer_manager.add_page(page1)?;
     buffer_manager.add_page(page2)?;
     buffer_manager.add_page(page3)?;
 
-    println!("  - Добавлены страницы: 1, 2, 3");
+    println!("- Added pages: 1, 2, 3");
     println!(
-        "  - Количество страниц в буфере: {}",
+        "- Number of pages in buffer: {}",
         buffer_manager.page_count()
     );
 
-    // Добавляем четвертую страницу (должна вытеснить первую)
+    // Add a fourth page (should displace the first)
     buffer_manager.add_page(page4)?;
-    println!("  - Добавлена страница 4");
+    println!("- Added page 4");
     println!(
-        "  - Количество страниц в буфере: {}",
+        "- Number of pages in buffer: {}",
         buffer_manager.page_count()
     );
 
-    // Проверяем, что первая страница была вытеснена
+    // Checking that the first page has been evicted
     assert!(!buffer_manager.contains_page(1));
     assert!(buffer_manager.contains_page(2));
     assert!(buffer_manager.contains_page(3));
     assert!(buffer_manager.contains_page(4));
 
-    println!("  - Страница 1 была вытеснена (LRU стратегия)");
-    println!("  - Страницы 2, 3, 4 остались в буфере");
+    println!("- Page 1 was evicted (LRU strategy)");
+    println!("- Pages 2, 3, 4 remained in the buffer");
 
-    // Получаем страницу (обновляем порядок LRU)
+    // Getting the page (updating the LRU order)
     buffer_manager.get_page(2);
-    println!("  - Получена страница 2 (обновлен порядок LRU)");
+    println!("- Page 2 received (LRU order updated)");
 
-    // Добавляем еще одну страницу (должна вытеснить страницу 3)
+    // Add another page (should displace page 3)
     let page5 = Page::new(5);
     buffer_manager.add_page(page5)?;
 
@@ -340,38 +340,38 @@ fn example_buffer_manager() -> Result<(), Box<dyn std::error::Error>> {
     assert!(buffer_manager.contains_page(4));
     assert!(buffer_manager.contains_page(5));
 
-    println!("  - Страница 3 была вытеснена");
-    println!("  - Страницы 2, 4, 5 остались в буфере");
+    println!("- Page 3 has been supplanted");
+    println!("- Pages 2, 4, 5 remained in the buffer");
 
-    // Получаем статистику
+    // Getting statistics
     let stats = buffer_manager.get_stats();
     println!(
-        "  - Статистика буфера: hit_ratio={:.2}, total_accesses={}",
+        "- Buffer statistics: hit_ratio={:.2}, total_accesses={}",
         stats.hit_ratio(),
         stats.total_accesses
     );
 
-    // Меняем стратегию вытеснения
+    // Changing the displacement strategy
     buffer_manager.set_eviction_strategy(EvictionStrategy::Clock);
-    println!("  - Стратегия вытеснения изменена на Clock");
+    println!("- Preemption strategy changed to Clock");
 
-    println!("  ✓ Менеджер буферов работает корректно\n");
+    println!("✓ Buffer manager works correctly\n");
     Ok(())
 }
 
-/// Пример работы с менеджером схем
+// / Example of working with the schema manager
 fn example_schema_manager() -> Result<(), Box<dyn std::error::Error>> {
-    println!("6. Работа с менеджером схем:");
+    println!("6. Working with the schema manager:");
 
-    // Создаем менеджер схем
+    // Creating a schema manager
     let mut schema_manager = SchemaManager::new();
 
-    // Регистрируем валидатор
+    // Registering the validator
     let validator = Box::new(BasicSchemaValidator);
     schema_manager.register_validator(validator);
-    println!("  - Зарегистрирован валидатор схем");
+    println!("- Registered schema validator");
 
-    // Создаем схему таблицы
+    // Creating a table schema
     let schema = Schema::new("employees".to_string())
         .add_column(Column::new("id".to_string(), DataType::Integer(0)).not_null())
         .add_column(Column::new(
@@ -384,11 +384,11 @@ fn example_schema_manager() -> Result<(), Box<dyn std::error::Error>> {
         ))
         .primary_key(vec!["id".to_string()]);
 
-    // Создаем схему в менеджере
+    // Creating a schema in the manager
     schema_manager.create_schema("employees".to_string(), schema)?;
-    println!("  - Создана схема таблицы 'employees'");
+    println!("- Created table schema 'employees'");
 
-    // Выполняем ALTER TABLE операции
+    // Performing ALTER TABLE operations
     let new_column = Column::new("salary".to_string(), DataType::Double(0.0));
     let add_column_op = SchemaOperation::AddColumn {
         column: new_column,
@@ -396,14 +396,14 @@ fn example_schema_manager() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     schema_manager.alter_table("employees", add_column_op)?;
-    println!("  - Добавлена колонка 'salary'");
+    println!("- Added 'salary' column");
 
-    // Проверяем, что колонка добавлена
+    // Checking that the column has been added
     let updated_schema = schema_manager.get_schema("employees").unwrap();
     assert!(updated_schema.has_column("salary"));
-    println!("  - Колонка 'salary' успешно добавлена");
+    println!("- 'salary' column added successfully");
 
-    // Добавляем индекс
+    // Adding an index
     let add_index_op = SchemaOperation::AddIndex {
         index_name: "idx_department".to_string(),
         columns: vec!["department".to_string()],
@@ -411,9 +411,9 @@ fn example_schema_manager() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     schema_manager.alter_table("employees", add_index_op)?;
-    println!("  - Добавлен индекс 'idx_department'");
+    println!("- Added index 'idx_department'");
 
-    // Проверяем, что индекс добавлен
+    // Checking that the index has been added
     let final_schema = schema_manager.get_schema("employees").unwrap();
     let index_exists = final_schema
         .base
@@ -421,11 +421,11 @@ fn example_schema_manager() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .any(|i| i.name == "idx_department");
     assert!(index_exists);
-    println!("  - Индекс 'idx_department' успешно добавлен");
+    println!("- Index 'idx_department' added successfully");
 
-    // Получаем историю изменений
+    // Getting the history of changes
     let history = schema_manager.get_change_history();
-    println!("  - История изменений: {} записей", history.len());
+    println!("- History of changes: {} entries", history.len());
 
     for (i, change) in history.iter().enumerate() {
         println!(
@@ -437,6 +437,6 @@ fn example_schema_manager() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    println!("  ✓ Менеджер схем работает корректно\n");
+    println!("✓ Scheme manager works correctly\n");
     Ok(())
 }

@@ -1,4 +1,4 @@
-//! Тесты для структуры Page
+//! Tests for the Page structure
 
 use crate::storage::page::{Page, PageHeader, RecordSlot, PAGE_SIZE, PAGE_HEADER_SIZE};
 use crate::common::types::PageId;
@@ -47,7 +47,7 @@ fn test_add_multiple_records() {
     let mut page = Page::new(PageId(1));
     let mut record_offsets = Vec::new();
     
-    // Добавляем несколько записей
+    // Adding multiple entries
     for i in 1..=5 {
         let record_data = format!("Record {}", i);
         let result = page.add_record(record_data.as_bytes(), i);
@@ -57,7 +57,7 @@ fn test_add_multiple_records() {
     
     assert_eq!(page.get_record_count(), 5);
     
-    // Проверяем, что все записи имеют разные смещения
+    // Checking that all records have different offsets
     for i in 0..record_offsets.len() {
         for j in i + 1..record_offsets.len() {
             assert_ne!(record_offsets[i], record_offsets[j]);
@@ -82,7 +82,7 @@ fn test_get_record() {
 #[test]
 fn test_get_nonexistent_record() {
     let page = Page::new(PageId(1));
-    let result = page.get_record(PAGE_SIZE); // Невалидное смещение
+    let result = page.get_record(PAGE_SIZE);
     assert!(result.is_none());
 }
 
@@ -95,11 +95,11 @@ fn test_update_record() {
     
     let offset = page.add_record(original_data, record_id).unwrap();
     
-    // Обновляем запись
+    // Updating the entry
     let result = page.update_record(offset, updated_data);
     assert!(result.is_ok());
     
-    // Проверяем, что данные обновились
+    // Checking that the data has been updated
     let retrieved = page.get_record(offset).unwrap();
     assert_eq!(retrieved, updated_data);
 }
@@ -113,10 +113,10 @@ fn test_update_record_larger_size() {
     
     let offset = page.add_record(original_data, record_id).unwrap();
     
-    // Попытка обновить запись более длинными данными может не удаться
+    // An attempt to update a record with longer data may fail
     let result = page.update_record(offset, updated_data);
-    // В зависимости от реализации, это может быть ошибкой или успехом
-    // Проверяем, что страница остается в консистентном состоянии
+    // Depending on the implementation, this may be an error or a success
+    // Checking that the page remains in a consistent state
     assert!(page.get_record(offset).is_some());
 }
 
@@ -132,7 +132,7 @@ fn test_delete_record() {
     let result = page.delete_record(offset);
     assert!(result.is_ok());
     
-    // Проверяем, что запись удалена
+    // Checking that the entry has been deleted
     assert!(page.get_record(offset).is_none());
     assert_eq!(page.get_record_count(), initial_count - 1);
 }
@@ -140,7 +140,7 @@ fn test_delete_record() {
 #[test]
 fn test_delete_nonexistent_record() {
     let mut page = Page::new(PageId(1));
-    let result = page.delete_record(PAGE_SIZE); // Невалидное смещение
+    let result = page.delete_record(PAGE_SIZE);
     assert!(result.is_err());
 }
 
@@ -149,7 +149,7 @@ fn test_page_full_scenario() {
     let mut page = Page::new(PageId(1));
     let mut records_added = 0;
     
-    // Заполняем страницу записями до тех пор, пока не закончится место
+    // Fill the page with entries until the space runs out
     loop {
         let record_data = format!("Record number {}", records_added);
         let result = page.add_record(record_data.as_bytes(), records_added + 1);
@@ -159,7 +159,7 @@ fn test_page_full_scenario() {
         }
         records_added += 1;
         
-        // Защита от бесконечного цикла
+        // Infinite loop protection
         if records_added > 1000 {
             break;
         }
@@ -168,24 +168,24 @@ fn test_page_full_scenario() {
     assert!(records_added > 0);
     assert_eq!(page.get_record_count(), records_added);
     
-    // Проверяем, что свободного места очень мало или нет совсем
-    assert!(page.get_free_space() < 100); // Менее 100 байт свободного места
+    // We check that there is very little free space or no space at all
+    assert!(page.get_free_space() < 100);
 }
 
 #[test]
 fn test_page_serialization() {
     let mut page = Page::new(PageId(42));
     
-    // Добавляем несколько записей
+    // Adding multiple entries
     page.add_record(b"First record", 1).unwrap();
     page.add_record(b"Second record", 2).unwrap();
     page.add_record(b"Third record", 3).unwrap();
     
-    // Сериализуем страницу
+    // Serializing the page
     let serialized = page.serialize();
     assert_eq!(serialized.len(), PAGE_SIZE);
     
-    // Десериализуем страницу
+    // Deserializing the page
     let deserialized = Page::deserialize(&serialized, PageId(42));
     assert!(deserialized.is_ok());
     
@@ -199,18 +199,18 @@ fn test_page_persistence() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test_page.dat");
     
-    // Создаем и заполняем страницу
+    // Create and fill out the page
     let mut page = Page::new(PageId(100));
     page.add_record(b"Persistent data", 1).unwrap();
     
-    // Записываем страницу в файл
+    // Write the page to a file
     {
         let mut file = File::create(&file_path).unwrap();
         let serialized = page.serialize();
         file.write_all(&serialized).unwrap();
     }
     
-    // Читаем страницу из файла
+    // Reading a page from a file
     {
         let mut file = File::open(&file_path).unwrap();
         let mut buffer = vec![0u8; PAGE_SIZE];
@@ -220,7 +220,7 @@ fn test_page_persistence() {
         assert_eq!(loaded_page.get_page_id(), PageId(100));
         assert_eq!(loaded_page.get_record_count(), 1);
         
-        // Проверяем, что данные сохранились
+        // Checking that the data has been saved
         let header = loaded_page.get_header();
         assert_eq!(header.page_id, PageId(100));
     }
@@ -233,7 +233,7 @@ fn test_record_slot_functionality() {
     
     let offset = page.add_record(record_data, 1).unwrap();
     
-    // Проверяем, что слот корректно создался
+    // Checking that the slot was created correctly
     let retrieved = page.get_record(offset);
     assert!(retrieved.is_some());
     assert_eq!(retrieved.unwrap(), record_data);
@@ -242,12 +242,12 @@ fn test_record_slot_functionality() {
 #[test]
 fn test_page_dirty_flag() {
     let mut page = Page::new(PageId(1));
-    assert!(page.is_dirty()); // Новая страница помечена как грязная
+    assert!(page.is_dirty());
     
     page.mark_clean();
     assert!(!page.is_dirty());
     
-    // Любая модификация должна помечать страницу как грязную
+    // Any modification should mark the page as dirty
     page.add_record(b"test", 1).unwrap();
     assert!(page.is_dirty());
 }
@@ -256,20 +256,20 @@ fn test_page_dirty_flag() {
 fn test_page_compaction() {
     let mut page = Page::new(PageId(1));
     
-    // Добавляем записи
+    // Adding entries
     let offset1 = page.add_record(b"Record 1", 1).unwrap();
     let offset2 = page.add_record(b"Record 2", 2).unwrap();
     let offset3 = page.add_record(b"Record 3", 3).unwrap();
     
     let initial_free_space = page.get_free_space();
     
-    // Удаляем среднюю запись
+    // Deleting the middle entry
     page.delete_record(offset2).unwrap();
     
-    // Проверяем, что свободное место увеличилось
+    // Checking that free space has increased
     assert!(page.get_free_space() > initial_free_space);
     
-    // Записи 1 и 3 должны остаться доступными
+    // Entries 1 and 3 should remain available
     assert!(page.get_record(offset1).is_some());
     assert!(page.get_record(offset3).is_some());
     assert!(page.get_record(offset2).is_none());
@@ -277,17 +277,17 @@ fn test_page_compaction() {
 
 #[test]
 fn test_page_boundary_conditions() {
-    let mut page = Page::new(PageId(u64::MAX)); // Максимальный ID страницы
+    let mut page = Page::new(PageId(u64::MAX));
     
-    // Проверяем корректность работы с граничными значениями
+    // Checking the correctness of work with boundary values
     assert_eq!(page.get_page_id(), PageId(u64::MAX));
     
-    // Пытаемся добавить запись максимально возможного размера
+    // We are trying to add a record of the largest possible size
     let max_record_size = page.get_free_space() - std::mem::size_of::<RecordSlot>();
     let large_record = vec![0u8; max_record_size];
     
     let result = page.add_record(&large_record, 1);
-    // Результат зависит от реализации, но страница должна остаться в корректном состоянии
+    // The result is implementation dependent, but the page should remain in the correct state
     assert!(page.get_record_count() <= 1);
 }
 
@@ -299,7 +299,7 @@ fn test_concurrent_page_access_simulation() {
     let page = Arc::new(Mutex::new(Page::new(PageId(1))));
     let mut handles = vec![];
     
-    // Симулируем конкурентный доступ
+    // Simulating competitive access
     for i in 0..10 {
         let page_clone = Arc::clone(&page);
         let handle = thread::spawn(move || {
@@ -310,11 +310,11 @@ fn test_concurrent_page_access_simulation() {
         handles.push(handle);
     }
     
-    // Ждем завершения всех потоков
+    // Waiting for all threads to complete
     for handle in handles {
         handle.join().unwrap();
     }
     
     let final_page = page.lock().unwrap();
-    assert!(final_page.get_record_count() <= 10); // Некоторые записи могут не поместиться
+    assert!(final_page.get_record_count() <= 10);
 }

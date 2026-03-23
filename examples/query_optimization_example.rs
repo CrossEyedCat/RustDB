@@ -1,4 +1,4 @@
-//! Пример использования расширенной оптимизации запросов для RustDB
+//! Example of using advanced query optimization for RustDB
 
 use rustdb::catalog::{StatisticsManager, ValueDistribution};
 use rustdb::planner::planner::{
@@ -7,78 +7,78 @@ use rustdb::planner::planner::{
 use rustdb::planner::{AdvancedOptimizerSettings, AdvancedQueryOptimizer};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Пример расширенной оптимизации запросов RustDB ===\n");
+    println!("=== RustDB Advanced Query Optimization Example ===\n");
 
-    // Демонстрация менеджера статистики
+    // Statistics manager demo
     demo_statistics_manager()?;
 
-    // Демонстрация расширенного оптимизатора
+    // Advanced Optimizer Demonstration
     demo_advanced_optimizer()?;
 
-    // Демонстрация оптимизации с использованием статистики
+    // Demonstration of optimization using statistics
     demo_optimization_with_statistics()?;
 
-    println!("=== Демонстрация завершена успешно! ===");
+    println!("=== Demonstration completed successfully! ===");
     Ok(())
 }
 
-/// Демонстрация работы менеджера статистики
+// / Demonstration of the statistics manager
 fn demo_statistics_manager() -> Result<(), Box<dyn std::error::Error>> {
-    println!("1. Демонстрация менеджера статистики:");
-    println!("   Создание менеджера статистики...");
+    println!("1. Statistics manager demo:");
+    println!("Creating a statistics manager...");
 
     let mut stats_manager = StatisticsManager::new()?;
 
-    // Собираем статистику для таблицы users
-    println!("   Сбор статистики для таблицы 'users'...");
+    // Collecting statistics for the users table
+    println!("Collecting statistics for the 'users' table...");
     let table_stats = stats_manager.collect_table_statistics("users")?;
 
-    println!("   Статистика таблицы 'users':");
-    println!("     - Общее количество строк: {}", table_stats.total_rows);
+    println!("Statistics for table 'users':");
+    println!("- Total number of lines: {}", table_stats.total_rows);
     println!(
-        "     - Размер таблицы: {} байт",
+        "- Table size: {} bytes",
         table_stats.total_size_bytes
     );
     println!(
-        "     - Количество колонок: {}",
+        "- Number of columns: {}",
         table_stats.column_statistics.len()
     );
 
-    // Показываем статистику по колонкам
+    // Showing statistics by columns
     for (col_name, col_stats) in &table_stats.column_statistics {
-        println!("     - Колонка '{}':", col_name);
+        println!("- Column '{}':", col_name);
         println!(
-            "       * Уникальных значений: {}",
+            "* Unique values: {}",
             col_stats.distinct_values
         );
-        println!("       * NULL значений: {}", col_stats.null_count);
-        println!("       * Минимальное значение: {:?}", col_stats.min_value);
-        println!("       * Максимальное значение: {:?}", col_stats.max_value);
+        println!("* NULL values: {}", col_stats.null_count);
+        println!("* Minimum value: {:?}", col_stats.min_value);
+        println!("* Maximum value: {:?}", col_stats.max_value);
 
         match &col_stats.value_distribution {
             ValueDistribution::Uniform { step } => {
-                println!("       * Распределение: равномерное (шаг: {})", step);
+                println!("* Distribution: uniform (step: {})", step);
             }
             ValueDistribution::Normal { mean, std_dev } => {
                 println!(
-                    "       * Распределение: нормальное (среднее: {}, ст.откл.: {})",
+                    "* Distribution: normal (mean: {}, std: {})",
                     mean, std_dev
                 );
             }
             ValueDistribution::Histogram { buckets } => {
                 println!(
-                    "       * Распределение: гистограмма ({} корзин)",
+                    "* Distribution: histogram ({} buckets)",
                     buckets.len()
                 );
             }
             ValueDistribution::Unknown => {
-                println!("       * Распределение: неизвестно");
+                println!("*Distribution: unknown");
             }
         }
     }
 
-    // Демонстрируем оценку селективности
-    println!("\n   Оценка селективности:");
+    // Demonstrating selectivity assessment
+    println!("\nSelectivity assessment:");
     let selectivity_eq = stats_manager.estimate_selectivity("users", "id", "=")?;
     let selectivity_range = stats_manager.estimate_selectivity("users", "age", ">")?;
     let selectivity_like = stats_manager.estimate_selectivity("users", "name", "LIKE")?;
@@ -87,22 +87,22 @@ fn demo_statistics_manager() -> Result<(), Box<dyn std::error::Error>> {
     println!("     - age > ?: {:.4}", selectivity_range);
     println!("     - name LIKE ?: {:.4}", selectivity_like);
 
-    // Демонстрируем оценку количества строк результата
-    println!("\n   Оценка количества строк результата:");
+    // We demonstrate an estimate of the number of result lines
+    println!("\n Estimation of the number of result lines:");
     let rows_eq = stats_manager.estimate_result_rows("users", "id", "=")?;
     let rows_range = stats_manager.estimate_result_rows("users", "age", ">")?;
 
-    println!("     - id = ?: {} строк", rows_eq);
-    println!("     - age > ?: {} строк", rows_range);
+    println!("- id = ?: {} lines", rows_eq);
+    println!("- age > ?: {} lines", rows_range);
 
     println!();
     Ok(())
 }
 
-/// Демонстрация работы расширенного оптимизатора
+// / Demonstration of the advanced optimizer
 fn demo_advanced_optimizer() -> Result<(), Box<dyn std::error::Error>> {
-    println!("2. Демонстрация расширенного оптимизатора:");
-    println!("   Создание расширенного оптимизатора...");
+    println!("2. Demonstration of the advanced optimizer:");
+    println!("Creating an Advanced Optimizer...");
 
     let settings = AdvancedOptimizerSettings {
         enable_statistics_usage: true,
@@ -115,25 +115,25 @@ fn demo_advanced_optimizer() -> Result<(), Box<dyn std::error::Error>> {
 
     let optimizer = AdvancedQueryOptimizer::with_settings(settings)?;
 
-    println!("   Настройки оптимизатора:");
+    println!("Optimizer settings:");
     println!(
-        "     - Использование статистики: {}",
+        "- Using statistics: {}",
         optimizer.settings().enable_statistics_usage
     );
     println!(
-        "     - Перезапись запросов: {}",
+        "- Query rewriting: {}",
         optimizer.settings().enable_query_rewriting
     );
     println!(
-        "     - Упрощение выражений: {}",
+        "- Simplifying expressions: {}",
         optimizer.settings().enable_expression_simplification
     );
     println!(
-        "     - Вынесение подзапросов: {}",
+        "- Submitting subqueries: {}",
         optimizer.settings().enable_subquery_extraction
     );
     println!(
-        "     - Порог стоимости: {}",
+        "- Cost threshold: {}",
         optimizer.settings().cost_threshold
     );
 
@@ -141,94 +141,94 @@ fn demo_advanced_optimizer() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Демонстрация оптимизации с использованием статистики
+// / Demonstration of optimization using statistics
 fn demo_optimization_with_statistics() -> Result<(), Box<dyn std::error::Error>> {
-    println!("3. Демонстрация оптимизации с использованием статистики:");
+    println!("3. Demonstration of optimization using statistics:");
 
-    // Создаем простой план выполнения
-    println!("   Создание тестового плана выполнения...");
+    // Create a simple execution plan
+    println!("Creating a Test Execution Plan...");
     let test_plan = create_test_execution_plan()?;
 
-    println!("   Исходный план:");
+    println!("Original plan:");
     println!(
-        "     - Оценка стоимости: {:.2}",
+        "- Cost Estimate: {:.2}",
         test_plan.metadata.estimated_cost
     );
     println!(
-        "     - Оценка количества строк: {}",
+        "- Number of lines estimate: {}",
         test_plan.metadata.estimated_rows
     );
     println!(
-        "     - Количество операторов: {}",
+        "- Number of operators: {}",
         test_plan.metadata.statistics.operator_count
     );
 
-    // Создаем оптимизатор и применяем оптимизацию
-    println!("\n   Применение расширенной оптимизации...");
+    // Create an optimizer and apply optimization
+    println!("\nApplying advanced optimization...");
     let mut optimizer = AdvancedQueryOptimizer::new()?;
 
-    // Собираем статистику для таблиц в плане
+    // Collecting statistics for tables in the plan
     let stats_manager = optimizer.statistics_manager_mut();
     stats_manager.collect_table_statistics("users")?;
     stats_manager.collect_table_statistics("orders")?;
 
-    // Применяем оптимизацию
+    // Applying optimization
     let optimization_result = optimizer.optimize_with_statistics(test_plan)?;
 
-    println!("   Результат оптимизации:");
+    println!("Optimization result:");
     println!(
-        "     - Количество примененных оптимизаций: {}",
+        "- Number of optimizations applied: {}",
         optimization_result.statistics.optimizations_applied
     );
     println!(
-        "     - Время оптимизации: {} мс",
+        "- Optimization time: {} ms",
         optimization_result.statistics.optimization_time_ms
     );
     println!(
-        "     - Улучшение стоимости: {:.2}%",
+        "- Cost Improvement: {:.2}%",
         optimization_result.statistics.cost_improvement_percent
     );
     println!(
-        "     - Перезаписи запросов: {}",
+        "- Query rewrites: {}",
         optimization_result.statistics.query_rewrites
     );
     println!(
-        "     - Упрощения выражений: {}",
+        "- Expression simplifications: {}",
         optimization_result.statistics.expression_simplifications
     );
     println!(
-        "     - Вынесения подзапросов: {}",
+        "- Extracting subqueries: {}",
         optimization_result.statistics.subquery_extractions
     );
     println!(
-        "     - Использования статистики: {}",
+        "- Statistics usage: {}",
         optimization_result.statistics.statistics_usage_count
     );
 
-    // Показываем сообщения об оптимизациях
+    // Showing messages about optimizations
     if !optimization_result.messages.is_empty() {
-        println!("\n   Примененные оптимизации:");
+        println!("\nOptimizations applied:");
         for (i, message) in optimization_result.messages.iter().enumerate() {
             println!("     {}. {}", i + 1, message);
         }
     }
 
-    // Показываем использованную статистику
+    // Showing the statistics used
     if !optimization_result.used_statistics.is_empty() {
-        println!("\n   Использованная статистика:");
+        println!("\nStatistics used:");
         for (i, stat_info) in optimization_result.used_statistics.iter().enumerate() {
             println!("     {}. {}", i + 1, stat_info);
         }
     }
 
-    // Показываем оптимизированный план
-    println!("\n   Оптимизированный план:");
+    // Showing the optimized plan
+    println!("\nOptimized plan:");
     println!(
-        "     - Оценка стоимости: {:.2}",
+        "- Cost Estimate: {:.2}",
         optimization_result.optimized_plan.metadata.estimated_cost
     );
     println!(
-        "     - Оценка количества строк: {}",
+        "- Number of lines estimate: {}",
         optimization_result.optimized_plan.metadata.estimated_rows
     );
 
@@ -236,9 +236,9 @@ fn demo_optimization_with_statistics() -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
-/// Создание тестового плана выполнения
+// / Create a test execution plan
 fn create_test_execution_plan() -> Result<ExecutionPlan, Box<dyn std::error::Error>> {
-    // Создаем узлы плана
+    // Creating plan nodes
     let users_scan = PlanNode::TableScan(TableScanNode {
         table_name: "users".to_string(),
         alias: Some("u".to_string()),
@@ -268,7 +268,7 @@ fn create_test_execution_plan() -> Result<ExecutionPlan, Box<dyn std::error::Err
         cost: 300.0,
     });
 
-    // Создаем метаданные плана
+    // Creating plan metadata
     let metadata = PlanMetadata {
         estimated_cost: 2100.0,
         estimated_rows: 1500,

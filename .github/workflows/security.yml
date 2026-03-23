@@ -6,11 +6,11 @@ on:
   pull_request:
     branches: [ main, develop ]
   schedule:
-    # Запуск каждый день в 2:00 UTC
+    # Daily at 02:00 UTC
     - cron: '0 2 * * *'
 
 jobs:
-  # Аудит зависимостей на уязвимости
+  # Dependency vulnerability audit
   security_audit:
     name: Security Audit
     runs-on: ubuntu-latest
@@ -27,7 +27,7 @@ jobs:
       - name: Run security audit
         run: cargo audit
 
-  # Проверка лицензий зависимостей
+  # Dependency license check
   license_check:
     name: License Check
     runs-on: ubuntu-latest
@@ -50,7 +50,7 @@ jobs:
           name: license-report
           path: licenses.json
 
-  # Проверка на небезопасный код
+  # Unsafe code check
   unsafe_check:
     name: Unsafe Code Check
     runs-on: ubuntu-latest
@@ -107,7 +107,7 @@ jobs:
           exit 0
         continue-on-error: true
 
-  # Статический анализ кода
+  # Static analysis
   static_analysis:
     name: Static Analysis
     runs-on: ubuntu-latest
@@ -127,7 +127,7 @@ jobs:
         run: cargo semver-checks check-release
         continue-on-error: true
 
-  # Проверка на потенциальные проблемы с памятью
+  # Memory safety checks
   memory_safety:
     name: Memory Safety Check
     runs-on: ubuntu-latest

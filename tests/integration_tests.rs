@@ -1,7 +1,7 @@
-//! Интеграционные тесты для RustBD
+//! Integration tests for RustBD
 //!
-//! Этот файл содержит все интеграционные тесты, которые проверяют
-//! взаимодействие между различными компонентами системы.
+//! This file contains all the integration tests that check
+//! interaction between various system components.
 
 mod integration;
 
@@ -10,13 +10,13 @@ use rustdb::common::Result;
 use rustdb::core::IsolationLevel;
 use std::time::Duration;
 
-/// Запуск всех интеграционных тестов
+// / Run all integration tests
 #[test]
 fn run_all_integration_tests() -> Result<()> {
-    println!("🚀 Запуск всех интеграционных тестов...");
+    println!("🚀Running all integration tests...");
 
-    // Тесты полного цикла запросов
-    println!("📋 Тестирование полного цикла запросов...");
+    // Full query cycle tests
+    println!("📋 Testing the full cycle of requests...");
     full_cycle_tests::test_simple_select_cycle()?;
     full_cycle_tests::test_insert_cycle()?;
     full_cycle_tests::test_update_cycle()?;
@@ -26,10 +26,10 @@ fn run_all_integration_tests() -> Result<()> {
     full_cycle_tests::test_transaction_rollback_cycle()?;
     full_cycle_tests::test_error_handling_cycle()?;
     full_cycle_tests::test_simple_query_performance()?;
-    println!("✅ Тесты полного цикла запросов завершены");
+    println!("✅ Tests of the full query cycle are completed");
 
-    // Тесты транзакций
-    println!("🔄 Тестирование транзакций...");
+    // Transaction tests
+    println!("🔄Testing transactions...");
     transaction_tests::test_basic_transaction_functionality()?;
     transaction_tests::test_transaction_rollback()?;
     transaction_tests::test_read_committed_isolation()?;
@@ -39,10 +39,10 @@ fn run_all_integration_tests() -> Result<()> {
     transaction_tests::test_crash_recovery()?;
     transaction_tests::test_long_running_transaction()?;
     transaction_tests::test_multiple_concurrent_transactions()?;
-    println!("✅ Тесты транзакций завершены");
+    println!("✅ Transaction tests completed");
 
-    // Benchmark тесты
-    println!("⚡ Запуск benchmark тестов...");
+    // Benchmark tests
+    println!("⚡ Launching benchmark tests...");
     benchmark_tests::benchmark_simple_select()?;
     benchmark_tests::benchmark_insert_operations()?;
     benchmark_tests::benchmark_update_operations()?;
@@ -54,10 +54,10 @@ fn run_all_integration_tests() -> Result<()> {
     benchmark_tests::benchmark_logging_operations()?;
     benchmark_tests::benchmark_checkpoint_operations()?;
     benchmark_tests::benchmark_mixed_operations()?;
-    println!("✅ Benchmark тесты завершены");
+    println!("✅ Benchmark tests completed");
 
-    // Stress тесты
-    println!("💪 Запуск stress тестов...");
+    // Stress tests
+    println!("💪Running stress tests...");
     stress_tests::stress_test_concurrent_connections()?;
     stress_tests::stress_test_long_transactions()?;
     stress_tests::stress_test_locking()?;
@@ -66,69 +66,69 @@ fn run_all_integration_tests() -> Result<()> {
     stress_tests::stress_test_recovery()?;
     stress_tests::stress_test_performance_under_load()?;
     stress_tests::stress_test_large_dataset()?;
-    println!("✅ Stress тесты завершены");
+    println!("✅ Stress tests completed");
 
-    println!("🎉 Все интеграционные тесты успешно завершены!");
+    println!("🎉 All integration tests have been successfully completed!");
 
     Ok(())
 }
 
-/// Тест интеграции компонентов системы
+// / System component integration test
 #[tokio::test]
 async fn test_system_integration() -> Result<()> {
-    println!("🔧 Тестирование интеграции компонентов системы...");
+    println!("🔧 Testing the integration of system components...");
 
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Тестируем создание таблицы
+    // Testing table creation
     ctx.create_test_table("integration_test").await?;
-    println!("✅ Создание таблицы работает");
+    println!("✅ Table creation works");
 
-    // Тестируем вставку данных
+    // Testing data insertion
     ctx.insert_test_data("integration_test", 100).await?;
-    println!("✅ Вставка данных работает");
+    println!("✅ Data insertion works");
 
-    // Тестируем запросы
+    // Testing requests
     let results = ctx.execute_sql("SELECT * FROM integration_test").await?;
     let count = results.len();
 
-    assert_eq!(count, 100, "Должно быть 100 записей");
-    println!("✅ Запросы работают");
+    assert_eq!(count, 100, "There must be 100 entries");
+    println!("✅ Requests are working");
 
-    // Тестируем транзакции
+    // Testing transactions
     let tx_id = ctx
         .transaction_manager
         .begin_transaction(IsolationLevel::ReadCommitted, false)?;
     ctx.execute_sql("INSERT INTO integration_test (id, name, age, email) VALUES (101, 'TestUser', 30, 'test@example.com')").await?;
     ctx.transaction_manager.commit_transaction(tx_id)?;
-    println!("✅ Транзакции работают");
+    println!("✅ Transactions work");
 
-    // Тестируем checkpoint
+    // Testing checkpoint
     ctx.checkpoint_manager.create_checkpoint().await?;
-    println!("✅ Checkpoint работает");
+    println!("✅ Checkpoint works");
 
-    println!("🎉 Интеграция компонентов системы работает корректно!");
+    println!("🎉 Integration of system components works correctly!");
 
     Ok(())
 }
 
-/// Тест производительности системы
+// / System performance test
 #[tokio::test]
 async fn test_system_performance() -> Result<()> {
-    println!("⚡ Тестирование производительности системы...");
+    println!("⚡ System performance testing...");
 
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем таблицу для тестирования производительности
+    // Creating a table for performance testing
     ctx.create_test_table("perf_test").await?;
 
-    // Тестируем производительность вставки
+    // Testing insert performance
     let start_time = std::time::Instant::now();
     ctx.insert_test_data("perf_test", 1000).await?;
     let insert_time = start_time.elapsed();
 
-    println!("Вставка 1000 записей: {:?}", insert_time);
-    // В CI (GitHub Actions) runner может быть сильно загружен — пороги выше, чем локально.
+    println!("Inserting 1000 records: {:?}", insert_time);
+    // In CI (GitHub Actions) the runner can be heavily loaded - the thresholds are higher than locally.
     let insert_limit = if std::env::var("CI").is_ok() {
         Duration::from_secs(120)
     } else {
@@ -136,18 +136,18 @@ async fn test_system_performance() -> Result<()> {
     };
     assert!(
         insert_time < insert_limit,
-        "Вставка должна быть быстрой (лимит {:?})",
+        "The insertion must be fast (limit {:?})",
         insert_limit
     );
 
-    // Тестируем производительность запросов
+    // Testing query performance
     let query_start = std::time::Instant::now();
     for _ in 0..100 {
         ctx.execute_sql("SELECT * FROM perf_test").await?;
     }
     let query_time = query_start.elapsed();
 
-    println!("100 запросов: {:?}", query_time);
+    println!("100 requests: {:?}", query_time);
     let query_limit = if std::env::var("CI").is_ok() {
         Duration::from_secs(60)
     } else {
@@ -155,18 +155,18 @@ async fn test_system_performance() -> Result<()> {
     };
     assert!(
         query_time < query_limit,
-        "Запросы должны быть быстрыми (лимит {:?})",
+        "Requests must be fast (limit {:?})",
         query_limit
     );
 
-    // Тестируем производительность обновлений
+    // Testing update performance
     let update_start = std::time::Instant::now();
     for _ in 1..=100 {
         ctx.execute_sql("UPDATE perf_test SET age = 99").await?;
     }
     let update_time = update_start.elapsed();
 
-    println!("100 обновлений: {:?}", update_time);
+    println!("100 updates: {:?}", update_time);
     let update_limit = if std::env::var("CI").is_ok() {
         Duration::from_secs(60)
     } else {
@@ -174,55 +174,55 @@ async fn test_system_performance() -> Result<()> {
     };
     assert!(
         update_time < update_limit,
-        "Обновления должны быть быстрыми (лимит {:?})",
+        "Updates must be fast (limit {:?})",
         update_limit
     );
 
-    println!("🎉 Производительность системы соответствует требованиям!");
+    println!("🎉 System performance meets requirements!");
 
     Ok(())
 }
 
-/// Тест надежности системы
+// / System reliability test
 #[tokio::test]
 async fn test_system_reliability() -> Result<()> {
-    println!("🛡️ Тестирование надежности системы...");
+    println!("🛡️ System reliability testing...");
 
     let mut ctx = IntegrationTestContext::new().await?;
 
-    // Создаем таблицу
+    // Create a table
     ctx.create_test_table("reliability_test").await?;
 
-    // Выполняем много операций
+    // We perform many operations
     for i in 1..=1000 {
         ctx.execute_sql(&format!(
             "INSERT INTO reliability_test (id, name, age, email) VALUES ({}, 'User{}', {}, 'user{}@example.com')",
             i, i, 20 + (i % 50), i
         )).await?;
 
-        // Периодически создаем checkpoint
+        // We periodically create checkpoints
         if i % 100 == 0 {
             ctx.checkpoint_manager.create_checkpoint().await?;
         }
     }
 
-    // Симулируем сбой
+    // Simulating a failure
     let mut new_ctx = IntegrationTestContext::new().await?;
 
-    // Для симуляции восстановления, мы восстанавливаем данные
+    // To simulate recovery, we recover data
     new_ctx
         .inserted_records
         .insert("reliability_test".to_string(), 1000);
 
-    // Проверяем восстановление
+    // Checking the recovery
     let results = new_ctx
         .execute_sql("SELECT * FROM reliability_test")
         .await?;
     let count = results.len();
 
-    assert_eq!(count, 1000, "Должны восстановиться все 1000 записей");
+    assert_eq!(count, 1000, "All 1000 records should be restored");
 
-    println!("🎉 Система надежно восстанавливается после сбоев!");
+    println!("🎉 The system is reliably restored after failures!");
 
     Ok(())
 }

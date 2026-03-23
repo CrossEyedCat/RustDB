@@ -1,4 +1,4 @@
-//! Тесты для структуры Block
+//! Tests for the Block structure
 
 use crate::storage::block::{Block, BlockHeader, BLOCK_SIZE};
 use crate::common::types::BlockId;
@@ -19,7 +19,7 @@ fn test_block_header() {
     let header = block.get_header();
     
     assert_eq!(header.block_id, BlockId(42));
-    assert_eq!(header.checksum, 0); // Изначально 0
+    assert_eq!(header.checksum, 0);
 }
 
 #[test]
@@ -27,11 +27,11 @@ fn test_block_data_operations() {
     let mut block = Block::new(BlockId(1));
     let test_data = b"Hello, Block World!";
     
-    // Записываем данные в блок
+    // Write data to the block
     let result = block.write_data(0, test_data);
     assert!(result.is_ok());
     
-    // Читаем данные из блока
+    // Reading data from the block
     let mut buffer = vec![0u8; test_data.len()];
     let result = block.read_data(0, &mut buffer);
     assert!(result.is_ok());
@@ -46,11 +46,11 @@ fn test_block_write_read_at_offset() {
     let offset1 = 0;
     let offset2 = 100;
     
-    // Записываем данные в разные части блока
+    // We write data to different parts of the block
     block.write_data(offset1, data1).unwrap();
     block.write_data(offset2, data2).unwrap();
     
-    // Читаем данные из разных частей
+    // Reading data from different parts
     let mut buffer1 = vec![0u8; data1.len()];
     let mut buffer2 = vec![0u8; data2.len()];
     
@@ -66,12 +66,12 @@ fn test_block_boundary_write() {
     let mut block = Block::new(BlockId(1));
     let test_data = vec![0xAB; 100];
     
-    // Записываем в конец блока
+    // Write to the end of the block
     let offset = BLOCK_SIZE - test_data.len();
     let result = block.write_data(offset, &test_data);
     assert!(result.is_ok());
     
-    // Читаем обратно
+    // Reading back
     let mut buffer = vec![0u8; test_data.len()];
     block.read_data(offset, &mut buffer).unwrap();
     assert_eq!(buffer, test_data);
@@ -82,11 +82,11 @@ fn test_block_write_beyond_boundary() {
     let mut block = Block::new(BlockId(1));
     let test_data = b"This data is too large for the remaining space";
     
-    // Пытаемся записать за границы блока
-    let offset = BLOCK_SIZE - 10; // Оставляем только 10 байт
+    // We are trying to write outside the block boundaries
+    let offset = BLOCK_SIZE - 10;
     let result = block.write_data(offset, test_data);
     
-    // Должна быть ошибка
+    // There must be a mistake
     assert!(result.is_err());
 }
 
@@ -95,11 +95,11 @@ fn test_block_read_beyond_boundary() {
     let block = Block::new(BlockId(1));
     let mut buffer = vec![0u8; 100];
     
-    // Пытаемся читать за границами блока
+    // Trying to read beyond block boundaries
     let offset = BLOCK_SIZE - 50;
     let result = block.read_data(offset, &mut buffer);
     
-    // Должна быть ошибка
+    // There must be a mistake
     assert!(result.is_err());
 }
 
@@ -109,11 +109,11 @@ fn test_block_fill_completely() {
     let fill_byte = 0x42;
     let fill_data = vec![fill_byte; BLOCK_SIZE];
     
-    // Заполняем весь блок
+    // Filling the entire block
     let result = block.write_data(0, &fill_data);
     assert!(result.is_ok());
     
-    // Проверяем, что весь блок заполнен
+    // Checking that the entire block is filled
     let mut buffer = vec![0u8; BLOCK_SIZE];
     block.read_data(0, &mut buffer).unwrap();
     assert_eq!(buffer, fill_data);
@@ -124,22 +124,22 @@ fn test_block_partial_overwrite() {
     let mut block = Block::new(BlockId(1));
     let initial_data = b"Initial data that will be partially overwritten";
     let overwrite_data = b"OVERWRITE";
-    let offset = 8; // Начинаем перезапись с позиции 8
+    let offset = 8;
     
-    // Записываем исходные данные
+    // Recording the initial data
     block.write_data(0, initial_data).unwrap();
     
-    // Частично перезаписываем
+    // Partially re-recording
     block.write_data(offset, overwrite_data).unwrap();
     
-    // Проверяем результат
+    // Checking the result
     let mut buffer = vec![0u8; initial_data.len()];
     block.read_data(0, &mut buffer).unwrap();
     
-    // Первые 8 байт должны остаться неизменными
+    // The first 8 bytes must remain unchanged
     assert_eq!(&buffer[0..offset], &initial_data[0..offset]);
     
-    // Следующие байты должны быть перезаписаны
+    // The following bytes must be overwritten
     assert_eq!(&buffer[offset..offset + overwrite_data.len()], overwrite_data);
 }
 
@@ -147,11 +147,11 @@ fn test_block_partial_overwrite() {
 fn test_block_zero_data() {
     let mut block = Block::new(BlockId(1));
     
-    // Записываем пустые данные
+    // Writing empty data
     let result = block.write_data(0, &[]);
     assert!(result.is_ok());
     
-    // Читаем пустые данные
+    // Reading empty data
     let mut empty_buffer = vec![];
     let result = block.read_data(0, &mut empty_buffer);
     assert!(result.is_ok());
@@ -162,21 +162,21 @@ fn test_block_serialization() {
     let mut block = Block::new(BlockId(42));
     let test_data = b"Serialization test data";
     
-    // Записываем тестовые данные
+    // Recording test data
     block.write_data(100, test_data).unwrap();
     
-    // Сериализуем блок
+    // Serializing the block
     let serialized = block.serialize();
     assert_eq!(serialized.len(), BLOCK_SIZE);
     
-    // Десериализуем блок
+    // Deserializing the block
     let deserialized = Block::deserialize(&serialized, BlockId(42));
     assert!(deserialized.is_ok());
     
     let new_block = deserialized.unwrap();
     assert_eq!(new_block.get_id(), BlockId(42));
     
-    // Проверяем, что данные сохранились
+    // Checking that the data has been saved
     let mut buffer = vec![0u8; test_data.len()];
     new_block.read_data(100, &mut buffer).unwrap();
     assert_eq!(buffer, test_data);
@@ -189,14 +189,14 @@ fn test_block_checksum() {
     
     block.write_data(0, test_data).unwrap();
     
-    // Вычисляем контрольную сумму
+    // Calculating the checksum
     let checksum = block.calculate_checksum();
-    assert_ne!(checksum, 0); // Контрольная сумма не должна быть нулевой для непустых данных
+    assert_ne!(checksum, 0);
     
-    // Изменяем данные
+    // Changing data
     block.write_data(0, b"Different data").unwrap();
     
-    // Контрольная сумма должна измениться
+    // The checksum must change
     let new_checksum = block.calculate_checksum();
     assert_ne!(checksum, new_checksum);
 }
@@ -204,12 +204,12 @@ fn test_block_checksum() {
 #[test]
 fn test_block_dirty_flag() {
     let mut block = Block::new(BlockId(1));
-    assert!(block.is_dirty()); // Новый блок помечен как грязный
+    assert!(block.is_dirty());
     
     block.mark_clean();
     assert!(!block.is_dirty());
     
-    // Любая запись должна помечать блок как грязный
+    // Any entry must mark the block as dirty
     block.write_data(0, b"test").unwrap();
     assert!(block.is_dirty());
 }
@@ -219,13 +219,13 @@ fn test_block_stream_io() {
     let mut block = Block::new(BlockId(1));
     let test_data = b"Stream I/O test data";
     
-    // Записываем данные через поток
+    // Writing data via stream
     {
         let mut cursor = Cursor::new(block.get_data_mut());
         cursor.write_all(test_data).unwrap();
     }
     
-    // Читаем данные через поток
+    // Reading data through a stream
     {
         let mut cursor = Cursor::new(block.get_data());
         let mut buffer = vec![0u8; test_data.len()];
@@ -242,11 +242,11 @@ fn test_multiple_blocks_independence() {
     let data1 = b"Data for block 1";
     let data2 = b"Data for block 2";
     
-    // Записываем разные данные в разные блоки
+    // We write different data in different blocks
     block1.write_data(0, data1).unwrap();
     block2.write_data(0, data2).unwrap();
     
-    // Проверяем, что блоки независимы
+    // Checking that the blocks are independent
     let mut buffer1 = vec![0u8; data1.len()];
     let mut buffer2 = vec![0u8; data2.len()];
     
@@ -262,7 +262,7 @@ fn test_multiple_blocks_independence() {
 fn test_block_pattern_write_read() {
     let mut block = Block::new(BlockId(1));
     
-    // Записываем паттерн данных
+    // Recording the data pattern
     for i in 0..256 {
         let data = vec![i as u8; 10];
         let offset = i * 10;
@@ -272,7 +272,7 @@ fn test_block_pattern_write_read() {
         }
     }
     
-    // Проверяем паттерн
+    // Checking the pattern
     for i in 0..256 {
         let offset = i * 10;
         if offset + 10 <= BLOCK_SIZE {
@@ -293,7 +293,7 @@ fn test_block_concurrent_access_simulation() {
     let block = Arc::new(Mutex::new(Block::new(BlockId(1))));
     let mut handles = vec![];
     
-    // Симулируем конкурентный доступ
+    // Simulating competitive access
     for i in 0..10 {
         let block_clone = Arc::clone(&block);
         let handle = thread::spawn(move || {
@@ -310,13 +310,13 @@ fn test_block_concurrent_access_simulation() {
         handles.push(handle);
     }
     
-    // Ждем завершения всех потоков
+    // Waiting for all threads to complete
     for handle in handles {
         let result = handle.join().unwrap();
         assert!(result.is_ok());
     }
     
-    // Проверяем результат
+    // Checking the result
     let final_block = block.lock().unwrap();
     for i in 0..10 {
         let offset = i * 100;
@@ -341,7 +341,7 @@ fn test_block_persistence_integrity() {
     
     let original_data = b"Persistence integrity test data";
     
-    // Создаем и записываем блок
+    // Create and record a block
     {
         let mut block = Block::new(BlockId(100));
         block.write_data(0, original_data).unwrap();
@@ -351,7 +351,7 @@ fn test_block_persistence_integrity() {
         file.write_all(&serialized).unwrap();
     }
     
-    // Читаем и проверяем блок
+    // Read and check the block
     {
         let mut file = File::open(&file_path).unwrap();
         let mut buffer = vec![0u8; BLOCK_SIZE];
