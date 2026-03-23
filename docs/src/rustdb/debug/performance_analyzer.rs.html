@@ -709,98 +709,99 @@
 <a href=#709 id=709 data-nosnippet>709</a></span><span class="kw">mod </span>tests {
 <a href=#710 id=710 data-nosnippet>710</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
 <a href=#711 id=711 data-nosnippet>711</a>
-<a href=#712 id=712 data-nosnippet>712</a>    <span class="attr">#[tokio::test]
-<a href=#713 id=713 data-nosnippet>713</a>    </span><span class="kw">async fn </span>test_performance_analyzer() {
-<a href=#714 id=714 data-nosnippet>714</a>        <span class="kw">let </span>config = DebugConfig {
-<a href=#715 id=715 data-nosnippet>715</a>            metrics_collection_interval: <span class="number">1</span>,
-<a href=#716 id=716 data-nosnippet>716</a>            ..Default::default()
-<a href=#717 id=717 data-nosnippet>717</a>        };
-<a href=#718 id=718 data-nosnippet>718</a>
-<a href=#719 id=719 data-nosnippet>719</a>        <span class="kw">let </span>analyzer = PerformanceAnalyzer::new(<span class="kw-2">&amp;</span>config);
-<a href=#720 id=720 data-nosnippet>720</a>
-<a href=#721 id=721 data-nosnippet>721</a>        <span class="comment">// Wait for analyses to accumulate
-<a href=#722 id=722 data-nosnippet>722</a>        </span>tokio::time::sleep(Duration::from_millis(<span class="number">1500</span>)).<span class="kw">await</span>;
-<a href=#723 id=723 data-nosnippet>723</a>
-<a href=#724 id=724 data-nosnippet>724</a>        <span class="comment">// Validate statistics
-<a href=#725 id=725 data-nosnippet>725</a>        </span><span class="kw">let </span>stats = analyzer.get_stats();
-<a href=#726 id=726 data-nosnippet>726</a>        <span class="macro">assert!</span>(stats.total_analyses &gt; <span class="number">0</span>);
-<a href=#727 id=727 data-nosnippet>727</a>
-<a href=#728 id=728 data-nosnippet>728</a>        <span class="comment">// Validate latest analysis
-<a href=#729 id=729 data-nosnippet>729</a>        </span><span class="kw">let </span>latest_analysis = analyzer.get_latest_analysis();
-<a href=#730 id=730 data-nosnippet>730</a>        <span class="macro">assert!</span>(latest_analysis.is_some());
-<a href=#731 id=731 data-nosnippet>731</a>
-<a href=#732 id=732 data-nosnippet>732</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(analysis) = latest_analysis {
-<a href=#733 id=733 data-nosnippet>733</a>            <span class="macro">assert!</span>(analysis.overall_score &gt;= <span class="number">0.0 </span>&amp;&amp; analysis.overall_score &lt;= <span class="number">100.0</span>);
-<a href=#734 id=734 data-nosnippet>734</a>            <span class="macro">assert!</span>(!analysis.metrics.is_empty());
-<a href=#735 id=735 data-nosnippet>735</a>        }
-<a href=#736 id=736 data-nosnippet>736</a>
-<a href=#737 id=737 data-nosnippet>737</a>        <span class="comment">// Validate report contents
-<a href=#738 id=738 data-nosnippet>738</a>        </span><span class="kw">let </span>report = analyzer.generate_performance_report();
-<a href=#739 id=739 data-nosnippet>739</a>        <span class="macro">assert!</span>(report.contains(<span class="string">"Performance analysis report"</span>));
-<a href=#740 id=740 data-nosnippet>740</a>        <span class="macro">assert!</span>(report.contains(<span class="string">"Overall statistics"</span>));
-<a href=#741 id=741 data-nosnippet>741</a>        <span class="macro">assert!</span>(report.contains(<span class="string">"Improvement guidance"</span>));
-<a href=#742 id=742 data-nosnippet>742</a>    }
-<a href=#743 id=743 data-nosnippet>743</a>
-<a href=#744 id=744 data-nosnippet>744</a>    <span class="attr">#[test]
-<a href=#745 id=745 data-nosnippet>745</a>    </span><span class="kw">fn </span>test_bottleneck_detection() {
-<a href=#746 id=746 data-nosnippet>746</a>        <span class="kw">let </span>metrics = <span class="macro">vec!</span>[
-<a href=#747 id=747 data-nosnippet>747</a>            PerformanceMetric {
-<a href=#748 id=748 data-nosnippet>748</a>                name: <span class="string">"cpu_usage"</span>.to_string(),
-<a href=#749 id=749 data-nosnippet>749</a>                value: <span class="number">95.0</span>, <span class="comment">// Critical value
-<a href=#750 id=750 data-nosnippet>750</a>                </span>unit: <span class="string">"%"</span>.to_string(),
-<a href=#751 id=751 data-nosnippet>751</a>                timestamp: <span class="number">1000</span>,
-<a href=#752 id=752 data-nosnippet>752</a>                component: <span class="string">"System"</span>.to_string(),
-<a href=#753 id=753 data-nosnippet>753</a>                thresholds: Thresholds {
-<a href=#754 id=754 data-nosnippet>754</a>                    warning: <span class="number">70.0</span>,
-<a href=#755 id=755 data-nosnippet>755</a>                    critical: <span class="number">90.0</span>,
-<a href=#756 id=756 data-nosnippet>756</a>                },
-<a href=#757 id=757 data-nosnippet>757</a>            },
-<a href=#758 id=758 data-nosnippet>758</a>            PerformanceMetric {
-<a href=#759 id=759 data-nosnippet>759</a>                name: <span class="string">"memory_usage"</span>.to_string(),
-<a href=#760 id=760 data-nosnippet>760</a>                value: <span class="number">75.0</span>, <span class="comment">// Warning value
-<a href=#761 id=761 data-nosnippet>761</a>                </span>unit: <span class="string">"%"</span>.to_string(),
-<a href=#762 id=762 data-nosnippet>762</a>                timestamp: <span class="number">1000</span>,
-<a href=#763 id=763 data-nosnippet>763</a>                component: <span class="string">"System"</span>.to_string(),
-<a href=#764 id=764 data-nosnippet>764</a>                thresholds: Thresholds {
-<a href=#765 id=765 data-nosnippet>765</a>                    warning: <span class="number">80.0</span>,
-<a href=#766 id=766 data-nosnippet>766</a>                    critical: <span class="number">95.0</span>,
-<a href=#767 id=767 data-nosnippet>767</a>                },
-<a href=#768 id=768 data-nosnippet>768</a>            },
-<a href=#769 id=769 data-nosnippet>769</a>        ];
-<a href=#770 id=770 data-nosnippet>770</a>
-<a href=#771 id=771 data-nosnippet>771</a>        <span class="kw">let </span>analysis = PerformanceAnalyzer::perform_analysis(<span class="kw-2">&amp;</span>metrics);
-<a href=#772 id=772 data-nosnippet>772</a>
-<a href=#773 id=773 data-nosnippet>773</a>        <span class="macro">assert!</span>(analysis.overall_score &lt; <span class="number">100.0</span>);
-<a href=#774 id=774 data-nosnippet>774</a>        <span class="macro">assert!</span>(!analysis.bottlenecks.is_empty());
-<a href=#775 id=775 data-nosnippet>775</a>
-<a href=#776 id=776 data-nosnippet>776</a>        <span class="kw">let </span>critical_bottlenecks: Vec&lt;<span class="kw">_</span>&gt; = analysis
-<a href=#777 id=777 data-nosnippet>777</a>            .bottlenecks
-<a href=#778 id=778 data-nosnippet>778</a>            .iter()
-<a href=#779 id=779 data-nosnippet>779</a>            .filter(|b| <span class="macro">matches!</span>(b.severity, SeverityLevel::Critical))
-<a href=#780 id=780 data-nosnippet>780</a>            .collect();
-<a href=#781 id=781 data-nosnippet>781</a>
-<a href=#782 id=782 data-nosnippet>782</a>        <span class="macro">assert!</span>(!critical_bottlenecks.is_empty());
-<a href=#783 id=783 data-nosnippet>783</a>        <span class="macro">assert!</span>(critical_bottlenecks
-<a href=#784 id=784 data-nosnippet>784</a>            .iter()
-<a href=#785 id=785 data-nosnippet>785</a>            .any(|b| <span class="macro">matches!</span>(b.bottleneck_type, BottleneckType::Cpu)));
-<a href=#786 id=786 data-nosnippet>786</a>    }
-<a href=#787 id=787 data-nosnippet>787</a>
-<a href=#788 id=788 data-nosnippet>788</a>    <span class="attr">#[test]
-<a href=#789 id=789 data-nosnippet>789</a>    </span><span class="kw">fn </span>test_recommendations() {
-<a href=#790 id=790 data-nosnippet>790</a>        <span class="kw">let </span>cpu_recommendations =
-<a href=#791 id=791 data-nosnippet>791</a>            PerformanceAnalyzer::get_recommendations(<span class="string">"cpu_usage"</span>, SeverityLevel::Critical);
-<a href=#792 id=792 data-nosnippet>792</a>        <span class="macro">assert!</span>(!cpu_recommendations.is_empty());
-<a href=#793 id=793 data-nosnippet>793</a>        <span class="macro">assert!</span>(cpu_recommendations
-<a href=#794 id=794 data-nosnippet>794</a>            .iter()
-<a href=#795 id=795 data-nosnippet>795</a>            .any(|r| r.to_lowercase().contains(<span class="string">"optimize"</span>)));
-<a href=#796 id=796 data-nosnippet>796</a>
-<a href=#797 id=797 data-nosnippet>797</a>        <span class="kw">let </span>memory_recommendations =
-<a href=#798 id=798 data-nosnippet>798</a>            PerformanceAnalyzer::get_recommendations(<span class="string">"memory_usage"</span>, SeverityLevel::Warning);
-<a href=#799 id=799 data-nosnippet>799</a>        <span class="macro">assert!</span>(!memory_recommendations.is_empty());
-<a href=#800 id=800 data-nosnippet>800</a>        <span class="comment">// Ensure recommendations contain relevant keywords
-<a href=#801 id=801 data-nosnippet>801</a>        </span><span class="macro">assert!</span>(memory_recommendations
-<a href=#802 id=802 data-nosnippet>802</a>            .iter()
-<a href=#803 id=803 data-nosnippet>803</a>            .any(|r| r.to_lowercase().contains(<span class="string">"memory"</span>) || r.to_lowercase().contains(<span class="string">"object"</span>)));
-<a href=#804 id=804 data-nosnippet>804</a>    }
-<a href=#805 id=805 data-nosnippet>805</a>}
+<a href=#712 id=712 data-nosnippet>712</a>    <span class="attr">#[cfg_attr(miri, ignore)]
+<a href=#713 id=713 data-nosnippet>713</a>    #[tokio::test]
+<a href=#714 id=714 data-nosnippet>714</a>    </span><span class="kw">async fn </span>test_performance_analyzer() {
+<a href=#715 id=715 data-nosnippet>715</a>        <span class="kw">let </span>config = DebugConfig {
+<a href=#716 id=716 data-nosnippet>716</a>            metrics_collection_interval: <span class="number">1</span>,
+<a href=#717 id=717 data-nosnippet>717</a>            ..Default::default()
+<a href=#718 id=718 data-nosnippet>718</a>        };
+<a href=#719 id=719 data-nosnippet>719</a>
+<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">let </span>analyzer = PerformanceAnalyzer::new(<span class="kw-2">&amp;</span>config);
+<a href=#721 id=721 data-nosnippet>721</a>
+<a href=#722 id=722 data-nosnippet>722</a>        <span class="comment">// Wait for analyses to accumulate
+<a href=#723 id=723 data-nosnippet>723</a>        </span>tokio::time::sleep(Duration::from_millis(<span class="number">1500</span>)).<span class="kw">await</span>;
+<a href=#724 id=724 data-nosnippet>724</a>
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="comment">// Validate statistics
+<a href=#726 id=726 data-nosnippet>726</a>        </span><span class="kw">let </span>stats = analyzer.get_stats();
+<a href=#727 id=727 data-nosnippet>727</a>        <span class="macro">assert!</span>(stats.total_analyses &gt; <span class="number">0</span>);
+<a href=#728 id=728 data-nosnippet>728</a>
+<a href=#729 id=729 data-nosnippet>729</a>        <span class="comment">// Validate latest analysis
+<a href=#730 id=730 data-nosnippet>730</a>        </span><span class="kw">let </span>latest_analysis = analyzer.get_latest_analysis();
+<a href=#731 id=731 data-nosnippet>731</a>        <span class="macro">assert!</span>(latest_analysis.is_some());
+<a href=#732 id=732 data-nosnippet>732</a>
+<a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(analysis) = latest_analysis {
+<a href=#734 id=734 data-nosnippet>734</a>            <span class="macro">assert!</span>(analysis.overall_score &gt;= <span class="number">0.0 </span>&amp;&amp; analysis.overall_score &lt;= <span class="number">100.0</span>);
+<a href=#735 id=735 data-nosnippet>735</a>            <span class="macro">assert!</span>(!analysis.metrics.is_empty());
+<a href=#736 id=736 data-nosnippet>736</a>        }
+<a href=#737 id=737 data-nosnippet>737</a>
+<a href=#738 id=738 data-nosnippet>738</a>        <span class="comment">// Validate report contents
+<a href=#739 id=739 data-nosnippet>739</a>        </span><span class="kw">let </span>report = analyzer.generate_performance_report();
+<a href=#740 id=740 data-nosnippet>740</a>        <span class="macro">assert!</span>(report.contains(<span class="string">"Performance analysis report"</span>));
+<a href=#741 id=741 data-nosnippet>741</a>        <span class="macro">assert!</span>(report.contains(<span class="string">"Overall statistics"</span>));
+<a href=#742 id=742 data-nosnippet>742</a>        <span class="macro">assert!</span>(report.contains(<span class="string">"Improvement guidance"</span>));
+<a href=#743 id=743 data-nosnippet>743</a>    }
+<a href=#744 id=744 data-nosnippet>744</a>
+<a href=#745 id=745 data-nosnippet>745</a>    <span class="attr">#[test]
+<a href=#746 id=746 data-nosnippet>746</a>    </span><span class="kw">fn </span>test_bottleneck_detection() {
+<a href=#747 id=747 data-nosnippet>747</a>        <span class="kw">let </span>metrics = <span class="macro">vec!</span>[
+<a href=#748 id=748 data-nosnippet>748</a>            PerformanceMetric {
+<a href=#749 id=749 data-nosnippet>749</a>                name: <span class="string">"cpu_usage"</span>.to_string(),
+<a href=#750 id=750 data-nosnippet>750</a>                value: <span class="number">95.0</span>, <span class="comment">// Critical value
+<a href=#751 id=751 data-nosnippet>751</a>                </span>unit: <span class="string">"%"</span>.to_string(),
+<a href=#752 id=752 data-nosnippet>752</a>                timestamp: <span class="number">1000</span>,
+<a href=#753 id=753 data-nosnippet>753</a>                component: <span class="string">"System"</span>.to_string(),
+<a href=#754 id=754 data-nosnippet>754</a>                thresholds: Thresholds {
+<a href=#755 id=755 data-nosnippet>755</a>                    warning: <span class="number">70.0</span>,
+<a href=#756 id=756 data-nosnippet>756</a>                    critical: <span class="number">90.0</span>,
+<a href=#757 id=757 data-nosnippet>757</a>                },
+<a href=#758 id=758 data-nosnippet>758</a>            },
+<a href=#759 id=759 data-nosnippet>759</a>            PerformanceMetric {
+<a href=#760 id=760 data-nosnippet>760</a>                name: <span class="string">"memory_usage"</span>.to_string(),
+<a href=#761 id=761 data-nosnippet>761</a>                value: <span class="number">75.0</span>, <span class="comment">// Warning value
+<a href=#762 id=762 data-nosnippet>762</a>                </span>unit: <span class="string">"%"</span>.to_string(),
+<a href=#763 id=763 data-nosnippet>763</a>                timestamp: <span class="number">1000</span>,
+<a href=#764 id=764 data-nosnippet>764</a>                component: <span class="string">"System"</span>.to_string(),
+<a href=#765 id=765 data-nosnippet>765</a>                thresholds: Thresholds {
+<a href=#766 id=766 data-nosnippet>766</a>                    warning: <span class="number">80.0</span>,
+<a href=#767 id=767 data-nosnippet>767</a>                    critical: <span class="number">95.0</span>,
+<a href=#768 id=768 data-nosnippet>768</a>                },
+<a href=#769 id=769 data-nosnippet>769</a>            },
+<a href=#770 id=770 data-nosnippet>770</a>        ];
+<a href=#771 id=771 data-nosnippet>771</a>
+<a href=#772 id=772 data-nosnippet>772</a>        <span class="kw">let </span>analysis = PerformanceAnalyzer::perform_analysis(<span class="kw-2">&amp;</span>metrics);
+<a href=#773 id=773 data-nosnippet>773</a>
+<a href=#774 id=774 data-nosnippet>774</a>        <span class="macro">assert!</span>(analysis.overall_score &lt; <span class="number">100.0</span>);
+<a href=#775 id=775 data-nosnippet>775</a>        <span class="macro">assert!</span>(!analysis.bottlenecks.is_empty());
+<a href=#776 id=776 data-nosnippet>776</a>
+<a href=#777 id=777 data-nosnippet>777</a>        <span class="kw">let </span>critical_bottlenecks: Vec&lt;<span class="kw">_</span>&gt; = analysis
+<a href=#778 id=778 data-nosnippet>778</a>            .bottlenecks
+<a href=#779 id=779 data-nosnippet>779</a>            .iter()
+<a href=#780 id=780 data-nosnippet>780</a>            .filter(|b| <span class="macro">matches!</span>(b.severity, SeverityLevel::Critical))
+<a href=#781 id=781 data-nosnippet>781</a>            .collect();
+<a href=#782 id=782 data-nosnippet>782</a>
+<a href=#783 id=783 data-nosnippet>783</a>        <span class="macro">assert!</span>(!critical_bottlenecks.is_empty());
+<a href=#784 id=784 data-nosnippet>784</a>        <span class="macro">assert!</span>(critical_bottlenecks
+<a href=#785 id=785 data-nosnippet>785</a>            .iter()
+<a href=#786 id=786 data-nosnippet>786</a>            .any(|b| <span class="macro">matches!</span>(b.bottleneck_type, BottleneckType::Cpu)));
+<a href=#787 id=787 data-nosnippet>787</a>    }
+<a href=#788 id=788 data-nosnippet>788</a>
+<a href=#789 id=789 data-nosnippet>789</a>    <span class="attr">#[test]
+<a href=#790 id=790 data-nosnippet>790</a>    </span><span class="kw">fn </span>test_recommendations() {
+<a href=#791 id=791 data-nosnippet>791</a>        <span class="kw">let </span>cpu_recommendations =
+<a href=#792 id=792 data-nosnippet>792</a>            PerformanceAnalyzer::get_recommendations(<span class="string">"cpu_usage"</span>, SeverityLevel::Critical);
+<a href=#793 id=793 data-nosnippet>793</a>        <span class="macro">assert!</span>(!cpu_recommendations.is_empty());
+<a href=#794 id=794 data-nosnippet>794</a>        <span class="macro">assert!</span>(cpu_recommendations
+<a href=#795 id=795 data-nosnippet>795</a>            .iter()
+<a href=#796 id=796 data-nosnippet>796</a>            .any(|r| r.to_lowercase().contains(<span class="string">"optimize"</span>)));
+<a href=#797 id=797 data-nosnippet>797</a>
+<a href=#798 id=798 data-nosnippet>798</a>        <span class="kw">let </span>memory_recommendations =
+<a href=#799 id=799 data-nosnippet>799</a>            PerformanceAnalyzer::get_recommendations(<span class="string">"memory_usage"</span>, SeverityLevel::Warning);
+<a href=#800 id=800 data-nosnippet>800</a>        <span class="macro">assert!</span>(!memory_recommendations.is_empty());
+<a href=#801 id=801 data-nosnippet>801</a>        <span class="comment">// Ensure recommendations contain relevant keywords
+<a href=#802 id=802 data-nosnippet>802</a>        </span><span class="macro">assert!</span>(memory_recommendations
+<a href=#803 id=803 data-nosnippet>803</a>            .iter()
+<a href=#804 id=804 data-nosnippet>804</a>            .any(|r| r.to_lowercase().contains(<span class="string">"memory"</span>) || r.to_lowercase().contains(<span class="string">"object"</span>)));
+<a href=#805 id=805 data-nosnippet>805</a>    }
+<a href=#806 id=806 data-nosnippet>806</a>}
 </code></pre></div></section></main></body></html>

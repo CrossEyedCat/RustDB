@@ -597,124 +597,130 @@
 <a href=#597 id=597 data-nosnippet>597</a>        </span><span class="prelude-val">Ok</span>(CheckpointManager::new(checkpoint_config, log_writer))
 <a href=#598 id=598 data-nosnippet>598</a>    }
 <a href=#599 id=599 data-nosnippet>599</a>
-<a href=#600 id=600 data-nosnippet>600</a>    <span class="attr">#[tokio::test]
-<a href=#601 id=601 data-nosnippet>601</a>    </span><span class="kw">async fn </span>test_checkpoint_manager_creation() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#602 id=602 data-nosnippet>602</a>        <span class="kw">let </span>_manager = create_test_checkpoint_manager().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#603 id=603 data-nosnippet>603</a>        <span class="prelude-val">Ok</span>(())
-<a href=#604 id=604 data-nosnippet>604</a>    }
-<a href=#605 id=605 data-nosnippet>605</a>
-<a href=#606 id=606 data-nosnippet>606</a>    <span class="attr">#[tokio::test]
-<a href=#607 id=607 data-nosnippet>607</a>    </span><span class="kw">async fn </span>test_manual_checkpoint() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">let </span>manager = create_test_checkpoint_manager().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#609 id=609 data-nosnippet>609</a>
-<a href=#610 id=610 data-nosnippet>610</a>        <span class="kw">let </span>checkpoint_info = manager.create_checkpoint().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#600 id=600 data-nosnippet>600</a>    <span class="attr">#[cfg_attr(miri, ignore)]
+<a href=#601 id=601 data-nosnippet>601</a>    #[tokio::test]
+<a href=#602 id=602 data-nosnippet>602</a>    </span><span class="kw">async fn </span>test_checkpoint_manager_creation() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#603 id=603 data-nosnippet>603</a>        <span class="kw">let </span>_manager = create_test_checkpoint_manager().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#604 id=604 data-nosnippet>604</a>        <span class="prelude-val">Ok</span>(())
+<a href=#605 id=605 data-nosnippet>605</a>    }
+<a href=#606 id=606 data-nosnippet>606</a>
+<a href=#607 id=607 data-nosnippet>607</a>    <span class="attr">#[cfg_attr(miri, ignore)]
+<a href=#608 id=608 data-nosnippet>608</a>    #[tokio::test]
+<a href=#609 id=609 data-nosnippet>609</a>    </span><span class="kw">async fn </span>test_manual_checkpoint() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#610 id=610 data-nosnippet>610</a>        <span class="kw">let </span>manager = create_test_checkpoint_manager().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#611 id=611 data-nosnippet>611</a>
-<a href=#612 id=612 data-nosnippet>612</a>        <span class="macro">assert!</span>(checkpoint_info.id &gt; <span class="number">0</span>);
-<a href=#613 id=613 data-nosnippet>613</a>        <span class="macro">assert!</span>(checkpoint_info.lsn &gt; <span class="number">0</span>);
-<a href=#614 id=614 data-nosnippet>614</a>        <span class="macro">assert!</span>(checkpoint_info.creation_time_ms &gt; <span class="number">0</span>);
-<a href=#615 id=615 data-nosnippet>615</a>
-<a href=#616 id=616 data-nosnippet>616</a>        <span class="prelude-val">Ok</span>(())
-<a href=#617 id=617 data-nosnippet>617</a>    }
-<a href=#618 id=618 data-nosnippet>618</a>
-<a href=#619 id=619 data-nosnippet>619</a>    <span class="attr">#[tokio::test]
-<a href=#620 id=620 data-nosnippet>620</a>    </span><span class="kw">async fn </span>test_checkpoint_with_transactions() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#621 id=621 data-nosnippet>621</a>        <span class="kw">let </span>manager = create_test_checkpoint_manager().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#622 id=622 data-nosnippet>622</a>
-<a href=#623 id=623 data-nosnippet>623</a>        <span class="comment">// Add active transactions
-<a href=#624 id=624 data-nosnippet>624</a>        </span>manager.add_active_transaction(<span class="number">100</span>);
-<a href=#625 id=625 data-nosnippet>625</a>        manager.add_active_transaction(<span class="number">101</span>);
-<a href=#626 id=626 data-nosnippet>626</a>        manager.add_active_transaction(<span class="number">102</span>);
-<a href=#627 id=627 data-nosnippet>627</a>
-<a href=#628 id=628 data-nosnippet>628</a>        <span class="comment">// Add dirty pages
-<a href=#629 id=629 data-nosnippet>629</a>        </span>manager.add_dirty_page(<span class="number">1</span>, <span class="number">10</span>);
-<a href=#630 id=630 data-nosnippet>630</a>        manager.add_dirty_page(<span class="number">1</span>, <span class="number">11</span>);
-<a href=#631 id=631 data-nosnippet>631</a>        manager.add_dirty_page(<span class="number">2</span>, <span class="number">20</span>);
-<a href=#632 id=632 data-nosnippet>632</a>
-<a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">let </span>checkpoint_info = manager.create_checkpoint().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#634 id=634 data-nosnippet>634</a>
-<a href=#635 id=635 data-nosnippet>635</a>        <span class="macro">assert_eq!</span>(checkpoint_info.active_transactions.len(), <span class="number">3</span>);
-<a href=#636 id=636 data-nosnippet>636</a>        <span class="macro">assert_eq!</span>(checkpoint_info.dirty_pages.len(), <span class="number">3</span>);
-<a href=#637 id=637 data-nosnippet>637</a>        <span class="macro">assert!</span>(checkpoint_info.flushed_pages &gt; <span class="number">0</span>);
-<a href=#638 id=638 data-nosnippet>638</a>
-<a href=#639 id=639 data-nosnippet>639</a>        <span class="prelude-val">Ok</span>(())
-<a href=#640 id=640 data-nosnippet>640</a>    }
+<a href=#612 id=612 data-nosnippet>612</a>        <span class="kw">let </span>checkpoint_info = manager.create_checkpoint().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#613 id=613 data-nosnippet>613</a>
+<a href=#614 id=614 data-nosnippet>614</a>        <span class="macro">assert!</span>(checkpoint_info.id &gt; <span class="number">0</span>);
+<a href=#615 id=615 data-nosnippet>615</a>        <span class="macro">assert!</span>(checkpoint_info.lsn &gt; <span class="number">0</span>);
+<a href=#616 id=616 data-nosnippet>616</a>        <span class="macro">assert!</span>(checkpoint_info.creation_time_ms &gt; <span class="number">0</span>);
+<a href=#617 id=617 data-nosnippet>617</a>
+<a href=#618 id=618 data-nosnippet>618</a>        <span class="prelude-val">Ok</span>(())
+<a href=#619 id=619 data-nosnippet>619</a>    }
+<a href=#620 id=620 data-nosnippet>620</a>
+<a href=#621 id=621 data-nosnippet>621</a>    <span class="attr">#[cfg_attr(miri, ignore)]
+<a href=#622 id=622 data-nosnippet>622</a>    #[tokio::test]
+<a href=#623 id=623 data-nosnippet>623</a>    </span><span class="kw">async fn </span>test_checkpoint_with_transactions() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#624 id=624 data-nosnippet>624</a>        <span class="kw">let </span>manager = create_test_checkpoint_manager().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#625 id=625 data-nosnippet>625</a>
+<a href=#626 id=626 data-nosnippet>626</a>        <span class="comment">// Add active transactions
+<a href=#627 id=627 data-nosnippet>627</a>        </span>manager.add_active_transaction(<span class="number">100</span>);
+<a href=#628 id=628 data-nosnippet>628</a>        manager.add_active_transaction(<span class="number">101</span>);
+<a href=#629 id=629 data-nosnippet>629</a>        manager.add_active_transaction(<span class="number">102</span>);
+<a href=#630 id=630 data-nosnippet>630</a>
+<a href=#631 id=631 data-nosnippet>631</a>        <span class="comment">// Add dirty pages
+<a href=#632 id=632 data-nosnippet>632</a>        </span>manager.add_dirty_page(<span class="number">1</span>, <span class="number">10</span>);
+<a href=#633 id=633 data-nosnippet>633</a>        manager.add_dirty_page(<span class="number">1</span>, <span class="number">11</span>);
+<a href=#634 id=634 data-nosnippet>634</a>        manager.add_dirty_page(<span class="number">2</span>, <span class="number">20</span>);
+<a href=#635 id=635 data-nosnippet>635</a>
+<a href=#636 id=636 data-nosnippet>636</a>        <span class="kw">let </span>checkpoint_info = manager.create_checkpoint().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#637 id=637 data-nosnippet>637</a>
+<a href=#638 id=638 data-nosnippet>638</a>        <span class="macro">assert_eq!</span>(checkpoint_info.active_transactions.len(), <span class="number">3</span>);
+<a href=#639 id=639 data-nosnippet>639</a>        <span class="macro">assert_eq!</span>(checkpoint_info.dirty_pages.len(), <span class="number">3</span>);
+<a href=#640 id=640 data-nosnippet>640</a>        <span class="macro">assert!</span>(checkpoint_info.flushed_pages &gt; <span class="number">0</span>);
 <a href=#641 id=641 data-nosnippet>641</a>
-<a href=#642 id=642 data-nosnippet>642</a>    <span class="attr">#[tokio::test]
-<a href=#643 id=643 data-nosnippet>643</a>    </span><span class="kw">async fn </span>test_checkpoint_statistics() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#644 id=644 data-nosnippet>644</a>        <span class="kw">let </span>manager = create_test_checkpoint_manager().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#645 id=645 data-nosnippet>645</a>
-<a href=#646 id=646 data-nosnippet>646</a>        <span class="comment">// Create several checkpoints
-<a href=#647 id=647 data-nosnippet>647</a>        </span>manager.create_checkpoint().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#648 id=648 data-nosnippet>648</a>        manager.create_checkpoint().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#642 id=642 data-nosnippet>642</a>        <span class="prelude-val">Ok</span>(())
+<a href=#643 id=643 data-nosnippet>643</a>    }
+<a href=#644 id=644 data-nosnippet>644</a>
+<a href=#645 id=645 data-nosnippet>645</a>    <span class="attr">#[cfg_attr(miri, ignore)]
+<a href=#646 id=646 data-nosnippet>646</a>    #[tokio::test]
+<a href=#647 id=647 data-nosnippet>647</a>    </span><span class="kw">async fn </span>test_checkpoint_statistics() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#648 id=648 data-nosnippet>648</a>        <span class="kw">let </span>manager = create_test_checkpoint_manager().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#649 id=649 data-nosnippet>649</a>
-<a href=#650 id=650 data-nosnippet>650</a>        <span class="kw">let </span>stats = manager.get_statistics().<span class="kw">await</span>;
-<a href=#651 id=651 data-nosnippet>651</a>
-<a href=#652 id=652 data-nosnippet>652</a>        <span class="macro">assert_eq!</span>(stats.total_checkpoints, <span class="number">2</span>);
-<a href=#653 id=653 data-nosnippet>653</a>        <span class="macro">assert_eq!</span>(stats.forced_checkpoints, <span class="number">2</span>); <span class="comment">// Manual checkpoints
-<a href=#654 id=654 data-nosnippet>654</a>        </span><span class="macro">assert!</span>(stats.average_checkpoint_time_ms &gt; <span class="number">0</span>);
+<a href=#650 id=650 data-nosnippet>650</a>        <span class="comment">// Create several checkpoints
+<a href=#651 id=651 data-nosnippet>651</a>        </span>manager.create_checkpoint().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#652 id=652 data-nosnippet>652</a>        manager.create_checkpoint().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#653 id=653 data-nosnippet>653</a>
+<a href=#654 id=654 data-nosnippet>654</a>        <span class="kw">let </span>stats = manager.get_statistics().<span class="kw">await</span>;
 <a href=#655 id=655 data-nosnippet>655</a>
-<a href=#656 id=656 data-nosnippet>656</a>        <span class="prelude-val">Ok</span>(())
-<a href=#657 id=657 data-nosnippet>657</a>    }
-<a href=#658 id=658 data-nosnippet>658</a>
-<a href=#659 id=659 data-nosnippet>659</a>    <span class="attr">#[tokio::test]
-<a href=#660 id=660 data-nosnippet>660</a>    </span><span class="kw">async fn </span>test_shutdown_checkpoint() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#661 id=661 data-nosnippet>661</a>        <span class="kw">let </span><span class="kw-2">mut </span>manager = create_test_checkpoint_manager().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#656 id=656 data-nosnippet>656</a>        <span class="macro">assert_eq!</span>(stats.total_checkpoints, <span class="number">2</span>);
+<a href=#657 id=657 data-nosnippet>657</a>        <span class="macro">assert_eq!</span>(stats.forced_checkpoints, <span class="number">2</span>); <span class="comment">// Manual checkpoints
+<a href=#658 id=658 data-nosnippet>658</a>        </span><span class="macro">assert!</span>(stats.average_checkpoint_time_ms &gt; <span class="number">0</span>);
+<a href=#659 id=659 data-nosnippet>659</a>
+<a href=#660 id=660 data-nosnippet>660</a>        <span class="prelude-val">Ok</span>(())
+<a href=#661 id=661 data-nosnippet>661</a>    }
 <a href=#662 id=662 data-nosnippet>662</a>
-<a href=#663 id=663 data-nosnippet>663</a>        manager.add_active_transaction(<span class="number">200</span>);
-<a href=#664 id=664 data-nosnippet>664</a>
-<a href=#665 id=665 data-nosnippet>665</a>        <span class="kw">let </span>checkpoint_info = manager.create_shutdown_checkpoint().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#666 id=666 data-nosnippet>666</a>
-<a href=#667 id=667 data-nosnippet>667</a>        <span class="macro">assert!</span>(checkpoint_info.id &gt; <span class="number">0</span>);
-<a href=#668 id=668 data-nosnippet>668</a>        <span class="macro">assert_eq!</span>(checkpoint_info.active_transactions.len(), <span class="number">1</span>);
+<a href=#663 id=663 data-nosnippet>663</a>    <span class="attr">#[cfg_attr(miri, ignore)]
+<a href=#664 id=664 data-nosnippet>664</a>    #[tokio::test]
+<a href=#665 id=665 data-nosnippet>665</a>    </span><span class="kw">async fn </span>test_shutdown_checkpoint() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#666 id=666 data-nosnippet>666</a>        <span class="kw">let </span><span class="kw-2">mut </span>manager = create_test_checkpoint_manager().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#667 id=667 data-nosnippet>667</a>
+<a href=#668 id=668 data-nosnippet>668</a>        manager.add_active_transaction(<span class="number">200</span>);
 <a href=#669 id=669 data-nosnippet>669</a>
-<a href=#670 id=670 data-nosnippet>670</a>        manager.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#670 id=670 data-nosnippet>670</a>        <span class="kw">let </span>checkpoint_info = manager.create_shutdown_checkpoint().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#671 id=671 data-nosnippet>671</a>
-<a href=#672 id=672 data-nosnippet>672</a>        <span class="prelude-val">Ok</span>(())
-<a href=#673 id=673 data-nosnippet>673</a>    }
+<a href=#672 id=672 data-nosnippet>672</a>        <span class="macro">assert!</span>(checkpoint_info.id &gt; <span class="number">0</span>);
+<a href=#673 id=673 data-nosnippet>673</a>        <span class="macro">assert_eq!</span>(checkpoint_info.active_transactions.len(), <span class="number">1</span>);
 <a href=#674 id=674 data-nosnippet>674</a>
-<a href=#675 id=675 data-nosnippet>675</a>    <span class="attr">#[tokio::test]
-<a href=#676 id=676 data-nosnippet>676</a>    </span><span class="kw">async fn </span>test_data_source_updates() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#677 id=677 data-nosnippet>677</a>        <span class="kw">let </span>manager = create_test_checkpoint_manager().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#678 id=678 data-nosnippet>678</a>
-<a href=#679 id=679 data-nosnippet>679</a>        <span class="comment">// Test updating active transactions
-<a href=#680 id=680 data-nosnippet>680</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>transactions = HashSet::new();
-<a href=#681 id=681 data-nosnippet>681</a>        transactions.insert(<span class="number">300</span>);
-<a href=#682 id=682 data-nosnippet>682</a>        transactions.insert(<span class="number">301</span>);
-<a href=#683 id=683 data-nosnippet>683</a>        manager.update_active_transactions(transactions);
+<a href=#675 id=675 data-nosnippet>675</a>        manager.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#676 id=676 data-nosnippet>676</a>
+<a href=#677 id=677 data-nosnippet>677</a>        <span class="prelude-val">Ok</span>(())
+<a href=#678 id=678 data-nosnippet>678</a>    }
+<a href=#679 id=679 data-nosnippet>679</a>
+<a href=#680 id=680 data-nosnippet>680</a>    <span class="attr">#[cfg_attr(miri, ignore)]
+<a href=#681 id=681 data-nosnippet>681</a>    #[tokio::test]
+<a href=#682 id=682 data-nosnippet>682</a>    </span><span class="kw">async fn </span>test_data_source_updates() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#683 id=683 data-nosnippet>683</a>        <span class="kw">let </span>manager = create_test_checkpoint_manager().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#684 id=684 data-nosnippet>684</a>
-<a href=#685 id=685 data-nosnippet>685</a>        <span class="comment">// Test updating dirty pages
-<a href=#686 id=686 data-nosnippet>686</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>pages = HashSet::new();
-<a href=#687 id=687 data-nosnippet>687</a>        pages.insert((<span class="number">3</span>, <span class="number">30</span>));
-<a href=#688 id=688 data-nosnippet>688</a>        pages.insert((<span class="number">3</span>, <span class="number">31</span>));
-<a href=#689 id=689 data-nosnippet>689</a>        manager.update_dirty_pages(pages);
+<a href=#685 id=685 data-nosnippet>685</a>        <span class="comment">// Test updating active transactions
+<a href=#686 id=686 data-nosnippet>686</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>transactions = HashSet::new();
+<a href=#687 id=687 data-nosnippet>687</a>        transactions.insert(<span class="number">300</span>);
+<a href=#688 id=688 data-nosnippet>688</a>        transactions.insert(<span class="number">301</span>);
+<a href=#689 id=689 data-nosnippet>689</a>        manager.update_active_transactions(transactions);
 <a href=#690 id=690 data-nosnippet>690</a>
-<a href=#691 id=691 data-nosnippet>691</a>        <span class="kw">let </span>checkpoint_info = manager.create_checkpoint().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#692 id=692 data-nosnippet>692</a>
-<a href=#693 id=693 data-nosnippet>693</a>        <span class="macro">assert_eq!</span>(checkpoint_info.active_transactions.len(), <span class="number">2</span>);
-<a href=#694 id=694 data-nosnippet>694</a>        <span class="macro">assert_eq!</span>(checkpoint_info.dirty_pages.len(), <span class="number">2</span>);
-<a href=#695 id=695 data-nosnippet>695</a>
-<a href=#696 id=696 data-nosnippet>696</a>        <span class="prelude-val">Ok</span>(())
-<a href=#697 id=697 data-nosnippet>697</a>    }
+<a href=#691 id=691 data-nosnippet>691</a>        <span class="comment">// Test updating dirty pages
+<a href=#692 id=692 data-nosnippet>692</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>pages = HashSet::new();
+<a href=#693 id=693 data-nosnippet>693</a>        pages.insert((<span class="number">3</span>, <span class="number">30</span>));
+<a href=#694 id=694 data-nosnippet>694</a>        pages.insert((<span class="number">3</span>, <span class="number">31</span>));
+<a href=#695 id=695 data-nosnippet>695</a>        manager.update_dirty_pages(pages);
+<a href=#696 id=696 data-nosnippet>696</a>
+<a href=#697 id=697 data-nosnippet>697</a>        <span class="kw">let </span>checkpoint_info = manager.create_checkpoint().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#698 id=698 data-nosnippet>698</a>
-<a href=#699 id=699 data-nosnippet>699</a>    <span class="comment">// #[tokio::test]
-<a href=#700 id=700 data-nosnippet>700</a>    // async fn test_wait_for_checkpoint() -&gt; Result&lt;()&gt; {
-<a href=#701 id=701 data-nosnippet>701</a>    //     let manager = create_test_checkpoint_manager().await?;
-<a href=#702 id=702 data-nosnippet>702</a>
-<a href=#703 id=703 data-nosnippet>703</a>    //     // Start checkpoint creation in background
-<a href=#704 id=704 data-nosnippet>704</a>    //     let manager_clone = manager;
-<a href=#705 id=705 data-nosnippet>705</a>    //     let checkpoint_task = tokio::spawn(async move {
-<a href=#706 id=706 data-nosnippet>706</a>    //         tokio::time::sleep(Duration::from_millis(50)).await;
-<a href=#707 id=707 data-nosnippet>707</a>    //         manager_clone.create_checkpoint().await
-<a href=#708 id=708 data-nosnippet>708</a>    //     });
-<a href=#709 id=709 data-nosnippet>709</a>
-<a href=#710 id=710 data-nosnippet>710</a>    //     // Wait for checkpoint completion
-<a href=#711 id=711 data-nosnippet>711</a>    //     let wait_result = manager.wait_for_checkpoint(Duration::from_secs(1)).await;
-<a href=#712 id=712 data-nosnippet>712</a>    //     assert!(wait_result.is_ok());
-<a href=#713 id=713 data-nosnippet>713</a>
-<a href=#714 id=714 data-nosnippet>714</a>    //     let checkpoint_info = checkpoint_task.await.unwrap()?;
-<a href=#715 id=715 data-nosnippet>715</a>    //     assert!(checkpoint_info.id &gt; 0);
-<a href=#716 id=716 data-nosnippet>716</a>
-<a href=#717 id=717 data-nosnippet>717</a>    //     Ok(())
-<a href=#718 id=718 data-nosnippet>718</a>    // }
-<a href=#719 id=719 data-nosnippet>719</a></span>}
+<a href=#699 id=699 data-nosnippet>699</a>        <span class="macro">assert_eq!</span>(checkpoint_info.active_transactions.len(), <span class="number">2</span>);
+<a href=#700 id=700 data-nosnippet>700</a>        <span class="macro">assert_eq!</span>(checkpoint_info.dirty_pages.len(), <span class="number">2</span>);
+<a href=#701 id=701 data-nosnippet>701</a>
+<a href=#702 id=702 data-nosnippet>702</a>        <span class="prelude-val">Ok</span>(())
+<a href=#703 id=703 data-nosnippet>703</a>    }
+<a href=#704 id=704 data-nosnippet>704</a>
+<a href=#705 id=705 data-nosnippet>705</a>    <span class="comment">// #[tokio::test]
+<a href=#706 id=706 data-nosnippet>706</a>    // async fn test_wait_for_checkpoint() -&gt; Result&lt;()&gt; {
+<a href=#707 id=707 data-nosnippet>707</a>    //     let manager = create_test_checkpoint_manager().await?;
+<a href=#708 id=708 data-nosnippet>708</a>
+<a href=#709 id=709 data-nosnippet>709</a>    //     // Start checkpoint creation in background
+<a href=#710 id=710 data-nosnippet>710</a>    //     let manager_clone = manager;
+<a href=#711 id=711 data-nosnippet>711</a>    //     let checkpoint_task = tokio::spawn(async move {
+<a href=#712 id=712 data-nosnippet>712</a>    //         tokio::time::sleep(Duration::from_millis(50)).await;
+<a href=#713 id=713 data-nosnippet>713</a>    //         manager_clone.create_checkpoint().await
+<a href=#714 id=714 data-nosnippet>714</a>    //     });
+<a href=#715 id=715 data-nosnippet>715</a>
+<a href=#716 id=716 data-nosnippet>716</a>    //     // Wait for checkpoint completion
+<a href=#717 id=717 data-nosnippet>717</a>    //     let wait_result = manager.wait_for_checkpoint(Duration::from_secs(1)).await;
+<a href=#718 id=718 data-nosnippet>718</a>    //     assert!(wait_result.is_ok());
+<a href=#719 id=719 data-nosnippet>719</a>
+<a href=#720 id=720 data-nosnippet>720</a>    //     let checkpoint_info = checkpoint_task.await.unwrap()?;
+<a href=#721 id=721 data-nosnippet>721</a>    //     assert!(checkpoint_info.id &gt; 0);
+<a href=#722 id=722 data-nosnippet>722</a>
+<a href=#723 id=723 data-nosnippet>723</a>    //     Ok(())
+<a href=#724 id=724 data-nosnippet>724</a>    // }
+<a href=#725 id=725 data-nosnippet>725</a></span>}
 </code></pre></div></section></main></body></html>

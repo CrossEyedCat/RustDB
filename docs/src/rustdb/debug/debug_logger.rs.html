@@ -582,64 +582,65 @@
 <a href=#582 id=582 data-nosnippet>582</a>        <span class="macro">assert!</span>(formatted.contains(<span class="string">"Test error message"</span>));
 <a href=#583 id=583 data-nosnippet>583</a>    }
 <a href=#584 id=584 data-nosnippet>584</a>
-<a href=#585 id=585 data-nosnippet>585</a>    <span class="attr">#[tokio::test]
-<a href=#586 id=586 data-nosnippet>586</a>    </span><span class="kw">async fn </span>test_debug_logger() {
-<a href=#587 id=587 data-nosnippet>587</a>        <span class="kw">let </span>config = DebugConfig {
-<a href=#588 id=588 data-nosnippet>588</a>            enable_debug_logging: <span class="bool-val">true</span>,
-<a href=#589 id=589 data-nosnippet>589</a>            detail_level: <span class="number">5</span>,
-<a href=#590 id=590 data-nosnippet>590</a>            ..Default::default()
-<a href=#591 id=591 data-nosnippet>591</a>        };
-<a href=#592 id=592 data-nosnippet>592</a>
-<a href=#593 id=593 data-nosnippet>593</a>        <span class="kw">let </span>logger = DebugLogger::new(<span class="kw-2">&amp;</span>config);
-<a href=#594 id=594 data-nosnippet>594</a>
-<a href=#595 id=595 data-nosnippet>595</a>        <span class="comment">// Exercise various logging helpers
-<a href=#596 id=596 data-nosnippet>596</a>        </span>logger.log_transaction_operation(
-<a href=#597 id=597 data-nosnippet>597</a>            LogLevel::Info,
-<a href=#598 id=598 data-nosnippet>598</a>            <span class="string">"BEGIN"</span>,
-<a href=#599 id=599 data-nosnippet>599</a>            <span class="number">123</span>,
-<a href=#600 id=600 data-nosnippet>600</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">10</span>)),
-<a href=#601 id=601 data-nosnippet>601</a>            <span class="prelude-val">Some</span>(<span class="number">256</span>),
-<a href=#602 id=602 data-nosnippet>602</a>        );
-<a href=#603 id=603 data-nosnippet>603</a>
-<a href=#604 id=604 data-nosnippet>604</a>        logger.log_data_operation(
-<a href=#605 id=605 data-nosnippet>605</a>            LogLevel::Debug,
-<a href=#606 id=606 data-nosnippet>606</a>            <span class="string">"INSERT"</span>,
-<a href=#607 id=607 data-nosnippet>607</a>            <span class="string">"users"</span>,
-<a href=#608 id=608 data-nosnippet>608</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">5</span>)),
-<a href=#609 id=609 data-nosnippet>609</a>            <span class="prelude-val">Some</span>(<span class="number">512</span>),
-<a href=#610 id=610 data-nosnippet>610</a>        );
-<a href=#611 id=611 data-nosnippet>611</a>
-<a href=#612 id=612 data-nosnippet>612</a>        logger.log_query_operation(
-<a href=#613 id=613 data-nosnippet>613</a>            LogLevel::Info,
-<a href=#614 id=614 data-nosnippet>614</a>            <span class="string">"EXECUTE"</span>,
-<a href=#615 id=615 data-nosnippet>615</a>            <span class="string">"query_001"</span>,
-<a href=#616 id=616 data-nosnippet>616</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">50</span>)),
-<a href=#617 id=617 data-nosnippet>617</a>            <span class="prelude-val">Some</span>(<span class="number">1024</span>),
-<a href=#618 id=618 data-nosnippet>618</a>        );
-<a href=#619 id=619 data-nosnippet>619</a>
-<a href=#620 id=620 data-nosnippet>620</a>        logger.log_system_operation(
-<a href=#621 id=621 data-nosnippet>621</a>            LogLevel::Warning,
-<a href=#622 id=622 data-nosnippet>622</a>            <span class="string">"BufferManager"</span>,
-<a href=#623 id=623 data-nosnippet>623</a>            <span class="string">"Buffer overflow detected"</span>,
-<a href=#624 id=624 data-nosnippet>624</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">1</span>)),
-<a href=#625 id=625 data-nosnippet>625</a>        );
-<a href=#626 id=626 data-nosnippet>626</a>
-<a href=#627 id=627 data-nosnippet>627</a>        <span class="comment">// Validate statistics
-<a href=#628 id=628 data-nosnippet>628</a>        </span><span class="kw">let </span>stats = logger.get_stats();
-<a href=#629 id=629 data-nosnippet>629</a>        <span class="macro">assert!</span>(stats.total_entries &gt;= <span class="number">4</span>);
-<a href=#630 id=630 data-nosnippet>630</a>        <span class="macro">assert!</span>(stats.entries_by_level.contains_key(<span class="string">"INFO"</span>));
-<a href=#631 id=631 data-nosnippet>631</a>        <span class="macro">assert!</span>(stats.entries_by_level.contains_key(<span class="string">"DEBUG"</span>));
-<a href=#632 id=632 data-nosnippet>632</a>        <span class="macro">assert!</span>(stats.entries_by_level.contains_key(<span class="string">"WARNING"</span>));
-<a href=#633 id=633 data-nosnippet>633</a>        <span class="macro">assert!</span>(stats.entries_by_category.contains_key(<span class="string">"TX"</span>));
-<a href=#634 id=634 data-nosnippet>634</a>        <span class="macro">assert!</span>(stats.entries_by_category.contains_key(<span class="string">"DATA"</span>));
-<a href=#635 id=635 data-nosnippet>635</a>        <span class="macro">assert!</span>(stats.entries_by_category.contains_key(<span class="string">"QUERY"</span>));
-<a href=#636 id=636 data-nosnippet>636</a>        <span class="macro">assert!</span>(stats.entries_by_category.contains_key(<span class="string">"SYSTEM"</span>));
-<a href=#637 id=637 data-nosnippet>637</a>
-<a href=#638 id=638 data-nosnippet>638</a>        <span class="comment">// Validate status report
-<a href=#639 id=639 data-nosnippet>639</a>        </span><span class="kw">let </span>report = logger.generate_status_report();
-<a href=#640 id=640 data-nosnippet>640</a>        <span class="macro">assert!</span>(report.contains(<span class="string">"Total entries"</span>));
-<a href=#641 id=641 data-nosnippet>641</a>        <span class="macro">assert!</span>(report.contains(<span class="string">"Entries by level"</span>));
-<a href=#642 id=642 data-nosnippet>642</a>        <span class="macro">assert!</span>(report.contains(<span class="string">"Entries by category"</span>));
-<a href=#643 id=643 data-nosnippet>643</a>    }
-<a href=#644 id=644 data-nosnippet>644</a>}
+<a href=#585 id=585 data-nosnippet>585</a>    <span class="attr">#[cfg_attr(miri, ignore)]
+<a href=#586 id=586 data-nosnippet>586</a>    #[tokio::test]
+<a href=#587 id=587 data-nosnippet>587</a>    </span><span class="kw">async fn </span>test_debug_logger() {
+<a href=#588 id=588 data-nosnippet>588</a>        <span class="kw">let </span>config = DebugConfig {
+<a href=#589 id=589 data-nosnippet>589</a>            enable_debug_logging: <span class="bool-val">true</span>,
+<a href=#590 id=590 data-nosnippet>590</a>            detail_level: <span class="number">5</span>,
+<a href=#591 id=591 data-nosnippet>591</a>            ..Default::default()
+<a href=#592 id=592 data-nosnippet>592</a>        };
+<a href=#593 id=593 data-nosnippet>593</a>
+<a href=#594 id=594 data-nosnippet>594</a>        <span class="kw">let </span>logger = DebugLogger::new(<span class="kw-2">&amp;</span>config);
+<a href=#595 id=595 data-nosnippet>595</a>
+<a href=#596 id=596 data-nosnippet>596</a>        <span class="comment">// Exercise various logging helpers
+<a href=#597 id=597 data-nosnippet>597</a>        </span>logger.log_transaction_operation(
+<a href=#598 id=598 data-nosnippet>598</a>            LogLevel::Info,
+<a href=#599 id=599 data-nosnippet>599</a>            <span class="string">"BEGIN"</span>,
+<a href=#600 id=600 data-nosnippet>600</a>            <span class="number">123</span>,
+<a href=#601 id=601 data-nosnippet>601</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">10</span>)),
+<a href=#602 id=602 data-nosnippet>602</a>            <span class="prelude-val">Some</span>(<span class="number">256</span>),
+<a href=#603 id=603 data-nosnippet>603</a>        );
+<a href=#604 id=604 data-nosnippet>604</a>
+<a href=#605 id=605 data-nosnippet>605</a>        logger.log_data_operation(
+<a href=#606 id=606 data-nosnippet>606</a>            LogLevel::Debug,
+<a href=#607 id=607 data-nosnippet>607</a>            <span class="string">"INSERT"</span>,
+<a href=#608 id=608 data-nosnippet>608</a>            <span class="string">"users"</span>,
+<a href=#609 id=609 data-nosnippet>609</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">5</span>)),
+<a href=#610 id=610 data-nosnippet>610</a>            <span class="prelude-val">Some</span>(<span class="number">512</span>),
+<a href=#611 id=611 data-nosnippet>611</a>        );
+<a href=#612 id=612 data-nosnippet>612</a>
+<a href=#613 id=613 data-nosnippet>613</a>        logger.log_query_operation(
+<a href=#614 id=614 data-nosnippet>614</a>            LogLevel::Info,
+<a href=#615 id=615 data-nosnippet>615</a>            <span class="string">"EXECUTE"</span>,
+<a href=#616 id=616 data-nosnippet>616</a>            <span class="string">"query_001"</span>,
+<a href=#617 id=617 data-nosnippet>617</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">50</span>)),
+<a href=#618 id=618 data-nosnippet>618</a>            <span class="prelude-val">Some</span>(<span class="number">1024</span>),
+<a href=#619 id=619 data-nosnippet>619</a>        );
+<a href=#620 id=620 data-nosnippet>620</a>
+<a href=#621 id=621 data-nosnippet>621</a>        logger.log_system_operation(
+<a href=#622 id=622 data-nosnippet>622</a>            LogLevel::Warning,
+<a href=#623 id=623 data-nosnippet>623</a>            <span class="string">"BufferManager"</span>,
+<a href=#624 id=624 data-nosnippet>624</a>            <span class="string">"Buffer overflow detected"</span>,
+<a href=#625 id=625 data-nosnippet>625</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">1</span>)),
+<a href=#626 id=626 data-nosnippet>626</a>        );
+<a href=#627 id=627 data-nosnippet>627</a>
+<a href=#628 id=628 data-nosnippet>628</a>        <span class="comment">// Validate statistics
+<a href=#629 id=629 data-nosnippet>629</a>        </span><span class="kw">let </span>stats = logger.get_stats();
+<a href=#630 id=630 data-nosnippet>630</a>        <span class="macro">assert!</span>(stats.total_entries &gt;= <span class="number">4</span>);
+<a href=#631 id=631 data-nosnippet>631</a>        <span class="macro">assert!</span>(stats.entries_by_level.contains_key(<span class="string">"INFO"</span>));
+<a href=#632 id=632 data-nosnippet>632</a>        <span class="macro">assert!</span>(stats.entries_by_level.contains_key(<span class="string">"DEBUG"</span>));
+<a href=#633 id=633 data-nosnippet>633</a>        <span class="macro">assert!</span>(stats.entries_by_level.contains_key(<span class="string">"WARNING"</span>));
+<a href=#634 id=634 data-nosnippet>634</a>        <span class="macro">assert!</span>(stats.entries_by_category.contains_key(<span class="string">"TX"</span>));
+<a href=#635 id=635 data-nosnippet>635</a>        <span class="macro">assert!</span>(stats.entries_by_category.contains_key(<span class="string">"DATA"</span>));
+<a href=#636 id=636 data-nosnippet>636</a>        <span class="macro">assert!</span>(stats.entries_by_category.contains_key(<span class="string">"QUERY"</span>));
+<a href=#637 id=637 data-nosnippet>637</a>        <span class="macro">assert!</span>(stats.entries_by_category.contains_key(<span class="string">"SYSTEM"</span>));
+<a href=#638 id=638 data-nosnippet>638</a>
+<a href=#639 id=639 data-nosnippet>639</a>        <span class="comment">// Validate status report
+<a href=#640 id=640 data-nosnippet>640</a>        </span><span class="kw">let </span>report = logger.generate_status_report();
+<a href=#641 id=641 data-nosnippet>641</a>        <span class="macro">assert!</span>(report.contains(<span class="string">"Total entries"</span>));
+<a href=#642 id=642 data-nosnippet>642</a>        <span class="macro">assert!</span>(report.contains(<span class="string">"Entries by level"</span>));
+<a href=#643 id=643 data-nosnippet>643</a>        <span class="macro">assert!</span>(report.contains(<span class="string">"Entries by category"</span>));
+<a href=#644 id=644 data-nosnippet>644</a>    }
+<a href=#645 id=645 data-nosnippet>645</a>}
 </code></pre></div></section></main></body></html>
