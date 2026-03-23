@@ -582,12 +582,25 @@ impl Default for MetadataCache {
     }
 }
 
-// Helper function to get current time
+// Helper function to get current time (milliseconds).
+// Under Miri with isolation, `SystemTime`/`REALTIME` is unavailable; monotonic elapsed time
+// preserves TTL and cleanup behavior because only deltas matter here.
 fn current_timestamp_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    #[cfg(miri)]
+    {
+        static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        START
+            .get_or_init(Instant::now)
+            .elapsed()
+            .as_millis() as u64
+    }
+    #[cfg(not(miri))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
 }
 
 #[cfg(test)]
