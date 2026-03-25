@@ -106,6 +106,7 @@ fn test_hash_index_with_complex_types() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "wall-clock thresholds are meaningless under Miri")]
 fn test_index_performance_comparison() {
     // Compare performance between index types
     use std::time::Instant;

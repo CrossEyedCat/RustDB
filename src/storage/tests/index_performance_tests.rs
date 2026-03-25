@@ -41,6 +41,7 @@ impl BenchmarkResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "throughput thresholds are meaningless under Miri")]
 fn test_insertion_performance() {
     println!("🚀 Insertion performance test:");
 
@@ -96,6 +97,7 @@ fn test_insertion_performance() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "throughput thresholds are meaningless under Miri")]
 fn test_search_performance() {
     println!("🔍 Search performance test:");
 
@@ -181,6 +183,7 @@ fn test_search_performance() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "wall-clock thresholds are meaningless under Miri")]
 fn test_range_query_performance() {
     println!("📊 Range-query performance test:");
 
@@ -263,6 +266,7 @@ fn test_deletion_performance() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "throughput thresholds are meaningless under Miri")]
 fn test_mixed_operations_performance() {
     println!("🔄 Mixed operations performance test:");
 
@@ -354,6 +358,7 @@ fn test_memory_usage_scaling() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "throughput thresholds are meaningless under Miri")]
 fn test_cache_efficiency() {
     println!("⚡ Cache efficiency test:");
 

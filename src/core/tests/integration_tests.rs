@@ -317,6 +317,10 @@ fn test_system_recovery_simulation() {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "wall-clock / load thresholds are meaningless under Miri"
+)]
 fn test_performance_under_load() {
     let tm = Arc::new(TransactionManager::new().unwrap());
     let mut handles = vec![];

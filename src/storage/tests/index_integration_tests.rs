@@ -409,6 +409,10 @@ fn test_concurrent_access_simulation() {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "performance timing assertions are meaningless under Miri"
+)]
 fn test_large_dataset_handling() {
     let mut table = IndexedTable::new();
 
