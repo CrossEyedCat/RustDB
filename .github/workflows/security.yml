@@ -153,4 +153,7 @@ jobs:
           cargo miri setup
           cargo miri test --lib
         env:
-          MIRIFLAGS: -Zmiri-strict-provenance
+          # Strict provenance: keep unsafe pointer discipline checks.
+          # Disable isolation: std::env::temp_dir, SystemTime::now, file I/O in unit tests
+          # (tempfile, config roundtrip) are otherwise unsupported under Miri's default host isolation.
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation

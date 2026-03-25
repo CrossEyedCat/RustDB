@@ -589,10 +589,7 @@ fn current_timestamp_ms() -> u64 {
     #[cfg(miri)]
     {
         static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-        START
-            .get_or_init(Instant::now)
-            .elapsed()
-            .as_millis() as u64
+        START.get_or_init(Instant::now).elapsed().as_millis() as u64
     }
     #[cfg(not(miri))]
     {
