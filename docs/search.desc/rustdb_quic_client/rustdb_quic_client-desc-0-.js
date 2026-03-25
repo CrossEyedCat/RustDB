@@ -1,0 +1,1 @@
+searchState.loadedDescShard("rustdb_quic_client", 0, "Minimal QUIC client: send one SQL query and print the …\nServer address (host:port).\nPath to the server leaf certificate (DER), for trusting …\nReturns the argument unchanged.\nCalls <code>U::from(self)</code>.\nTLS server name (must match certificate SAN; use <code>127.0.0.1</code> …\nSQL query text.")

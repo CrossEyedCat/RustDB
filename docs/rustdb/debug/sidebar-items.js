@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["debug_logger","performance_analyzer","profiler","query_tracer"],"struct":["DebugConfig","DebugManager"]};
+window.SIDEBAR_ITEMS = {"fn":["record_network_query_latency_ms"],"mod":["debug_logger","performance_analyzer","profiler","query_tracer"],"struct":["DebugConfig","DebugManager"]};

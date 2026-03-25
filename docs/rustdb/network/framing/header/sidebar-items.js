@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FRAME_HEADER_LEN","FRAME_MAGIC","MAX_FRAME_PAYLOAD_BYTES","PROTOCOL_VERSION_V1"],"struct":["FrameHeader"]};
