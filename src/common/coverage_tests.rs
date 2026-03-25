@@ -81,6 +81,7 @@ fn test_database_config_file_roundtrip() -> Result<(), Box<dyn std::error::Error
         connection_timeout: 11,
         query_timeout: 22,
         language: Language::English,
+        network: NetworkConfig::default(),
     };
     original.to_file(&path)?;
     let loaded = DatabaseConfig::from_file(&path)?;
@@ -89,6 +90,8 @@ fn test_database_config_file_roundtrip() -> Result<(), Box<dyn std::error::Error
     assert_eq!(loaded.max_connections, original.max_connections);
     assert_eq!(loaded.connection_timeout, original.connection_timeout);
     assert_eq!(loaded.query_timeout, original.query_timeout);
+    assert_eq!(loaded.network.host, original.network.host);
+    assert_eq!(loaded.network.port, original.network.port);
     Ok(())
 }
 
@@ -132,6 +135,7 @@ fn test_database_config_merge_non_defaults() {
         connection_timeout: 99,
         query_timeout: 88,
         language: Language::English,
+        ..Default::default()
     };
     let m = base.merge(other);
     assert_eq!(m.name, "merged");

@@ -28,7 +28,34 @@ cargo test
 cargo test --test integration_tests
 ```
 
+## Project status
+
+### Implemented
+
+- **QUIC network (experimental):** `cargo run -- server` starts the UDP listener (ALPN `rustdb-v1`) with a stub engine; `rustdb_quic_client` can run queries over loopback. See [docs/network/README.md](docs/network/README.md). Full `EngineHandle` integration with the database is still future work.
+- **Parser and semantics:** lexer, AST, SELECT/INSERT/UPDATE/DELETE, CREATE TABLE/INDEX, BEGIN/COMMIT/ROLLBACK, PREPARE/EXECUTE; analyzer with types and access checks.
+- **Planning and execution:** DML plan construction, optimization (some heuristics still stub cost/selectivity); executor operators (scan, filter, join, aggregates, sort, limit/offset, and others).
+- **Storage and catalog:** file/page managers, tuples, B-tree and hash indexes, `SchemaManager` with storage-level DDL operations.
+- **Logging:** WAL, checkpoint, compaction.
+- **Transactions and concurrency:** MVCC modules, lock managers, recovery/recovery manager (see **In progress** for end-to-end wiring).
+- **Infrastructure:** configuration, i18n, debugging/profiling, CI, benchmarks.
+
+### In progress
+
+- **Public database API** (`Database` in `lib.rs`): open/close lifecycle, coherent initialization of catalog, buffer pool, and WAL.
+- **End-to-end SQL:** a single path parser → plan → `QueryExecutor` → pages/tables/indexes; the `create` / `query` CLI subcommands and the QUIC server’s engine are still stubs—there is no full “create a database and run a query” workflow through the main binary yet (the separate `rustdb_quic_client` exercises the wire path only).
+- **ACID and recovery:** finishing AcidManager integration, WAL writes on commit, UNDO, isolation levels, and log-based recovery.
+- **DDL and storage:** ALTER/DROP in the parser; insertion into internal B-tree nodes; buffer (flush to disk), catalog/schema, concurrent access to storage, tuple constraint validation.
+
+MSRV and the target OS for production-style use are documented under **Requirements** above.
+
+### Test limitations
+
+Integration tests exercise the **parse → plan → optimize** pipeline and **simulate** DML outcomes (e.g. with counters), not full SQL execution through the executor with real on-disk pages. Some executor and storage tests are marked `#[ignore]` due to known issues (including hangs) on full runs—they do not demonstrate a production-ready “SQL → disk” path end to end.
+
 ## Documentation
+
+- **Network protocol (QUIC, framing, engine boundary):** see [docs/network/README.md](docs/network/README.md).
 
 API documentation is generated with:
 

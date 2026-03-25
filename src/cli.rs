@@ -3,8 +3,13 @@
 //! Provides command-line interface for database management and language settings
 
 use crate::common::{set_language, t, DatabaseConfig, I18nManager, Language, MessageKey, I18N};
+use crate::network::engine::{EngineHandle, EngineOutput, StubEngine};
+use crate::network::server::QuicServer;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+use tracing::{info, warn};
 
 /// RustDB - Relational database implementation in Rust
 #[derive(Parser)]
@@ -30,15 +35,19 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Start the database server
+    /// Start the QUIC database server (ALPN `rustdb-v1`; see `docs/network/`)
     Server {
-        /// Port to listen on
-        #[arg(short, long, default_value = "8080")]
-        port: u16,
+        /// Listen address host (overrides `network.host` in config when set)
+        #[arg(long, value_name = "HOST")]
+        host: Option<String>,
 
-        /// Host to listen on
-        #[arg(long, default_value = "0.0.0.0")]
-        host: String,
+        /// Listen UDP port (overrides `network.port` in config when set)
+        #[arg(short, long, value_name = "PORT")]
+        port: Option<u16>,
+
+        /// Write the dev TLS leaf certificate (DER) to this path for `rustdb_quic_client --cert`
+        #[arg(long, value_name = "PATH")]
+        cert_out: Option<PathBuf>,
     },
 
     /// Interface language management
@@ -129,7 +138,11 @@ impl Cli {
     /// Executes a command
     pub async fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
         match &self.command {
-            Some(Commands::Server { port, host }) => self.run_server(host.clone(), *port).await,
+            Some(Commands::Server {
+                port,
+                host,
+                cert_out,
+            }) => self.run_server(host.clone(), *port, cert_out.clone()).await,
             Some(Commands::Language { action }) => self.handle_language_command(action).await,
             Some(Commands::Info) => self.show_info().await,
             Some(Commands::Create { name, data_dir }) => {
@@ -142,13 +155,88 @@ impl Cli {
         }
     }
 
-    /// Starts the database server
-    async fn run_server(&self, host: String, port: u16) -> Result<(), Box<dyn std::error::Error>> {
-        println!("{}", t(MessageKey::Welcome));
-        println!("{}: {}:{}", t(MessageKey::Info), host, port);
+    /// Starts the QUIC listener with [`StubEngine`] until Ctrl+C (production wiring uses [`EngineHandle`] for `Database` later).
+    async fn run_server(
+        &self,
+        host_arg: Option<String>,
+        port_arg: Option<u16>,
+        cert_out: Option<PathBuf>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .try_init();
 
-        // TODO: Implement server startup
-        println!("{}", t(MessageKey::Info));
+        println!("{}", t(MessageKey::Welcome));
+
+        let db = self.load_config()?;
+        db.validate().map_err(|e| e.to_string())?;
+
+        let host = host_arg.unwrap_or_else(|| db.network.host.clone());
+        let port = port_arg.unwrap_or(db.network.port);
+
+        let server_config = crate::network::server::ServerConfig {
+            host,
+            port,
+            max_connections: db.network.max_connections,
+            connection_timeout: Duration::from_secs(db.connection_timeout),
+            query_timeout: Duration::from_secs(db.query_timeout),
+            ..Default::default()
+        };
+
+        let srv = Arc::new(
+            QuicServer::bind(server_config).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?,
+        );
+
+        if let Some(ref path) = cert_out {
+            std::fs::write(path, srv.pinned_certificate().as_ref())?;
+            info!(path = %path.display(), "wrote TLS leaf certificate (DER) for QUIC clients");
+        }
+
+        let listen = srv.local_addr()?;
+        println!(
+            "QUIC listening on {} (ALPN rustdb-v1). Press Ctrl+C to stop.",
+            listen
+        );
+        if let Some(ref p) = cert_out {
+            println!(
+                "TLS leaf written to {} — use: rustdb_quic_client --addr {} --cert {} --server-name <SAN>",
+                p.display(),
+                listen,
+                p.display(),
+            );
+        }
+
+        let engine: Arc<dyn EngineHandle> = Arc::new(StubEngine::fixed_ok(EngineOutput::ResultSet {
+            columns: vec![],
+            rows: vec![],
+        }));
+
+        let endpoint = srv.endpoint().clone();
+        let run_task = tokio::spawn({
+            let srv = srv.clone();
+            async move {
+                if let Err(e) = srv.run(engine).await {
+                    warn!(error = %e, "QUIC accept loop ended with error");
+                }
+            }
+        });
+
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("shutdown requested");
+                QuicServer::initiate_shutdown(&endpoint);
+                QuicServer::wait_idle(&endpoint).await;
+            }
+            r = run_task => {
+                match r {
+                    Ok(()) => {}
+                    Err(e) => return Err(format!("server task join: {}", e).into()),
+                }
+            }
+        }
 
         Ok(())
     }
@@ -275,9 +363,22 @@ mod tests {
             "127.0.0.1",
         ])
         .unwrap();
-        if let Some(Commands::Server { port, host }) = cli.command {
-            assert_eq!(port, 9000);
-            assert_eq!(host, "127.0.0.1");
+        if let Some(Commands::Server { port, host, cert_out }) = cli.command {
+            assert_eq!(port, Some(9000));
+            assert_eq!(host, Some("127.0.0.1".to_string()));
+            assert!(cert_out.is_none());
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn test_cli_server_defaults_from_config() {
+        let cli = Cli::try_parse_from(vec!["rustdb", "server"]).unwrap();
+        if let Some(Commands::Server { port, host, cert_out }) = cli.command {
+            assert!(port.is_none());
+            assert!(host.is_none());
+            assert!(cert_out.is_none());
         } else {
             panic!();
         }

@@ -9,6 +9,7 @@ repository = "https://github.com/CrossEyedCat/RustDB"
 homepage = "https://crosseyedcat.github.io/RustDB"
 documentation = "https://crosseyedcat.github.io/RustDB/docs"
 readme = "README.md"
+default-run = "rustdb"
 keywords = ["database", "sql", "relational", "rust", "storage"]
 categories = ["database", "database-implementations"]
 # Minimum: unty-next 0.1.1 (1.90+), virtue-next 0.1.3 / bincode-next derive (let chains, const API).
@@ -41,7 +42,7 @@ log = "0.4"
 env_logger = "0.11"
 tracing = "0.1"
 # >=0.3.20 addresses RUSTSEC-2025-0055 (ANSI escapes in logs).
-tracing-subscriber = "0.3.20"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
 
 # File operations and I/O
 memmap2 = "0.9"
@@ -67,6 +68,14 @@ toml = "1.0"
 
 # Parallel execution
 rayon = "1.10"
+
+# QUIC transport and on-wire frame payloads (serde types via postcard + serde crate).
+quinn = "0.11"
+postcard = { version = "1.1", features = ["use-std"] }
+# TLS for QUIC (`ServerConfig` + ALPN); align with quinn’s rustls.
+rustls = "0.23"
+# Dev self-signed certs for the QUIC listener (see `network::server`).
+rcgen = "0.14.7"
 
 # Testing
 criterion = { version = "0.8", optional = true }

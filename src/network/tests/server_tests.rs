@@ -1,7 +1,25 @@
 //! Network server tests
 
-use crate::network::server::{NetworkServer, Server, ServerConfig};
+use crate::network::server::{
+    build_quinn_server_config, NetworkServer, QuicServer, Server, ServerConfig,
+};
 use std::time::Duration;
+
+#[test]
+fn quinn_server_config_builds() {
+    let c = ServerConfig::default();
+    let (_cfg, _cert) = build_quinn_server_config(&c).expect("quinn ServerConfig should build");
+}
+
+#[tokio::test]
+async fn quic_server_bind_ephemeral_port() {
+    let config = ServerConfig {
+        port: 0,
+        ..Default::default()
+    };
+    let srv = QuicServer::bind(config).expect("QUIC bind");
+    assert!(srv.local_addr().expect("local addr").port() > 0);
+}
 
 #[test]
 fn test_server_config_default() {
@@ -20,6 +38,7 @@ fn test_server_config_custom() {
         max_connections: 100,
         connection_timeout: Duration::from_secs(30),
         enable_tls: false,
+        ..Default::default()
     };
 
     assert_eq!(config.host, "127.0.0.1");

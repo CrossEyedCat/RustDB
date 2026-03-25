@@ -12,6 +12,12 @@ pub mod performance_analyzer;
 pub mod profiler;
 pub mod query_tracer;
 
+/// Optional hook when the QUIC layer completes a stream query (latency in milliseconds).
+/// Used by [`crate::network::query_stream`] for trace-level observability; does not allocate.
+pub fn record_network_query_latency_ms(latency_ms: u64) {
+    tracing::trace!(target: "rustdb::network::metrics", query_latency_ms = latency_ms);
+}
+
 pub use debug_logger::DebugLogger;
 pub use performance_analyzer::PerformanceAnalyzer;
 pub use profiler::Profiler;

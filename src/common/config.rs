@@ -22,6 +22,9 @@ pub struct DatabaseConfig {
     pub query_timeout: u64,
     /// Interface language
     pub language: Language,
+    /// QUIC / network listener (used by `rustdb server`; see `docs/network/`).
+    #[serde(default)]
+    pub network: NetworkConfig,
 }
 
 impl Default for DatabaseConfig {
@@ -33,6 +36,7 @@ impl Default for DatabaseConfig {
             connection_timeout: 30,
             query_timeout: 60,
             language: Language::English,
+            network: NetworkConfig::default(),
         }
     }
 }
@@ -102,9 +106,9 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
-            host: "0.0.0.0".to_string(),
-            port: 8080,
-            max_connections: 1000,
+            host: "127.0.0.1".to_string(),
+            port: 5432,
+            max_connections: 100,
         }
     }
 }
@@ -209,6 +213,7 @@ impl DatabaseConfig {
         if other.language != Language::English {
             self.language = other.language;
         }
+        self.network = self.network.clone().merge(other.network.clone());
 
         // Merge nested configs
         // self.storage = self.storage.merge(other.storage);
@@ -291,13 +296,14 @@ impl LoggingConfig {
 
 impl NetworkConfig {
     fn merge(mut self, other: Self) -> Self {
-        if other.host != "0.0.0.0" {
+        let default = Self::default();
+        if other.host != default.host {
             self.host = other.host;
         }
-        if other.port != 8080 {
+        if other.port != default.port {
             self.port = other.port;
         }
-        if other.max_connections != 1000 {
+        if other.max_connections != default.max_connections {
             self.max_connections = other.max_connections;
         }
         self
@@ -336,6 +342,8 @@ mod tests {
         assert_eq!(config.max_connections, 100);
         assert_eq!(config.language, Language::English);
         assert_eq!(config.connection_timeout, 30);
+        assert_eq!(config.network.port, 5432);
+        assert_eq!(config.network.host, "127.0.0.1");
     }
 
     #[test]
