@@ -63,11 +63,15 @@ jobs:
         with:
           components: rust-src
 
+      # Install outside the repo so `rust-toolchain.toml` (MSRV 1.90) does not build `cargo-geiger`
+      # against 1.90 — latest geiger pulls `cargo` crates that require Rust 1.92+.
       - name: Install cargo-geiger
         run: cargo install cargo-geiger
+        working-directory: /tmp
 
       - name: Check unsafe code usage
         run: |
+          cd "${{ github.workspace }}"
           # Run cargo geiger and capture output
           # Use || true to prevent failure on dependency parsing errors
           # These errors occur in dependencies, not our code
@@ -120,11 +124,15 @@ jobs:
         with:
           components: rust-src
 
+      # Same as cargo-geiger: avoid MSRV toolchain when compiling the `cargo install` binary.
       - name: Install cargo-semver-checks
         run: cargo install cargo-semver-checks
+        working-directory: /tmp
 
       - name: Check semver compatibility
-        run: cargo semver-checks check-release
+        run: |
+          cd "${{ github.workspace }}"
+          cargo semver-checks check-release
         continue-on-error: true
 
   # Memory safety checks

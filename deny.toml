@@ -26,6 +26,7 @@ allow = [
     "BSL-1.0",                      # Boost Software License
     "CC0-1.0",                      # Public domain
     "Unlicense",                    # Public domain
+    "CDLA-Permissive-2.0",          # webpki-root-certs (rustls-platform-verifier → quinn)
 ]
 confidence-threshold = 0.8
 

@@ -71,7 +71,8 @@ rayon = "1.10"
 
 # QUIC transport and on-wire frame payloads (serde types via postcard + serde crate).
 quinn = "0.11"
-postcard = { version = "1.1", features = ["use-std"] }
+# default features enable heapless → atomic-polyfill (RUSTSEC-2023-0089); we only need alloc + std serde.
+postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 # TLS for QUIC (`ServerConfig` + ALPN); align with quinn’s rustls.
 rustls = "0.23"
 # Dev self-signed certs for the QUIC listener (see `network::server`).

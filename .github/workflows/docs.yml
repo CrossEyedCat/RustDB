@@ -24,8 +24,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Use MSRV-aligned toolchain; repo `rust-toolchain.toml` also pins 1.90.0 for `cargo doc`.
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          components: rust-docs
 
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
