@@ -150,8 +150,8 @@ jobs:
       # via `#[cfg_attr(miri, ignore)]`.
       - name: Run Miri
         run: |
-          cargo miri setup
-          cargo miri test --lib
+          cargo +nightly miri setup
+          cargo +nightly miri test --lib
         env:
           # Strict provenance: keep unsafe pointer discipline checks.
           # Disable isolation: std::env::temp_dir, SystemTime::now, file I/O in unit tests

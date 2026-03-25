@@ -1,0 +1,4 @@
+[toolchain]
+# Matches `rust-version` in Cargo.toml so `cargo` on CI and locally uses a compatible compiler.
+channel = "1.90.0"
+components = ["rustfmt", "clippy"]

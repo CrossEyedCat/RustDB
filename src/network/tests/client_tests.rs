@@ -9,6 +9,7 @@ use crate::network::engine::{EngineOutput, StubEngine};
 use crate::network::framing::ServerMessage;
 use crate::network::server::{QuicServer, ServerConfig};
 
+#[cfg_attr(miri, ignore = "QUIC / tokio I/O not supported under Miri")]
 #[tokio::test]
 async fn quic_client_query_roundtrip_localhost() {
     let server_config = ServerConfig {

@@ -5,12 +5,14 @@ use crate::network::server::{
 };
 use std::time::Duration;
 
+#[cfg_attr(miri, ignore = "TLS / rcgen not exercised under Miri")]
 #[test]
 fn quinn_server_config_builds() {
     let c = ServerConfig::default();
     let (_cfg, _cert) = build_quinn_server_config(&c).expect("quinn ServerConfig should build");
 }
 
+#[cfg_attr(miri, ignore = "QUIC UDP bind not supported under Miri")]
 #[tokio::test]
 async fn quic_server_bind_ephemeral_port() {
     let config = ServerConfig {
