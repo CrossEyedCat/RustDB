@@ -214,7 +214,7 @@
 <a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">let </span>cqe = ring
 <a href=#215 id=215 data-nosnippet>215</a>            .completion()
 <a href=#216 id=216 data-nosnippet>216</a>            .next()
-<a href=#217 id=217 data-nosnippet>217</a>            .ok_or_else(|| Error::database(<span class="string">"io_uring completion queue empty"</span>.into()))<span class="question-mark">?</span>;
+<a href=#217 id=217 data-nosnippet>217</a>            .ok_or_else(|| Error::database(<span class="string">"io_uring completion queue empty"</span>))<span class="question-mark">?</span>;
 <a href=#218 id=218 data-nosnippet>218</a>        <span class="kw">let </span>res = cqe.result();
 <a href=#219 id=219 data-nosnippet>219</a>        <span class="kw">if </span>res &lt; <span class="number">0 </span>{
 <a href=#220 id=220 data-nosnippet>220</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::database(<span class="macro">format!</span>(
@@ -256,7 +256,7 @@
 <a href=#256 id=256 data-nosnippet>256</a>        <span class="kw">let </span>cqe = ring
 <a href=#257 id=257 data-nosnippet>257</a>            .completion()
 <a href=#258 id=258 data-nosnippet>258</a>            .next()
-<a href=#259 id=259 data-nosnippet>259</a>            .ok_or_else(|| Error::database(<span class="string">"io_uring completion queue empty"</span>.into()))<span class="question-mark">?</span>;
+<a href=#259 id=259 data-nosnippet>259</a>            .ok_or_else(|| Error::database(<span class="string">"io_uring completion queue empty"</span>))<span class="question-mark">?</span>;
 <a href=#260 id=260 data-nosnippet>260</a>        <span class="kw">let </span>res = cqe.result();
 <a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">if </span>res &lt; <span class="number">0 </span>{
 <a href=#262 id=262 data-nosnippet>262</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::database(<span class="macro">format!</span>(
@@ -290,7 +290,7 @@
 <a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">let </span>cqe = ring
 <a href=#291 id=291 data-nosnippet>291</a>            .completion()
 <a href=#292 id=292 data-nosnippet>292</a>            .next()
-<a href=#293 id=293 data-nosnippet>293</a>            .ok_or_else(|| Error::database(<span class="string">"io_uring completion queue empty"</span>.into()))<span class="question-mark">?</span>;
+<a href=#293 id=293 data-nosnippet>293</a>            .ok_or_else(|| Error::database(<span class="string">"io_uring completion queue empty"</span>))<span class="question-mark">?</span>;
 <a href=#294 id=294 data-nosnippet>294</a>        <span class="kw">let </span>res = cqe.result();
 <a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">if </span>res &lt; <span class="number">0 </span>{
 <a href=#296 id=296 data-nosnippet>296</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::database(<span class="macro">format!</span>(
@@ -326,7 +326,7 @@
 <a href=#326 id=326 data-nosnippet>326</a>        <span class="kw">let </span>cqe = ring
 <a href=#327 id=327 data-nosnippet>327</a>            .completion()
 <a href=#328 id=328 data-nosnippet>328</a>            .next()
-<a href=#329 id=329 data-nosnippet>329</a>            .ok_or_else(|| Error::database(<span class="string">"io_uring completion queue empty"</span>.into()))<span class="question-mark">?</span>;
+<a href=#329 id=329 data-nosnippet>329</a>            .ok_or_else(|| Error::database(<span class="string">"io_uring completion queue empty"</span>))<span class="question-mark">?</span>;
 <a href=#330 id=330 data-nosnippet>330</a>        <span class="kw">let </span>res = cqe.result();
 <a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">if </span>res &lt; <span class="number">0 </span>{
 <a href=#332 id=332 data-nosnippet>332</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::database(<span class="macro">format!</span>(
