@@ -187,7 +187,8 @@ impl Cli {
         };
 
         let srv = Arc::new(
-            QuicServer::bind(server_config).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?,
+            QuicServer::bind(server_config)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?,
         );
 
         if let Some(ref path) = cert_out {
@@ -209,10 +210,11 @@ impl Cli {
             );
         }
 
-        let engine: Arc<dyn EngineHandle> = Arc::new(StubEngine::fixed_ok(EngineOutput::ResultSet {
-            columns: vec![],
-            rows: vec![],
-        }));
+        let engine: Arc<dyn EngineHandle> =
+            Arc::new(StubEngine::fixed_ok(EngineOutput::ResultSet {
+                columns: vec![],
+                rows: vec![],
+            }));
 
         let endpoint = srv.endpoint().clone();
         let run_task = tokio::spawn({
@@ -363,7 +365,12 @@ mod tests {
             "127.0.0.1",
         ])
         .unwrap();
-        if let Some(Commands::Server { port, host, cert_out }) = cli.command {
+        if let Some(Commands::Server {
+            port,
+            host,
+            cert_out,
+        }) = cli.command
+        {
             assert_eq!(port, Some(9000));
             assert_eq!(host, Some("127.0.0.1".to_string()));
             assert!(cert_out.is_none());
@@ -375,7 +382,12 @@ mod tests {
     #[test]
     fn test_cli_server_defaults_from_config() {
         let cli = Cli::try_parse_from(vec!["rustdb", "server"]).unwrap();
-        if let Some(Commands::Server { port, host, cert_out }) = cli.command {
+        if let Some(Commands::Server {
+            port,
+            host,
+            cert_out,
+        }) = cli.command
+        {
             assert!(port.is_none());
             assert!(host.is_none());
             assert!(cert_out.is_none());

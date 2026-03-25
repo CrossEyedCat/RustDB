@@ -90,11 +90,8 @@ impl EngineOutput {
 
 /// Abstraction implemented by the real database engine (or a stub for tests).
 pub trait EngineHandle: Send + Sync {
-    fn execute_sql(
-        &self,
-        sql: &str,
-        ctx: &mut SessionContext,
-    ) -> Result<EngineOutput, EngineError>;
+    fn execute_sql(&self, sql: &str, ctx: &mut SessionContext)
+        -> Result<EngineOutput, EngineError>;
 }
 
 /// Configurable stub engine for tests and early server bring-up (no `Database` required).

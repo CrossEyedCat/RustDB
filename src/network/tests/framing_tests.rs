@@ -1,10 +1,11 @@
 //! Tests for `network::framing` (Phase 1 — no QUIC).
 
 use crate::network::framing::{
-    decode_client_frame_v1, decode_server_frame_v1, encode_client_message_v1, encode_server_message_v1,
-    ClientHelloPayload, ClientMessage, ErrorPayload, ExecutionOkPayload, FrameHeader, MessageKind,
-    ProtocolError, QueryPayload, ResultSetPayload, ServerMessage, ServerReadyPayload,
-    FRAME_MAGIC, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_BYTES, PROTOCOL_VERSION_V1,
+    decode_client_frame_v1, decode_server_frame_v1, encode_client_message_v1,
+    encode_server_message_v1, ClientHelloPayload, ClientMessage, ErrorPayload, ExecutionOkPayload,
+    FrameHeader, MessageKind, ProtocolError, QueryPayload, ResultSetPayload, ServerMessage,
+    ServerReadyPayload, FRAME_HEADER_LEN, FRAME_MAGIC, MAX_FRAME_PAYLOAD_BYTES,
+    PROTOCOL_VERSION_V1,
 };
 
 #[test]
@@ -52,10 +53,8 @@ fn roundtrip_server_all_variants() {
 
 #[test]
 fn wrong_magic() {
-    let mut wire = encode_client_message_v1(&ClientMessage::Query(QueryPayload {
-        sql: "x".into(),
-    }))
-    .unwrap();
+    let mut wire =
+        encode_client_message_v1(&ClientMessage::Query(QueryPayload { sql: "x".into() })).unwrap();
     wire[0] = b'X';
     let err = decode_client_frame_v1(&wire).unwrap_err();
     assert_eq!(err, ProtocolError::BadMagic);
@@ -91,10 +90,8 @@ fn truncated_header() {
 
 #[test]
 fn truncated_payload() {
-    let mut wire = encode_client_message_v1(&ClientMessage::Query(QueryPayload {
-        sql: "hi".into(),
-    }))
-    .unwrap();
+    let mut wire =
+        encode_client_message_v1(&ClientMessage::Query(QueryPayload { sql: "hi".into() })).unwrap();
     wire.truncate(wire.len().saturating_sub(1));
     let err = decode_client_frame_v1(&wire).unwrap_err();
     assert!(matches!(err, ProtocolError::TruncatedFrame { .. }));

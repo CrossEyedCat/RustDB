@@ -32,7 +32,9 @@ pub fn build_quinn_client_config(
 }
 
 /// Create a client [`quinn::Endpoint`] bound to an ephemeral UDP port with `client_config` as default.
-pub fn make_client_endpoint(client_config: quinn::ClientConfig) -> Result<quinn::Endpoint, std::io::Error> {
+pub fn make_client_endpoint(
+    client_config: quinn::ClientConfig,
+) -> Result<quinn::Endpoint, std::io::Error> {
     let mut endpoint = quinn::Endpoint::client((std::net::Ipv4Addr::UNSPECIFIED, 0).into())?;
     endpoint.set_default_client_config(client_config);
     Ok(endpoint)
@@ -49,7 +51,10 @@ pub async fn connect(
 }
 
 /// Variant A: open one bidirectional stream, send a single [`ClientMessage::Query`] frame, read one response frame.
-pub async fn query_once(connection: &Connection, sql: &str) -> Result<ServerMessage, QuicClientError> {
+pub async fn query_once(
+    connection: &Connection,
+    sql: &str,
+) -> Result<ServerMessage, QuicClientError> {
     let (mut send, mut recv) = connection.open_bi().await?;
     let frame = encode_client_message_v1(&ClientMessage::Query(QueryPayload {
         sql: sql.to_string(),

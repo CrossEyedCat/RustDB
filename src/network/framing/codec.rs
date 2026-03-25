@@ -5,8 +5,8 @@ use std::io::Write;
 use super::error::FrameDirection;
 use super::header::{FrameHeader, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_BYTES, PROTOCOL_VERSION_V1};
 use super::messages::{
-    ClientHelloPayload, ClientMessage, ErrorPayload, ExecutionOkPayload, MessageKind,
-    QueryPayload, ResultSetPayload, ServerMessage, ServerReadyPayload,
+    ClientHelloPayload, ClientMessage, ErrorPayload, ExecutionOkPayload, MessageKind, QueryPayload,
+    ResultSetPayload, ServerMessage, ServerReadyPayload,
 };
 use super::{EncodeError, ProtocolError};
 
@@ -152,15 +152,13 @@ pub fn decode_client_frame(
     let body = payload_slice(frame, &header)?;
     match kind {
         MessageKind::Query => {
-            let p: QueryPayload = postcard::from_bytes(body).map_err(|e| {
-                ProtocolError::PostcardDecode(format!("{e:?}"))
-            })?;
+            let p: QueryPayload = postcard::from_bytes(body)
+                .map_err(|e| ProtocolError::PostcardDecode(format!("{e:?}")))?;
             Ok(ClientMessage::Query(p))
         }
         MessageKind::ClientHello => {
-            let p: ClientHelloPayload = postcard::from_bytes(body).map_err(|e| {
-                ProtocolError::PostcardDecode(format!("{e:?}"))
-            })?;
+            let p: ClientHelloPayload = postcard::from_bytes(body)
+                .map_err(|e| ProtocolError::PostcardDecode(format!("{e:?}")))?;
             Ok(ClientMessage::ClientHello(p))
         }
         _ => unreachable!(),
@@ -196,27 +194,23 @@ pub fn decode_server_frame(
     let body = payload_slice(frame, &header)?;
     match kind {
         MessageKind::ResultSet => {
-            let p: ResultSetPayload = postcard::from_bytes(body).map_err(|e| {
-                ProtocolError::PostcardDecode(format!("{e:?}"))
-            })?;
+            let p: ResultSetPayload = postcard::from_bytes(body)
+                .map_err(|e| ProtocolError::PostcardDecode(format!("{e:?}")))?;
             Ok(ServerMessage::ResultSet(p))
         }
         MessageKind::ExecutionOk => {
-            let p: ExecutionOkPayload = postcard::from_bytes(body).map_err(|e| {
-                ProtocolError::PostcardDecode(format!("{e:?}"))
-            })?;
+            let p: ExecutionOkPayload = postcard::from_bytes(body)
+                .map_err(|e| ProtocolError::PostcardDecode(format!("{e:?}")))?;
             Ok(ServerMessage::ExecutionOk(p))
         }
         MessageKind::Error => {
-            let p: ErrorPayload = postcard::from_bytes(body).map_err(|e| {
-                ProtocolError::PostcardDecode(format!("{e:?}"))
-            })?;
+            let p: ErrorPayload = postcard::from_bytes(body)
+                .map_err(|e| ProtocolError::PostcardDecode(format!("{e:?}")))?;
             Ok(ServerMessage::Error(p))
         }
         MessageKind::ServerReady => {
-            let p: ServerReadyPayload = postcard::from_bytes(body).map_err(|e| {
-                ProtocolError::PostcardDecode(format!("{e:?}"))
-            })?;
+            let p: ServerReadyPayload = postcard::from_bytes(body)
+                .map_err(|e| ProtocolError::PostcardDecode(format!("{e:?}")))?;
             Ok(ServerMessage::ServerReady(p))
         }
         _ => unreachable!(),

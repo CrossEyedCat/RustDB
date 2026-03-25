@@ -3,7 +3,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rustdb::network::client::{build_quinn_client_config, connect, make_client_endpoint, query_once};
+use rustdb::network::client::{
+    build_quinn_client_config, connect, make_client_endpoint, query_once,
+};
 use rustdb::network::engine::{
     engine_error_code, EngineError, EngineHandle, EngineOutput, StubEngine,
 };

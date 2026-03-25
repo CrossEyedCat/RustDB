@@ -101,7 +101,9 @@ pub(crate) fn ensure_rustls_crypto_provider() {
 
 /// Build a quinn [`quinn::ServerConfig`] from [`ServerConfig`]: dev self-signed cert, ALPN, idle timeout.
 /// Returns the **leaf** [`CertificateDer`] so QUIC clients can pin the same dev certificate.
-pub fn build_quinn_server_config(config: &ServerConfig) -> QuicResult<(quinn::ServerConfig, CertificateDer<'static>)> {
+pub fn build_quinn_server_config(
+    config: &ServerConfig,
+) -> QuicResult<(quinn::ServerConfig, CertificateDer<'static>)> {
     ensure_rustls_crypto_provider();
     let subject = tls_subject_name(config);
     let certified = rcgen::generate_simple_self_signed(vec![subject])?;
@@ -140,9 +142,9 @@ fn tls_subject_name(config: &ServerConfig) -> String {
 /// Resolve `ServerConfig` host/port to a [`SocketAddr`] for binding.
 pub fn resolve_listen_addr(config: &ServerConfig) -> QuicResult<SocketAddr> {
     let mut addrs = (config.host.as_str(), config.port).to_socket_addrs()?;
-    addrs
-        .next()
-        .ok_or_else(|| QuicServerError::NoResolvedAddress(format!("{}:{}", config.host, config.port)))
+    addrs.next().ok_or_else(|| {
+        QuicServerError::NoResolvedAddress(format!("{}:{}", config.host, config.port))
+    })
 }
 
 /// QUIC server handle: bound UDP [`quinn::Endpoint`] and accept loop (Variant A: bidi streams per query).
@@ -213,9 +215,7 @@ impl QuicServer {
 
         while let Some(incoming) = endpoint.accept().await {
             if endpoint.open_connections() >= max {
-                metrics
-                    .connections_refused
-                    .fetch_add(1, Ordering::Relaxed);
+                metrics.connections_refused.fetch_add(1, Ordering::Relaxed);
                 warn!(
                     limit = max,
                     open = endpoint.open_connections(),
@@ -244,9 +244,7 @@ async fn handle_incoming_quic(
     let conn = match incoming.await {
         Ok(c) => c,
         Err(e) => {
-            metrics
-                .handshake_failures
-                .fetch_add(1, Ordering::Relaxed);
+            metrics.handshake_failures.fetch_add(1, Ordering::Relaxed);
             warn!(error = %e, "QUIC incoming handshake failed");
             return;
         }

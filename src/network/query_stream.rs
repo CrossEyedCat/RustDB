@@ -56,18 +56,24 @@ pub enum DispatchError {
 impl DispatchError {
     fn to_error_message(&self) -> ServerMessage {
         match self {
-            DispatchError::Protocol(p) => ServerMessage::Error(crate::network::framing::ErrorPayload {
-                code: engine_error_code::PROTOCOL,
-                message: p.to_string(),
-            }),
-            DispatchError::Encode(e) => ServerMessage::Error(crate::network::framing::ErrorPayload {
-                code: engine_error_code::INTERNAL,
-                message: e.to_string(),
-            }),
-            DispatchError::Engine(e) => ServerMessage::Error(crate::network::framing::ErrorPayload {
-                code: e.code,
-                message: e.message.clone(),
-            }),
+            DispatchError::Protocol(p) => {
+                ServerMessage::Error(crate::network::framing::ErrorPayload {
+                    code: engine_error_code::PROTOCOL,
+                    message: p.to_string(),
+                })
+            }
+            DispatchError::Encode(e) => {
+                ServerMessage::Error(crate::network::framing::ErrorPayload {
+                    code: engine_error_code::INTERNAL,
+                    message: e.to_string(),
+                })
+            }
+            DispatchError::Engine(e) => {
+                ServerMessage::Error(crate::network::framing::ErrorPayload {
+                    code: e.code,
+                    message: e.message.clone(),
+                })
+            }
         }
     }
 }
@@ -141,22 +147,30 @@ pub fn dispatch_client_frame(
     }
 }
 
-fn enforce_max_result_rows(out: EngineOutput, max_rows: usize) -> Result<EngineOutput, DispatchError> {
+fn enforce_max_result_rows(
+    out: EngineOutput,
+    max_rows: usize,
+) -> Result<EngineOutput, DispatchError> {
     match out {
-        EngineOutput::ResultSet { columns, rows } if rows.len() > max_rows => Err(EngineError::new(
-            engine_error_code::RESULT_ROWS_TOO_LARGE,
-            format!(
-                "result has {} rows; max_result_rows is {}",
-                rows.len(),
-                max_rows
-            ),
-        )
-        .into()),
+        EngineOutput::ResultSet { columns, rows } if rows.len() > max_rows => {
+            Err(EngineError::new(
+                engine_error_code::RESULT_ROWS_TOO_LARGE,
+                format!(
+                    "result has {} rows; max_result_rows is {}",
+                    rows.len(),
+                    max_rows
+                ),
+            )
+            .into())
+        }
         other => Ok(other),
     }
 }
 
-async fn write_error_response(send: &mut SendStream, err: &DispatchError) -> Result<(), quinn::WriteError> {
+async fn write_error_response(
+    send: &mut SendStream,
+    err: &DispatchError,
+) -> Result<(), quinn::WriteError> {
     let msg = err.to_error_message();
     let bytes = match encode_server_message_v1(&msg) {
         Ok(b) => b,
@@ -199,12 +213,9 @@ pub async fn handle_query_bidi_stream(
     };
 
     let t0 = Instant::now();
-    let result = tokio::time::timeout(
-        policy.query_timeout,
-        async {
-            dispatch_client_frame(&frame, engine.as_ref(), policy.as_ref())
-        },
-    )
+    let result = tokio::time::timeout(policy.query_timeout, async {
+        dispatch_client_frame(&frame, engine.as_ref(), policy.as_ref())
+    })
     .await;
 
     let result = match result {
@@ -222,12 +233,7 @@ pub async fn handle_query_bidi_stream(
         if let Some(m) = metrics.as_ref() {
             let ms = latency_ns / 1_000_000;
             crate::debug::record_network_query_latency_ms(ms);
-            m.record_query_handled(
-                outcome,
-                frame.len() as u64,
-                bytes_out,
-                latency_ns,
-            );
+            m.record_query_handled(outcome, frame.len() as u64, bytes_out, latency_ns);
         }
     };
 

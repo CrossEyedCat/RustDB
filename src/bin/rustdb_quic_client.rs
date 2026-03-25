@@ -14,7 +14,9 @@ use std::path::PathBuf;
 use clap::Parser;
 use rustls::pki_types::CertificateDer;
 
-use rustdb::network::client::{build_quinn_client_config, connect, make_client_endpoint, query_once};
+use rustdb::network::client::{
+    build_quinn_client_config, connect, make_client_endpoint, query_once,
+};
 use rustdb::network::framing::ServerMessage;
 
 #[derive(Parser, Debug)]

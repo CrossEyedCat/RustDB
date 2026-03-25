@@ -76,6 +76,6 @@ fn multiple_queries_aggregate() {
     assert_eq!(s.queries_error_response, 1);
     assert_eq!(s.queries_write_failed, 1);
     assert_eq!(s.bytes_received, 1 + 3 + 5);
-    assert_eq!(s.bytes_sent, 2 + 4 + 0);
+    assert_eq!(s.bytes_sent, 2 + 4);
     assert_eq!(s.query_latency_sum_ns, 10 + 20 + 30);
 }

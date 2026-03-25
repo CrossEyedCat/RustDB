@@ -32,7 +32,8 @@ fn dispatch_query_returns_result_set() {
 fn dispatch_rejects_sql_over_limit() {
     let engine = StubEngine::empty_result_set();
     let sql = "x".repeat(16);
-    let req = encode_client_message_v1(&ClientMessage::Query(QueryPayload { sql })).expect("encode");
+    let req =
+        encode_client_message_v1(&ClientMessage::Query(QueryPayload { sql })).expect("encode");
     let policy = StreamPolicy {
         max_sql_bytes: 8,
         ..Default::default()

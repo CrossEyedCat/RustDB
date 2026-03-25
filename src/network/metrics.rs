@@ -6,7 +6,7 @@ use std::sync::Arc;
 /// Result of handling one query stream after a full request frame was read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryHandledOutcome {
-    /// Successful [`ServerMessage`] body written (ResultSet / ExecutionOk).
+    /// Successful [`crate::network::framing::ServerMessage`] body written (ResultSet / ExecutionOk).
     Ok,
     /// An error frame was written (dispatch failure, timeout, etc.).
     ErrorResponse,
@@ -102,12 +102,10 @@ impl QuicNetworkMetrics {
                 self.queries_ok.fetch_add(1, Ordering::Relaxed);
             }
             QueryHandledOutcome::ErrorResponse => {
-                self.queries_error_response
-                    .fetch_add(1, Ordering::Relaxed);
+                self.queries_error_response.fetch_add(1, Ordering::Relaxed);
             }
             QueryHandledOutcome::WriteFailed => {
-                self.queries_write_failed
-                    .fetch_add(1, Ordering::Relaxed);
+                self.queries_write_failed.fetch_add(1, Ordering::Relaxed);
             }
         }
         self.bytes_received.fetch_add(bytes_in, Ordering::Relaxed);

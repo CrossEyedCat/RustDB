@@ -22,9 +22,7 @@ fn stub_returns_empty_rows() {
     let mut ctx = SessionContext {
         session_id: Some(42),
     };
-    let out = engine
-        .execute_sql("SELECT * FROM t", &mut ctx)
-        .expect("ok");
+    let out = engine.execute_sql("SELECT * FROM t", &mut ctx).expect("ok");
     assert_eq!(
         out,
         EngineOutput::ResultSet {

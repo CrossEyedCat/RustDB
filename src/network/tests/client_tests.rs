@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use crate::network::client::{build_quinn_client_config, connect, make_client_endpoint, query_once};
+use crate::network::client::{
+    build_quinn_client_config, connect, make_client_endpoint, query_once,
+};
 use crate::network::engine::{EngineOutput, StubEngine};
 use crate::network::framing::ServerMessage;
 use crate::network::server::{QuicServer, ServerConfig};
