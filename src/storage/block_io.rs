@@ -214,7 +214,7 @@ impl BlockIoBackend for IoUringBackend {
         let cqe = ring
             .completion()
             .next()
-            .ok_or_else(|| Error::database("io_uring completion queue empty".into()))?;
+            .ok_or_else(|| Error::database("io_uring completion queue empty"))?;
         let res = cqe.result();
         if res < 0 {
             return Err(Error::database(format!(
@@ -256,7 +256,7 @@ impl BlockIoBackend for IoUringBackend {
         let cqe = ring
             .completion()
             .next()
-            .ok_or_else(|| Error::database("io_uring completion queue empty".into()))?;
+            .ok_or_else(|| Error::database("io_uring completion queue empty"))?;
         let res = cqe.result();
         if res < 0 {
             return Err(Error::database(format!(
@@ -290,7 +290,7 @@ impl BlockIoBackend for IoUringBackend {
         let cqe = ring
             .completion()
             .next()
-            .ok_or_else(|| Error::database("io_uring completion queue empty".into()))?;
+            .ok_or_else(|| Error::database("io_uring completion queue empty"))?;
         let res = cqe.result();
         if res < 0 {
             return Err(Error::database(format!(
@@ -326,7 +326,7 @@ impl BlockIoBackend for IoUringBackend {
         let cqe = ring
             .completion()
             .next()
-            .ok_or_else(|| Error::database("io_uring completion queue empty".into()))?;
+            .ok_or_else(|| Error::database("io_uring completion queue empty"))?;
         let res = cqe.result();
         if res < 0 {
             return Err(Error::database(format!(
