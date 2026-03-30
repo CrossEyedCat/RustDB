@@ -58,13 +58,13 @@ twox-hash = "=2.1.2"
 indexmap = "2.13"
 
 # UUID for generating unique identifiers
-uuid = { version = "1.0", features = ["v4", "serde"] }
+uuid = { version = "1.23", features = ["v4", "serde"] }
 
 # Internationalization
 lazy_static = "1.4"
 
 # Configuration
-toml = "1.0"
+toml = "1.1"
 
 # Parallel execution
 rayon = "1.10"
