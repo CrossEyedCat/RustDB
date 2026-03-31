@@ -433,7 +433,14 @@ impl AdvancedQueryOptimizer {
             PlanNode::Limit(node) => node.cost,
             PlanNode::Offset(node) => node.cost,
             PlanNode::Aggregate(node) => node.cost,
-            PlanNode::Insert(node) => node.cost,
+            PlanNode::Insert(node) => {
+                node.cost
+                    + node
+                        .insert_subplan
+                        .as_ref()
+                        .map(|s| self.estimate_node_cost(s))
+                        .unwrap_or(0.0)
+            }
             PlanNode::Update(node) => node.cost,
             PlanNode::Delete(node) => node.cost,
         }

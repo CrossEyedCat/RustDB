@@ -12,4 +12,12 @@ pub use statistics::{
     TableStatistics, ValueDistribution,
 };
 
-// TODO: Implement metadata catalog
+pub use access::AccessControl;
+pub use schema::SchemaManager;
+
+/// Bundles catalog-facing subsystems (schema + access control hooks).
+#[derive(Debug, Default)]
+pub struct MetadataCatalog {
+    pub schema: SchemaManager,
+    pub access: AccessControl,
+}

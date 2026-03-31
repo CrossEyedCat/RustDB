@@ -371,6 +371,22 @@ impl SqlParser {
         }
     }
 
+    /// WHERE / HAVING predicate: `parse_simple_expression` optionally followed by `= rhs` (equality comparison).
+    fn parse_where_expression(&mut self) -> Result<Expression> {
+        let left = self.parse_simple_expression()?;
+        if self.match_token(&TokenType::Equal) {
+            self.advance();
+            let right = self.parse_simple_expression()?;
+            Ok(Expression::BinaryOp {
+                left: Box::new(left),
+                op: BinaryOperator::Equal,
+                right: Box::new(right),
+            })
+        } else {
+            Ok(left)
+        }
+    }
+
     // Main parsing methods
     fn parse_select(&mut self) -> Result<SqlStatement> {
         self.expect_keyword("SELECT")?;
@@ -516,7 +532,7 @@ impl SqlParser {
         // Parse WHERE clause
         let where_clause = if self.match_keyword("WHERE") {
             self.advance();
-            Some(self.parse_simple_expression()?)
+            Some(self.parse_where_expression()?)
         } else {
             None
         };
@@ -537,7 +553,7 @@ impl SqlParser {
         // Parse WHERE clause
         let where_clause = if self.match_keyword("WHERE") {
             self.advance();
-            Some(self.parse_simple_expression()?)
+            Some(self.parse_where_expression()?)
         } else {
             None
         };
@@ -736,12 +752,86 @@ impl SqlParser {
     }
 
     fn parse_alter(&mut self) -> Result<SqlStatement> {
-        // TODO: Implement full ALTER parsing
-        Err(Error::parser("ALTER not implemented".to_string()))
+        self.expect_keyword("ALTER")?;
+        self.expect_keyword("TABLE")?;
+        let table_name = self.parse_identifier()?;
+
+        let operation = if self.match_keyword("ADD") {
+            self.advance();
+            self.expect_keyword("COLUMN")?;
+            let name = self.parse_identifier()?;
+            let data_type = self.parse_data_type()?;
+            AlterTableOperation::AddColumn(ColumnDefinition {
+                name,
+                data_type,
+                constraints: Vec::new(),
+            })
+        } else if self.match_keyword("DROP") {
+            self.advance();
+            self.expect_keyword("COLUMN")?;
+            let col = self.parse_identifier()?;
+            AlterTableOperation::DropColumn(col)
+        } else if self.match_keyword("MODIFY") {
+            self.advance();
+            self.expect_keyword("COLUMN")?;
+            let name = self.parse_identifier()?;
+            let data_type = self.parse_data_type()?;
+            AlterTableOperation::ModifyColumn(ColumnDefinition {
+                name,
+                data_type,
+                constraints: Vec::new(),
+            })
+        } else if self.match_keyword("RENAME") {
+            self.advance();
+            if self.match_keyword("COLUMN") {
+                self.advance();
+                let old_name = self.parse_identifier()?;
+                self.expect_keyword("TO")?;
+                let new_name = self.parse_identifier()?;
+                AlterTableOperation::RenameColumn { old_name, new_name }
+            } else if self.match_keyword("TO") {
+                self.advance();
+                let new_name = self.parse_identifier()?;
+                AlterTableOperation::RenameTable(new_name)
+            } else {
+                return Err(Error::parser(
+                    "Expected COLUMN or TO after RENAME".to_string(),
+                ));
+            }
+        } else {
+            return Err(Error::parser(
+                "Unsupported ALTER TABLE: use ADD COLUMN, DROP COLUMN, MODIFY COLUMN, RENAME COLUMN, or RENAME TO"
+                    .to_string(),
+            ));
+        };
+
+        Ok(SqlStatement::AlterTable(AlterTableStatement {
+            table_name,
+            operation,
+        }))
     }
 
     fn parse_drop(&mut self) -> Result<SqlStatement> {
-        // TODO: Implement full DROP parsing
-        Err(Error::parser("DROP not implemented".to_string()))
+        self.expect_keyword("DROP")?;
+        self.expect_keyword("TABLE")?;
+        let if_exists = if self.match_keyword("IF") {
+            self.advance();
+            self.expect_keyword("EXISTS")?;
+            true
+        } else {
+            false
+        };
+        let table_name = self.parse_identifier()?;
+        let cascade = if self.match_keyword("CASCADE") {
+            self.advance();
+            true
+        } else {
+            false
+        };
+        Ok(SqlStatement::DropTable(DropTableStatement {
+            table_name,
+            if_exists,
+            cascade,
+        }))
     }
 }

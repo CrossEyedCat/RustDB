@@ -3,7 +3,8 @@
 use crate::analyzer::{AnalysisContext, SemanticAnalyzer};
 use crate::common::{Error, Result};
 use crate::planner::planner::{
-    ExecutionPlan, FilterNode, IndexScanNode, JoinNode, PlanNode, TableScanNode,
+    estimate_selectivity, ExecutionPlan, FilterNode, IndexScanNode, JoinNode, PlanNode,
+    TableScanNode,
 };
 use crate::storage::index_registry::IndexRegistry;
 use serde::{Deserialize, Serialize};
@@ -228,20 +229,22 @@ impl QueryOptimizer {
 
                     // Add conditions to the corresponding branches
                     if let Some(condition) = left_condition {
+                        let sel = estimate_selectivity(&condition);
                         left = PlanNode::Filter(FilterNode {
                             condition,
                             input: Box::new(left),
-                            selectivity: 0.5, // TODO: Calculate selectivity
-                            cost: 0.0,
+                            selectivity: sel,
+                            cost: 0.05 + (1.0 - sel) * 0.15,
                         });
                     }
 
                     if let Some(condition) = right_condition {
+                        let sel = estimate_selectivity(&condition);
                         right = PlanNode::Filter(FilterNode {
                             condition,
                             input: Box::new(right),
-                            selectivity: 0.5,
-                            cost: 0.0,
+                            selectivity: sel,
+                            cost: 0.05 + (1.0 - sel) * 0.15,
                         });
                     }
 
@@ -500,7 +503,14 @@ impl QueryOptimizer {
             PlanNode::Limit(node) => node.cost,
             PlanNode::Offset(node) => node.cost,
             PlanNode::Aggregate(node) => node.cost,
-            PlanNode::Insert(node) => node.cost,
+            PlanNode::Insert(node) => {
+                node.cost
+                    + node
+                        .insert_subplan
+                        .as_ref()
+                        .map(|s| self.estimate_node_cost(s))
+                        .unwrap_or(0.0)
+            }
             PlanNode::Update(node) => node.cost,
             PlanNode::Delete(node) => node.cost,
         }

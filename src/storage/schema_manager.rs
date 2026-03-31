@@ -124,6 +124,11 @@ impl SchemaManager {
             self.validate_operation(schema, &operation)?;
         }
 
+        let snapshot_before = self
+            .get_schema(table_name)
+            .ok_or_else(|| Error::validation(format!("Table {} not found", table_name)))?
+            .clone();
+
         // Now execute the operation
         {
             let schema = self
@@ -132,11 +137,11 @@ impl SchemaManager {
             Self::execute_operation_static(schema, &operation)?;
         }
 
-        // Record the change
-        let change = SchemaChange::new(
+        // Record the change (snapshot for rollback)
+        let change = SchemaChange::new_alter(
             table_name.to_string(),
-            SchemaOperationType::Alter,
             format!("{:?}", operation),
+            snapshot_before,
         );
         self.change_history.push(change);
 
@@ -487,10 +492,23 @@ impl SchemaManager {
     fn execute_add_column_static(
         schema: &mut Schema,
         column: &Column,
-        _after: &Option<String>,
+        after: &Option<String>,
     ) -> Result<()> {
-        // TODO: Implement logic for adding a column at a specific position
-        schema.base = schema.base.clone().add_column(column.clone());
+        let insert_at = if let Some(after_name) = after {
+            let pos = schema.base.columns.iter().position(|c| c.name == *after_name);
+            match pos {
+                Some(i) => i + 1,
+                None => {
+                    return Err(Error::validation(format!(
+                        "AFTER column '{}' not found",
+                        after_name
+                    )));
+                }
+            }
+        } else {
+            schema.base.columns.len()
+        };
+        schema.base.columns.insert(insert_at, column.clone());
         Ok(())
     }
 
@@ -500,9 +518,42 @@ impl SchemaManager {
     }
 
     /// Static version of dropping a column
-    fn execute_drop_column_static(_schema: &mut Schema, _column_name: &str) -> Result<()> {
-        // TODO: Implement logic for dropping a column
-        // This is a complex operation requiring data restructuring
+    fn execute_drop_column_static(schema: &mut Schema, column_name: &str) -> Result<()> {
+        let pos = schema
+            .base
+            .columns
+            .iter()
+            .position(|c| c.name == column_name)
+            .ok_or_else(|| Error::validation(format!("Column {} not found", column_name)))?;
+        schema.base.columns.remove(pos);
+
+        if let Some(pk) = &mut schema.base.primary_key {
+            pk.retain(|c| c != column_name);
+            if pk.is_empty() {
+                schema.base.primary_key = None;
+            }
+        }
+
+        for uc in &mut schema.base.unique_constraints {
+            uc.retain(|c| c != column_name);
+        }
+        schema.base.unique_constraints.retain(|uc| !uc.is_empty());
+
+        schema.base.foreign_keys.retain_mut(|fk| {
+            fk.columns.retain(|c| c != column_name);
+            !fk.columns.is_empty()
+        });
+
+        schema.base.indexes.retain_mut(|idx| {
+            idx.columns.retain(|c| c != column_name);
+            !idx.columns.is_empty()
+        });
+
+        schema.constraints.retain_mut(|c| {
+            c.columns.retain(|col| col != column_name);
+            !c.columns.is_empty()
+        });
+
         Ok(())
     }
 
@@ -518,12 +569,21 @@ impl SchemaManager {
 
     /// Static version of modifying a column
     fn execute_modify_column_static(
-        _schema: &mut Schema,
-        _column_name: &str,
-        _new_column: &Column,
+        schema: &mut Schema,
+        column_name: &str,
+        new_column: &Column,
     ) -> Result<()> {
-        // TODO: Implement logic for modifying a column
-        // This is a complex operation requiring data restructuring
+        let col = schema
+            .base
+            .columns
+            .iter_mut()
+            .find(|c| c.name == column_name)
+            .ok_or_else(|| Error::validation(format!("Column {} not found", column_name)))?;
+        let mut updated = new_column.clone();
+        if updated.name != column_name {
+            updated.name = column_name.to_string();
+        }
+        *col = updated;
         Ok(())
     }
 
@@ -539,11 +599,53 @@ impl SchemaManager {
 
     /// Static version of renaming a column
     fn execute_rename_column_static(
-        _schema: &mut Schema,
-        _old_name: &str,
-        _new_name: &str,
+        schema: &mut Schema,
+        old_name: &str,
+        new_name: &str,
     ) -> Result<()> {
-        // TODO: Implement logic for renaming a column
+        let col = schema
+            .base
+            .columns
+            .iter_mut()
+            .find(|c| c.name == old_name)
+            .ok_or_else(|| Error::validation(format!("Column {} not found", old_name)))?;
+        col.name = new_name.to_string();
+
+        if let Some(pk) = &mut schema.base.primary_key {
+            for c in pk.iter_mut() {
+                if c == old_name {
+                    *c = new_name.to_string();
+                }
+            }
+        }
+        for uc in &mut schema.base.unique_constraints {
+            for c in uc.iter_mut() {
+                if c == old_name {
+                    *c = new_name.to_string();
+                }
+            }
+        }
+        for fk in &mut schema.base.foreign_keys {
+            for c in fk.columns.iter_mut() {
+                if c == old_name {
+                    *c = new_name.to_string();
+                }
+            }
+        }
+        for idx in &mut schema.base.indexes {
+            for c in idx.columns.iter_mut() {
+                if c == old_name {
+                    *c = new_name.to_string();
+                }
+            }
+        }
+        for c in &mut schema.constraints {
+            for col in c.columns.iter_mut() {
+                if col == old_name {
+                    *col = new_name.to_string();
+                }
+            }
+        }
         Ok(())
     }
 
@@ -654,9 +756,28 @@ impl SchemaManager {
 
     /// Rolls back the last schema change
     pub fn rollback_last_change(&mut self) -> Result<()> {
-        if let Some(change) = self.change_history.pop() {
-            // TODO: Implement change rollback
-            log::info!("Rolling back change: {:?}", change);
+        let change = self
+            .change_history
+            .pop()
+            .ok_or_else(|| Error::validation("No schema changes to roll back"))?;
+
+        log::info!("Rolling back change: {:?}", change);
+
+        match change.operation_type {
+            SchemaOperationType::Create => {
+                self.schemas.remove(&change.table_name);
+            }
+            SchemaOperationType::Alter => {
+                let prev = change.schema_snapshot_before.ok_or_else(|| {
+                    Error::internal("ALTER rollback missing schema snapshot")
+                })?;
+                self.schemas.insert(change.table_name, prev);
+            }
+            SchemaOperationType::Drop => {
+                return Err(Error::validation(
+                    "DROP rollback is not supported (no dropped-schema snapshot)",
+                ));
+            }
         }
         Ok(())
     }
@@ -694,6 +815,9 @@ pub struct SchemaChange {
     pub description: String,
     /// Change timestamp
     pub timestamp: u64,
+    /// Schema before an ALTER (used by [`SchemaManager::rollback_last_change`])
+    #[serde(default)]
+    pub schema_snapshot_before: Option<Schema>,
 }
 
 impl SchemaChange {
@@ -713,6 +837,23 @@ impl SchemaChange {
             operation_type,
             description,
             timestamp,
+            schema_snapshot_before: None,
+        }
+    }
+
+    /// ALTER entry with schema state before the change (for rollback)
+    pub fn new_alter(table_name: String, description: String, snapshot_before: Schema) -> Self {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Self {
+            table_name,
+            operation_type: SchemaOperationType::Alter,
+            description,
+            timestamp,
+            schema_snapshot_before: Some(snapshot_before),
         }
     }
 }
@@ -912,8 +1053,73 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(m.get_change_history().len() >= 2);
-        let _ = m.rollback_last_change();
+        assert!(m.get_schema("t4").unwrap().has_column("b"));
+        assert!(!m.get_schema("t4").unwrap().has_column("a"));
+        m.rollback_last_change().unwrap();
+        assert!(m.get_schema("t4").unwrap().has_column("a"));
+        assert!(!m.get_schema("t4").unwrap().has_column("b"));
+    }
+
+    #[test]
+    fn test_add_column_after_position() {
+        let mut m = SchemaManager::new();
+        let mut schema = Schema::new("t6".into());
+        schema = schema
+            .add_column(Column::new("first".into(), DataType::Integer(0)))
+            .add_column(Column::new("last".into(), DataType::Integer(0)));
+        m.create_schema("t6".into(), schema).unwrap();
+
+        let mid = Column::new("mid".into(), DataType::Integer(0));
+        m.alter_table(
+            "t6",
+            SchemaOperation::AddColumn {
+                column: mid,
+                after: Some("first".into()),
+            },
+        )
+        .unwrap();
+        let cols = m.get_schema("t6").unwrap().get_columns();
+        assert_eq!(cols[0].name, "first");
+        assert_eq!(cols[1].name, "mid");
+        assert_eq!(cols[2].name, "last");
+    }
+
+    #[test]
+    fn test_drop_column_updates_indexes() {
+        let mut m = SchemaManager::new();
+        let mut schema = Schema::new("t7".into());
+        schema = schema.add_column(Column::new("keep".into(), DataType::Integer(0)));
+        schema = schema.add_column(Column::new("dropme".into(), DataType::Integer(0)));
+        m.create_schema("t7".into(), schema).unwrap();
+        m.alter_table(
+            "t7",
+            SchemaOperation::AddIndex {
+                index_name: "ix_only_keep".into(),
+                columns: vec!["keep".into()],
+                unique: false,
+            },
+        )
+        .unwrap();
+        m.alter_table(
+            "t7",
+            SchemaOperation::DropColumn {
+                column_name: "dropme".into(),
+                cascade: false,
+            },
+        )
+        .unwrap();
+        assert!(m.get_schema("t7").unwrap().has_column("keep"));
+        assert!(!m.get_schema("t7").unwrap().has_column("dropme"));
+    }
+
+    #[test]
+    fn test_rollback_create_removes_table() {
+        let mut m = SchemaManager::new();
+        let schema = Schema::new("t8".into());
+        m.create_schema("t8".into(), schema).unwrap();
+        assert!(m.get_schema("t8").is_some());
+        m.rollback_last_change().unwrap();
+        assert!(m.get_schema("t8").is_none());
     }
 
     #[test]

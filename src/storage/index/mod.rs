@@ -4,12 +4,12 @@
 //! including B+ trees and hash indexes.
 
 pub mod btree;
+pub mod hash_index;
 pub mod simple_hash_index;
-// pub mod hash_index; // Temporarily disabled
 
 pub use btree::BPlusTree;
+pub use hash_index::{CollisionResolution, HashIndex};
 pub use simple_hash_index::SimpleHashIndex;
-// pub use hash_index::{HashIndex, CollisionResolution};
 
 use crate::common::{
     types::{PageId, RecordId},

@@ -38,6 +38,7 @@ fn table_scan_node() -> TableScanNode {
 #[test]
 fn test_executor_table_scan_only() -> crate::common::Result<()> {
     let (_tmp, pm) = common::create_test_page_manager();
+    common::seed_id_data_rows(&pm, 10);
     let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(pm));
     let ex = QueryExecutor::new(factory)?;
     let plan = ExecutionPlan {
@@ -56,6 +57,7 @@ fn test_executor_table_scan_only() -> crate::common::Result<()> {
 #[test]
 fn test_executor_limit_table_scan() -> crate::common::Result<()> {
     let (_tmp, pm) = common::create_test_page_manager();
+    common::seed_id_data_rows(&pm, 10);
     let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(pm));
     let ex = QueryExecutor::new(factory)?;
     let plan = ExecutionPlan {
@@ -74,6 +76,7 @@ fn test_executor_limit_table_scan() -> crate::common::Result<()> {
 #[test]
 fn test_executor_offset_limit() -> crate::common::Result<()> {
     let (_tmp, pm) = common::create_test_page_manager();
+    common::seed_id_data_rows(&pm, 10);
     let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(pm));
     let ex = QueryExecutor::new(factory)?;
     let inner = PlanNode::Limit(LimitNode {
@@ -96,6 +99,7 @@ fn test_executor_offset_limit() -> crate::common::Result<()> {
 #[test]
 fn test_executor_filter() -> crate::common::Result<()> {
     let (_tmp, pm) = common::create_test_page_manager();
+    common::seed_id_data_rows(&pm, 10);
     let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(pm));
     let ex = QueryExecutor::new(factory)?;
     let plan = ExecutionPlan {
@@ -118,6 +122,7 @@ fn test_executor_filter() -> crate::common::Result<()> {
 #[test]
 fn test_executor_projection() -> crate::common::Result<()> {
     let (_tmp, pm) = common::create_test_page_manager();
+    common::seed_id_data_rows(&pm, 10);
     let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(pm));
     let ex = QueryExecutor::new(factory)?;
     let plan = ExecutionPlan {
@@ -143,6 +148,7 @@ fn test_executor_projection() -> crate::common::Result<()> {
 #[test]
 fn test_executor_sort() -> crate::common::Result<()> {
     let (_tmp, pm) = common::create_test_page_manager();
+    common::seed_id_data_rows(&pm, 10);
     let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(pm));
     let ex = QueryExecutor::new(factory)?;
     let plan = ExecutionPlan {
@@ -167,6 +173,7 @@ fn test_executor_sort() -> crate::common::Result<()> {
 #[test]
 fn test_executor_group_by() -> crate::common::Result<()> {
     let (_tmp, pm) = common::create_test_page_manager();
+    common::seed_id_data_rows(&pm, 10);
     let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(pm));
     let ex = QueryExecutor::new(factory)?;
     let plan = ExecutionPlan {
@@ -193,6 +200,7 @@ fn test_executor_group_by() -> crate::common::Result<()> {
 #[test]
 fn test_executor_join_small() -> crate::common::Result<()> {
     let (_tmp, pm) = common::create_test_page_manager();
+    common::seed_id_data_rows(&pm, 10);
     let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(pm));
     let ex = QueryExecutor::new(factory)?;
     let left = PlanNode::Limit(LimitNode {
@@ -236,6 +244,7 @@ fn test_executor_join_small() -> crate::common::Result<()> {
 #[test]
 fn test_executor_join_types() -> crate::common::Result<()> {
     let (_tmp, pm) = common::create_test_page_manager();
+    common::seed_id_data_rows(&pm, 10);
     let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(pm));
     let ex = QueryExecutor::with_config(
         factory,
@@ -312,6 +321,7 @@ fn test_executor_unsupported_plan() {
             table_name: "x".to_string(),
             columns: vec![],
             values: vec![],
+            insert_subplan: None,
             cost: 1.0,
         }),
         metadata: plan_meta(),

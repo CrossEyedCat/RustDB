@@ -7,7 +7,7 @@ use rustdb::core::{
 };
 use rustdb::logging::wal::{WalConfig, WriteAheadLog};
 use rustdb::storage::page_manager::{PageManager, PageManagerConfig};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -40,15 +40,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn create_test_acid_manager() -> Result<Arc<AcidManager>, Box<dyn std::error::Error>> {
     let config = AcidConfig::default();
-    let wal_config = WalConfig::default();
+    let mut wal_config = WalConfig::default();
+    let wal_dir = std::env::temp_dir().join("rustdb_acid_example_wal");
+    std::fs::create_dir_all(&wal_dir)?;
+    wal_config.log_writer_config.log_directory = wal_dir;
     let wal = Arc::new(WriteAheadLog::new(wal_config).await?);
 
     let temp_dir = std::env::temp_dir();
-    let page_manager = Arc::new(PageManager::new(
+    let page_manager = Arc::new(Mutex::new(PageManager::new(
         temp_dir,
         "test_db",
         PageManagerConfig::default(),
-    )?);
+    )?));
 
     let lock_manager = Arc::new(LockManager::new()?);
 
@@ -63,7 +66,7 @@ async fn demo_atomicity(acid_manager: &AcidManager) -> Result<(), Box<dyn std::e
     let transaction_id = TransactionId::new(1);
 
     // Let's start the transaction
-    acid_manager.begin_transaction(transaction_id, IsolationLevel::ReadCommitted, true)?;
+    acid_manager.begin_transaction(transaction_id, IsolationLevel::ReadCommitted, false)?;
 
     // Making several notes
     write_record(acid_manager, transaction_id, 1, 1, b"Data 1")?;
@@ -106,7 +109,7 @@ async fn demo_isolation(acid_manager: &AcidManager) -> Result<(), Box<dyn std::e
     let transaction_id_2 = TransactionId::new(4);
 
     // Transaction 1
-    acid_manager.begin_transaction(transaction_id_1, IsolationLevel::RepeatableRead, true)?;
+    acid_manager.begin_transaction(transaction_id_1, IsolationLevel::RepeatableRead, false)?;
     write_record(acid_manager, transaction_id_1, 1, 4, b"Isolated data")?;
 
     // Transaction 2 (should not see transaction 1's changes)
@@ -132,7 +135,7 @@ async fn demo_durability(acid_manager: &AcidManager) -> Result<(), Box<dyn std::
 
     let transaction_id = TransactionId::new(5);
 
-    acid_manager.begin_transaction(transaction_id, IsolationLevel::ReadCommitted, true)?;
+    acid_manager.begin_transaction(transaction_id, IsolationLevel::ReadCommitted, false)?;
 
     // Recording critical data
     write_record(acid_manager, transaction_id, 1, 5, b"Critical data")?;
@@ -157,7 +160,7 @@ async fn demo_mvcc(acid_manager: &AcidManager) -> Result<(), Box<dyn std::error:
     let _data1 = read_record(acid_manager, transaction_id_1, 1, 1)?;
 
     // Transaction 2 updates the same data
-    acid_manager.begin_transaction(transaction_id_2, IsolationLevel::ReadCommitted, true)?;
+    acid_manager.begin_transaction(transaction_id_2, IsolationLevel::ReadCommitted, false)?;
     write_record(acid_manager, transaction_id_2, 1, 1, b"Updated data")?;
     acid_manager.commit_transaction(transaction_id_2)?;
 
@@ -261,22 +264,24 @@ async fn demo_isolation_levels(
 
 // Helper functions for demonstration
 fn write_record(
-    _acid_manager: &AcidManager,
-    _transaction_id: TransactionId,
-    _page_id: u64,
-    _record_id: u64,
-    _data: &[u8],
+    acid_manager: &AcidManager,
+    transaction_id: TransactionId,
+    page_id: u64,
+    record_id: u64,
+    data: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // TODO: Implement record entry
-    Ok(())
+    acid_manager
+        .write_record(transaction_id, page_id, record_id, data)
+        .map_err(|e| e.to_string().into())
 }
 
 fn read_record(
-    _acid_manager: &AcidManager,
-    _transaction_id: TransactionId,
-    _page_id: u64,
-    _record_id: u64,
+    acid_manager: &AcidManager,
+    transaction_id: TransactionId,
+    page_id: u64,
+    record_id: u64,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    // TODO: Implement record reading
-    Ok(b"test data".to_vec())
+    acid_manager
+        .read_record(transaction_id, page_id, record_id)
+        .map_err(|e| e.to_string().into())
 }

@@ -10,7 +10,7 @@ use rustdb::{
         file_manager::FileManager, page_manager::PageManager, schema_manager::SchemaManager,
     },
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 // / Configuration for integration tests
@@ -58,7 +58,7 @@ impl IntegrationTestConfig {
 pub struct IntegrationTestContext {
     pub config: IntegrationTestConfig,
     pub file_manager: Arc<FileManager>,
-    pub page_manager: Arc<PageManager>,
+    pub page_manager: Arc<Mutex<PageManager>>,
     pub schema_manager: Arc<SchemaManager>,
     pub transaction_manager: Arc<TransactionManager>,
     pub concurrency_manager: Arc<ConcurrencyManager>,
@@ -88,11 +88,11 @@ impl IntegrationTestContext {
 
         // Initializing components
         let file_manager = Arc::new(FileManager::new(&config.database_path)?);
-        let page_manager = Arc::new(PageManager::new(
+        let page_manager = Arc::new(Mutex::new(PageManager::new(
             std::path::PathBuf::from(&config.database_path),
             "test_table",
             Default::default(),
-        )?);
+        )?));
         let schema_manager = Arc::new(SchemaManager::new());
 
         let transaction_manager = Arc::new(TransactionManager::new()?);

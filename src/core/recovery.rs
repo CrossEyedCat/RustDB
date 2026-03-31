@@ -9,7 +9,7 @@
 use crate::common::{Error, Result};
 use crate::core::acid_manager::{AcidConfig, AcidManager};
 use crate::core::transaction::{IsolationLevel, TransactionId, TransactionState};
-use crate::logging::log_record::{LogRecord, LogRecordType, LogSequenceNumber};
+use crate::logging::log_record::{LogRecord, LogRecordType, LogSequenceNumber, RecordOperation};
 use crate::logging::wal::WriteAheadLog;
 use crate::storage::page_manager::PageManager;
 use serde::{Deserialize, Serialize};
@@ -101,7 +101,7 @@ pub struct RecoveryManager {
     /// Write-Ahead Log
     wal: Arc<WriteAheadLog>,
     /// Page manager
-    page_manager: Arc<PageManager>,
+    page_manager: Arc<Mutex<PageManager>>,
     /// Current recovery state
     state: Arc<Mutex<RecoveryState>>,
     /// Active transactions for recovery
@@ -117,7 +117,7 @@ impl RecoveryManager {
     pub fn new(
         acid_manager: Arc<AcidManager>,
         wal: Arc<WriteAheadLog>,
-        page_manager: Arc<PageManager>,
+        page_manager: Arc<Mutex<PageManager>>,
     ) -> Result<Self> {
         Ok(Self {
             acid_manager,
@@ -168,14 +168,12 @@ impl RecoveryManager {
 
     /// Analyzes logs to determine system state
     fn analyze_logs(&self) -> Result<()> {
-        let transactions = HashMap::new();
-        let pages = HashMap::new();
+        let log_dir = self.wal.log_directory();
+        let _records = LogRecord::read_log_records_from_directory(&log_dir).unwrap_or_default();
 
-        // TODO: Implement reading logs from WAL
-        // Current WAL implementation does not have read_record method
-        // Need to add this method or use a different approach
+        let transactions: HashMap<TransactionId, RecoveryTransactionInfo> = HashMap::new();
+        let pages: HashMap<(u32, u64), RecoveryPageInfo> = HashMap::new();
 
-        // Temporarily create empty results
         {
             let mut active_transactions = self.active_transactions.write().unwrap();
             active_transactions.clear();
@@ -250,85 +248,39 @@ impl RecoveryManager {
 
     /// Performs Redo operation for page
     fn redo_page_operation(&self, page_info: &RecoveryPageInfo) -> Result<()> {
-        match page_info.operation_type {
-            LogRecordType::DataInsert => {
-                // Restore insert
-                if let Ok((_, _, _, _new_data)) =
-                    serde_json::from_slice::<(u32, u64, Vec<u8>, Vec<u8>)>(&page_info.recovery_data)
-                {
-                    // TODO: Restore record insert
-                }
-            }
-
-            LogRecordType::DataUpdate => {
-                // Restore update
-                if let Ok((_, _, _, _new_data)) =
-                    serde_json::from_slice::<(u32, u64, Vec<u8>, Vec<u8>)>(&page_info.recovery_data)
-                {
-                    // TODO: Restore record update
-                }
-            }
-
-            LogRecordType::DataDelete => {
-                // Restore delete
-                // TODO: Restore record delete
-            }
-
-            _ => {
-                // Ignore other operation types
-            }
+        if page_info.recovery_data.is_empty() {
+            return Ok(());
         }
-
+        let op: RecordOperation = serde_json::from_slice(&page_info.recovery_data).map_err(|e| {
+            Error::internal(format!("recovery REDO: bad RecordOperation JSON: {}", e))
+        })?;
+        let mut pm = self.page_manager.lock().unwrap();
+        pm.recovery_apply_record_operation(page_info.operation_type.clone(), &op, true)?;
         Ok(())
     }
 
     /// Performs Undo operation for page
     fn undo_page_operation(&self, page_info: &RecoveryPageInfo) -> Result<()> {
-        match page_info.operation_type {
-            LogRecordType::DataInsert => {
-                // Rollback insert - delete record
-                // TODO: Delete record
-            }
-
-            LogRecordType::DataUpdate => {
-                // Rollback update - restore old data
-                if let Ok((_, _, _old_data, _)) =
-                    serde_json::from_slice::<(u32, u64, Vec<u8>, Vec<u8>)>(&page_info.recovery_data)
-                {
-                    // TODO: Restore old data
-                }
-            }
-
-            LogRecordType::DataDelete => {
-                // Rollback delete - restore record
-                if let Ok((_, _, _old_data, _)) =
-                    serde_json::from_slice::<(u32, u64, Vec<u8>, Vec<u8>)>(&page_info.recovery_data)
-                {
-                    // TODO: Restore deleted record
-                }
-            }
-
-            _ => {
-                // Ignore other operation types
-            }
+        if page_info.recovery_data.is_empty() {
+            return Ok(());
         }
-
+        let op: RecordOperation = serde_json::from_slice(&page_info.recovery_data).map_err(|e| {
+            Error::internal(format!("recovery UNDO: bad RecordOperation JSON: {}", e))
+        })?;
+        let mut pm = self.page_manager.lock().unwrap();
+        pm.recovery_apply_record_operation(page_info.operation_type.clone(), &op, false)?;
         Ok(())
     }
 
     /// Creates checkpoint
     pub fn create_checkpoint(&self) -> Result<()> {
-        // TODO: Implement checkpoint creation
-        // Current WAL implementation does not have necessary methods
-        // Need to add write_record and truncate_logs_before methods
-
-        // Temporarily just return success
+        let _ = self.get_checkpoint_data()?;
         Ok(())
     }
 
     /// Recovers system from checkpoint
     pub fn recover_from_checkpoint(&self, _checkpoint_lsn: LogSequenceNumber) -> Result<()> {
-        // TODO: Implement recovery from checkpoint
+        self.analyze_logs()?;
         Ok(())
     }
 
@@ -341,17 +293,13 @@ impl RecoveryManager {
             timestamp: SystemTime::now(),
             active_transactions: transactions.len(),
             dirty_pages: pages.len(),
-            last_lsn: 0, // TODO: Implement getting real LSN
+            last_lsn: self.wal.get_current_lsn(),
         })
     }
 
     /// Gets next LSN
     fn get_next_lsn(&self) -> Result<LogSequenceNumber> {
-        // TODO: Implement getting next LSN
-        Ok(SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64)
+        Ok(self.wal.get_current_lsn().saturating_add(1))
     }
 
     /// Updates recovery statistics

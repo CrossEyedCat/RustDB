@@ -7,7 +7,7 @@ use crate::storage::index::BPlusTree;
 use crate::storage::index::Index;
 use crate::storage::page_manager::PageManager as StoragePageManager;
 use crate::storage::tuple::Tuple;
-use crate::{PageId, RecordId, Row};
+use crate::{RecordId, Row};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -45,26 +45,17 @@ pub struct OperatorStatistics {
     pub memory_used_bytes: usize,
 }
 
-/// Table scan operator
+/// Table scan operator — reads heap records via [`StoragePageManager::select`] and deserializes [`Tuple`] to [`Row`].
 pub struct TableScanOperator {
-    /// Table name
+    #[allow(dead_code)]
     table_name: String,
-    /// Page manager
     page_manager: Arc<Mutex<StoragePageManager>>,
-    /// Current page
-    current_page_id: Option<PageId>,
-    /// Current position in page
-    current_position: usize,
-    /// Filter condition
     filter_condition: Option<String>,
-    /// Table schema
+    /// Projection column names from the plan (`*` = all tuple columns).
     schema: Vec<String>,
-    /// Statistics
     statistics: OperatorStatistics,
-    /// Page buffer
-    page_buffer: HashMap<PageId, Vec<u8>>,
-    /// Maximum buffer size
-    max_buffer_size: usize,
+    cached_rows: Option<Vec<Row>>,
+    cursor: usize,
 }
 
 impl TableScanOperator {
@@ -78,113 +69,105 @@ impl TableScanOperator {
         Ok(Self {
             table_name,
             page_manager,
-            current_page_id: None,
-            current_position: 0,
             filter_condition,
             schema,
             statistics: OperatorStatistics::default(),
-            page_buffer: HashMap::new(),
-            max_buffer_size: 100, // Maximum 100 pages in buffer
+            cached_rows: None,
+            cursor: 0,
         })
     }
 
-    /// Load page into buffer (simplified version)
-    fn load_page(&mut self, page_id: PageId) -> Result<Vec<u8>> {
-        // Check if page is in buffer
-        if let Some(page_data) = self.page_buffer.get(&page_id) {
-            return Ok(page_data.clone());
+    fn materialize(&mut self) -> Result<()> {
+        if self.cached_rows.is_some() {
+            return Ok(());
         }
+        let mut pm = self
+            .page_manager
+            .lock()
+            .map_err(|_| Error::lock("page manager poisoned"))?;
+        let records = pm.select(None)?;
+        self.statistics.io_operations = self.statistics.io_operations.saturating_add(1);
+        let mut rows = Vec::new();
+        for (_rid, data) in records {
+            let tuple = match Tuple::from_bytes(&data) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if tuple.is_deleted {
+                continue;
+            }
+            rows.push(Self::tuple_to_row(&tuple, &self.schema));
+        }
+        self.cached_rows = Some(rows);
+        Ok(())
+    }
 
-        // Simplified implementation - create test data
-        let page_data = vec![0u8; 4096]; // Standard page size
+    fn tuple_to_row(tuple: &Tuple, projection: &[String]) -> Row {
+        let mut row = Row::new();
+        row.version = tuple.version;
+        row.created_at = tuple.created_at;
+        row.updated_at = tuple.updated_at;
 
-        // Add to buffer
-        if self.page_buffer.len() >= self.max_buffer_size {
-            // Remove oldest page (simple FIFO strategy)
-            let oldest_page = self.page_buffer.keys().next().cloned();
-            if let Some(old_page_id) = oldest_page {
-                self.page_buffer.remove(&old_page_id);
+        let wildcard = projection.is_empty() || projection.iter().any(|c| c == "*");
+        if wildcard {
+            if !tuple.values.contains_key("id") {
+                row.set_value(
+                    "id",
+                    ColumnValue::new(DataType::BigInt(tuple.id as i64)),
+                );
+            }
+            let mut keys: Vec<_> = tuple.values.keys().cloned().collect();
+            keys.sort();
+            for k in keys {
+                if let Some(v) = tuple.values.get(&k) {
+                    row.set_value(&k, v.clone());
+                }
+            }
+        } else {
+            for p in projection {
+                if p == "id" {
+                    let cv = tuple
+                        .values
+                        .get("id")
+                        .cloned()
+                        .unwrap_or_else(|| ColumnValue::new(DataType::BigInt(tuple.id as i64)));
+                    row.set_value("id", cv);
+                } else if let Some(v) = tuple.values.get(p) {
+                    row.set_value(p, v.clone());
+                }
             }
         }
-
-        self.page_buffer.insert(page_id, page_data.clone());
-        self.statistics.io_operations += 1;
-
-        Ok(page_data)
+        row
     }
 
-    /// Find next page with data (simplified version)
-    fn find_next_page(&mut self) -> Result<Option<PageId>> {
-        // Simplified implementation - return sequential pages
-        let next_page = if let Some(current) = self.current_page_id {
-            current + 1
-        } else {
-            1 // First data page
-        };
-
-        // Limit number of pages for testing
-        if next_page <= 10 {
-            Ok(Some(next_page))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Apply filter to row
     fn apply_filter(&self, row: &Row) -> bool {
         if let Some(condition) = &self.filter_condition {
-            // Simplified filter implementation
-            self.evaluate_condition(row, condition)
+            let row_string = format!("{:?}", row);
+            row_string.contains(condition)
         } else {
-            true // No filter - pass all rows
+            true
         }
-    }
-
-    /// Evaluate filter condition
-    fn evaluate_condition(&self, row: &Row, condition: &str) -> bool {
-        // Simplified implementation - just check for substring presence
-        let row_string = format!("{:?}", row);
-        row_string.contains(condition)
     }
 }
 
 impl Operator for TableScanOperator {
     fn next(&mut self) -> Result<Option<Row>> {
+        self.materialize()?;
+        let rows = self
+            .cached_rows
+            .as_ref()
+            .ok_or_else(|| Error::query_execution("table scan cache missing"))?;
         let start_time = std::time::Instant::now();
 
-        loop {
-            // If we don't have current page, find next one
-            if self.current_page_id.is_none() {
-                self.current_page_id = self.find_next_page()?;
-                if self.current_page_id.is_none() {
-                    // No more pages
-                    break;
-                }
-                self.current_position = 0;
+        while self.cursor < rows.len() {
+            let row = &rows[self.cursor];
+            self.cursor += 1;
+            self.statistics.rows_processed += 1;
+            if self.apply_filter(row) {
+                self.statistics.rows_returned += 1;
+                self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+                return Ok(Some(row.clone()));
             }
-
-            let page_id = self.current_page_id.unwrap();
-            let page_data = self.load_page(page_id)?;
-
-            // Parse page and extract rows
-            let rows = self.parse_page_rows(&page_data)?;
-
-            // Process rows on current page
-            while self.current_position < rows.len() {
-                let row = &rows[self.current_position];
-                self.current_position += 1;
-                self.statistics.rows_processed += 1;
-
-                // Apply filter
-                if self.apply_filter(row) {
-                    self.statistics.rows_returned += 1;
-                    self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
-                    return Ok(Some(row.clone()));
-                }
-            }
-
-            // Move to next page
-            self.current_page_id = None;
         }
 
         self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
@@ -192,41 +175,31 @@ impl Operator for TableScanOperator {
     }
 
     fn reset(&mut self) -> Result<()> {
-        self.current_page_id = None;
-        self.current_position = 0;
+        self.cursor = 0;
+        self.cached_rows = None;
         self.statistics = OperatorStatistics::default();
-        self.page_buffer.clear();
         Ok(())
     }
 
     fn get_schema(&self) -> Result<Vec<String>> {
-        Ok(self.schema.clone())
+        if let Some(cache) = &self.cached_rows {
+            if let Some(first) = cache.first() {
+                let mut keys: Vec<_> = first.values.keys().cloned().collect();
+                keys.sort();
+                return Ok(keys);
+            }
+        }
+        if self.schema.iter().any(|c| c == "*") {
+            Ok(vec!["*".to_string()])
+        } else if !self.schema.is_empty() {
+            Ok(self.schema.clone())
+        } else {
+            Ok(vec!["*".to_string()])
+        }
     }
 
     fn get_statistics(&self) -> OperatorStatistics {
         self.statistics.clone()
-    }
-}
-
-impl TableScanOperator {
-    /// Parse rows from page data
-    fn parse_page_rows(&self, _page_data: &[u8]) -> Result<Vec<Row>> {
-        // Simplified implementation - create test rows
-        let mut rows = Vec::new();
-
-        // Create several test rows
-        for i in 0..10 {
-            let mut row = Row::new();
-            for col in &self.schema {
-                row.set_value(
-                    col,
-                    ColumnValue::new(DataType::Varchar(format!("{}_{}", col, i))),
-                );
-            }
-            rows.push(row);
-        }
-
-        Ok(rows)
     }
 }
 

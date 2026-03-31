@@ -3,12 +3,14 @@
 //! Hash index implementation for fast key lookups.
 //! Supports dynamic resizing and multiple collision resolution strategies.
 
-use crate::common::{Result, Error};
+use crate::common::{Error, Result};
 use crate::storage::index::{Index, IndexStatistics};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::fmt::Debug;
+use std::hash::{Hash, Hasher};
 
 /// Collision resolution strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,10 +23,14 @@ pub enum CollisionResolution {
 
 /// Hash table entry for chaining
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ChainEntry<K, V> 
+#[serde(bound(
+    serialize = "K: Serialize, V: Serialize",
+    deserialize = "K: DeserializeOwned, V: DeserializeOwned"
+))]
+struct ChainEntry<K, V>
 where
-    K: Hash + Eq + Clone + Serialize + for<'de> Deserialize<'de>,
-    V: Clone + Serialize + for<'de> Deserialize<'de>,
+    K: Hash + Eq + Clone + Serialize + DeserializeOwned,
+    V: Clone + Serialize + DeserializeOwned,
 {
     key: K,
     value: V,
@@ -33,10 +39,14 @@ where
 
 /// Hash table entry for open addressing
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "K: Serialize, V: Serialize",
+    deserialize = "K: DeserializeOwned, V: DeserializeOwned"
+))]
 enum HashEntry<K, V>
 where
-    K: Hash + Eq + Clone + Serialize + for<'de> Deserialize<'de>,
-    V: Clone + Serialize + for<'de> Deserialize<'de>,
+    K: Hash + Eq + Clone + Serialize + DeserializeOwned,
+    V: Clone + Serialize + DeserializeOwned,
 {
     /// Empty slot
     Empty,
@@ -47,11 +57,11 @@ where
 }
 
 /// Hash index
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HashIndex<K, V>
 where
-    K: Hash + Eq + Clone + Serialize + for<'de> Deserialize<'de>,
-    V: Clone + Serialize + for<'de> Deserialize<'de>,
+    K: Hash + Eq + Clone + Serialize + DeserializeOwned,
+    V: Clone + Serialize + DeserializeOwned,
 {
     /// Chaining table
     chains: Option<Vec<Option<ChainEntry<K, V>>>>,
@@ -67,14 +77,14 @@ where
     deleted_count: usize,
     /// Load factor threshold
     load_factor_threshold: f64,
-    /// Operation statistics
-    statistics: IndexStatistics,
+    /// Operation statistics ([`RefCell`] so [`Index::search`] / [`Index::range_search`] can update counters.)
+    statistics: RefCell<IndexStatistics>,
 }
 
 impl<K, V> HashIndex<K, V>
 where
-    K: Hash + Eq + Clone + Serialize + for<'de> Deserialize<'de>,
-    V: Clone + Serialize + for<'de> Deserialize<'de>,
+    K: Hash + Eq + Clone + Serialize + DeserializeOwned,
+    V: Clone + Serialize + DeserializeOwned,
 {
     /// Creates a new hash index with the given parameters
     pub fn new(
@@ -101,7 +111,7 @@ where
             size: 0,
             deleted_count: 0,
             load_factor_threshold,
-            statistics: IndexStatistics::default(),
+            statistics: RefCell::new(IndexStatistics::default()),
         }
     }
     
@@ -110,9 +120,9 @@ where
         Self::new(1024, CollisionResolution::Chaining, 0.75)
     }
     
-    /// Returns index statistics
-    pub fn get_statistics(&self) -> &IndexStatistics {
-        &self.statistics
+    /// Returns a snapshot of index statistics
+    pub fn get_statistics(&self) -> IndexStatistics {
+        self.statistics.borrow().clone()
     }
     
     /// Computes key hash
@@ -131,8 +141,10 @@ where
         let mut hasher2 = DefaultHasher::new();
         key.hash(&mut hasher2);
         let hash2 = (hasher2.finish() as usize) | 1; // Force odd secondary hash
-        
-        (hash1 + attempt * hash2) % self.capacity
+
+        hash1
+            .wrapping_add(attempt.wrapping_mul(hash2))
+            % self.capacity
     }
     
     /// Returns whether the table should grow
@@ -162,6 +174,7 @@ where
         self.capacity = new_capacity;
         self.size = 0;
         self.deleted_count = 0;
+        self.statistics.borrow_mut().total_elements = 0;
         
         match self.collision_resolution {
             CollisionResolution::Chaining => {
@@ -210,59 +223,60 @@ where
     
     /// Insert using chaining
     fn insert_chaining(&mut self, key: K, value: V) -> Result<()> {
-        let chains = self.chains.as_mut().unwrap();
         let index = self.hash_key(&key);
-        
-        // Check if key already exists
-        let mut current = &mut chains[index];
-        loop {
-            match current {
-                None => {
-                    // Insert new entry
-                    *current = Some(ChainEntry {
-                        key,
-                        value,
-                        next: None,
-                    });
-                    self.size += 1;
-                    self.statistics.total_elements += 1;
-                    break;
-                },
-                Some(ref mut entry) => {
-                    if entry.key == key {
-                        // Update existing entry
-                        entry.value = value;
-                        break;
+        let chains = self.chains.as_mut().unwrap();
+
+        let head = &mut chains[index];
+        match head {
+            None => {
+                *head = Some(ChainEntry {
+                    key,
+                    value,
+                    next: None,
+                });
+                self.size += 1;
+                self.statistics.borrow_mut().total_elements += 1;
+            }
+            Some(entry) => {
+                if entry.key == key {
+                    entry.value = value;
+                    return Ok(());
+                }
+                let mut link = &mut entry.next;
+                loop {
+                    match link {
+                        None => {
+                            *link = Some(Box::new(ChainEntry {
+                                key,
+                                value,
+                                next: None,
+                            }));
+                            self.size += 1;
+                            self.statistics.borrow_mut().total_elements += 1;
+                            break;
+                        }
+                        Some(boxed) => {
+                            if boxed.key == key {
+                                boxed.value = value;
+                                break;
+                            }
+                            link = &mut boxed.next;
+                        }
                     }
-                    
-                    if entry.next.is_none() {
-                        // Append to chain
-                        entry.next = Some(Box::new(ChainEntry {
-                            key,
-                            value,
-                            next: None,
-                        }));
-                        self.size += 1;
-                        self.statistics.total_elements += 1;
-                        break;
-                    }
-                    
-                    // Walk chain
-                    current = &mut entry.next.as_mut().unwrap().next;
                 }
             }
         }
-        
+
         Ok(())
     }
     
     /// Insert using open addressing
     fn insert_open_addressing(&mut self, key: K, value: V) -> Result<()> {
-        let table = self.open_table.as_mut().unwrap();
-        
-        for attempt in 0..self.capacity {
+        let cap = self.capacity;
+        for attempt in 0..cap {
             let index = self.hash_key_double(&key, attempt);
-            
+            let table = self.open_table.as_mut().unwrap();
+
             match &table[index] {
                 HashEntry::Empty | HashEntry::Deleted => {
                     if matches!(table[index], HashEntry::Deleted) {
@@ -270,20 +284,18 @@ where
                     }
                     table[index] = HashEntry::Occupied { key, value };
                     self.size += 1;
-                    self.statistics.total_elements += 1;
+                    self.statistics.borrow_mut().total_elements += 1;
                     return Ok(());
-                },
+                }
                 HashEntry::Occupied { key: existing_key, .. } => {
                     if *existing_key == key {
-                        // Update existing entry
                         table[index] = HashEntry::Occupied { key, value };
                         return Ok(());
                     }
-                    // Continue probing
                 }
             }
         }
-        
+
         Err(Error::database("Hash table is full"))
     }
     
@@ -291,15 +303,15 @@ where
     fn search_chaining(&self, key: &K) -> Option<V> {
         let chains = self.chains.as_ref().unwrap();
         let index = self.hash_key(key);
-        
-        let mut current = &chains[index];
-        while let Some(ref entry) = current {
+
+        let mut current = chains[index].as_ref();
+        while let Some(entry) = current {
             if entry.key == *key {
                 return Some(entry.value.clone());
             }
-            current = &entry.next.as_ref().map(|boxed| boxed.as_ref());
+            current = entry.next.as_ref().map(|b| b.as_ref());
         }
-        
+
         None
     }
     
@@ -326,45 +338,56 @@ where
     
     /// Delete using chaining
     fn delete_chaining(&mut self, key: &K) -> Result<bool> {
-        let chains = self.chains.as_mut().unwrap();
         let index = self.hash_key(key);
-        
+        let chains = self.chains.as_mut().unwrap();
+
         let chain_head = &mut chains[index];
-        
-        // Check head of chain
-        if let Some(ref entry) = chain_head {
+
+        if chain_head.is_none() {
+            return Ok(false);
+        }
+
+        if let Some(entry) = chain_head.as_ref() {
             if entry.key == *key {
-                *chain_head = entry.next.as_ref().map(|boxed| *boxed.clone());
+                let removed = chain_head.take().unwrap();
+                *chain_head = removed.next.map(|b| *b);
                 self.size -= 1;
-                self.statistics.total_elements -= 1;
+                {
+                    let mut s = self.statistics.borrow_mut();
+                    s.total_elements = s.total_elements.saturating_sub(1);
+                }
                 return Ok(true);
             }
         }
-        
-        // Search remainder of chain
-        let mut current = chain_head;
-        while let Some(ref mut entry) = current {
-            if let Some(ref mut next_entry) = entry.next {
-                if next_entry.key == *key {
-                    entry.next = next_entry.next.take();
-                    self.size -= 1;
-                    self.statistics.total_elements -= 1;
-                    return Ok(true);
+
+        let mut link = &mut chain_head.as_mut().unwrap().next;
+        loop {
+            match link.take() {
+                None => return Ok(false),
+                Some(mut node) => {
+                    if node.key == *key {
+                        *link = node.next.take();
+                        self.size -= 1;
+                        {
+                            let mut s = self.statistics.borrow_mut();
+                            s.total_elements = s.total_elements.saturating_sub(1);
+                        }
+                        return Ok(true);
+                    }
+                    *link = Some(node);
+                    link = &mut link.as_mut().unwrap().next;
                 }
             }
-            current = &mut entry.next.as_mut().map(|boxed| boxed.as_mut());
         }
-        
-        Ok(false)
     }
     
     /// Delete using open addressing
     fn delete_open_addressing(&mut self, key: &K) -> Result<bool> {
-        let table = self.open_table.as_mut().unwrap();
-        
-        for attempt in 0..self.capacity {
+        let cap = self.capacity;
+        for attempt in 0..cap {
             let index = self.hash_key_double(key, attempt);
-            
+            let table = self.open_table.as_mut().unwrap();
+
             match &table[index] {
                 HashEntry::Empty => return Ok(false),
                 HashEntry::Deleted => continue,
@@ -373,7 +396,10 @@ where
                         table[index] = HashEntry::Deleted;
                         self.size -= 1;
                         self.deleted_count += 1;
-                        self.statistics.total_elements -= 1;
+                        {
+                            let mut s = self.statistics.borrow_mut();
+                            s.total_elements = s.total_elements.saturating_sub(1);
+                        }
                         return Ok(true);
                     }
                 }
@@ -384,22 +410,23 @@ where
     }
     
     /// Refresh index statistics
-    fn update_statistics(&mut self) {
-        self.statistics.fill_factor = self.size as f64 / self.capacity as f64;
-        self.statistics.depth = 1; // Hash table depth is 1
+    fn update_statistics(&self) {
+        let mut s = self.statistics.borrow_mut();
+        s.fill_factor = self.size as f64 / self.capacity as f64;
+        s.depth = 1; // Hash table depth is 1
     }
 }
 
 impl<K, V> Index for HashIndex<K, V>
 where
-    K: Hash + Eq + Clone + Serialize + for<'de> Deserialize<'de> + Debug,
-    V: Clone + Serialize + for<'de> Deserialize<'de> + Debug,
+    K: Hash + Eq + Ord + Clone + Serialize + DeserializeOwned + Debug,
+    V: Clone + Serialize + DeserializeOwned + Debug,
 {
     type Key = K;
     type Value = V;
     
     fn insert(&mut self, key: Self::Key, value: Self::Value) -> Result<()> {
-        self.statistics.insert_operations += 1;
+        self.statistics.borrow_mut().insert_operations += 1;
         
         if self.should_resize() {
             self.resize()?;
@@ -411,8 +438,8 @@ where
     }
     
     fn search(&self, key: &Self::Key) -> Result<Option<Self::Value>> {
-        // self.statistics.search_operations += 1; // TODO: make statistics mutable
-        
+        self.statistics.borrow_mut().search_operations += 1;
+
         let result = match self.collision_resolution {
             CollisionResolution::Chaining => self.search_chaining(key),
             CollisionResolution::OpenAddressing => self.search_open_addressing(key),
@@ -422,7 +449,7 @@ where
     }
     
     fn delete(&mut self, key: &Self::Key) -> Result<bool> {
-        self.statistics.delete_operations += 1;
+        self.statistics.borrow_mut().delete_operations += 1;
         
         let result = match self.collision_resolution {
             CollisionResolution::Chaining => self.delete_chaining(key)?,
@@ -434,8 +461,8 @@ where
     }
     
     fn range_search(&self, _start: &Self::Key, _end: &Self::Key) -> Result<Vec<(Self::Key, Self::Value)>> {
-        // self.statistics.range_search_operations += 1; // TODO: make statistics mutable
-        
+        self.statistics.borrow_mut().range_search_operations += 1;
+
         // Hash indexes do not support efficient range scans
         // Return empty result
         Ok(Vec::new())

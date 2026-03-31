@@ -5,6 +5,7 @@
 
 use crate::common::{Error, Result};
 use crate::storage::index::{Index, IndexStatistics};
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::fmt::Debug;
 
@@ -70,9 +71,18 @@ where
         self.keys.len() < (degree - 1) / 2
     }
 
-    /// Finds position for key insertion
+    /// Finds position for key insertion (leaf: sorted insert / update index)
     pub fn find_key_position(&self, key: &K) -> usize {
         self.keys.binary_search(key).unwrap_or_else(|pos| pos)
+    }
+
+    /// Child index for internal-node descent: `Err(i)` → child `i`;
+    /// if key equals separator `keys[i]`, use child `i + 1` (right subtree).
+    pub fn descend_child_index(&self, key: &K) -> usize {
+        match self.keys.binary_search(key) {
+            Ok(i) => i + 1,
+            Err(i) => i,
+        }
     }
 
     /// Searches for key in node
@@ -92,8 +102,8 @@ where
     root: Option<Box<BTreeNode<K, V>>>,
     /// Tree degree (maximum number of children)
     degree: usize,
-    /// Operation statistics
-    statistics: IndexStatistics,
+    /// Operation statistics (interior mutability for [`Index::search`])
+    statistics: RefCell<IndexStatistics>,
 }
 
 impl<K, V> BPlusTree<K, V>
@@ -112,7 +122,7 @@ where
         Self {
             root: None,
             degree,
-            statistics: IndexStatistics::default(),
+            statistics: RefCell::new(IndexStatistics::default()),
         }
     }
 
@@ -121,9 +131,9 @@ where
         Self::new(DEFAULT_DEGREE)
     }
 
-    /// Returns tree statistics
-    pub fn get_statistics(&self) -> &IndexStatistics {
-        &self.statistics
+    /// Returns a snapshot of tree statistics
+    pub fn get_statistics(&self) -> IndexStatistics {
+        self.statistics.borrow().clone()
     }
 
     /// Calculates tree depth
@@ -150,9 +160,10 @@ where
     }
 
     /// Updates tree statistics
-    fn update_statistics(&mut self) {
-        self.statistics.depth = self.calculate_depth();
-        self.statistics.fill_factor = self.calculate_fill_factor();
+    fn update_statistics(&self) {
+        let mut s = self.statistics.borrow_mut();
+        s.depth = self.calculate_depth();
+        s.fill_factor = self.calculate_fill_factor();
     }
 
     /// Calculates tree fill factor
@@ -197,13 +208,12 @@ where
         new_node.keys = node.keys.split_off(mid);
         new_node.values = node.values.split_off(mid);
 
-        // Link leaf nodes
+        // Link leaf nodes (right sibling; parent also receives `new_box`)
         new_node.next_leaf = node.next_leaf.take();
-        node.next_leaf = Some(Box::new(new_node.clone()));
-
         let separator_key = new_node.keys[0].clone();
-
-        Ok((separator_key, Box::new(new_node)))
+        let new_box = Box::new(new_node);
+        node.next_leaf = Some(new_box.clone());
+        Ok((separator_key, new_box))
     }
 
     /// Splits internal node
@@ -242,7 +252,7 @@ where
         // Insert new key-value
         node.keys.insert(pos, key);
         node.values.insert(pos, value);
-        self.statistics.total_elements += 1;
+        self.statistics.borrow_mut().total_elements += 1;
 
         // Check if split is needed
         if node.is_full(self.degree) {
@@ -260,7 +270,7 @@ where
         key: K,
         value: V,
     ) -> Result<Option<(K, Box<BTreeNode<K, V>>)>> {
-        let pos = node.find_key_position(&key);
+        let pos = node.descend_child_index(&key);
 
         // Recursively insert into appropriate child
         let split_result = if node.children[pos].is_leaf {
@@ -296,8 +306,7 @@ where
                 None
             }
         } else {
-            // Search in internal node
-            let pos = node.find_key_position(key);
+            let pos = node.descend_child_index(key);
             if pos < node.children.len() {
                 self.search_in_node(&node.children[pos], key)
             } else {
@@ -367,49 +376,31 @@ where
     type Value = V;
 
     fn insert(&mut self, key: Self::Key, value: Self::Value) -> Result<()> {
-        self.statistics.insert_operations += 1;
+        self.statistics.borrow_mut().insert_operations += 1;
 
         if self.root.is_none() {
-            // Create root leaf node
             let mut root = BTreeNode::new_leaf();
             root.keys.push(key);
             root.values.push(value);
             self.root = Some(Box::new(root));
-            self.statistics.total_elements = 1;
+            self.statistics.borrow_mut().total_elements = 1;
             self.update_statistics();
             return Ok(());
         }
 
-        // Simple implementation without node splitting for now
-        let root = self.root.as_mut().unwrap();
-        if root.is_leaf {
-            // Simple insertion into leaf
-            let pos = root.find_key_position(&key);
-            if pos < root.keys.len() && root.keys[pos] == key {
-                // Update existing key
-                root.values[pos] = value;
-            } else {
-                // Insert new key
-                root.keys.insert(pos, key);
-                root.values.insert(pos, value);
-                self.statistics.total_elements += 1;
-            }
+        let mut root_box = self.root.take().unwrap();
+        let split_result = if root_box.is_leaf {
+            self.insert_into_leaf(&mut root_box, key, value)?
         } else {
-            // For internal nodes for now just add to first leaf node
-            // TODO: Implement full insertion into internal nodes
-            return Err(Error::database(
-                "Internal node insertion not implemented yet",
-            ));
-        }
+            self.insert_into_internal(&mut root_box, key, value)?
+        };
+        self.root = Some(root_box);
 
-        let split_result: Option<(K, Box<BTreeNode<K, V>>)> = None;
-
-        // If root was split, create new root
-        if let Some((separator_key, new_node)) = split_result {
+        if let Some((separator_key, new_child)) = split_result {
             let mut new_root = BTreeNode::new_internal();
             new_root.keys.push(separator_key);
             new_root.children.push(self.root.take().unwrap());
-            new_root.children.push(new_node);
+            new_root.children.push(new_child);
             self.root = Some(Box::new(new_root));
         }
 
@@ -418,7 +409,7 @@ where
     }
 
     fn search(&self, key: &Self::Key) -> Result<Option<Self::Value>> {
-        // self.statistics.search_operations += 1; // TODO: Make statistics mutable
+        self.statistics.borrow_mut().search_operations += 1;
 
         match &self.root {
             None => Ok(None),
@@ -427,7 +418,7 @@ where
     }
 
     fn delete(&mut self, key: &Self::Key) -> Result<bool> {
-        self.statistics.delete_operations += 1;
+        self.statistics.borrow_mut().delete_operations += 1;
 
         if self.root.is_none() {
             return Ok(false);
@@ -438,7 +429,10 @@ where
             if let Some(pos) = root.search_key(key) {
                 root.keys.remove(pos);
                 root.values.remove(pos);
-                self.statistics.total_elements = self.statistics.total_elements.saturating_sub(1);
+                {
+                    let mut s = self.statistics.borrow_mut();
+                    s.total_elements = s.total_elements.saturating_sub(1);
+                }
                 if root.keys.is_empty() {
                     self.root = None;
                 }
@@ -446,16 +440,17 @@ where
                 return Ok(true);
             }
         } else {
-            // Find child and recurse - simplified: only handle single-level for now
-            let pos = root.find_key_position(key);
+            let pos = root.descend_child_index(key);
             if pos < root.children.len() {
                 let child = &mut root.children[pos];
                 if child.is_leaf {
                     if let Some(idx) = child.search_key(key) {
                         child.keys.remove(idx);
                         child.values.remove(idx);
-                        self.statistics.total_elements =
-                            self.statistics.total_elements.saturating_sub(1);
+                        {
+                            let mut s = self.statistics.borrow_mut();
+                            s.total_elements = s.total_elements.saturating_sub(1);
+                        }
                         self.update_statistics();
                         return Ok(true);
                     }
@@ -470,7 +465,7 @@ where
         start: &Self::Key,
         end: &Self::Key,
     ) -> Result<Vec<(Self::Key, Self::Value)>> {
-        // self.statistics.range_search_operations += 1; // TODO: Make statistics mutable
+        self.statistics.borrow_mut().range_search_operations += 1;
 
         if start > end {
             return Ok(Vec::new());
@@ -487,7 +482,7 @@ where
     }
 
     fn size(&self) -> usize {
-        self.statistics.total_elements as usize
+        self.statistics.borrow().total_elements as usize
     }
 }
 

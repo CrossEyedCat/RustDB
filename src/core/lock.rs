@@ -265,6 +265,34 @@ impl LockManager {
         }
     }
 
+    /// Returns the first transaction holding a lock on `resource` (if any).
+    pub fn get_lock_owner(&self, resource: &str) -> Result<Option<TransactionId>> {
+        let active_locks = self.active_locks.read().map_err(|_| {
+            Error::internal("Failed to acquire read lock on active locks".to_string())
+        })?;
+        Ok(active_locks
+            .get(resource)
+            .and_then(|locks| locks.first().map(|l| l.transaction_id)))
+    }
+
+    /// Releases every lock held by `transaction_id`.
+    pub fn release_all_locks(&self, transaction_id: TransactionId) -> Result<()> {
+        let resources: Vec<String> = {
+            let active_locks = self.active_locks.read().map_err(|_| {
+                Error::internal("Failed to acquire read lock on active locks".to_string())
+            })?;
+            active_locks
+                .iter()
+                .filter(|(_, locks)| locks.iter().any(|l| l.transaction_id == transaction_id))
+                .map(|(r, _)| r.clone())
+                .collect()
+        };
+        for r in resources {
+            self.release_lock(transaction_id, r)?;
+        }
+        Ok(())
+    }
+
     /// Releases lock
     pub fn release_lock(&self, transaction_id: TransactionId, resource: String) -> Result<()> {
         // Remove lock

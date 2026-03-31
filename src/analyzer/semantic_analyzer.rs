@@ -2,7 +2,6 @@
 
 use crate::common::Result;
 use crate::parser::ast::*;
-// use crate::catalog::schema::Schema; // TODO: Implement when schema module is ready
 use crate::storage::schema_manager::SchemaManager;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

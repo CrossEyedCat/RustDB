@@ -3,9 +3,10 @@
 //! Provides command-line interface for database management and language settings
 
 use crate::common::{set_language, t, DatabaseConfig, I18nManager, Language, MessageKey, I18N};
-use crate::network::engine::{EngineHandle, EngineOutput, StubEngine};
+use crate::network::engine::{EngineHandle, EngineOutput, SessionContext};
+use crate::network::SqlEngine;
 use crate::network::server::QuicServer;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -155,7 +156,7 @@ impl Cli {
         }
     }
 
-    /// Starts the QUIC listener with [`StubEngine`] until Ctrl+C (production wiring uses [`EngineHandle`] for `Database` later).
+    /// Starts the QUIC listener with [`SqlEngine`] (real parse → plan → execute for `SELECT`) until Ctrl+C.
     async fn run_server(
         &self,
         host_arg: Option<String>,
@@ -210,11 +211,10 @@ impl Cli {
             );
         }
 
-        let engine: Arc<dyn EngineHandle> =
-            Arc::new(StubEngine::fixed_ok(EngineOutput::ResultSet {
-                columns: vec![],
-                rows: vec![],
-            }));
+        let data_root = PathBuf::from(&db.data_directory);
+        let engine: Arc<dyn EngineHandle> = Arc::new(
+            SqlEngine::open(data_root).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?,
+        );
 
         let endpoint = srv.endpoint().clone();
         let run_task = tokio::spawn({
@@ -294,13 +294,25 @@ impl Cli {
         let data_path = data_dir.cloned().unwrap_or_else(|| PathBuf::from("./data"));
         println!("{}: {:?}", t(MessageKey::Info), data_path);
 
-        // TODO: Implement database creation
+        let db_path = data_path.join(name);
+        std::fs::create_dir_all(&db_path).map_err(|e| e.to_string())?;
+        let marker = db_path.join(".rustdb");
+        std::fs::write(
+            &marker,
+            format!(
+                "RustDB database\nname={}\npath={}\n",
+                name,
+                db_path.display()
+            ),
+        )
+        .map_err(|e| e.to_string())?;
+
         println!("{}", t(MessageKey::Success));
 
         Ok(())
     }
 
-    /// Executes an SQL query
+    /// Executes an SQL query via [`SqlEngine`] (same pipeline as the QUIC server).
     async fn execute_query(
         &self,
         query: &str,
@@ -308,11 +320,30 @@ impl Cli {
     ) -> Result<(), Box<dyn std::error::Error>> {
         println!("{}: {}", t(MessageKey::Info), query);
 
-        if let Some(db_name) = database {
+        let config = self.load_config()?;
+        let base = PathBuf::from(&config.data_directory);
+        let data_dir = if let Some(db_name) = database {
             println!("{}: {}", t(MessageKey::Info), db_name);
+            base.join(db_name)
+        } else {
+            base
+        };
+
+        let engine = SqlEngine::open(data_dir)?;
+        let mut ctx = SessionContext::default();
+        match engine.execute_sql(query, &mut ctx) {
+            Ok(EngineOutput::ResultSet { columns, rows }) => {
+                println!("columns: {:?}", columns);
+                for row in rows {
+                    println!("{:?}", row);
+                }
+            }
+            Ok(EngineOutput::ExecutionOk { rows_affected }) => {
+                println!("rows_affected: {}", rows_affected);
+            }
+            Err(e) => return Err(e.message.into()),
         }
 
-        // TODO: Implement query execution
         println!("{}", t(MessageKey::Success));
 
         Ok(())
@@ -321,10 +352,8 @@ impl Cli {
     /// Shows help
     async fn show_help(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", t(MessageKey::Welcome));
-        println!("{}", t(MessageKey::Info));
-
-        // TODO: Show detailed help
-
+        Cli::command().print_help()?;
+        println!();
         Ok(())
     }
 }

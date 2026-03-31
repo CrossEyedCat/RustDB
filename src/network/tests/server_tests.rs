@@ -176,5 +176,5 @@ fn test_server_statistics() {
 
 #[test]
 fn test_network_server_legacy_new() {
-    assert!(NetworkServer::new().is_ok());
+    assert!(NetworkServer::new(ServerConfig::default()).is_ok());
 }

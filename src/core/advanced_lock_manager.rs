@@ -505,7 +505,7 @@ impl AdvancedLockManager {
             resource_type: resource_type.clone(),
             lock_mode,
             requested_at: Instant::now(),
-            priority: 0, // TODO: Implement prioritization
+            priority: (transaction_id.value() % 1000) as u32,
             timeout,
         };
 

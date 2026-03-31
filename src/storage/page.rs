@@ -297,22 +297,16 @@ impl Page {
     }
 
     /// Creates a page from bytes with specified page_id
+    ///
+    /// Parses slotted or legacy bincode format (see [`Self::from_bytes`]), then sets
+    /// [`PageHeader::page_id`] to `page_id` (caller’s canonical id, e.g. from storage layer).
     pub fn from_bytes_with_id(bytes: &[u8], page_id: PageId) -> Result<Self> {
         if bytes.len() != PAGE_SIZE {
             return Err(Error::validation("Invalid page size"));
         }
-
-        // TODO: Implement full deserialization
-        let header = PageHeader::new(page_id, PageType::Data);
-        let data = bytes.to_vec();
-        let free_space_map = vec![true; PAGE_SIZE - PAGE_HEADER_SIZE];
-
-        Ok(Self {
-            header,
-            slots: Vec::new(),
-            data,
-            free_space_map,
-        })
+        let mut page = Self::from_bytes(bytes)?;
+        page.header.page_id = page_id;
+        Ok(page)
     }
 
     /// Serializes the page to bytes (uses slotted format for compactness)
@@ -413,6 +407,38 @@ impl Page {
         self.update_free_space_map(offset, end_offset, false);
 
         Ok(offset as u32)
+    }
+
+    /// Inserts a record at a fixed byte offset (WAL recovery). Caller must ensure the span is free.
+    pub fn add_record_at_offset(
+        &mut self,
+        record_data: &[u8],
+        record_id: u64,
+        offset: u32,
+    ) -> Result<()> {
+        if record_data.len() > MAX_RECORD_SIZE {
+            return Err(Error::validation("Record is too large"));
+        }
+        let start = offset as usize;
+        let end = start + record_data.len();
+        if end > PAGE_SIZE {
+            return Err(Error::validation("Record does not fit on page"));
+        }
+        if self
+            .slots
+            .iter()
+            .any(|s| s.offset == offset && !s.is_deleted)
+        {
+            return Err(Error::validation("Record already exists at offset"));
+        }
+        self.data[start..end].copy_from_slice(record_data);
+        let slot = RecordSlot::new(offset, record_data.len() as u32, record_id);
+        self.slots.push(slot);
+        self.header.record_count += 1;
+        self.header.free_space -= record_data.len() as u32;
+        self.header.mark_dirty();
+        self.update_free_space_map(start, end, false);
+        Ok(())
     }
 
     /// Deletes a record by ID

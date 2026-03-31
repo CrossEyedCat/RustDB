@@ -290,9 +290,194 @@ impl Constraint {
     }
 
     /// Validates the constraint for a tuple
-    pub fn validate(&self, _tuple: &Tuple) -> Result<()> {
-        // TODO: Implement constraint validation
+    pub fn validate(&self, tuple: &Tuple) -> Result<()> {
+        match self.constraint_type {
+            ConstraintType::NotNull => {
+                for col in &self.columns {
+                    match tuple.get_value(col) {
+                        None => {
+                            return Err(Error::validation(format!(
+                                "Constraint '{}': column '{}' is missing (NOT NULL)",
+                                self.name, col
+                            )));
+                        }
+                        Some(v) if v.is_null() => {
+                            return Err(Error::validation(format!(
+                                "Constraint '{}': column '{}' cannot be NULL",
+                                self.name, col
+                            )));
+                        }
+                        Some(_) => {}
+                    }
+                }
+                Ok(())
+            }
+            ConstraintType::Default => Ok(()),
+            ConstraintType::Check | ConstraintType::Custom => self.validate_check_expression(tuple),
+        }
+    }
+
+    /// Parses `col op literal` CHECK forms: `>=`, `<=`, `!=`, `=`, `>`, `<`.
+    fn validate_check_expression(&self, tuple: &Tuple) -> Result<()> {
+        let expr = self.expression.trim();
+        if expr.is_empty() {
+            return Ok(());
+        }
+
+        let Some((left_col, op, right_raw)) = split_binary_comparison(expr) else {
+            // Constant-only expressions (e.g. placeholders `1` / `true` = always satisfied)
+            let e = expr.trim();
+            if e.eq_ignore_ascii_case("true")
+                || e == "1"
+                || e.eq_ignore_ascii_case("t")
+            {
+                return Ok(());
+            }
+            if e.eq_ignore_ascii_case("false") || e == "0" || e.eq_ignore_ascii_case("f") {
+                return Err(Error::validation(format!(
+                    "Constraint '{}': CHECK constant false",
+                    self.name
+                )));
+            }
+            return Err(Error::validation(format!(
+                "Constraint '{}': unsupported CHECK expression {:?}",
+                self.name, self.expression
+            )));
+        };
+
+        if !self.columns.is_empty() && !self.columns.iter().any(|c| c == left_col) {
+            return Err(Error::validation(format!(
+                "Constraint '{}': column '{}' is not listed in constraint columns {:?}",
+                self.name, left_col, self.columns
+            )));
+        }
+
+        let Some(cv) = tuple.get_value(left_col) else {
+            return Err(Error::validation(format!(
+                "Constraint '{}': column '{}' missing for CHECK",
+                self.name, left_col
+            )));
+        };
+        if cv.is_null() {
+            return Err(Error::validation(format!(
+                "Constraint '{}': column '{}' is NULL in CHECK",
+                self.name, left_col
+            )));
+        }
+
+        let rhs = parse_check_literal(right_raw)?;
+        let ok = compare_check_value(&cv, op, &rhs).map_err(|e| {
+            Error::validation(format!(
+                "Constraint '{}': {} (column '{}')",
+                self.name, e, left_col
+            ))
+        })?;
+
+        if !ok {
+            return Err(Error::validation(format!(
+                "Constraint '{}': CHECK failed ({})",
+                self.name, expr
+            )));
+        }
         Ok(())
+    }
+}
+
+/// Splits `a >= 0` style comparisons (longest operator first).
+fn split_binary_comparison(expr: &str) -> Option<(&str, &'static str, &str)> {
+    let expr = expr.trim();
+    const OPS: &[&str] = &[">=", "<=", "!=", "=", ">", "<"];
+    for op in OPS {
+        if let Some(i) = expr.find(op) {
+            let left = expr[..i].trim();
+            let rest = i + op.len();
+            if rest <= expr.len() {
+                let right = expr[rest..].trim();
+                if !left.is_empty() && !right.is_empty() {
+                    return Some((left, *op, right));
+                }
+            }
+        }
+    }
+    None
+}
+
+#[derive(Debug)]
+enum CheckLiteral {
+    Number(f64),
+    Str(String),
+}
+
+fn parse_check_literal(s: &str) -> Result<CheckLiteral> {
+    let s = s.trim();
+    if s.len() >= 2
+        && ((s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')))
+    {
+        return Ok(CheckLiteral::Str(
+            s[1..s.len() - 1].replace("''", "'").replace("\"\"", "\""),
+        ));
+    }
+    if s.eq_ignore_ascii_case("true") {
+        return Ok(CheckLiteral::Number(1.0));
+    }
+    if s.eq_ignore_ascii_case("false") {
+        return Ok(CheckLiteral::Number(0.0));
+    }
+    s.parse::<f64>()
+        .map(CheckLiteral::Number)
+        .map_err(|_| Error::validation(format!("Invalid CHECK literal {:?}", s)))
+}
+
+fn column_value_as_f64(cv: &ColumnValue) -> Option<f64> {
+    match &cv.data_type {
+        DataType::TinyInt(v) => Some(*v as f64),
+        DataType::SmallInt(v) => Some(*v as f64),
+        DataType::Integer(v) => Some(*v as f64),
+        DataType::BigInt(v) => Some(*v as f64),
+        DataType::Float(v) => Some(*v as f64),
+        DataType::Double(v) => Some(*v),
+        DataType::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
+        _ => None,
+    }
+}
+
+fn column_value_as_string(cv: &ColumnValue) -> Option<String> {
+    match &cv.data_type {
+        DataType::Char(s) | DataType::Varchar(s) | DataType::Text(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+fn compare_check_value(
+    cv: &ColumnValue,
+    op: &str,
+    rhs: &CheckLiteral,
+) -> std::result::Result<bool, String> {
+    match rhs {
+        CheckLiteral::Str(rs) => {
+            let lhs = column_value_as_string(cv)
+                .ok_or_else(|| "CHECK expects string column for string literal".to_string())?;
+            match op {
+                "=" => Ok(lhs == *rs),
+                "!=" => Ok(lhs != *rs),
+                _ => Err("Only = or != supported for string CHECK literals".to_string()),
+            }
+        }
+        CheckLiteral::Number(r) => {
+            let lhs = column_value_as_f64(cv).ok_or_else(|| {
+                "CHECK numeric comparison requires numeric or boolean column".to_string()
+            })?;
+            let ok = match op {
+                ">=" => lhs >= *r - f64::EPSILON,
+                "<=" => lhs <= *r + f64::EPSILON,
+                ">" => lhs > *r,
+                "<" => lhs < *r,
+                "=" => (lhs - *r).abs() <= (1e-9_f64).max(f64::EPSILON * lhs.abs().max(1.0)),
+                "!=" => (lhs - *r).abs() > (1e-9_f64).max(f64::EPSILON * lhs.abs().max(1.0)),
+                _ => return Err(format!("unsupported operator {:?}", op)),
+            };
+            Ok(ok)
+        }
     }
 }
 
@@ -465,6 +650,50 @@ mod tests {
 
         assert_eq!(constraint.name, "age_check");
         assert_eq!(constraint.constraint_type, ConstraintType::Check);
+    }
+
+    #[test]
+    fn test_constraint_not_null() {
+        let c = Constraint::new(
+            "nn".into(),
+            ConstraintType::NotNull,
+            String::new(),
+            vec!["x".into()],
+        );
+        let mut t = Tuple::new(1);
+        assert!(c.validate(&t).is_err());
+        t.set_value("x", ColumnValue::null());
+        assert!(c.validate(&t).is_err());
+        t.set_value("x", ColumnValue::new(DataType::Integer(1)));
+        assert!(c.validate(&t).is_ok());
+    }
+
+    #[test]
+    fn test_constraint_check_numeric() {
+        let c = Constraint::new(
+            "age_pos".into(),
+            ConstraintType::Check,
+            "age >= 0".into(),
+            vec!["age".into()],
+        );
+        let mut t = Tuple::new(1);
+        t.set_value("age", ColumnValue::new(DataType::Integer(5)));
+        assert!(c.validate(&t).is_ok());
+        t.set_value("age", ColumnValue::new(DataType::Integer(-1)));
+        assert!(c.validate(&t).is_err());
+    }
+
+    #[test]
+    fn test_constraint_check_constant_true() {
+        let c = Constraint::new(
+            "trivial".into(),
+            ConstraintType::Check,
+            "1".into(),
+            vec!["c".into()],
+        );
+        let mut t = Tuple::new(1);
+        t.set_value("c", ColumnValue::new(DataType::Integer(0)));
+        assert!(c.validate(&t).is_ok());
     }
 
     #[test]

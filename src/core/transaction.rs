@@ -79,6 +79,8 @@ pub struct TransactionInfo {
     pub waiting_for: Option<String>,
     /// Read-only flag
     pub read_only: bool,
+    /// Pages modified by this transaction (page_id)
+    pub dirty_pages: HashSet<u64>,
 }
 
 impl TransactionInfo {
@@ -93,6 +95,7 @@ impl TransactionInfo {
             locked_resources: HashSet::new(),
             waiting_for: None,
             read_only,
+            dirty_pages: HashSet::new(),
         }
     }
 

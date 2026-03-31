@@ -6,6 +6,7 @@ use crate::common::{Error, Result};
 use crate::core::transaction::TransactionId;
 use crate::logging::log_record::{LogRecord, LogRecordType, LogSequenceNumber};
 use crate::logging::wal::WriteAheadLog;
+use crate::storage::page_manager::PageManager;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -118,6 +119,8 @@ pub struct AdvancedRecoveryManager {
     statistics: Arc<Mutex<RecoveryStatistics>>,
     /// WAL
     wal: Option<Arc<WriteAheadLog>>,
+    /// Data pages (same file as logged `file_id`) — required for REDO/UNDO to touch storage
+    page_manager: Option<Arc<Mutex<PageManager>>>,
 }
 
 impl AdvancedRecoveryManager {
@@ -127,12 +130,24 @@ impl AdvancedRecoveryManager {
             config,
             statistics: Arc::new(Mutex::new(RecoveryStatistics::default())),
             wal: None,
+            page_manager: None,
         }
     }
 
     /// Sets WAL
     pub fn set_wal(&mut self, wal: Arc<WriteAheadLog>) {
         self.wal = Some(wal);
+    }
+
+    /// Sets the page manager for applying data REDO/UNDO (must match WAL `file_id` for that table).
+    pub fn set_page_manager(&mut self, page_manager: Arc<Mutex<PageManager>>) {
+        self.page_manager = Some(page_manager);
+    }
+
+    /// Builder: attach page manager
+    pub fn with_page_manager(mut self, page_manager: Arc<Mutex<PageManager>>) -> Self {
+        self.page_manager = Some(page_manager);
+        self
     }
 
     /// Checks if recovery is needed
@@ -263,9 +278,7 @@ impl AdvancedRecoveryManager {
 
     /// Reads log records from file
     fn read_log_file(&self, file_path: &Path) -> Result<Vec<LogRecord>> {
-        // Simulation - in reality read and deserialize from file
-        // TODO: Integration with real WAL format
-        Ok(Vec::new())
+        LogRecord::read_log_records_from_file(file_path)
     }
 
     /// Processes one log record
@@ -420,19 +433,11 @@ impl AdvancedRecoveryManager {
     /// Applies one REDO operation
     fn apply_redo_operation(&self, operation: &LogRecord) -> Result<()> {
         match operation.record_type {
-            LogRecordType::DataInsert => {
-                // Repeat INSERT
-                // TODO: Integration with storage for real application
-                Ok(())
-            }
-            LogRecordType::DataUpdate => {
-                // Repeat UPDATE
-                // TODO: Integration with storage for real application
-                Ok(())
-            }
-            LogRecordType::DataDelete => {
-                // Repeat DELETE
-                // TODO: Integration with storage for real application
+            LogRecordType::DataInsert | LogRecordType::DataUpdate | LogRecordType::DataDelete => {
+                if let Some(pm) = &self.page_manager {
+                    let mut pm = pm.lock().unwrap();
+                    pm.apply_log_record_recovery(operation, true)?;
+                }
                 Ok(())
             }
             _ => Ok(()),
@@ -442,19 +447,11 @@ impl AdvancedRecoveryManager {
     /// Applies one UNDO operation
     fn apply_undo_operation(&self, operation: &LogRecord) -> Result<()> {
         match operation.record_type {
-            LogRecordType::DataInsert => {
-                // For INSERT do DELETE
-                // TODO: Integration with storage
-                Ok(())
-            }
-            LogRecordType::DataUpdate => {
-                // For UPDATE restore old data
-                // TODO: Integration with storage
-                Ok(())
-            }
-            LogRecordType::DataDelete => {
-                // For DELETE restore deleted data
-                // TODO: Integration with storage
+            LogRecordType::DataInsert | LogRecordType::DataUpdate | LogRecordType::DataDelete => {
+                if let Some(pm) = &self.page_manager {
+                    let mut pm = pm.lock().unwrap();
+                    pm.apply_log_record_recovery(operation, false)?;
+                }
                 Ok(())
             }
             _ => Ok(()),

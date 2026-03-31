@@ -2,6 +2,7 @@
 
 use crate::common::Result;
 use crate::parser::{SqlParser, SqlStatement};
+use crate::planner::planner::InsertNode;
 use crate::planner::{ExecutionPlan, PlanNode, QueryPlanner};
 
 #[test]
@@ -40,6 +41,85 @@ fn test_create_insert_plan() -> Result<()> {
     let plan = planner.create_plan(&statement)?;
 
     assert!(matches!(plan.root, PlanNode::Insert(_)));
+
+    Ok(())
+}
+
+#[test]
+fn test_insert_select_plan_has_subplan() -> Result<()> {
+    let mut planner = QueryPlanner::new()?;
+    let mut parser = SqlParser::new("INSERT INTO t (a) SELECT id FROM users WHERE id > 0")?;
+
+    let statement = parser.parse()?;
+    let plan = planner.create_plan(&statement)?;
+
+    let PlanNode::Insert(InsertNode {
+        insert_subplan: Some(sub),
+        values,
+        ..
+    }) = &plan.root
+    else {
+        panic!("expected Insert with subplan");
+    };
+    assert!(values.is_empty());
+    assert!(matches!(**sub, PlanNode::Projection(_)));
+
+    Ok(())
+}
+
+#[test]
+fn test_create_select_plan_columns_and_groupby_aggregates() -> Result<()> {
+    use crate::parser::ast::{
+        Expression, FromClause, SelectItem, SelectStatement, SqlStatement, TableReference,
+    };
+
+    let mut planner = QueryPlanner::new()?;
+    // Parser `parse_select` is minimal (no functions/GROUP BY); build AST for planner coverage.
+    let statement = SqlStatement::Select(SelectStatement {
+        select_list: vec![
+            SelectItem::Expression {
+                expr: Expression::Identifier("dept".to_string()),
+                alias: None,
+            },
+            SelectItem::Expression {
+                expr: Expression::Function {
+                    name: "COUNT".to_string(),
+                    args: vec![Expression::Identifier("id".to_string())],
+                },
+                alias: None,
+            },
+        ],
+        from: Some(FromClause {
+            table: TableReference::Table {
+                name: "employees".to_string(),
+                alias: None,
+            },
+            joins: vec![],
+        }),
+        where_clause: None,
+        group_by: vec![Expression::Identifier("dept".to_string())],
+        having: None,
+        order_by: vec![],
+        limit: None,
+        offset: None,
+    });
+
+    let plan = planner.create_plan(&statement)?;
+
+    let PlanNode::Projection(proj) = &plan.root else {
+        panic!("expected projection root");
+    };
+    let PlanNode::GroupBy(gb) = proj.input.as_ref() else {
+        panic!("expected group by");
+    };
+    assert_eq!(gb.group_columns.len(), 1);
+    assert_eq!(gb.aggregates.len(), 1);
+    assert_eq!(gb.aggregates[0].name, "COUNT");
+
+    let PlanNode::TableScan(ts) = gb.input.as_ref() else {
+        panic!("expected table scan under group by");
+    };
+    assert_eq!(ts.columns, vec!["dept", "COUNT(id)"]);
 
     Ok(())
 }

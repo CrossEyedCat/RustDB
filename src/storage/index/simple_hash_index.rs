@@ -5,6 +5,7 @@
 
 use crate::common::{Error, Result};
 use crate::storage::index::{Index, IndexStatistics};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -19,7 +20,7 @@ where
     /// Internal hash table
     data: HashMap<K, V>,
     /// Operation statistics
-    statistics: IndexStatistics,
+    statistics: RefCell<IndexStatistics>,
 }
 
 impl<K, V> SimpleHashIndex<K, V>
@@ -31,7 +32,7 @@ where
     pub fn new() -> Self {
         Self {
             data: HashMap::new(),
-            statistics: IndexStatistics::default(),
+            statistics: RefCell::new(IndexStatistics::default()),
         }
     }
 
@@ -39,24 +40,25 @@ where
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             data: HashMap::with_capacity(capacity),
-            statistics: IndexStatistics::default(),
+            statistics: RefCell::new(IndexStatistics::default()),
         }
     }
 
-    /// Returns index statistics
-    pub fn get_statistics(&self) -> &IndexStatistics {
-        &self.statistics
+    /// Returns a snapshot of index statistics
+    pub fn get_statistics(&self) -> IndexStatistics {
+        self.statistics.borrow().clone()
     }
 
     /// Updates index statistics
-    fn update_statistics(&mut self) {
-        self.statistics.total_elements = self.data.len() as u64;
-        self.statistics.fill_factor = if self.data.capacity() == 0 {
+    fn update_statistics(&self) {
+        let mut s = self.statistics.borrow_mut();
+        s.total_elements = self.data.len() as u64;
+        s.fill_factor = if self.data.capacity() == 0 {
             0.0
         } else {
             self.data.len() as f64 / self.data.capacity() as f64
         };
-        self.statistics.depth = 1; // Hash table has depth 1
+        s.depth = 1; // Hash table has depth 1
     }
 }
 
@@ -69,19 +71,19 @@ where
     type Value = V;
 
     fn insert(&mut self, key: Self::Key, value: Self::Value) -> Result<()> {
-        self.statistics.insert_operations += 1;
+        self.statistics.borrow_mut().insert_operations += 1;
         self.data.insert(key, value);
         self.update_statistics();
         Ok(())
     }
 
     fn search(&self, key: &Self::Key) -> Result<Option<Self::Value>> {
-        // self.statistics.search_operations += 1; // TODO: Make statistics mutable
+        self.statistics.borrow_mut().search_operations += 1;
         Ok(self.data.get(key).cloned())
     }
 
     fn delete(&mut self, key: &Self::Key) -> Result<bool> {
-        self.statistics.delete_operations += 1;
+        self.statistics.borrow_mut().delete_operations += 1;
         let result = self.data.remove(key).is_some();
         self.update_statistics();
         Ok(result)
@@ -92,7 +94,7 @@ where
         _start: &Self::Key,
         _end: &Self::Key,
     ) -> Result<Vec<(Self::Key, Self::Value)>> {
-        // self.statistics.range_search_operations += 1; // TODO: Make statistics mutable
+        self.statistics.borrow_mut().range_search_operations += 1;
 
         // Hash indexes don't support efficient range queries
         // Return empty result

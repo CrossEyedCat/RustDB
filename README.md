@@ -55,6 +55,7 @@ Integration tests exercise the **parse → plan → optimize** pipeline and **si
 
 ## Documentation
 
+- **Cookbook (Docker GHCR, CLI examples):** [docs/cookbook.md](docs/cookbook.md)
 - **Network protocol (QUIC, framing, engine boundary):** see [docs/network/README.md](docs/network/README.md).
 
 API documentation is generated with:

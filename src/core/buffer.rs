@@ -1,10 +1,13 @@
 //! Buffer manager for rustdb
 
 use crate::common::{types::PageId, Error, Result};
-use crate::storage::page::{Page, PageHeader};
+use crate::storage::page::Page;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// Persists serialized page bytes (e.g. write to `.tbl` via file manager). Return `Ok(())` on success.
+pub type PageFlushCallback = Arc<dyn Fn(PageId, Vec<u8>) -> Result<()> + Send + Sync>;
 
 /// Buffer statistics
 #[derive(Debug, Clone)]
@@ -118,11 +121,13 @@ impl LRUEntry {
     /// Marks page as modified
     fn mark_dirty(&mut self) {
         self.is_dirty = true;
+        self.page.header.mark_dirty();
     }
 
     /// Marks page as clean
     fn mark_clean(&mut self) {
         self.is_dirty = false;
+        self.page.header.mark_clean();
     }
 }
 
@@ -153,6 +158,8 @@ pub struct BufferManager {
     clock_pointer: usize,
     /// Access counter for adaptive strategy
     access_counter: u64,
+    /// When set, dirty pages are serialized and passed here on eviction and flush.
+    dirty_flush: Option<PageFlushCallback>,
 }
 
 impl BufferManager {
@@ -166,7 +173,22 @@ impl BufferManager {
             stats: BufferStats::new(),
             clock_pointer: 0,
             access_counter: 0,
+            dirty_flush: None,
         }
+    }
+
+    /// Install a hook to persist dirty page contents. Without it, eviction/flush only clears dirty state (with a warning on eviction).
+    pub fn set_dirty_flush_hook(&mut self, hook: Option<PageFlushCallback>) {
+        self.dirty_flush = hook;
+    }
+
+    fn run_flush_hook(&mut self, page_id: PageId, bytes: Vec<u8>) -> Result<()> {
+        let Some(ref hook) = self.dirty_flush else {
+            return Ok(());
+        };
+        hook(page_id, bytes)?;
+        self.stats.record_write();
+        Ok(())
     }
 
     /// Gets page by ID
@@ -281,13 +303,29 @@ impl BufferManager {
             EvictionStrategy::Adaptive => self.evict_adaptive()?,
         };
 
-        if let Some(page) = self.remove_page(page_id) {
-            // If page is dirty, need to write it to disk
-            if page.header.is_dirty {
-                // TODO: Implement disk write
-                log::warn!("Evicting dirty page {} without writing to disk", page_id);
+        let dirty = self
+            .cache
+            .get(&page_id)
+            .map(|e| e.is_dirty || e.page.header.is_dirty)
+            .unwrap_or(false);
+        if dirty {
+            if self.dirty_flush.is_none() {
+                log::warn!(
+                    "Evicting dirty page {} without flush hook; data may not be persisted",
+                    page_id
+                );
+            } else {
+                let bytes = self
+                    .cache
+                    .get(&page_id)
+                    .unwrap()
+                    .page
+                    .to_bytes()?;
+                self.run_flush_hook(page_id, bytes)?;
             }
         }
+
+        let _ = self.remove_page(page_id);
 
         Ok(())
     }
@@ -431,8 +469,21 @@ impl BufferManager {
             .collect();
 
         for page_id in dirty_pages {
+            let need_flush = self
+                .cache
+                .get(&page_id)
+                .map(|e| e.is_dirty || e.page.header.is_dirty)
+                .unwrap_or(false);
+            if need_flush && self.dirty_flush.is_some() {
+                let bytes = self
+                    .cache
+                    .get(&page_id)
+                    .unwrap()
+                    .page
+                    .to_bytes()?;
+                self.run_flush_hook(page_id, bytes)?;
+            }
             if let Some(entry) = self.cache.get_mut(&page_id) {
-                // TODO: Implement disk write
                 entry.mark_clean();
                 flushed_count += 1;
             }
@@ -469,6 +520,7 @@ pub fn create_shared_buffer_manager(
 mod tests {
     use super::*;
     use crate::storage::page::{Page, PageType};
+    use std::sync::Arc;
 
     #[test]
     fn test_buffer_manager_creation() {
@@ -553,5 +605,29 @@ mod tests {
 
         manager.set_eviction_strategy(EvictionStrategy::Adaptive);
         assert_eq!(manager.get_eviction_strategy(), EvictionStrategy::Adaptive);
+    }
+
+    #[test]
+    fn test_dirty_flush_hook_on_eviction() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let flushed = Arc::new(AtomicUsize::new(0));
+        let f = flushed.clone();
+        let hook: PageFlushCallback = Arc::new(move |_pid, _bytes| {
+            f.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+
+        let mut manager = BufferManager::new(1, EvictionStrategy::LRU);
+        manager.set_dirty_flush_hook(Some(hook));
+
+        let mut p1 = Page::new(1);
+        p1.header.mark_dirty();
+        manager.add_page(p1).unwrap();
+        let mut p2 = Page::new(2);
+        p2.header.mark_dirty();
+        manager.add_page(p2).unwrap();
+
+        assert_eq!(flushed.load(Ordering::SeqCst), 1);
     }
 }

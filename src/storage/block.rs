@@ -182,23 +182,29 @@ impl Block {
     }
 
     /// Serializes the block to bytes
+    ///
+    /// Layout: `bincode(header)` · `u32 page_count` · repeated (`u64 page_id` · `u32 len` · payload) ·
+    /// `u32 links_len` · `bincode(links)` · `u32 meta_len` · `bincode(metadata)`.
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        // TODO: Implement full serialization
         let mut bytes = Vec::new();
 
-        // Add header
         let header_bytes = bincode_io::serialize(&self.header).map_err(Error::from)?;
         bytes.extend_from_slice(&header_bytes);
 
-        // Add page count
         bytes.extend_from_slice(&(self.pages.len() as u32).to_le_bytes());
 
-        // Add pages
         for (page_id, page_data) in &self.pages {
             bytes.extend_from_slice(&page_id.to_le_bytes());
             bytes.extend_from_slice(&(page_data.len() as u32).to_le_bytes());
             bytes.extend_from_slice(page_data);
         }
+
+        let links_bytes = bincode_io::serialize(&self.links).map_err(Error::from)?;
+        let meta_bytes = bincode_io::serialize(&self.metadata).map_err(Error::from)?;
+        bytes.extend_from_slice(&(links_bytes.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&links_bytes);
+        bytes.extend_from_slice(&(meta_bytes.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&meta_bytes);
 
         Ok(bytes)
     }
@@ -299,12 +305,66 @@ impl Block {
             offset += page_data_len;
         }
 
-        // Create block
+        let mut links = BlockLinks::new();
+        let mut metadata = HashMap::new();
+
+        if offset < bytes.len() {
+            if bytes.len() < offset + 4 {
+                return Err(Error::validation(
+                    "Invalid block: truncated links length field",
+                ));
+            }
+            let links_len = u32::from_le_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+            ]) as usize;
+            offset += 4;
+            if offset + links_len > bytes.len() {
+                return Err(Error::validation("Invalid block: truncated links payload"));
+            }
+            if links_len > 0 {
+                links = bincode_io::deserialize(&bytes[offset..offset + links_len])
+                    .map_err(Error::from)?;
+            }
+            offset += links_len;
+
+            if offset < bytes.len() {
+                if bytes.len() < offset + 4 {
+                    return Err(Error::validation(
+                        "Invalid block: truncated metadata length field",
+                    ));
+                }
+                let meta_len = u32::from_le_bytes([
+                    bytes[offset],
+                    bytes[offset + 1],
+                    bytes[offset + 2],
+                    bytes[offset + 3],
+                ]) as usize;
+                offset += 4;
+                if offset + meta_len > bytes.len() {
+                    return Err(Error::validation("Invalid block: truncated metadata payload"));
+                }
+                if meta_len > 0 {
+                    metadata = bincode_io::deserialize(&bytes[offset..offset + meta_len])
+                        .map_err(Error::from)?;
+                }
+                offset += meta_len;
+            }
+        }
+
+        if offset != bytes.len() {
+            return Err(Error::validation(
+                "Invalid block: trailing bytes after metadata",
+            ));
+        }
+
         let block = Self {
             header,
             pages,
-            links: BlockLinks::new(),
-            metadata: HashMap::new(),
+            links,
+            metadata,
         };
 
         Ok(block)
@@ -539,5 +599,26 @@ mod tests {
                 panic!("Failed to deserialize: {:?}", e);
             }
         }
+    }
+
+    #[test]
+    fn test_block_roundtrip_links_and_metadata() {
+        use crate::common::types::PAGE_SIZE;
+        let mut block = Block::new(42, BlockType::Index, PAGE_SIZE as u32);
+        block.add_page(1, vec![7, 8, 9]).unwrap();
+        block.links.set_next(100);
+        block.links.add_child(200);
+        block
+            .metadata
+            .insert("k".to_string(), "v".to_string());
+
+        let raw = block.to_bytes().unwrap();
+        let out = Block::from_bytes(&raw).unwrap();
+        assert_eq!(out.header.block_id, 42);
+        assert_eq!(out.pages.len(), 1);
+        assert_eq!(out.get_page(1).unwrap().as_slice(), &[7, 8, 9]);
+        assert_eq!(out.links.next_block, Some(100));
+        assert_eq!(out.links.child_blocks, vec![200]);
+        assert_eq!(out.metadata.get("k"), Some(&"v".to_string()));
     }
 }

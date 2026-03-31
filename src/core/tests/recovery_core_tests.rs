@@ -5,7 +5,7 @@ use crate::core::lock::LockManager;
 use crate::core::recovery::{RecoveryManager, RecoveryState, RecoveryStatistics};
 use crate::logging::wal::{WalConfig, WriteAheadLog};
 use crate::storage::page_manager::{PageManager, PageManagerConfig};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
@@ -21,11 +21,11 @@ async fn test_recovery_manager_perform_recovery() -> crate::common::Result<()> {
 
     let wal = Arc::new(WriteAheadLog::new(wal_config).await?);
     let lock_mgr = Arc::new(LockManager::new()?);
-    let page_mgr = Arc::new(PageManager::new(
+    let page_mgr = Arc::new(Mutex::new(PageManager::new(
         temp.path().to_path_buf(),
         "recovery_test_tbl",
         PageManagerConfig::default(),
-    )?);
+    )?));
 
     let acid = Arc::new(AcidManager::new(
         AcidConfig::default(),
@@ -62,14 +62,14 @@ fn test_recovery_getters_empty() {
         wal_config.log_writer_config.log_directory = wal_dir;
         let wal = Arc::new(WriteAheadLog::new(wal_config).await.unwrap());
         let lock_mgr = Arc::new(LockManager::new().unwrap());
-        let page_mgr = Arc::new(
+        let page_mgr = Arc::new(Mutex::new(
             PageManager::new(
                 temp.path().to_path_buf(),
                 "t2",
                 PageManagerConfig::default(),
             )
             .unwrap(),
-        );
+        ));
         let acid = Arc::new(
             AcidManager::new(
                 AcidConfig::default(),

@@ -8,7 +8,7 @@ use crate::core::lock::{LockManager, LockMode, LockType};
 use crate::core::transaction::{IsolationLevel, TransactionId};
 use crate::logging::wal::WriteAheadLog;
 use crate::storage::page_manager::PageManager;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Utility to run tests with a 1-second timeout
@@ -44,8 +44,9 @@ async fn create_test_acid_manager() -> AcidManager {
     let table_name = format!("test_table_{}", unique_id);
 
     let page_manager_config = crate::storage::page_manager::PageManagerConfig::default();
-    let page_manager =
-        Arc::new(PageManager::new(temp_dir, &table_name, page_manager_config).unwrap());
+    let page_manager = Arc::new(Mutex::new(
+        PageManager::new(temp_dir, &table_name, page_manager_config).unwrap(),
+    ));
 
     AcidManager::new(config, lock_manager, wal, page_manager).unwrap()
 }
@@ -57,7 +58,7 @@ fn create_test_advanced_lock_manager() -> AdvancedLockManager {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acid_manager_creation() {
     run_test_with_timeout(|| async {
         let acid_manager = create_test_acid_manager().await;
@@ -67,7 +68,7 @@ async fn test_acid_manager_creation() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acid_manager_transaction_lifecycle() {
     run_test_with_timeout(|| async {
         let acid_manager = create_test_acid_manager().await;
@@ -93,7 +94,7 @@ async fn test_acid_manager_transaction_lifecycle() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acid_manager_transaction_abort() {
     run_test_with_timeout(|| async {
         let acid_manager = create_test_acid_manager().await;
@@ -115,7 +116,7 @@ async fn test_acid_manager_transaction_abort() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acid_manager_read_only_transaction() {
     run_test_with_timeout(|| async {
         let acid_manager = create_test_acid_manager().await;
@@ -137,7 +138,7 @@ async fn test_acid_manager_read_only_transaction() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acid_manager_isolation_levels() {
     run_test_with_timeout(|| async {
         let acid_manager = create_test_acid_manager().await;
@@ -160,7 +161,7 @@ async fn test_acid_manager_isolation_levels() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_advanced_lock_manager_creation() {
     run_test_with_timeout(|| async {
         let lock_manager = create_test_advanced_lock_manager();
@@ -172,7 +173,7 @@ async fn test_advanced_lock_manager_creation() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_advanced_lock_manager_basic_operations() {
     run_test_with_timeout(|| async {
         let lock_manager = create_test_advanced_lock_manager();
@@ -208,7 +209,7 @@ async fn test_advanced_lock_manager_basic_operations() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_advanced_lock_manager_lock_compatibility() {
     run_test_with_timeout(|| async {
         let lock_manager = create_test_advanced_lock_manager();
@@ -254,7 +255,7 @@ async fn test_advanced_lock_manager_lock_compatibility() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_advanced_lock_manager_lock_conflict() {
     run_test_with_timeout(|| async {
         let lock_manager = create_test_advanced_lock_manager();
@@ -303,7 +304,7 @@ async fn test_advanced_lock_manager_lock_conflict() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_advanced_lock_manager_lock_upgrade() {
     run_test_with_timeout(|| async {
         let lock_manager = create_test_advanced_lock_manager();
@@ -338,7 +339,7 @@ async fn test_advanced_lock_manager_lock_upgrade() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_advanced_lock_manager_deadlock_detection() {
     // This test checks basic locking functionality
     // (full deadlock detection requires more complex logic)
@@ -383,7 +384,7 @@ async fn test_advanced_lock_manager_deadlock_detection() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_advanced_lock_manager_statistics() {
     run_test_with_timeout(|| async {
         let lock_manager = create_test_advanced_lock_manager();
@@ -417,7 +418,7 @@ async fn test_advanced_lock_manager_statistics() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_advanced_lock_manager_resource_types() {
     run_test_with_timeout(|| async {
         let lock_manager = create_test_advanced_lock_manager();
@@ -451,7 +452,7 @@ async fn test_advanced_lock_manager_resource_types() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_advanced_lock_manager_lock_modes() {
     run_test_with_timeout(|| async {
         let lock_manager = create_test_advanced_lock_manager();
@@ -482,7 +483,7 @@ async fn test_advanced_lock_manager_lock_modes() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acid_manager_concurrent_transactions() {
     run_test_with_timeout(|| async {
         let acid_manager = create_test_acid_manager().await;
@@ -518,7 +519,7 @@ async fn test_acid_manager_concurrent_transactions() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acid_manager_error_handling() {
     run_test_with_timeout(|| async {
         let acid_manager = create_test_acid_manager().await;
@@ -544,7 +545,7 @@ async fn test_acid_manager_error_handling() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acid_manager_configuration() {
     run_test_with_timeout(|| async {
         let config = AcidConfig::default();
@@ -562,7 +563,7 @@ async fn test_acid_manager_configuration() {
 }
 
 #[cfg_attr(miri, ignore)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_advanced_lock_manager_configuration() {
     run_test_with_timeout(|| async {
         let config = AdvancedLockConfig::default();

@@ -3,10 +3,178 @@
 use crate::analyzer::{AnalysisContext, SemanticAnalyzer};
 use crate::common::{Error, Result};
 use crate::parser::ast::{
-    DeleteStatement, InsertStatement, SelectStatement, SqlStatement, UpdateStatement,
+    DeleteStatement, Expression, InsertStatement, InsertValues, SelectItem, SelectStatement,
+    SqlStatement, UpdateStatement,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Heuristic predicate selectivity for cost estimation (0.001–0.95).
+pub(crate) fn estimate_selectivity(condition: &str) -> f64 {
+    let c = condition.to_uppercase();
+    let mut s = 0.33_f64;
+    if c.contains(" = ") || c.contains("EQUAL") {
+        s *= 0.35;
+    }
+    if c.contains(" AND ") {
+        s *= 0.5;
+    }
+    if c.contains(" OR ") {
+        s = (s * 1.5).min(0.9);
+    }
+    if c.contains(" LIKE ") {
+        s *= 0.45;
+    }
+    if c.contains(" < ")
+        || c.contains(" > ")
+        || c.contains(">=")
+        || c.contains("<=")
+        || c.contains("LESSTHAN")
+        || c.contains("GREATERTHAN")
+    {
+        s *= 0.4;
+    }
+    if c.contains(" IN ") {
+        s *= 0.25;
+    }
+    if c.contains(" BETWEEN ") {
+        s *= 0.3;
+    }
+    s.clamp(0.001, 0.95)
+}
+
+fn column_names_from_select(select: &SelectStatement) -> Vec<String> {
+    let mut out = Vec::new();
+    for item in &select.select_list {
+        match item {
+            SelectItem::Wildcard => {
+                if !out.iter().any(|s| s == "*") {
+                    out.push("*".to_string());
+                }
+            }
+            SelectItem::Expression { expr, alias } => {
+                let name = if let Some(a) = alias {
+                    a.clone()
+                } else {
+                    expr_to_short_name(expr)
+                };
+                out.push(name);
+            }
+        }
+    }
+    if out.is_empty() {
+        out.push("*".to_string());
+    }
+    out
+}
+
+fn expr_to_short_name(expr: &Expression) -> String {
+    match expr {
+        Expression::Identifier(s) => s.clone(),
+        Expression::QualifiedIdentifier { column, .. } => column.clone(),
+        Expression::Function { name, args } => {
+            let arg = args
+                .first()
+                .map(expr_to_short_name)
+                .unwrap_or_else(|| "*".to_string());
+            format!("{}({})", name.to_uppercase(), arg)
+        }
+        _ => format!("{:?}", expr),
+    }
+}
+
+fn try_aggregate_from_expr(expr: &Expression) -> Option<AggregateFunction> {
+    if let Expression::Function { name, args } = expr {
+        let n = name.to_uppercase();
+        match n.as_str() {
+            "COUNT" | "SUM" | "AVG" | "MIN" | "MAX" => {
+                let arg = args
+                    .first()
+                    .map(|e| expr_to_short_name(e))
+                    .unwrap_or_else(|| "*".to_string());
+                Some(AggregateFunction {
+                    name: n,
+                    argument: arg,
+                    alias: None,
+                })
+            }
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+fn extract_aggregates_from_select(select: &SelectStatement) -> Vec<AggregateFunction> {
+    select
+        .select_list
+        .iter()
+        .filter_map(|item| match item {
+            SelectItem::Expression { expr, alias } => try_aggregate_from_expr(expr).map(|mut a| {
+                a.alias = alias.clone();
+                a
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn rough_rows(node: &PlanNode) -> usize {
+    match node {
+        PlanNode::TableScan(t) => t.estimated_rows.max(1),
+        PlanNode::IndexScan(i) => i.estimated_rows.max(1),
+        PlanNode::Filter(f) => {
+            let r = rough_rows(&f.input);
+            ((r as f64) * f.selectivity).max(1.0) as usize
+        }
+        PlanNode::Projection(p) => rough_rows(&p.input),
+        PlanNode::Join(j) => {
+            let lr = rough_rows(&j.left);
+            let rr = rough_rows(&j.right);
+            (lr * rr / 1000).max(1)
+        }
+        PlanNode::GroupBy(g) => (rough_rows(&g.input) / 10).max(1),
+        PlanNode::Sort(s) => rough_rows(&s.input),
+        PlanNode::Limit(n) => n.limit.min(rough_rows(&n.input)),
+        PlanNode::Offset(o) => {
+            let r = rough_rows(&o.input);
+            r.saturating_sub(o.offset).max(1)
+        }
+        PlanNode::Aggregate(a) => (rough_rows(&a.input) / 10).max(1),
+        _ => 100,
+    }
+}
+
+fn rough_subtree_cost(node: &PlanNode) -> f64 {
+    match node {
+        PlanNode::TableScan(t) => t.cost,
+        PlanNode::IndexScan(i) => i.cost,
+        PlanNode::Filter(f) => rough_subtree_cost(&f.input) + f.cost + 0.05,
+        PlanNode::Projection(p) => rough_subtree_cost(&p.input) + p.cost + 0.02,
+        PlanNode::Join(j) => rough_subtree_cost(&j.left) + rough_subtree_cost(&j.right) + j.cost,
+        PlanNode::GroupBy(g) => rough_subtree_cost(&g.input) + g.cost + 0.1,
+        PlanNode::Sort(s) => rough_subtree_cost(&s.input) + s.cost + 0.05,
+        PlanNode::Limit(n) => rough_subtree_cost(&n.input) + n.cost,
+        PlanNode::Offset(o) => rough_subtree_cost(&o.input) + o.cost,
+        PlanNode::Aggregate(a) => rough_subtree_cost(&a.input) + a.cost + 0.1,
+        PlanNode::Insert(i) => {
+            i.cost
+                + i.insert_subplan
+                    .as_ref()
+                    .map(|b| rough_subtree_cost(b))
+                    .unwrap_or(0.0)
+        }
+        _ => 1.0,
+    }
+}
+
+fn estimate_binary_join_cost(left: &PlanNode, right: &PlanNode) -> f64 {
+    let lc = rough_subtree_cost(left);
+    let rc = rough_subtree_cost(right);
+    let lr = rough_rows(left) as f64;
+    let rr = rough_rows(right) as f64;
+    lc + rc + 10.0 + (lr.max(1.0) * rr.max(1.0)).sqrt() * 0.05
+}
 
 /// Query execution plan
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -270,6 +438,9 @@ pub struct InsertNode {
     pub columns: Vec<String>,
     /// Values for insertion
     pub values: Vec<Vec<String>>,
+    /// Plan for `INSERT ... SELECT` (mutually exclusive with populated `values` in executor terms)
+    #[serde(default)]
+    pub insert_subplan: Option<Box<PlanNode>>,
     /// Cost estimate
     pub cost: f64,
 }
@@ -395,9 +566,11 @@ impl QueryPlanner {
 
     /// Creates plan for SELECT query
     fn create_select_plan(&self, select: &SelectStatement) -> Result<PlanNode> {
+        let scan_columns = column_names_from_select(select);
+
         // Create base table scan plan
         let mut current_plan = if let Some(from) = &select.from {
-            self.create_table_scan_plan(&from.table)?
+            self.create_table_scan_plan(&from.table, &scan_columns)?
         } else {
             // If no FROM, create empty plan
             PlanNode::TableScan(TableScanNode {
@@ -413,7 +586,8 @@ impl QueryPlanner {
         // Add JOIN operations
         if let Some(from) = &select.from {
             for join in &from.joins {
-                let join_plan = self.create_table_scan_plan(&join.table)?;
+                let join_plan = self.create_table_scan_plan(&join.table, &scan_columns)?;
+                let join_cost = estimate_binary_join_cost(&current_plan, &join_plan);
                 current_plan = PlanNode::Join(JoinNode {
                     join_type: match join.join_type {
                         crate::parser::ast::JoinType::Inner => JoinType::Inner,
@@ -429,43 +603,49 @@ impl QueryPlanner {
                         .unwrap_or_default(),
                     left: Box::new(current_plan),
                     right: Box::new(join_plan),
-                    cost: 0.0, // TODO: Calculate cost
+                    cost: join_cost,
                 });
             }
         }
 
         // Add WHERE condition
         if let Some(where_clause) = &select.where_clause {
+            let cond = format!("{:?}", where_clause);
+            let sel = estimate_selectivity(&cond);
             current_plan = PlanNode::Filter(FilterNode {
-                condition: format!("{:?}", where_clause),
+                condition: cond,
                 input: Box::new(current_plan),
-                selectivity: 0.5, // TODO: Calculate selectivity
-                cost: 0.0,
+                selectivity: sel,
+                cost: 0.05 + (1.0 - sel) * 0.15,
             });
         }
 
         // Add GROUP BY
         if !select.group_by.is_empty() {
+            let gb_cost = rough_subtree_cost(&current_plan) * 0.02 + 2.0;
             current_plan = PlanNode::GroupBy(GroupByNode {
                 group_columns: select.group_by.iter().map(|e| format!("{:?}", e)).collect(),
-                aggregates: vec![], // TODO: Extract aggregate functions
+                aggregates: extract_aggregates_from_select(select),
                 input: Box::new(current_plan),
-                cost: 0.0,
+                cost: gb_cost,
             });
         }
 
         // Add HAVING
         if let Some(having) = &select.having {
+            let cond = format!("{:?}", having);
+            let sel = estimate_selectivity(&cond);
             current_plan = PlanNode::Filter(FilterNode {
-                condition: format!("{:?}", having),
+                condition: cond,
                 input: Box::new(current_plan),
-                selectivity: 0.5,
-                cost: 0.0,
+                selectivity: sel,
+                cost: 0.05 + (1.0 - sel) * 0.15,
             });
         }
 
         // Add ORDER BY
         if !select.order_by.is_empty() {
+            let sort_cost = rough_rows(&current_plan) as f64 * 0.01 + 1.0;
             current_plan = PlanNode::Sort(SortNode {
                 sort_columns: select
                     .order_by
@@ -479,7 +659,7 @@ impl QueryPlanner {
                     })
                     .collect(),
                 input: Box::new(current_plan),
-                cost: 0.0,
+                cost: sort_cost,
             });
         }
 
@@ -488,7 +668,7 @@ impl QueryPlanner {
             current_plan = PlanNode::Limit(LimitNode {
                 limit: limit as usize,
                 input: Box::new(current_plan),
-                cost: 0.0,
+                cost: 0.01,
             });
         }
 
@@ -497,7 +677,7 @@ impl QueryPlanner {
             current_plan = PlanNode::Offset(OffsetNode {
                 offset: offset as usize,
                 input: Box::new(current_plan),
-                cost: 0.0,
+                cost: 0.02,
             });
         }
 
@@ -522,7 +702,7 @@ impl QueryPlanner {
                 })
                 .collect(),
             input: Box::new(current_plan),
-            cost: 0.0,
+            cost: 0.05,
         });
 
         Ok(current_plan)
@@ -532,16 +712,22 @@ impl QueryPlanner {
     fn create_table_scan_plan(
         &self,
         table_ref: &crate::parser::ast::TableReference,
+        output_columns: &[String],
     ) -> Result<PlanNode> {
+        let cols = if output_columns.is_empty() {
+            vec!["*".to_string()]
+        } else {
+            output_columns.to_vec()
+        };
         match table_ref {
             crate::parser::ast::TableReference::Table { name, alias } => {
                 Ok(PlanNode::TableScan(TableScanNode {
                     table_name: name.clone(),
                     alias: alias.clone(),
-                    columns: vec!["*".to_string()], // TODO: Determine specific columns
+                    columns: cols,
                     filter: None,
-                    cost: 1.0,            // Base scan cost
-                    estimated_rows: 1000, // TODO: Get from statistics
+                    cost: 1.0,
+                    estimated_rows: 1000,
                 }))
             }
             crate::parser::ast::TableReference::Subquery { query, alias } => {
@@ -554,7 +740,7 @@ impl QueryPlanner {
                         alias: Some(alias.clone()),
                     }],
                     input: Box::new(subquery_plan),
-                    cost: 0.0,
+                    cost: 0.05,
                 }))
             }
         }
@@ -562,20 +748,28 @@ impl QueryPlanner {
 
     /// Creates plan for INSERT query
     fn create_insert_plan(&self, insert: &InsertStatement) -> Result<PlanNode> {
-        Ok(PlanNode::Insert(InsertNode {
-            table_name: insert.table.clone(),
-            columns: insert.columns.clone().unwrap_or_default(),
-            values: match &insert.values {
-                crate::parser::ast::InsertValues::Values(values) => values
+        match &insert.values {
+            InsertValues::Values(values) => Ok(PlanNode::Insert(InsertNode {
+                table_name: insert.table.clone(),
+                columns: insert.columns.clone().unwrap_or_default(),
+                values: values
                     .iter()
                     .map(|row| row.iter().map(|val| format!("{:?}", val)).collect())
                     .collect(),
-                crate::parser::ast::InsertValues::Select(_) => {
-                    vec![] // TODO: Handle INSERT ... SELECT
-                }
-            },
-            cost: 1.0,
-        }))
+                insert_subplan: None,
+                cost: 1.0 + values.len() as f64 * 0.01,
+            })),
+            InsertValues::Select(q) => {
+                let sub = self.create_select_plan(q)?;
+                Ok(PlanNode::Insert(InsertNode {
+                    table_name: insert.table.clone(),
+                    columns: insert.columns.clone().unwrap_or_default(),
+                    values: vec![],
+                    insert_subplan: Some(Box::new(sub)),
+                    cost: 1.0,
+                }))
+            }
+        }
     }
 
     /// Creates plan for UPDATE query
@@ -686,7 +880,14 @@ impl QueryPlanner {
             PlanNode::Limit(node) => node.cost + self.estimate_plan_cost(&node.input),
             PlanNode::Offset(node) => node.cost + self.estimate_plan_cost(&node.input),
             PlanNode::Aggregate(node) => node.cost + self.estimate_plan_cost(&node.input),
-            PlanNode::Insert(node) => node.cost,
+            PlanNode::Insert(node) => {
+                node.cost
+                    + node
+                        .insert_subplan
+                        .as_ref()
+                        .map(|s| self.estimate_plan_cost(s))
+                        .unwrap_or(0.0)
+            }
             PlanNode::Update(node) => node.cost,
             PlanNode::Delete(node) => node.cost,
         }
@@ -718,7 +919,12 @@ impl QueryPlanner {
                 }
             }
             PlanNode::Aggregate(node) => self.estimate_plan_rows(&node.input) / 10,
-            PlanNode::Insert(_) => 1,
+            PlanNode::Insert(node) => node
+                .insert_subplan
+                .as_ref()
+                .map(|s| self.estimate_plan_rows(s))
+                .unwrap_or(1)
+                .max(1),
             PlanNode::Update(_) => 1,
             PlanNode::Delete(_) => 1,
         }

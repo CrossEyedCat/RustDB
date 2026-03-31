@@ -19,4 +19,4 @@ pub mod tuple;
 #[cfg(test)]
 pub mod tests;
 
-// TODO: Implement data storage components
+// Page store, file managers, indexes, and tuple layer — modules above.

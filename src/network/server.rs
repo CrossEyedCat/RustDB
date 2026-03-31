@@ -293,14 +293,19 @@ pub struct ServerStatistics {
     pub active_connections: u64,
 }
 
-// Legacy structure for compatibility
+/// Legacy wrapper: same fields as [`Server`].
 pub struct NetworkServer {
-    // TODO: Implement structure
+    inner: Server,
 }
 
 impl NetworkServer {
-    pub fn new() -> Result<Self> {
-        // TODO: Implement initialization
-        Ok(Self {})
+    pub fn new(config: ServerConfig) -> Result<Self> {
+        Ok(Self {
+            inner: Server::new(config)?,
+        })
+    }
+
+    pub fn inner(&self) -> &Server {
+        &self.inner
     }
 }

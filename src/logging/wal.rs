@@ -714,6 +714,29 @@ impl WriteAheadLog {
         self.log_writer.current_lsn()
     }
 
+    /// Directory where WAL segment files are written.
+    pub fn log_directory(&self) -> std::path::PathBuf {
+        self.config.log_writer_config.log_directory.clone()
+    }
+
+    /// Append a log record from synchronous code (e.g. non-async `AcidManager`). Uses the current
+    /// Tokio runtime when available, otherwise creates a temporary runtime.
+    pub fn append_log_record_blocking(&self, record: LogRecord) -> Result<LogSequenceNumber> {
+        let lw = self.log_writer.clone();
+        let mut record = record;
+        let fut = async move { lw.write_log_sync(record).await };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(fut)
+            })
+        } else {
+            tokio::runtime::Runtime::new()
+                .map_err(|e| Error::internal(format!("tokio runtime: {}", e)))?
+                .block_on(fut)
+        }
+    }
+
     /// Get WAL statistics
     pub fn get_statistics(&self) -> WalStatistics {
         let mut stats = self.statistics.read().unwrap().clone();

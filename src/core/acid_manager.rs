@@ -6,14 +6,27 @@
 //! - Isolation - transactions are isolated from each other
 //! - Durability - committed changes are permanently saved
 
+use crate::common::types::RecordId;
 use crate::common::{Error, Result};
 use crate::core::lock::{LockManager, LockMode, LockType};
 use crate::core::transaction::{IsolationLevel, TransactionId, TransactionInfo, TransactionState};
+use crate::logging::log_record::{self as log_rec, LogRecord};
 use crate::logging::wal::WriteAheadLog;
 use crate::storage::page_manager::PageManager;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime};
+
+fn log_isolation(il: &IsolationLevel) -> log_rec::IsolationLevel {
+    match il {
+        IsolationLevel::ReadUncommitted => log_rec::IsolationLevel::ReadUncommitted,
+        IsolationLevel::ReadCommitted => log_rec::IsolationLevel::ReadCommitted,
+        IsolationLevel::RepeatableRead => log_rec::IsolationLevel::RepeatableRead,
+        IsolationLevel::Serializable => log_rec::IsolationLevel::Serializable,
+    }
+}
 
 /// ACID manager errors
 #[derive(Debug, thiserror::Error)]
@@ -105,7 +118,7 @@ pub struct AcidManager {
     /// Write-Ahead Log
     wal: Arc<WriteAheadLog>,
     /// Page manager
-    page_manager: Arc<PageManager>,
+    page_manager: Arc<Mutex<PageManager>>,
     /// Active transactions
     active_transactions: Arc<RwLock<HashMap<TransactionId, TransactionInfo>>>,
     /// Wait-for graph for deadlock detection
@@ -116,6 +129,9 @@ pub struct AcidManager {
     versions: Arc<RwLock<HashMap<(u64, u64), Vec<VersionInfo>>>>, // (page_id, record_id) -> versions
     /// Version counter
     version_counter: Arc<Mutex<u64>>,
+    deadlocks_detected: AtomicU64,
+    transactions_committed: AtomicU64,
+    transactions_aborted: AtomicU64,
 }
 
 impl AcidManager {
@@ -124,7 +140,7 @@ impl AcidManager {
         config: AcidConfig,
         lock_manager: Arc<LockManager>,
         wal: Arc<WriteAheadLog>,
-        page_manager: Arc<PageManager>,
+        page_manager: Arc<Mutex<PageManager>>,
     ) -> Result<Self> {
         Ok(Self {
             config,
@@ -136,6 +152,9 @@ impl AcidManager {
             waiting_transactions: Arc::new(Mutex::new(VecDeque::new())),
             versions: Arc::new(RwLock::new(HashMap::new())),
             version_counter: Arc::new(Mutex::new(0)),
+            deadlocks_detected: AtomicU64::new(0),
+            transactions_committed: AtomicU64::new(0),
+            transactions_aborted: AtomicU64::new(0),
         })
     }
 
@@ -146,21 +165,18 @@ impl AcidManager {
         isolation_level: IsolationLevel,
         read_only: bool,
     ) -> Result<()> {
-        // Create transaction information
+        let begin = LogRecord::new_transaction_begin(
+            0,
+            transaction_id.0,
+            log_isolation(&isolation_level),
+        );
+        self.wal.append_log_record_blocking(begin)?;
+
         let transaction_info =
             TransactionInfo::new(transaction_id, isolation_level.clone(), read_only);
 
-        // TODO: Write to WAL
-        println!(
-            "Started transaction {} with isolation level {:?}",
-            transaction_id, isolation_level
-        );
-
-        // Add to active transactions
-        {
-            let mut transactions = self.active_transactions.write().unwrap();
-            transactions.insert(transaction_id, transaction_info);
-        }
+        let mut transactions = self.active_transactions.write().unwrap();
+        transactions.insert(transaction_id, transaction_info);
 
         Ok(())
     }
@@ -178,19 +194,24 @@ impl AcidManager {
             .into());
         }
 
-        // TODO: Write COMMIT to WAL
-        println!("Committed transaction {}", transaction_id);
+        let file_id = self.page_manager.lock().unwrap().file_id();
+        let dirty: Vec<(u32, u64)> = transaction_info
+            .dirty_pages
+            .iter()
+            .map(|&p| (file_id, p))
+            .collect();
+        let commit = LogRecord::new_transaction_commit(0, transaction_id.0, dirty, None);
+        self.wal.append_log_record_blocking(commit)?;
 
-        // TODO: Release all locks
-        // self.lock_manager.release_all_locks(transaction_id)?;
+        self.lock_manager.release_all_locks(transaction_id)?;
 
-        // Remove from active transactions
+        self.transactions_committed.fetch_add(1, Ordering::Relaxed);
+
         {
             let mut transactions = self.active_transactions.write().unwrap();
             transactions.remove(&transaction_id);
         }
 
-        // Remove from wait-for graph
         {
             let mut graph = self.wait_for_graph.lock().unwrap();
             graph.remove(&transaction_id);
@@ -202,24 +223,22 @@ impl AcidManager {
     /// Aborts transaction
     pub fn abort_transaction(&self, transaction_id: TransactionId) -> Result<()> {
         // Check that transaction exists
-        let transaction_info = self.get_transaction_info(transaction_id)?;
+        let _transaction_info = self.get_transaction_info(transaction_id)?;
 
-        // TODO: Write ABORT to WAL
-        println!("Aborted transaction {}", transaction_id);
+        let abort = LogRecord::new_transaction_abort(0, transaction_id.0, None);
+        self.wal.append_log_record_blocking(abort)?;
 
-        // TODO: Perform rollback of changes (UNDO)
-        // self.undo_transaction_changes(transaction_id)?;
+        self.undo_transaction_changes(transaction_id)?;
 
-        // TODO: Release all locks
-        // self.lock_manager.release_all_locks(transaction_id)?;
+        self.lock_manager.release_all_locks(transaction_id)?;
 
-        // Remove from active transactions
+        self.transactions_aborted.fetch_add(1, Ordering::Relaxed);
+
         {
             let mut transactions = self.active_transactions.write().unwrap();
             transactions.remove(&transaction_id);
         }
 
-        // Remove from wait-for graph
         {
             let mut graph = self.wait_for_graph.lock().unwrap();
             graph.remove(&transaction_id);
@@ -236,34 +255,46 @@ impl AcidManager {
         lock_mode: LockMode,
     ) -> Result<()> {
         let start_time = Instant::now();
-        let retry_count = 0;
+        let resource = lock_type.to_string();
+        let mut retry_count = 0u32;
 
         while retry_count < self.config.max_lock_retries {
-            // TODO: Try to acquire lock
-            // match self.lock_manager.acquire_lock(transaction_id, lock_type.clone(), lock_mode.clone()) {
-            //     Ok(()) => {
-            //         self.update_transaction_locks(transaction_id, &lock_type)?;
-            //         return Ok(());
-            //     }
-            //     Err(_) => {
-            //         // Error handling
-            //     }
-            // }
-
-            // Temporarily just return success
-            println!(
-                "Acquired lock for transaction {} on resource {:?}",
-                transaction_id, lock_type
-            );
-            return Ok(());
-
-            // Check timeout
-            if start_time.elapsed() > self.config.lock_timeout {
-                return Err(AcidError::LockTimeout(format!(
-                    "Lock acquisition timeout for transaction {}",
-                    transaction_id
-                ))
-                .into());
+            match self.lock_manager.acquire_lock(
+                transaction_id,
+                resource.clone(),
+                lock_type.clone(),
+                lock_mode.clone(),
+            ) {
+                Ok(true) => {
+                    self.update_transaction_locks(transaction_id, &lock_type)?;
+                    return Ok(());
+                }
+                Ok(false) => {
+                    self.add_wait_edge(transaction_id, lock_type.clone())?;
+                    if self.config.auto_deadlock_detection {
+                        if let Ok(true) = self.detect_deadlock(transaction_id) {
+                            self.deadlocks_detected.fetch_add(1, Ordering::Relaxed);
+                            return Err(AcidError::DeadlockDetected(format!(
+                                "cycle involving {}",
+                                transaction_id
+                            ))
+                            .into());
+                        }
+                    }
+                    if start_time.elapsed() > self.config.lock_timeout {
+                        return Err(AcidError::LockTimeout(format!(
+                            "Lock acquisition timeout for transaction {}",
+                            transaction_id
+                        ))
+                        .into());
+                    }
+                    thread::sleep(Duration::from_millis(1));
+                    retry_count += 1;
+                }
+                Err(e) => {
+                    self.deadlocks_detected.fetch_add(1, Ordering::Relaxed);
+                    return Err(e);
+                }
             }
         }
 
@@ -276,13 +307,8 @@ impl AcidManager {
 
     /// Releases lock
     pub fn release_lock(&self, transaction_id: TransactionId, lock_type: LockType) -> Result<()> {
-        // TODO: Release lock
-        // self.lock_manager.release_lock(transaction_id, lock_type.clone())?;
-
-        println!(
-            "Released lock for transaction {} on resource {:?}",
-            transaction_id, lock_type
-        );
+        self.lock_manager
+            .release_lock(transaction_id, lock_type.to_string())?;
 
         // Remove from transaction's locked resources
         self.remove_transaction_lock(transaction_id, &lock_type)?;
@@ -328,7 +354,7 @@ impl AcidManager {
         transaction_id: TransactionId,
         page_id: u64,
         record_id: u64,
-        _new_data: &[u8],
+        new_data: &[u8],
     ) -> Result<()> {
         let transaction_info = self.get_transaction_info(transaction_id)?;
 
@@ -339,35 +365,48 @@ impl AcidManager {
             .into());
         }
 
-        // Acquire write lock
         self.acquire_lock(
             transaction_id,
             LockType::Record(page_id, record_id),
             LockMode::Exclusive,
         )?;
 
-        // TODO: Read old data for UNDO
-        // let old_data = self.page_manager.read_record(page_id, record_id)?;
+        let full_rid: RecordId = ((page_id as u64) << 32) | (record_id as u32 as u64);
+        let record_offset = (full_rid & 0xFFFF_FFFF) as u32;
+        let (file_id, old_data) = {
+            let mut pm = self.page_manager.lock().unwrap();
+            let prior = pm.get_record(full_rid)?;
+            let old_data = prior.clone().unwrap_or_default();
 
-        // Create version for MVCC
-        if self.config.enable_mvcc {
-            // TODO: Create version
-            // self.create_version(page_id, record_id, transaction_id, &old_data)?;
-        }
+            if self.config.enable_mvcc {
+                self.create_version(page_id, record_id, transaction_id, new_data)?;
+            }
 
-        // TODO: Write to WAL
-        // let log_record = LogRecord { ... };
-        // self.wal.write_record(&log_record)?;
+            match prior {
+                Some(_) => {
+                    pm.update(full_rid, new_data)?;
+                }
+                None => {
+                    pm.insert(new_data)?;
+                }
+            }
 
-        // TODO: Write data to page
-        // self.page_manager.write_record(page_id, record_id, new_data)?;
+            (pm.file_id(), old_data)
+        };
 
-        println!(
-            "Wrote data for transaction {} to page {} record {}",
-            transaction_id, page_id, record_id
+        let prev = Some(self.wal.get_current_lsn());
+        let log = LogRecord::new_data_update(
+            0,
+            transaction_id.0,
+            file_id,
+            page_id,
+            record_offset as u16,
+            old_data,
+            new_data.to_vec(),
+            prev,
         );
+        self.wal.append_log_record_blocking(log)?;
 
-        // Update transaction information
         self.update_transaction_dirty_pages(transaction_id, page_id)?;
 
         Ok(())
@@ -419,12 +458,17 @@ impl AcidManager {
     }
 
     /// Adds edge to wait-for graph
-    fn add_wait_edge(&self, _waiting: TransactionId, _lock_type: LockType) -> Result<()> {
-        // TODO: Find transaction owning the lock
-        // if let Some(owner) = self.lock_manager.get_lock_owner(&lock_type)? {
-        //     let mut graph = self.wait_for_graph.lock().unwrap();
-        //     graph.entry(waiting).or_insert_with(HashSet::new).insert(owner);
-        // }
+    fn add_wait_edge(&self, waiting: TransactionId, lock_type: LockType) -> Result<()> {
+        let resource = lock_type.to_string();
+        if let Some(owner) = self.lock_manager.get_lock_owner(&resource)? {
+            if owner != waiting {
+                let mut graph = self.wait_for_graph.lock().unwrap();
+                graph
+                    .entry(waiting)
+                    .or_insert_with(HashSet::new)
+                    .insert(owner);
+            }
+        }
         Ok(())
     }
 
@@ -484,42 +528,64 @@ impl AcidManager {
     }
 
     /// Reads uncommitted data
-    fn read_uncommitted_record(&self, _page_id: u64, _record_id: u64) -> Result<Vec<u8>> {
-        // TODO: Implement reading uncommitted data
-        Ok(b"uncommitted_data".to_vec())
+    fn read_uncommitted_record(&self, page_id: u64, record_id: u64) -> Result<Vec<u8>> {
+        let key = (page_id, record_id);
+        let versions = self.versions.read().unwrap();
+        if let Some(vlist) = versions.get(&key) {
+            if let Some(v) = vlist.last() {
+                return Ok(v.data.clone());
+            }
+        }
+        drop(versions);
+        let full_rid: RecordId = ((page_id as u64) << 32) | (record_id as u32 as u64);
+        let mut pm = self.page_manager.lock().unwrap();
+        Ok(pm.get_record(full_rid)?.unwrap_or_default())
     }
 
     /// Reads only committed data
-    fn read_committed_record(&self, _page_id: u64, _record_id: u64) -> Result<Vec<u8>> {
-        // TODO: Implement reading only committed data
-        Ok(b"committed_data".to_vec())
+    fn read_committed_record(&self, page_id: u64, record_id: u64) -> Result<Vec<u8>> {
+        let full_rid: RecordId = ((page_id as u64) << 32) | (record_id as u32 as u64);
+        let mut pm = self.page_manager.lock().unwrap();
+        Ok(pm.get_record(full_rid)?.unwrap_or_default())
     }
 
     /// Reads data snapshot for repeatable read
     fn read_repeatable_record(
         &self,
-        _transaction_id: TransactionId,
-        _page_id: u64,
-        _record_id: u64,
+        transaction_id: TransactionId,
+        page_id: u64,
+        record_id: u64,
     ) -> Result<Vec<u8>> {
-        // TODO: Implement reading data snapshot
-        Ok(b"repeatable_data".to_vec())
+        let key = (page_id, record_id);
+        let versions = self.versions.read().unwrap();
+        if let Some(vlist) = versions.get(&key) {
+            if let Some(v) = vlist.iter().rev().find(|x| x.created_by == transaction_id) {
+                return Ok(v.data.clone());
+            }
+            if let Some(v) = vlist.last() {
+                return Ok(v.data.clone());
+            }
+        }
+        drop(versions);
+        self.read_committed_record(page_id, record_id)
     }
 
     /// Reads data with strict isolation
     fn read_serializable_record(
         &self,
-        _transaction_id: TransactionId,
-        _page_id: u64,
-        _record_id: u64,
+        transaction_id: TransactionId,
+        page_id: u64,
+        record_id: u64,
     ) -> Result<Vec<u8>> {
-        // TODO: Implement strict isolation
-        Ok(b"serializable_data".to_vec())
+        self.read_repeatable_record(transaction_id, page_id, record_id)
     }
 
     /// Performs rollback of transaction changes
-    fn undo_transaction_changes(&self, _transaction_id: TransactionId) -> Result<()> {
-        // TODO: Implement rollback of changes
+    fn undo_transaction_changes(&self, transaction_id: TransactionId) -> Result<()> {
+        let mut versions = self.versions.write().unwrap();
+        for vlist in versions.values_mut() {
+            vlist.retain(|v| v.created_by != transaction_id);
+        }
         Ok(())
     }
 
@@ -561,20 +627,19 @@ impl AcidManager {
     /// Updates list of transaction's modified pages
     fn update_transaction_dirty_pages(
         &self,
-        _transaction_id: TransactionId,
-        _page_id: u64,
+        transaction_id: TransactionId,
+        page_id: u64,
     ) -> Result<()> {
-        // TODO: Add page_id to dirty_pages
+        let mut transactions = self.active_transactions.write().unwrap();
+        if let Some(t) = transactions.get_mut(&transaction_id) {
+            t.dirty_pages.insert(page_id);
+        }
         Ok(())
     }
 
     /// Gets next LSN
     fn get_next_lsn(&self) -> Result<LogSequenceNumber> {
-        // TODO: Implement getting next LSN
-        Ok(SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64)
+        Ok(self.wal.get_current_lsn().saturating_add(1))
     }
 
     /// Gets ACID manager statistics
@@ -593,9 +658,9 @@ impl AcidManager {
             active_transactions: active_count,
             waiting_transactions: waiting_count,
             total_versions: version_count,
-            deadlocks_detected: 0,     // TODO: Add counter
-            transactions_committed: 0, // TODO: Add counter
-            transactions_aborted: 0,   // TODO: Add counter
+            deadlocks_detected: self.deadlocks_detected.load(Ordering::Relaxed),
+            transactions_committed: self.transactions_committed.load(Ordering::Relaxed),
+            transactions_aborted: self.transactions_aborted.load(Ordering::Relaxed),
         })
     }
 }

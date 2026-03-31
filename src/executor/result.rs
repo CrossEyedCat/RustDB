@@ -1,16 +1,31 @@
 //! Query results for rustdb
 
-use crate::common::{Error, Result};
+use crate::common::Result;
 
-// TODO: Implement query results
+/// Tabular query result (column names and stringified row values).
+#[derive(Debug, Clone, Default)]
 pub struct ResultSet {
-    // TODO: Implement structure
+    pub column_names: Vec<String>,
+    pub rows: Vec<Vec<String>>,
 }
 
 impl ResultSet {
     pub fn new() -> Result<Self> {
-        // TODO: Implement initialization
-        Ok(Self {})
+        Ok(Self {
+            column_names: Vec::new(),
+            rows: Vec::new(),
+        })
+    }
+
+    pub fn with_columns(columns: Vec<String>) -> Result<Self> {
+        Ok(Self {
+            column_names: columns,
+            rows: Vec::new(),
+        })
+    }
+
+    pub fn push_row(&mut self, row: Vec<String>) {
+        self.rows.push(row);
     }
 }
 

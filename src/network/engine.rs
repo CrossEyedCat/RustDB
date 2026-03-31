@@ -18,6 +18,8 @@ pub mod engine_error_code {
     pub const QUERY_TIMEOUT: u32 = 2002;
     /// Result row count exceeds configured cap.
     pub const RESULT_ROWS_TOO_LARGE: u32 = 2003;
+    /// Statement kind not implemented on the server engine (e.g. DDL or DML not wired).
+    pub const UNSUPPORTED_SQL: u32 = 2004;
 }
 
 /// Session-scoped state for a single logical client connection (placeholder for Phase 2).
@@ -151,5 +153,4 @@ impl EngineHandle for StubEngine {
     }
 }
 
-// `Database` does not yet expose `execute_sql`; add `impl EngineHandle for Database` (or a wrapper)
-// when the engine API is ready — see `docs/network/engine-boundary.md`.
+// Production path: [`crate::network::sql_engine::SqlEngine`] implements [`EngineHandle`] (parse → plan → execute).

@@ -12,10 +12,12 @@ fn database_creation_benchmark(c: &mut Criterion) {
 }
 
 fn database_open_benchmark(c: &mut Criterion) {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path = temp.path().join("bench_db");
     c.bench_function("database_open", |b| {
         b.iter(|| {
-            // TODO: create temporary database for benchmarking
-            // let _db = Database::open("temp.db").unwrap();
+            let p = path.to_str().expect("path utf8");
+            let _db = Database::open(p).expect("open");
         });
     });
 }

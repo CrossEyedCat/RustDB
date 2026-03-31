@@ -53,14 +53,29 @@ impl Connection {
     }
 }
 
-// Legacy structure for compatibility
+/// Simple bounded pool placeholder (same config for every slot).
 pub struct ConnectionPool {
-    // TODO: Implement structure
+    config: ConnectionConfig,
+    max_size: usize,
 }
 
 impl ConnectionPool {
     pub fn new() -> Result<Self> {
-        // TODO: Implement initialization
-        Ok(Self {})
+        Ok(Self {
+            config: ConnectionConfig::default(),
+            max_size: 8,
+        })
+    }
+
+    pub fn with_config(config: ConnectionConfig, max_size: usize) -> Result<Self> {
+        Ok(Self { config, max_size })
+    }
+
+    pub fn max_size(&self) -> usize {
+        self.max_size
+    }
+
+    pub fn config(&self) -> &ConnectionConfig {
+        &self.config
     }
 }

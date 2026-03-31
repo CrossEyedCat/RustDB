@@ -59,33 +59,44 @@ pub mod parser;
 pub mod planner;
 pub mod storage;
 
+pub use network::SqlEngine;
+
 pub use common::error::{Error, Result};
 pub use common::types::*;
+
+use std::path::PathBuf;
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Main database structure
+/// Main database handle (data directory and lifecycle).
 pub struct Database {
-    // TODO: Implement main database structure
+    data_path: Option<PathBuf>,
 }
 
 impl Database {
-    /// Creates a new database instance
+    /// Creates a new in-memory database handle (no persistent directory until [`Self::open`]).
     pub fn new() -> Result<Self> {
-        // TODO: Database initialization
-        Ok(Self {})
+        Ok(Self { data_path: None })
     }
 
-    /// Opens an existing database
-    pub fn open(_path: &str) -> Result<Self> {
-        // TODO: Open existing database
-        Ok(Self {})
+    /// Opens or creates a database directory at `path`.
+    pub fn open(path: &str) -> Result<Self> {
+        let p = PathBuf::from(path);
+        std::fs::create_dir_all(&p).map_err(|e| Error::database(format!("create_dir {}: {}", path, e)))?;
+        Ok(Self {
+            data_path: Some(p),
+        })
     }
 
-    /// Closes the database
+    /// Active data directory, if any.
+    pub fn path(&self) -> Option<&std::path::Path> {
+        self.data_path.as_deref()
+    }
+
+    /// Releases resources and clears the handle.
     pub fn close(&mut self) -> Result<()> {
-        // TODO: Proper database shutdown
+        self.data_path = None;
         Ok(())
     }
 }
@@ -98,7 +109,7 @@ impl Drop for Database {
 
 #[cfg(test)]
 mod crate_tests {
-    use super::{Database, Result, VERSION};
+    use super::{Database, Error, Result, VERSION};
 
     #[test]
     #[allow(clippy::const_is_empty)] // CARGO_PKG_VERSION is non-empty; check kept explicit
@@ -109,7 +120,8 @@ mod crate_tests {
     #[test]
     fn test_database_new_open_close() -> Result<()> {
         let mut db = Database::new()?;
-        let _ = Database::open("/tmp/rustdb_test")?;
+        let tmp = std::env::temp_dir().join("rustdb_lib_test_open");
+        let _ = Database::open(tmp.to_str().ok_or_else(|| Error::database("temp path"))?)?;
         db.close()?;
         Ok(())
     }

@@ -8,7 +8,8 @@ use crate::core::advanced_lock_manager::{
 };
 use crate::core::mvcc::{MVCCManager, RowKey, Timestamp};
 use crate::core::transaction::TransactionId;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Isolation level for concurrent access
@@ -72,6 +73,8 @@ pub struct ConcurrencyManager {
     mvcc_manager: Arc<MVCCManager>,
     /// Configuration
     config: ConcurrencyConfig,
+    /// Simple row store when MVCC is disabled (lock + in-memory map).
+    non_mvcc_store: Arc<Mutex<HashMap<RowKey, Vec<u8>>>>,
 }
 
 impl ConcurrencyManager {
@@ -84,6 +87,7 @@ impl ConcurrencyManager {
             lock_manager,
             mvcc_manager,
             config,
+            non_mvcc_store: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -148,13 +152,14 @@ impl ConcurrencyManager {
             self.mvcc_manager
                 .read_version(key, transaction_id, snapshot)
         } else {
-            // Fallback without MVCC - require lock
             let resource = ResourceType::Record(key.table_id as u64, key.row_id);
             self.acquire_read_lock(transaction_id, resource, None)
                 .await?;
 
-            // TODO: Read data from storage
-            Ok(None)
+            let store = self.non_mvcc_store.lock().map_err(|e| {
+                Error::internal(format!("non-MVCC store lock: {}", e))
+            })?;
+            Ok(store.get(key).cloned())
         }
     }
 
@@ -175,7 +180,10 @@ impl ConcurrencyManager {
             self.mvcc_manager
                 .create_version(key, transaction_id, data)?;
         } else {
-            // TODO: Write data to storage directly
+            let mut store = self.non_mvcc_store.lock().map_err(|e| {
+                Error::internal(format!("non-MVCC store lock: {}", e))
+            })?;
+            store.insert(key, data);
         }
 
         Ok(())
@@ -192,7 +200,10 @@ impl ConcurrencyManager {
             // Mark for deletion
             self.mvcc_manager.delete_version(key, transaction_id)?;
         } else {
-            // TODO: Delete from storage directly
+            let mut store = self.non_mvcc_store.lock().map_err(|e| {
+                Error::internal(format!("non-MVCC store lock: {}", e))
+            })?;
+            store.remove(key);
         }
 
         Ok(())
@@ -361,5 +372,34 @@ mod tests {
         let cleaned = manager.vacuum().unwrap();
 
         assert_eq!(cleaned, 1);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_non_mvcc_roundtrip() {
+        let mut cfg = ConcurrencyConfig::default();
+        cfg.enable_mvcc = false;
+        let manager = ConcurrencyManager::new(cfg);
+        let key = RowKey::new(1, 1);
+
+        let tx1 = TransactionId::new(1);
+        manager
+            .write(tx1, key.clone(), vec![9, 9])
+            .await
+            .unwrap();
+        manager.commit_transaction(tx1).unwrap();
+
+        let tx2 = TransactionId::new(2);
+        let got = manager.read(tx2, &key, Timestamp::now()).await.unwrap();
+        assert_eq!(got, Some(vec![9, 9]));
+        manager.commit_transaction(tx2).unwrap();
+
+        let tx3 = TransactionId::new(3);
+        manager.delete(tx3, &key).await.unwrap();
+        manager.commit_transaction(tx3).unwrap();
+
+        let tx4 = TransactionId::new(4);
+        let got2 = manager.read(tx4, &key, Timestamp::now()).await.unwrap();
+        assert_eq!(got2, None);
     }
 }

@@ -285,3 +285,31 @@ fn test_open_existing_page_manager_safe() {
 
     assert!(true);
 }
+
+#[test]
+fn test_recovery_redo_delete_removes_record() {
+    use crate::logging::log_record::{LogRecordType, RecordOperation};
+
+    let Ok((mut pm, _dir)) = create_test_page_manager() else {
+        return;
+    };
+    let fid = pm.file_id();
+    let Ok(ins) = pm.insert(b"hello") else {
+        return;
+    };
+    let page_id = ins.page_id;
+    let rid = ins.record_id;
+    let slot_off = (rid & 0xFFFF_FFFF) as u32;
+
+    let op_del = RecordOperation {
+        file_id: fid,
+        page_id,
+        record_offset: slot_off as u16,
+        record_size: 5,
+        old_data: Some(b"hello".to_vec()),
+        new_data: None,
+    };
+    pm.recovery_apply_record_operation(LogRecordType::DataDelete, &op_del, true)
+        .unwrap();
+    assert!(pm.get_record(rid).unwrap().is_none());
+}

@@ -5,8 +5,9 @@
 
 use crate::common::{
     types::{PageId, RecordId},
-    Result,
+    Error, Result,
 };
+use crate::logging::log_record::{LogOperationData, LogRecord, LogRecordType, RecordOperation};
 
 /// Maximum records per page before bincode serialization exceeds PAGE_SIZE.
 /// CompactPage: header(~50) + slots(8 + n*17) + data(8 + ~12n) ≈ 130 + 29n.
@@ -354,6 +355,97 @@ impl PageManager {
         &self.statistics
     }
 
+    /// Record id encoding used by this manager (`page_id` high bits, slot byte offset low bits).
+    pub fn record_id_for_slot(page_id: PageId, slot_offset: u32) -> RecordId {
+        ((page_id as u64) << 32) | (slot_offset as u64)
+    }
+
+    /// Replays one WAL [`RecordOperation`] (REDO when `redo`, UNDO when `!redo`).
+    pub fn recovery_apply_record_operation(
+        &mut self,
+        record_type: LogRecordType,
+        op: &RecordOperation,
+        redo: bool,
+    ) -> Result<()> {
+        if op.file_id != self.file_id() {
+            return Ok(());
+        }
+        let page_id = op.page_id;
+        let slot_off = op.record_offset as u32;
+        let rid = Self::record_id_for_slot(page_id, slot_off);
+
+        let latch = self.get_page_latch(page_id);
+        let _guard = latch.write();
+        {
+            let page = self.get_or_load_page(page_id)?;
+
+            match (record_type, redo) {
+                (LogRecordType::DataInsert, true) => {
+                    let nd = op.new_data.as_ref().ok_or_else(|| {
+                        Error::internal("recovery REDO INSERT: missing new_data")
+                    })?;
+                    if page.update_record_by_offset(slot_off, nd).is_err() {
+                        let _ = page.delete_record_by_offset(slot_off);
+                        page.add_record_at_offset(nd, rid, slot_off)?;
+                    }
+                }
+                (LogRecordType::DataInsert, false) => {
+                    let _ = page.delete_record_by_offset(slot_off);
+                }
+                (LogRecordType::DataUpdate, true) => {
+                    let nd = op.new_data.as_ref().ok_or_else(|| {
+                        Error::internal("recovery REDO UPDATE: missing new_data")
+                    })?;
+                    if page.update_record_by_offset(slot_off, nd).is_err() {
+                        let _ = page.delete_record_by_offset(slot_off);
+                        page.add_record_at_offset(nd, rid, slot_off)?;
+                    }
+                }
+                (LogRecordType::DataUpdate, false) => {
+                    let old = op.old_data.as_ref().ok_or_else(|| {
+                        Error::internal("recovery UNDO UPDATE: missing old_data")
+                    })?;
+                    if page.update_record_by_offset(slot_off, old).is_err() {
+                        let _ = page.delete_record_by_offset(slot_off);
+                        page.add_record_at_offset(old, rid, slot_off)?;
+                    }
+                }
+                (LogRecordType::DataDelete, true) => {
+                    let _ = page.delete_record_by_offset(slot_off);
+                }
+                (LogRecordType::DataDelete, false) => {
+                    let old = op.old_data.as_ref().ok_or_else(|| {
+                        Error::internal("recovery UNDO DELETE: missing old_data")
+                    })?;
+                    if page.update_record_by_offset(slot_off, old).is_err() {
+                        let _ = page.delete_record_by_offset(slot_off);
+                        page.add_record_at_offset(old, rid, slot_off)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let page_info = {
+            let page = self
+                .dirty_pages
+                .get(&page_id)
+                .ok_or_else(|| Error::internal("recovery: page missing after apply"))?;
+            Self::page_info_from(page_id, page)
+        };
+        self.page_cache.insert(page_id, page_info);
+        Ok(())
+    }
+
+    /// Applies REDO/UNDO from a full [`LogRecord`] if it carries [`RecordOperation`] data.
+    pub fn apply_log_record_recovery(&mut self, record: &LogRecord, redo: bool) -> Result<()> {
+        let op = match &record.operation_data {
+            LogOperationData::Record(op) => op,
+            _ => return Ok(()),
+        };
+        self.recovery_apply_record_operation(record.record_type.clone(), op, redo)
+    }
+
     /// Gets the file ID for WAL logging
     pub fn file_id(&self) -> u32 {
         self.file_id
@@ -363,7 +455,7 @@ impl PageManager {
     /// When `use_async_flush` is true and running in tokio context, disk I/O runs in
     /// `block_in_place` to avoid blocking the async runtime.
     pub fn flush_dirty_pages(&mut self) -> Result<usize> {
-        let batch_size = self.config.batch_flush_size;
+        let batch_size = self.config.batch_flush_size.max(1);
         let mut flushed = 0;
 
         while !self.dirty_pages.is_empty() {
@@ -387,45 +479,30 @@ impl PageManager {
                 break;
             }
 
-            let data_dir = self.data_dir.clone();
-            let table_name = self.table_name.clone();
             let file_id = self.file_id;
-
             let page_ids: Vec<PageId> = to_flush.iter().map(|(id, _)| *id).collect();
-            let do_flush = || Self::flush_pages_to_disk(&data_dir, &table_name, file_id, &to_flush);
+
+            let write_batch = |pm: &mut Self, pages: &[(PageId, Vec<u8>)]| -> Result<usize> {
+                for (page_id, data) in pages {
+                    pm.file_manager.write_page(file_id, *page_id, data)?;
+                }
+                pm.file_manager.sync_file(file_id)?;
+                Ok(pages.len())
+            };
 
             if self.config.use_async_flush {
-                if let Ok(_) = tokio::runtime::Handle::try_current() {
-                    flushed += tokio::task::block_in_place(do_flush)?;
+                if tokio::runtime::Handle::try_current().is_ok() {
+                    flushed += tokio::task::block_in_place(|| write_batch(self, &to_flush))?;
                     self.file_manager.invalidate_pages(file_id, &page_ids);
                     continue;
                 }
             }
 
-            flushed += do_flush()?;
+            flushed += write_batch(self, &to_flush)?;
             self.file_manager.invalidate_pages(file_id, &page_ids);
         }
 
         Ok(flushed)
-    }
-
-    /// Writes collected page data to disk (used by flush_dirty_pages, runs in block_in_place when async)
-    fn flush_pages_to_disk(
-        data_dir: &PathBuf,
-        table_name: &str,
-        file_id: u32,
-        to_flush: &[(PageId, Vec<u8>)],
-    ) -> Result<usize> {
-        let mut file_manager = CachedFileManager::new(data_dir, 64)?;
-        let filename = format!("{}.tbl", table_name);
-        file_manager.open_database_file(&filename)?;
-
-        for (page_id, data) in to_flush {
-            file_manager.write_page(file_id, *page_id, data)?;
-        }
-        file_manager.sync_file(file_id)?;
-
-        Ok(to_flush.len())
     }
 
     /// Performs page defragmentation

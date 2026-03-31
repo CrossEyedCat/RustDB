@@ -447,6 +447,41 @@ impl LogRecord {
             .map_err(|e| Error::internal(&format!("Log record deserialization error: {}", e)))
     }
 
+    /// Reads length-prefixed bincode records from a WAL file (same format as [`crate::logging::log_writer::LogWriter`] batch writes).
+    pub fn read_log_records_from_file(path: &std::path::Path) -> Result<Vec<LogRecord>> {
+        let bytes = std::fs::read(path)
+            .map_err(|e| Error::internal(format!("Failed to read log file {:?}: {}", path, e)))?;
+        let mut records = Vec::new();
+        let mut i = 0usize;
+        while i + 4 <= bytes.len() {
+            let len = u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+            i += 4;
+            if len == 0 || i + len > bytes.len() {
+                break;
+            }
+            records.push(LogRecord::deserialize(&bytes[i..i + len])?);
+            i += len;
+        }
+        Ok(records)
+    }
+
+    /// Reads all `*.log` files in a directory (sorted by name) and concatenates records.
+    pub fn read_log_records_from_directory(dir: &std::path::Path) -> Result<Vec<LogRecord>> {
+        let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+            .map_err(|e| Error::internal(format!("read log dir: {}", e)))?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("log"))
+            .collect();
+        paths.sort();
+        let mut all = Vec::new();
+        for p in paths {
+            all.extend(LogRecord::read_log_records_from_file(&p)?);
+        }
+        all.sort_by_key(|r| r.lsn);
+        Ok(all)
+    }
+
     /// Returns human-readable record description
     pub fn description(&self) -> String {
         match &self.record_type {
