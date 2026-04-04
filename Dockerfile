@@ -17,8 +17,8 @@ COPY benches ./benches
 
 RUN cargo build --release --bin rustdb
 
-# Final image
-FROM debian:bookworm-slim
+# Final image — must match builder glibc (rust:1.90-slim uses newer Debian than bookworm).
+FROM debian:trixie-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
