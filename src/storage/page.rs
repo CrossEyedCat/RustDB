@@ -13,6 +13,10 @@ const SLOTTED_HEADER_OFFSET: usize = 2;
 const SLOTTED_HEADER_SIZE: usize = PAGE_HEADER_SIZE - 2; // 62 bytes after magic
 const SLOTTED_DATA_OFFSET: usize = PAGE_HEADER_SIZE; // 64 - same as Page layout
 const SLOT_SIZE: usize = 9; // offset u16, size u16, record_id u32, flags u8
+/// Must match `page_manager::MAX_RECORDS_PER_PAGE`. Payload placement reserves the slot
+/// directory as if the page could grow to this many active records, otherwise data written
+/// when the directory was small can overlap slots after more inserts.
+const MAX_DATA_RECORDS_PER_PAGE: usize = 100;
 
 /// Page header
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -547,18 +551,39 @@ impl Page {
 
     /// Finds free space for a record of the specified size
     fn find_free_space(&self, size: usize) -> Result<usize> {
-        let mut consecutive_free = 0;
-        let mut start_pos = PAGE_HEADER_SIZE;
+        // Keep layout consistent with `to_bytes_slotted`: slot directory grows upward from
+        // `PAGE_SIZE - 2` (slot_count u16) with `SLOT_SIZE` bytes per active slot. Record
+        // payload must not overlap `[slot_start, PAGE_SIZE)` or serialization fails with
+        // "Data overlaps slot area" and forces expensive splits.
+        let active_count = self.slots.iter().filter(|s| !s.is_deleted).count();
+        let slot_count_after = active_count + 1;
 
-        for (i, &is_free) in self.free_space_map.iter().enumerate() {
-            if is_free {
-                if consecutive_free == 0 {
-                    start_pos = i + PAGE_HEADER_SIZE;
-                }
+        if slot_count_after * SLOT_SIZE + 2 > PAGE_SIZE - SLOTTED_DATA_OFFSET {
+            return Err(Error::validation("Too many slots for page"));
+        }
+
+        let phys_max_slots = (PAGE_SIZE - SLOTTED_DATA_OFFSET - 2) / SLOT_SIZE;
+        let layout_slot_count = slot_count_after
+            .max(MAX_DATA_RECORDS_PER_PAGE)
+            .min(phys_max_slots);
+        let slot_start_ceiling = PAGE_SIZE - 2 - layout_slot_count * SLOT_SIZE;
+        let allowed_end = slot_start_ceiling.saturating_sub(PAGE_HEADER_SIZE);
+
+        if size == 0 || size > allowed_end {
+            return Err(Error::validation("Not enough free space on the page"));
+        }
+
+        let scan_end = allowed_end.min(self.free_space_map.len());
+
+        let mut consecutive_free = 0usize;
+        for i in 0..scan_end {
+            if self.free_space_map[i] {
                 consecutive_free += 1;
-
                 if consecutive_free >= size {
-                    return Ok(start_pos);
+                    let start_i = i + 1 - size;
+                    if start_i + size <= allowed_end {
+                        return Ok(PAGE_HEADER_SIZE + start_i);
+                    }
                 }
             } else {
                 consecutive_free = 0;

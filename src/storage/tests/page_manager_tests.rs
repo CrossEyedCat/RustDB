@@ -302,7 +302,7 @@ fn test_statistics_tracking() {
         let stats = manager.get_statistics();
         // insert_operations may include internal inserts (e.g., page splits)
         assert!(stats.insert_operations >= 1);
-        // select_operations may include internal calls like find_page_with_space
+        // select_operations counts explicit select calls only
         assert!(stats.select_operations >= expected_selects);
         assert_eq!(stats.update_operations, expected_updates);
         assert_eq!(stats.delete_operations, expected_deletes);

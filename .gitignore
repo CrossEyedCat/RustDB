@@ -3,6 +3,7 @@
 **/*.rs.bk
 
 # IDE
+.vs/
 .vscode/
 .idea/
 *.swp

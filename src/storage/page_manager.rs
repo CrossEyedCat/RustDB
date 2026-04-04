@@ -20,6 +20,7 @@ use crate::storage::{
 };
 use dashmap::DashMap;
 use parking_lot::RwLock;
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -78,6 +79,15 @@ pub struct InsertResult {
     pub page_id: PageId,
     /// Whether page split was performed
     pub page_split: bool,
+}
+
+/// Result of attempting to place a record on one page (see [`PageManager::try_insert_into_page`]).
+enum InsertPageOutcome {
+    Committed(InsertResult),
+    /// `header.free_space` can overstate contiguous room; try another page instead of splitting.
+    RetryAnotherPage,
+    /// Record was appended but slotted serialization failed — split this page.
+    NeedsSplit,
 }
 
 /// Update operation result
@@ -227,37 +237,32 @@ impl PageManager {
     pub fn insert(&mut self, data: &[u8]) -> Result<InsertResult> {
         self.statistics.insert_operations += 1;
 
-        // Find a page with sufficient free space
-        let page_id = self.find_page_with_space(data.len())?;
+        let required = data.len();
 
-        let record_id = self.generate_record_id(page_id, 0);
-
-        // Load the page, modify, extract info (latch released before split to avoid deadlock)
-        let (add_result, serialization_ok, page_info) = {
-            let latch = self.get_page_latch(page_id);
-            let _guard = latch.write();
-            let page = self.get_or_load_page(page_id)?;
-            let add_result = page.add_record(data, record_id);
-            let serialization_ok = add_result.is_ok() && page.to_bytes().is_ok();
-            let page_info = Self::page_info_from(page_id, page);
-            (add_result, serialization_ok, page_info)
-        };
-
-        match add_result {
-            Ok(offset) => {
-                let final_record_id = self.generate_record_id(page_id, offset);
-                if serialization_ok {
-                    self.page_cache.insert(page_id, page_info);
-                    Ok(InsertResult {
-                        record_id: final_record_id,
-                        page_id,
-                        page_split: false,
-                    })
-                } else {
-                    self.split_page_and_insert(page_id, data)
+        // Pages where `free_space` is high but bytes are fragmented used to be returned first
+        // (HashMap iteration order), causing `add_record` to fail and every insert to pay for
+        // `split_page_and_insert`. Prefer pages with the most reported free space first, and try
+        // every eligible page before splitting or allocating.
+        for page_id in self.sorted_insert_candidate_pages(required) {
+            match self.try_insert_into_page(page_id, data)? {
+                InsertPageOutcome::Committed(r) => return Ok(r),
+                InsertPageOutcome::RetryAnotherPage => continue,
+                InsertPageOutcome::NeedsSplit => {
+                    return self.split_page_and_insert(page_id, data);
                 }
             }
-            Err(_) => self.split_page_and_insert(page_id, data),
+        }
+
+        let page_id = self.take_fresh_page_for_insert()?;
+
+        match self.try_insert_into_page(page_id, data)? {
+            InsertPageOutcome::Committed(r) => Ok(r),
+            InsertPageOutcome::NeedsSplit => self.split_page_and_insert(page_id, data),
+            InsertPageOutcome::RetryAnotherPage => {
+                // Empty / newly allocated page should always have a contiguous run for any
+                // `add_record`-legal payload; treat as overflow and split the target page.
+                self.split_page_and_insert(page_id, data)
+            }
         }
     }
 
@@ -625,28 +630,63 @@ impl PageManager {
         Ok(())
     }
 
-    /// Finds a page with sufficient free space
-    fn find_page_with_space(&mut self, required_size: usize) -> Result<PageId> {
-        // First check cache (skip pages near serialization limit)
-        for (&page_id, page_info) in &self.page_cache {
-            if page_info.record_count < MAX_RECORDS_PER_PAGE
-                && page_info.free_space as usize >= required_size
-            {
-                return Ok(page_id);
-            }
-        }
+    /// Cached pages that might accept `required_size` bytes (by header), most free space first.
+    fn sorted_insert_candidate_pages(&self, required_size: usize) -> Vec<PageId> {
+        let mut candidates: Vec<PageId> = self
+            .page_cache
+            .iter()
+            .filter(|(_, info)| {
+                info.record_count < MAX_RECORDS_PER_PAGE
+                    && info.free_space as usize >= required_size
+            })
+            .map(|(&pid, _)| pid)
+            .collect();
+        candidates.sort_by_key(|&pid| {
+            Reverse(
+                self.page_cache
+                    .get(&pid)
+                    .map(|info| info.free_space)
+                    .unwrap_or(0),
+            )
+        });
+        candidates
+    }
 
-        // Use preallocated page
+    /// Preallocated page if any, otherwise allocates a new empty page into `dirty_pages`.
+    fn take_fresh_page_for_insert(&mut self) -> Result<PageId> {
         if let Some(page_id) = self.preallocated_pages.pop() {
             return Ok(page_id);
         }
-
-        // Allocate new page (put in dirty_pages, flush on commit)
         let page_id = self.file_manager.allocate_pages(self.file_id, 1)?;
         let page = Page::new(page_id);
         self.dirty_pages.insert(page_id, page);
-
         Ok(page_id)
+    }
+
+    /// One attempt to append `data` under the page latch. Does not split.
+    fn try_insert_into_page(&mut self, page_id: PageId, data: &[u8]) -> Result<InsertPageOutcome> {
+        let record_id = self.generate_record_id(page_id, 0);
+        let latch = self.get_page_latch(page_id);
+        let _guard = latch.write();
+        let page = self.get_or_load_page(page_id)?;
+        match page.add_record(data, record_id) {
+            Ok(offset) => {
+                let serialization_ok = page.to_bytes().is_ok();
+                let page_info = Self::page_info_from(page_id, page);
+                if serialization_ok {
+                    let final_record_id = self.generate_record_id(page_id, offset);
+                    self.page_cache.insert(page_id, page_info);
+                    Ok(InsertPageOutcome::Committed(InsertResult {
+                        record_id: final_record_id,
+                        page_id,
+                        page_split: false,
+                    }))
+                } else {
+                    Ok(InsertPageOutcome::NeedsSplit)
+                }
+            }
+            Err(_) => Ok(InsertPageOutcome::RetryAnotherPage),
+        }
     }
 
     /// Splits a page and inserts a record
