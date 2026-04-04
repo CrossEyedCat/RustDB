@@ -1,10 +1,30 @@
 name: CI/CD Pipeline
 
+# Skip the whole pipeline when only non-code paths change (saves minutes on docs/README edits).
+# If a commit touches any path NOT listed here, the workflow runs as usual.
 on:
   push:
     branches: [main, develop]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "assets/**"
+      - ".gitignore"
+      - "LICENSE"
+      - "LICENSE-*"
+      - "architecture.puml"
+      - ".editorconfig"
   pull_request:
     branches: [main, develop]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "assets/**"
+      - ".gitignore"
+      - "LICENSE"
+      - "LICENSE-*"
+      - "architecture.puml"
+      - ".editorconfig"
 
 env:
   CARGO_TERM_COLOR: always
