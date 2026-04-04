@@ -1,5 +1,5 @@
 # Multi-stage build for RustDB
-FROM rust:1.90-slim AS builder
+FROM rust:1.94-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
