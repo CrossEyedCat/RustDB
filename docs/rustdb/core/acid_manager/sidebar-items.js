@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AcidError"],"struct":["AcidConfig","AcidManager","AcidStatistics","VersionInfo"],"type":["LogSequenceNumber"]};
+window.SIDEBAR_ITEMS = {"enum":["AcidError"],"fn":["log_isolation"],"struct":["AcidConfig","AcidManager","AcidStatistics","VersionInfo"],"type":["LogSequenceNumber"]};

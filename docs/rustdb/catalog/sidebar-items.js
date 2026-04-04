@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["access","schema","statistics"]};
+window.SIDEBAR_ITEMS = {"mod":["access","schema","statistics"],"struct":["MetadataCatalog"]};

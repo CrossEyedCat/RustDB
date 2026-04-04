@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ConstraintType","TriggerEvent","TriggerTiming"],"struct":["Constraint","Schema","TableOptions","Trigger","Tuple"]};
+window.SIDEBAR_ITEMS = {"enum":["CheckLiteral","ConstraintType","TriggerEvent","TriggerTiming"],"fn":["column_value_as_f64","column_value_as_string","compare_check_value","parse_check_literal","split_binary_comparison"],"struct":["Constraint","Schema","TableOptions","Trigger","Tuple"]};

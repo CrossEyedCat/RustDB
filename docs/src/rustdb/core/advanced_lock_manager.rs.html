@@ -505,8 +505,8 @@
 <a href=#505 id=505 data-nosnippet>505</a>            resource_type: resource_type.clone(),
 <a href=#506 id=506 data-nosnippet>506</a>            lock_mode,
 <a href=#507 id=507 data-nosnippet>507</a>            requested_at: Instant::now(),
-<a href=#508 id=508 data-nosnippet>508</a>            priority: <span class="number">0</span>, <span class="comment">// TODO: Implement prioritization
-<a href=#509 id=509 data-nosnippet>509</a>            </span>timeout,
+<a href=#508 id=508 data-nosnippet>508</a>            priority: (transaction_id.value() % <span class="number">1000</span>) <span class="kw">as </span>u32,
+<a href=#509 id=509 data-nosnippet>509</a>            timeout,
 <a href=#510 id=510 data-nosnippet>510</a>        };
 <a href=#511 id=511 data-nosnippet>511</a>
 <a href=#512 id=512 data-nosnippet>512</a>        <span class="comment">// Add to waiting queue

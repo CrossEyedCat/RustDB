@@ -4,14 +4,14 @@
 <a href=#4 id=4 data-nosnippet>4</a>//! including B+ trees and hash indexes.
 <a href=#5 id=5 data-nosnippet>5</a>
 <a href=#6 id=6 data-nosnippet>6</a></span><span class="kw">pub mod </span>btree;
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">pub mod </span>simple_hash_index;
-<a href=#8 id=8 data-nosnippet>8</a><span class="comment">// pub mod hash_index; // Temporarily disabled
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">pub mod </span>hash_index;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">pub mod </span>simple_hash_index;
 <a href=#9 id=9 data-nosnippet>9</a>
-<a href=#10 id=10 data-nosnippet>10</a></span><span class="kw">pub use </span>btree::BPlusTree;
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">pub use </span>simple_hash_index::SimpleHashIndex;
-<a href=#12 id=12 data-nosnippet>12</a><span class="comment">// pub use hash_index::{HashIndex, CollisionResolution};
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">pub use </span>btree::BPlusTree;
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">pub use </span>hash_index::{CollisionResolution, HashIndex};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">pub use </span>simple_hash_index::SimpleHashIndex;
 <a href=#13 id=13 data-nosnippet>13</a>
-<a href=#14 id=14 data-nosnippet>14</a></span><span class="kw">use </span><span class="kw">crate</span>::common::{
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span><span class="kw">crate</span>::common::{
 <a href=#15 id=15 data-nosnippet>15</a>    types::{PageId, RecordId},
 <a href=#16 id=16 data-nosnippet>16</a>    <span class="prelude-ty">Result</span>,
 <a href=#17 id=17 data-nosnippet>17</a>};
