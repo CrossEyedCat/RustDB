@@ -47,7 +47,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust ${{ matrix.rust }}
         uses: dtolnay/rust-toolchain@master
@@ -103,7 +103,7 @@ jobs:
       COV_REGEX: '(executor[/\\]operators|analyzer[/\\]semantic_analyzer|analyzer[/\\]access_checker|analyzer[/\\]type_checker|analyzer[/\\]metadata_cache|core[/\\]recovery_manager|core[/\\]acid_manager|core[/\\]buffer|core[/\\]transaction|core[/\\]advanced_lock_manager|core[/\\]recovery\.rs|storage[/\\]page_manager|storage[/\\]schema_manager|storage[/\\]index[/\\]btree|storage[/\\]io_optimization|storage[/\\]block|storage[/\\]row|storage[/\\]tuple|storage[/\\]page\.rs|planner[/\\]planner|logging[/\\]compaction|logging[/\\]recovery|parser[/\\]parser)\.rs$|[/\\]src[/\\](cli|main)\.rs$'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -157,7 +157,7 @@ jobs:
     needs: [test]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -173,7 +173,7 @@ jobs:
     needs: [test]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -194,7 +194,7 @@ jobs:
     needs: [test]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust 1.90.0 (MSRV)
         uses: dtolnay/rust-toolchain@1.90.0
@@ -214,7 +214,7 @@ jobs:
     needs: [format, clippy, msrv, coverage]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -244,7 +244,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -286,7 +286,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -317,7 +317,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -381,7 +381,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Create source archive
         run: |
