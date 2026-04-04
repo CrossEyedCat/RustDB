@@ -111,10 +111,7 @@ impl TableScanOperator {
         let wildcard = projection.is_empty() || projection.iter().any(|c| c == "*");
         if wildcard {
             if !tuple.values.contains_key("id") {
-                row.set_value(
-                    "id",
-                    ColumnValue::new(DataType::BigInt(tuple.id as i64)),
-                );
+                row.set_value("id", ColumnValue::new(DataType::BigInt(tuple.id as i64)));
             }
             let mut keys: Vec<_> = tuple.values.keys().cloned().collect();
             keys.sort();

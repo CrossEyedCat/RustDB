@@ -315,12 +315,7 @@ impl BufferManager {
                     page_id
                 );
             } else {
-                let bytes = self
-                    .cache
-                    .get(&page_id)
-                    .unwrap()
-                    .page
-                    .to_bytes()?;
+                let bytes = self.cache.get(&page_id).unwrap().page.to_bytes()?;
                 self.run_flush_hook(page_id, bytes)?;
             }
         }
@@ -475,12 +470,7 @@ impl BufferManager {
                 .map(|e| e.is_dirty || e.page.header.is_dirty)
                 .unwrap_or(false);
             if need_flush && self.dirty_flush.is_some() {
-                let bytes = self
-                    .cache
-                    .get(&page_id)
-                    .unwrap()
-                    .page
-                    .to_bytes()?;
+                let bytes = self.cache.get(&page_id).unwrap().page.to_bytes()?;
                 self.run_flush_hook(page_id, bytes)?;
             }
             if let Some(entry) = self.cache.get_mut(&page_id) {

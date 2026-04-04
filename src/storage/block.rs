@@ -344,7 +344,9 @@ impl Block {
                 ]) as usize;
                 offset += 4;
                 if offset + meta_len > bytes.len() {
-                    return Err(Error::validation("Invalid block: truncated metadata payload"));
+                    return Err(Error::validation(
+                        "Invalid block: truncated metadata payload",
+                    ));
                 }
                 if meta_len > 0 {
                     metadata = bincode_io::deserialize(&bytes[offset..offset + meta_len])
@@ -608,9 +610,7 @@ mod tests {
         block.add_page(1, vec![7, 8, 9]).unwrap();
         block.links.set_next(100);
         block.links.add_child(200);
-        block
-            .metadata
-            .insert("k".to_string(), "v".to_string());
+        block.metadata.insert("k".to_string(), "v".to_string());
 
         let raw = block.to_bytes().unwrap();
         let out = Block::from_bytes(&raw).unwrap();

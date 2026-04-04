@@ -495,7 +495,11 @@ impl SchemaManager {
         after: &Option<String>,
     ) -> Result<()> {
         let insert_at = if let Some(after_name) = after {
-            let pos = schema.base.columns.iter().position(|c| c.name == *after_name);
+            let pos = schema
+                .base
+                .columns
+                .iter()
+                .position(|c| c.name == *after_name);
             match pos {
                 Some(i) => i + 1,
                 None => {
@@ -768,9 +772,9 @@ impl SchemaManager {
                 self.schemas.remove(&change.table_name);
             }
             SchemaOperationType::Alter => {
-                let prev = change.schema_snapshot_before.ok_or_else(|| {
-                    Error::internal("ALTER rollback missing schema snapshot")
-                })?;
+                let prev = change
+                    .schema_snapshot_before
+                    .ok_or_else(|| Error::internal("ALTER rollback missing schema snapshot"))?;
                 self.schemas.insert(change.table_name, prev);
             }
             SchemaOperationType::Drop => {

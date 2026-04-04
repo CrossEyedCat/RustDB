@@ -327,10 +327,7 @@ impl Constraint {
         let Some((left_col, op, right_raw)) = split_binary_comparison(expr) else {
             // Constant-only expressions (e.g. placeholders `1` / `true` = always satisfied)
             let e = expr.trim();
-            if e.eq_ignore_ascii_case("true")
-                || e == "1"
-                || e.eq_ignore_ascii_case("t")
-            {
+            if e.eq_ignore_ascii_case("true") || e == "1" || e.eq_ignore_ascii_case("t") {
                 return Ok(());
             }
             if e.eq_ignore_ascii_case("false") || e == "0" || e.eq_ignore_ascii_case("f") {
@@ -366,7 +363,7 @@ impl Constraint {
         }
 
         let rhs = parse_check_literal(right_raw)?;
-        let ok = compare_check_value(&cv, op, &rhs).map_err(|e| {
+        let ok = compare_check_value(cv, op, &rhs).map_err(|e| {
             Error::validation(format!(
                 "Constraint '{}': {} (column '{}')",
                 self.name, e, left_col

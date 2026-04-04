@@ -165,11 +165,8 @@ impl AcidManager {
         isolation_level: IsolationLevel,
         read_only: bool,
     ) -> Result<()> {
-        let begin = LogRecord::new_transaction_begin(
-            0,
-            transaction_id.0,
-            log_isolation(&isolation_level),
-        );
+        let begin =
+            LogRecord::new_transaction_begin(0, transaction_id.0, log_isolation(&isolation_level));
         self.wal.append_log_record_blocking(begin)?;
 
         let transaction_info =

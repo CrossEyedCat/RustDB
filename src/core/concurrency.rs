@@ -156,9 +156,10 @@ impl ConcurrencyManager {
             self.acquire_read_lock(transaction_id, resource, None)
                 .await?;
 
-            let store = self.non_mvcc_store.lock().map_err(|e| {
-                Error::internal(format!("non-MVCC store lock: {}", e))
-            })?;
+            let store = self
+                .non_mvcc_store
+                .lock()
+                .map_err(|e| Error::internal(format!("non-MVCC store lock: {}", e)))?;
             Ok(store.get(key).cloned())
         }
     }
@@ -180,9 +181,10 @@ impl ConcurrencyManager {
             self.mvcc_manager
                 .create_version(key, transaction_id, data)?;
         } else {
-            let mut store = self.non_mvcc_store.lock().map_err(|e| {
-                Error::internal(format!("non-MVCC store lock: {}", e))
-            })?;
+            let mut store = self
+                .non_mvcc_store
+                .lock()
+                .map_err(|e| Error::internal(format!("non-MVCC store lock: {}", e)))?;
             store.insert(key, data);
         }
 
@@ -200,9 +202,10 @@ impl ConcurrencyManager {
             // Mark for deletion
             self.mvcc_manager.delete_version(key, transaction_id)?;
         } else {
-            let mut store = self.non_mvcc_store.lock().map_err(|e| {
-                Error::internal(format!("non-MVCC store lock: {}", e))
-            })?;
+            let mut store = self
+                .non_mvcc_store
+                .lock()
+                .map_err(|e| Error::internal(format!("non-MVCC store lock: {}", e)))?;
             store.remove(key);
         }
 
@@ -383,10 +386,7 @@ mod tests {
         let key = RowKey::new(1, 1);
 
         let tx1 = TransactionId::new(1);
-        manager
-            .write(tx1, key.clone(), vec![9, 9])
-            .await
-            .unwrap();
+        manager.write(tx1, key.clone(), vec![9, 9]).await.unwrap();
         manager.commit_transaction(tx1).unwrap();
 
         let tx2 = TransactionId::new(2);

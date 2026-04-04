@@ -726,10 +726,7 @@ impl WriteAheadLog {
         let mut record = record;
         let fut = async move { lw.write_log_sync(record).await };
         if tokio::runtime::Handle::try_current().is_ok() {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(fut)
-            })
+            tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(fut))
         } else {
             tokio::runtime::Runtime::new()
                 .map_err(|e| Error::internal(format!("tokio runtime: {}", e)))?

@@ -251,9 +251,10 @@ impl RecoveryManager {
         if page_info.recovery_data.is_empty() {
             return Ok(());
         }
-        let op: RecordOperation = serde_json::from_slice(&page_info.recovery_data).map_err(|e| {
-            Error::internal(format!("recovery REDO: bad RecordOperation JSON: {}", e))
-        })?;
+        let op: RecordOperation =
+            serde_json::from_slice(&page_info.recovery_data).map_err(|e| {
+                Error::internal(format!("recovery REDO: bad RecordOperation JSON: {}", e))
+            })?;
         let mut pm = self.page_manager.lock().unwrap();
         pm.recovery_apply_record_operation(page_info.operation_type.clone(), &op, true)?;
         Ok(())
@@ -264,9 +265,10 @@ impl RecoveryManager {
         if page_info.recovery_data.is_empty() {
             return Ok(());
         }
-        let op: RecordOperation = serde_json::from_slice(&page_info.recovery_data).map_err(|e| {
-            Error::internal(format!("recovery UNDO: bad RecordOperation JSON: {}", e))
-        })?;
+        let op: RecordOperation =
+            serde_json::from_slice(&page_info.recovery_data).map_err(|e| {
+                Error::internal(format!("recovery UNDO: bad RecordOperation JSON: {}", e))
+            })?;
         let mut pm = self.page_manager.lock().unwrap();
         pm.recovery_apply_record_operation(page_info.operation_type.clone(), &op, false)?;
         Ok(())

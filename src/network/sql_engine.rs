@@ -80,9 +80,7 @@ impl SqlEngine {
         }
         let stmt = &stmts[0];
         match stmt {
-            SqlStatement::Select(sel) if sel.from.is_none() => {
-                eval_select_without_from(sel)
-            }
+            SqlStatement::Select(sel) if sel.from.is_none() => eval_select_without_from(sel),
             SqlStatement::Select(_) => {
                 let plan = inner.planner.create_plan(stmt).map_err(map_db_err)?;
                 let optimized = inner.optimizer.optimize(plan).map_err(map_db_err)?;
@@ -109,10 +107,9 @@ impl EngineHandle for SqlEngine {
         sql: &str,
         _ctx: &mut SessionContext,
     ) -> Result<EngineOutput, EngineError> {
-        let mut g = self
-            .inner
-            .lock()
-            .map_err(|_| EngineError::new(engine_error_code::INTERNAL, "SQL engine lock poisoned"))?;
+        let mut g = self.inner.lock().map_err(|_| {
+            EngineError::new(engine_error_code::INTERNAL, "SQL engine lock poisoned")
+        })?;
         Self::execute_sql_inner(&mut g, sql)
     }
 }
@@ -177,9 +174,7 @@ fn build_insert_tuple(
             }
             cols.clone()
         }
-        None => (0..row.len())
-            .map(|i| format!("col{}", i + 1))
-            .collect(),
+        None => (0..row.len()).map(|i| format!("col{}", i + 1)).collect(),
     };
     for (name, expr) in col_names.iter().zip(row.iter()) {
         let cv = expr_to_column_value(expr)?;
@@ -346,9 +341,7 @@ fn eval_select_without_from(sel: &SelectStatement) -> Result<EngineOutput, Engin
                 ));
             }
             SelectItem::Expression { expr, alias } => {
-                let name = alias
-                    .clone()
-                    .unwrap_or_else(|| format!("col{}", i + 1));
+                let name = alias.clone().unwrap_or_else(|| format!("col{}", i + 1));
                 columns.push(name);
                 row.push(expr_to_string(expr)?);
             }
@@ -419,9 +412,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
         let mut ctx = SessionContext::default();
-        let out = eng
-            .execute_sql("SELECT 1, 2", &mut ctx)
-            .expect("ok");
+        let out = eng.execute_sql("SELECT 1, 2", &mut ctx).expect("ok");
         match out {
             EngineOutput::ResultSet { columns, rows } => {
                 assert_eq!(rows.len(), 1);
@@ -438,15 +429,9 @@ mod tests {
         let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
         let mut ctx = SessionContext::default();
         let out = eng
-            .execute_sql(
-                "INSERT INTO t (a, b) VALUES (1, 'x'), (2, 'y')",
-                &mut ctx,
-            )
+            .execute_sql("INSERT INTO t (a, b) VALUES (1, 'x'), (2, 'y')", &mut ctx)
             .expect("insert");
-        assert_eq!(
-            out,
-            EngineOutput::ExecutionOk { rows_affected: 2 }
-        );
+        assert_eq!(out, EngineOutput::ExecutionOk { rows_affected: 2 });
     }
 
     #[test]
@@ -459,17 +444,11 @@ mod tests {
         let out = eng
             .execute_sql("UPDATE users SET nm = 2 WHERE true", &mut ctx)
             .unwrap();
-        assert_eq!(
-            out,
-            EngineOutput::ExecutionOk { rows_affected: 1 }
-        );
+        assert_eq!(out, EngineOutput::ExecutionOk { rows_affected: 1 });
         let del = eng
             .execute_sql("DELETE FROM users WHERE true", &mut ctx)
             .unwrap();
-        assert_eq!(
-            del,
-            EngineOutput::ExecutionOk { rows_affected: 1 }
-        );
+        assert_eq!(del, EngineOutput::ExecutionOk { rows_affected: 1 });
     }
 
     #[test]

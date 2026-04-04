@@ -39,4 +39,21 @@ mod tests {
         let _rs = ResultSet::new()?;
         Ok(())
     }
+
+    #[test]
+    fn test_result_set_with_columns_and_rows() -> Result<()> {
+        let mut rs = ResultSet::with_columns(vec!["a".into(), "b".into()])?;
+        assert_eq!(rs.column_names.len(), 2);
+        rs.push_row(vec!["1".into(), "2".into()]);
+        assert_eq!(rs.rows.len(), 1);
+        assert_eq!(rs.rows[0][1], "2");
+        Ok(())
+    }
+
+    #[test]
+    fn test_result_set_default() {
+        let rs = ResultSet::default();
+        assert!(rs.column_names.is_empty());
+        assert!(rs.rows.is_empty());
+    }
 }

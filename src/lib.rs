@@ -83,10 +83,9 @@ impl Database {
     /// Opens or creates a database directory at `path`.
     pub fn open(path: &str) -> Result<Self> {
         let p = PathBuf::from(path);
-        std::fs::create_dir_all(&p).map_err(|e| Error::database(format!("create_dir {}: {}", path, e)))?;
-        Ok(Self {
-            data_path: Some(p),
-        })
+        std::fs::create_dir_all(&p)
+            .map_err(|e| Error::database(format!("create_dir {}: {}", path, e)))?;
+        Ok(Self { data_path: Some(p) })
     }
 
     /// Active data directory, if any.
@@ -120,8 +119,14 @@ mod crate_tests {
     #[test]
     fn test_database_new_open_close() -> Result<()> {
         let mut db = Database::new()?;
+        assert!(db.path().is_none());
         let tmp = std::env::temp_dir().join("rustdb_lib_test_open");
+        let mut on_disk =
+            Database::open(tmp.to_str().ok_or_else(|| Error::database("temp path"))?)?;
+        assert_eq!(on_disk.path(), Some(tmp.as_path()));
         let _ = Database::open(tmp.to_str().ok_or_else(|| Error::database("temp path"))?)?;
+        on_disk.close()?;
+        assert!(on_disk.path().is_none());
         db.close()?;
         Ok(())
     }

@@ -386,9 +386,10 @@ impl PageManager {
 
             match (record_type, redo) {
                 (LogRecordType::DataInsert, true) => {
-                    let nd = op.new_data.as_ref().ok_or_else(|| {
-                        Error::internal("recovery REDO INSERT: missing new_data")
-                    })?;
+                    let nd = op
+                        .new_data
+                        .as_ref()
+                        .ok_or_else(|| Error::internal("recovery REDO INSERT: missing new_data"))?;
                     if page.update_record_by_offset(slot_off, nd).is_err() {
                         let _ = page.delete_record_by_offset(slot_off);
                         page.add_record_at_offset(nd, rid, slot_off)?;
@@ -398,18 +399,20 @@ impl PageManager {
                     let _ = page.delete_record_by_offset(slot_off);
                 }
                 (LogRecordType::DataUpdate, true) => {
-                    let nd = op.new_data.as_ref().ok_or_else(|| {
-                        Error::internal("recovery REDO UPDATE: missing new_data")
-                    })?;
+                    let nd = op
+                        .new_data
+                        .as_ref()
+                        .ok_or_else(|| Error::internal("recovery REDO UPDATE: missing new_data"))?;
                     if page.update_record_by_offset(slot_off, nd).is_err() {
                         let _ = page.delete_record_by_offset(slot_off);
                         page.add_record_at_offset(nd, rid, slot_off)?;
                     }
                 }
                 (LogRecordType::DataUpdate, false) => {
-                    let old = op.old_data.as_ref().ok_or_else(|| {
-                        Error::internal("recovery UNDO UPDATE: missing old_data")
-                    })?;
+                    let old = op
+                        .old_data
+                        .as_ref()
+                        .ok_or_else(|| Error::internal("recovery UNDO UPDATE: missing old_data"))?;
                     if page.update_record_by_offset(slot_off, old).is_err() {
                         let _ = page.delete_record_by_offset(slot_off);
                         page.add_record_at_offset(old, rid, slot_off)?;
@@ -419,9 +422,10 @@ impl PageManager {
                     let _ = page.delete_record_by_offset(slot_off);
                 }
                 (LogRecordType::DataDelete, false) => {
-                    let old = op.old_data.as_ref().ok_or_else(|| {
-                        Error::internal("recovery UNDO DELETE: missing old_data")
-                    })?;
+                    let old = op
+                        .old_data
+                        .as_ref()
+                        .ok_or_else(|| Error::internal("recovery UNDO DELETE: missing old_data"))?;
                     if page.update_record_by_offset(slot_off, old).is_err() {
                         let _ = page.delete_record_by_offset(slot_off);
                         page.add_record_at_offset(old, rid, slot_off)?;
