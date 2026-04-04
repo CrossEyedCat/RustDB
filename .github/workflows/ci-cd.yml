@@ -389,7 +389,7 @@ jobs:
           mv /tmp/source.tar.gz rustdb-main-${{ github.sha }}-source.tar.gz
 
       - name: Download Linux build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: rustdb-linux-x64
           path: linux
