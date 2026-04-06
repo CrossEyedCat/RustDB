@@ -45,11 +45,12 @@ impl SqlEngine {
     /// Uses one heap file `default.tbl` for table scans (see [`ScanOperatorFactory`]).
     pub fn open(data_dir: PathBuf) -> Result<Self, DbError> {
         std::fs::create_dir_all(&data_dir)?;
-        let pm = Arc::new(Mutex::new(PageManager::new(
-            data_dir.clone(),
-            "default",
-            PageManagerConfig::default(),
-        )?));
+        let pm = match PageManager::open(data_dir.clone(), "default", PageManagerConfig::default())
+        {
+            Ok(pm) => pm,
+            Err(_) => PageManager::new(data_dir.clone(), "default", PageManagerConfig::default())?,
+        };
+        let pm = Arc::new(Mutex::new(pm));
         let table_pms: Arc<Mutex<HashMap<String, Arc<Mutex<PageManager>>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let factory = Arc::new(ScanOperatorFactory::with_tables(
