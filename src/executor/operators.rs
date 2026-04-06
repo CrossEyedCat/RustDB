@@ -1746,8 +1746,8 @@ pub struct ScanOperatorFactory {
     /// Indexes: (table_name, index_name) -> B+ tree
     indexes: HashMap<(String, String), Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>>,
     /// When set, a table name not yet in `table_page_managers` opens `<data_dir>/<table>.tbl`
-    /// (same layout as [`crate::network::sql_engine::table_page_manager`]). This lets `SELECT`
-    /// after a new process see rows inserted into a named heap file earlier.
+    /// using the same per-table heap files as [`SqlEngine`](crate::network::SqlEngine) for DML. This
+    /// lets `SELECT` in a new process see rows inserted into a named heap file earlier.
     data_dir: Option<PathBuf>,
     pm_config: PageManagerConfig,
 }
