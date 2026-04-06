@@ -99,13 +99,13 @@ fn e2e_update_and_delete_with_where_true() {
 }
 
 #[test]
-fn e2e_ddl_returns_unsupported() {
+fn e2e_ddl_create_table_is_accepted() {
     let (_dir, eng) = open_engine();
     let mut ctx = SessionContext::default();
-    let err = eng
+    let out = eng
         .execute_sql("CREATE TABLE x (id INT)", &mut ctx)
-        .expect_err("ddl unsupported");
-    assert_eq!(err.code, engine_error_code::UNSUPPORTED_SQL);
+        .expect("ddl ok");
+    assert_eq!(out, EngineOutput::ExecutionOk { rows_affected: 0 });
 }
 
 #[test]
@@ -119,11 +119,14 @@ fn e2e_multiple_statements_rejected() {
 }
 
 #[test]
-fn e2e_insert_select_subquery_unsupported() {
+fn e2e_insert_select_subquery_is_accepted() {
     let (_dir, eng) = open_engine();
     let mut ctx = SessionContext::default();
-    let err = eng
-        .execute_sql("INSERT INTO t SELECT 1", &mut ctx)
-        .expect_err("insert select");
-    assert_eq!(err.code, engine_error_code::UNSUPPORTED_SQL);
+    // Seed a source table, then insert-select into destination.
+    eng.execute_sql("INSERT INTO src (a) VALUES (1)", &mut ctx)
+        .expect("seed");
+    let out = eng
+        .execute_sql("INSERT INTO t (a) SELECT a FROM src", &mut ctx)
+        .expect("insert select");
+    assert_eq!(out, EngineOutput::ExecutionOk { rows_affected: 1 });
 }
