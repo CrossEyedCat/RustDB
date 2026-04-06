@@ -278,6 +278,54 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # Pull the image just pushed by `docker` and run scripts/sql_stateful_smoke.sh (persistent volume SQL checks).
+  docker_stateful_sql:
+    name: Docker stateful SQL smoke
+    runs-on: ubuntu-latest
+    needs: [docker]
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image tag (same as docker build)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Pull image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          IMAGE="$(echo "$TAGS" | head -n1 | tr -d '\r')"
+          test -n "$IMAGE"
+          echo "RUSTDB_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker pull "$IMAGE"
+
+      - name: Run stateful SQL smoke
+        run: |
+          set -euo pipefail
+          chmod +x scripts/sql_stateful_smoke.sh
+          ./scripts/sql_stateful_smoke.sh
+        timeout-minutes: 15
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest
@@ -374,7 +422,7 @@ jobs:
   deploy:
     name: Deploy to GitHub Releases
     runs-on: ubuntu-latest
-    needs: [build, docker]
+    needs: [build, docker, docker_stateful_sql]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
