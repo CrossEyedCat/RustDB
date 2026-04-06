@@ -86,9 +86,11 @@ impl AdvancedDatabaseFile {
 
     /// Opens an existing advanced database file
     pub fn open(base_file: DatabaseFile) -> Result<Self> {
-        // Read extended header from file
-        // In a real implementation, there would be code here to read the header
-        let header = DatabaseFileHeader::default();
+        // Extended header is not yet deserialized from disk; the base [`DatabaseFile`] header
+        // is authoritative for how many data blocks exist. Keep logical page count in sync so
+        // [`PageManager::get_all_page_ids`] can scan after reopen (see `insert_flush_open_sees_records`).
+        let mut header = DatabaseFileHeader::default();
+        header.total_pages = base_file.size_in_blocks() as u64;
         let free_page_map = FreePageMap::new();
         let extension_manager = FileExtensionManager::new(ExtensionStrategy::Adaptive);
 

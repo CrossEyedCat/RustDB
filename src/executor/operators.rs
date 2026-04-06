@@ -11,11 +11,13 @@ use crate::planner::{ExecutionPlan, PlanNode};
 use crate::storage::index::BPlusTree;
 use crate::storage::index::Index;
 use crate::storage::page_manager::PageManager as StoragePageManager;
+use crate::storage::page_manager::PageManagerConfig;
 use crate::storage::tuple::Tuple;
 use crate::{RecordId, Row};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 /// Base trait for all operators
@@ -1743,6 +1745,11 @@ pub struct ScanOperatorFactory {
     table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<StoragePageManager>>>>>,
     /// Indexes: (table_name, index_name) -> B+ tree
     indexes: HashMap<(String, String), Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>>,
+    /// When set, a table name not yet in `table_page_managers` opens `<data_dir>/<table>.tbl`
+    /// (same layout as [`crate::network::sql_engine::table_page_manager`]). This lets `SELECT`
+    /// after a new process see rows inserted into a named heap file earlier.
+    data_dir: Option<PathBuf>,
+    pm_config: PageManagerConfig,
 }
 
 impl ScanOperatorFactory {
@@ -1752,17 +1759,47 @@ impl ScanOperatorFactory {
             default_page_manager: page_manager,
             table_page_managers: Arc::new(Mutex::new(HashMap::new())),
             indexes: HashMap::new(),
+            data_dir: None,
+            pm_config: PageManagerConfig::default(),
         }
     }
 
     pub fn with_tables(
         default_page_manager: Arc<Mutex<StoragePageManager>>,
         table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<StoragePageManager>>>>>,
+        data_dir: PathBuf,
     ) -> Self {
         Self {
             default_page_manager,
             table_page_managers,
             indexes: HashMap::new(),
+            data_dir: Some(data_dir),
+            pm_config: PageManagerConfig::default(),
+        }
+    }
+
+    fn page_manager_for_table(&self, table_name: &str) -> Result<Arc<Mutex<StoragePageManager>>> {
+        let mut g = self
+            .table_page_managers
+            .lock()
+            .map_err(|_| Error::lock("table page managers poisoned"))?;
+        if let Some(pm) = g.get(table_name) {
+            return Ok(pm.clone());
+        }
+        if let Some(ref dir) = self.data_dir {
+            let pm = match StoragePageManager::open(dir.clone(), table_name, self.pm_config.clone())
+            {
+                Ok(pm) => Arc::new(Mutex::new(pm)),
+                Err(_) => Arc::new(Mutex::new(StoragePageManager::new(
+                    dir.clone(),
+                    table_name,
+                    self.pm_config.clone(),
+                )?)),
+            };
+            g.insert(table_name.to_string(), pm.clone());
+            Ok(pm)
+        } else {
+            Ok(self.default_page_manager.clone())
         }
     }
 
@@ -1797,15 +1834,7 @@ impl ScanOperatorFactory {
         filter: Option<String>,
         schema: Vec<String>,
     ) -> Result<Box<dyn Operator>> {
-        let pm = {
-            let g = self
-                .table_page_managers
-                .lock()
-                .map_err(|_| Error::lock("table page managers poisoned"))?;
-            g.get(&table_name)
-                .cloned()
-                .unwrap_or_else(|| self.default_page_manager.clone())
-        };
+        let pm = self.page_manager_for_table(&table_name)?;
         let operator = TableScanOperator::new(table_name, pm, filter, schema)?;
         Ok(Box::new(operator))
     }

@@ -56,6 +56,7 @@ impl SqlEngine {
         let factory = Arc::new(ScanOperatorFactory::with_tables(
             pm.clone(),
             table_pms.clone(),
+            data_dir.clone(),
         ));
         let executor = QueryExecutor::new(factory)?;
         Ok(Self {
@@ -228,6 +229,10 @@ fn execute_insert(
                 pm.insert(&bytes).map_err(map_db_err)?;
                 rows_affected += 1;
             }
+            {
+                let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+                pm.flush_dirty_pages().map_err(map_db_err)?;
+            }
             Ok(EngineOutput::ExecutionOk { rows_affected })
         }
         InsertValues::Values(rows) => {
@@ -245,6 +250,10 @@ fn execute_insert(
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
                 pm.insert(&bytes).map_err(map_db_err)?;
                 rows_affected += 1;
+            }
+            {
+                let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+                pm.flush_dirty_pages().map_err(map_db_err)?;
             }
             Ok(EngineOutput::ExecutionOk { rows_affected })
         }
@@ -331,6 +340,7 @@ fn execute_update(
         pm.update(rid, &new_bytes).map_err(map_db_err)?;
         rows_affected += 1;
     }
+    pm.flush_dirty_pages().map_err(map_db_err)?;
     Ok(EngineOutput::ExecutionOk { rows_affected })
 }
 
@@ -359,6 +369,7 @@ fn execute_delete(
         pm.delete(rid).map_err(map_db_err)?;
         rows_affected += 1;
     }
+    pm.flush_dirty_pages().map_err(map_db_err)?;
     Ok(EngineOutput::ExecutionOk { rows_affected })
 }
 

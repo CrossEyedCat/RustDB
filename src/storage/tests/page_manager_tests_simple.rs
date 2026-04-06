@@ -313,3 +313,31 @@ fn test_recovery_redo_delete_removes_record() {
         .unwrap();
     assert!(pm.get_record(rid).unwrap().is_none());
 }
+
+#[test]
+fn insert_flush_open_sees_records() {
+    let dir = TempDir::new().expect("tempdir");
+    let path = dir.path().to_path_buf();
+    let cfg = PageManagerConfig::default();
+    {
+        let mut pm = PageManager::new(path.clone(), "t_reopen", cfg.clone()).expect("new");
+        pm.insert(b"row-bytes").expect("insert");
+        let before_close = pm.select(None).expect("same-process select");
+        assert!(
+            !before_close.is_empty(),
+            "same process should see inserted row"
+        );
+        let flushed = pm.flush_dirty_pages().expect("flush");
+        assert!(
+            flushed > 0,
+            "flush should persist dirty pages, got {}",
+            flushed
+        );
+    }
+    let mut pm2 = PageManager::open(path, "t_reopen", cfg).expect("open");
+    let rows = pm2.select(None).expect("select");
+    assert!(
+        !rows.is_empty(),
+        "after flush, reopen should read persisted pages"
+    );
+}

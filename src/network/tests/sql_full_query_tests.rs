@@ -296,3 +296,34 @@ fn engine_transactions_are_accepted_minimally() {
         EngineOutput::ExecutionOk { rows_affected: 0 }
     );
 }
+
+#[test]
+fn engine_select_named_table_after_engine_reopen() {
+    let dir = TempDir::new().expect("tempdir");
+    {
+        let eng = SqlEngine::open(dir.path().to_path_buf()).expect("open");
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("INSERT INTO stateful_r (a) VALUES (100)", &mut ctx)
+            .expect("insert");
+    }
+    let heap = dir.path().join("stateful_r.tbl");
+    assert!(
+        heap.exists() && heap.metadata().expect("meta").len() > 0,
+        "expected persisted heap file with data"
+    );
+    {
+        let eng = SqlEngine::open(dir.path().to_path_buf()).expect("reopen");
+        let mut ctx = SessionContext::default();
+        let out = eng
+            .execute_sql("SELECT a FROM stateful_r", &mut ctx)
+            .expect("select");
+        match out {
+            EngineOutput::ResultSet { columns, rows } => {
+                assert_eq!(columns, vec!["a"]);
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0], vec!["Integer(100)"]);
+            }
+            _ => panic!("expected ResultSet"),
+        }
+    }
+}
