@@ -86,6 +86,8 @@ fn test_optimizer_filter_over_join_pushdown_path() -> Result<()> {
     });
     let root = PlanNode::Filter(FilterNode {
         condition: "a=1".into(),
+        predicate: None,
+        equality: None,
         input: Box::new(inner_join),
         selectivity: 0.3,
         cost: 1.0,

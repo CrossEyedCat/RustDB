@@ -417,6 +417,71 @@ impl TypeChecker {
         Ok(())
     }
 
+    /// Column identifiers are typed as [`DataType::Text`] without a schema; for comparisons with literals, align to the literal type so `WHERE a = 1` is accepted.
+    fn comparison_pair_types(
+        &self,
+        left: &Expression,
+        left_type: &DataType,
+        right: &Expression,
+        right_type: &DataType,
+        op: &BinaryOperator,
+    ) -> (DataType, DataType) {
+        if matches!(
+            op,
+            BinaryOperator::Add
+                | BinaryOperator::Subtract
+                | BinaryOperator::Multiply
+                | BinaryOperator::Divide
+                | BinaryOperator::Modulo
+        ) {
+            match (left, right) {
+                (
+                    Expression::Identifier(_) | Expression::QualifiedIdentifier { .. },
+                    Expression::Literal(lit),
+                ) => {
+                    let t = self.get_literal_type(lit);
+                    return (t.clone(), t);
+                }
+                (
+                    Expression::Literal(lit),
+                    Expression::Identifier(_) | Expression::QualifiedIdentifier { .. },
+                ) => {
+                    let t = self.get_literal_type(lit);
+                    return (t.clone(), t);
+                }
+                _ => {}
+            }
+        }
+        if !matches!(
+            op,
+            BinaryOperator::Equal
+                | BinaryOperator::NotEqual
+                | BinaryOperator::LessThan
+                | BinaryOperator::LessThanOrEqual
+                | BinaryOperator::GreaterThan
+                | BinaryOperator::GreaterThanOrEqual
+        ) {
+            return (left_type.clone(), right_type.clone());
+        }
+        match (left, right) {
+            (
+                Expression::Identifier(_) | Expression::QualifiedIdentifier { .. },
+                Expression::Literal(lit),
+            ) => {
+                let t = self.get_literal_type(lit);
+                (t.clone(), t)
+            }
+            (
+                Expression::Literal(lit),
+                Expression::Identifier(_) | Expression::QualifiedIdentifier { .. },
+            ) => {
+                let t = self.get_literal_type(lit);
+                (t.clone(), t)
+            }
+            _ => (left_type.clone(), right_type.clone()),
+        }
+    }
+
     fn check_expression_types(
         &mut self,
         expr: &Expression,
@@ -434,8 +499,11 @@ impl TypeChecker {
                 let left_type = self.check_expression_types(left, result)?;
                 let right_type = self.check_expression_types(right, result)?;
 
+                let (eff_left, eff_right) =
+                    self.comparison_pair_types(left, &left_type, right, &right_type, op);
+
                 // Check operand compatibility
-                let compatibility = self.check_compatibility(&left_type, &right_type);
+                let compatibility = self.check_compatibility(&eff_left, &eff_right);
                 if matches!(compatibility, TypeCompatibility::Incompatible) {
                     result.add_error(TypeCheckError {
                         message: format!(
@@ -462,7 +530,7 @@ impl TypeChecker {
                     });
                 }
 
-                self.get_binary_operation_result_type(&left_type, &right_type, op)
+                self.get_binary_operation_result_type(&eff_left, &eff_right, op)
             }
             Expression::UnaryOp { op, expr: operand } => {
                 let operand_type = self.check_expression_types(operand, result)?;

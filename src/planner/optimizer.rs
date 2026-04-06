@@ -232,6 +232,8 @@ impl QueryOptimizer {
                         let sel = estimate_selectivity(&condition);
                         left = PlanNode::Filter(FilterNode {
                             condition,
+                            predicate: None,
+                            equality: None,
                             input: Box::new(left),
                             selectivity: sel,
                             cost: 0.05 + (1.0 - sel) * 0.15,
@@ -242,6 +244,8 @@ impl QueryOptimizer {
                         let sel = estimate_selectivity(&condition);
                         right = PlanNode::Filter(FilterNode {
                             condition,
+                            predicate: None,
+                            equality: None,
                             input: Box::new(right),
                             selectivity: sel,
                             cost: 0.05 + (1.0 - sel) * 0.15,
@@ -259,6 +263,8 @@ impl QueryOptimizer {
                     // For other nodes, simply apply the filter
                     Ok(PlanNode::Filter(FilterNode {
                         condition: filter.condition.clone(),
+                        predicate: filter.predicate.clone(),
+                        equality: filter.equality.clone(),
                         input: Box::new(optimized_input),
                         selectivity: filter.selectivity,
                         cost: filter.cost,

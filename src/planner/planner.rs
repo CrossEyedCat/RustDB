@@ -3,8 +3,8 @@
 use crate::analyzer::{AnalysisContext, SemanticAnalyzer};
 use crate::common::{Error, Result};
 use crate::parser::ast::{
-    DeleteStatement, Expression, InsertStatement, InsertValues, SelectItem, SelectStatement,
-    SqlStatement, UpdateStatement,
+    BinaryOperator, DeleteStatement, Expression, InsertStatement, InsertValues, Literal,
+    SelectItem, SelectStatement, SqlStatement, UpdateStatement,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -44,13 +44,18 @@ pub(crate) fn estimate_selectivity(condition: &str) -> f64 {
 }
 
 fn column_names_from_select(select: &SelectStatement) -> Vec<String> {
+    use std::collections::HashSet;
     let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut push_unique = |s: String, out: &mut Vec<String>, seen: &mut HashSet<String>| {
+        if seen.insert(s.clone()) {
+            out.push(s);
+        }
+    };
     for item in &select.select_list {
         match item {
             SelectItem::Wildcard => {
-                if !out.iter().any(|s| s == "*") {
-                    out.push("*".to_string());
-                }
+                push_unique("*".to_string(), &mut out, &mut seen);
             }
             SelectItem::Expression { expr, alias } => {
                 let name = if let Some(a) = alias {
@@ -58,14 +63,77 @@ fn column_names_from_select(select: &SelectStatement) -> Vec<String> {
                 } else {
                     expr_to_short_name(expr)
                 };
-                out.push(name);
+                push_unique(name, &mut out, &mut seen);
             }
         }
+    }
+    if let Some(w) = &select.where_clause {
+        collect_identifier_columns(w, &mut out, &mut push_unique, &mut seen);
+    }
+    for ob in &select.order_by {
+        collect_identifier_columns(&ob.expr, &mut out, &mut push_unique, &mut seen);
+    }
+    for gb in &select.group_by {
+        collect_identifier_columns(gb, &mut out, &mut push_unique, &mut seen);
+    }
+    if let Some(h) = &select.having {
+        collect_identifier_columns(h, &mut out, &mut push_unique, &mut seen);
     }
     if out.is_empty() {
         out.push("*".to_string());
     }
     out
+}
+
+fn collect_identifier_columns(
+    expr: &Expression,
+    out: &mut Vec<String>,
+    push_unique: &mut impl FnMut(String, &mut Vec<String>, &mut std::collections::HashSet<String>),
+    seen: &mut std::collections::HashSet<String>,
+) {
+    match expr {
+        Expression::Identifier(s) => push_unique(s.clone(), out, seen),
+        Expression::QualifiedIdentifier { column, .. } => push_unique(column.clone(), out, seen),
+        Expression::BinaryOp { left, right, .. } => {
+            collect_identifier_columns(left, out, push_unique, seen);
+            collect_identifier_columns(right, out, push_unique, seen);
+        }
+        Expression::UnaryOp { expr, .. } => {
+            collect_identifier_columns(expr, out, push_unique, seen)
+        }
+        Expression::Function { args, .. } => {
+            for a in args {
+                collect_identifier_columns(a, out, push_unique, seen);
+            }
+        }
+        Expression::Case {
+            expr,
+            when_clauses,
+            else_clause,
+        } => {
+            if let Some(e) = expr {
+                collect_identifier_columns(e, out, push_unique, seen);
+            }
+            for w in when_clauses {
+                collect_identifier_columns(&w.condition, out, push_unique, seen);
+                collect_identifier_columns(&w.result, out, push_unique, seen);
+            }
+            if let Some(e) = else_clause {
+                collect_identifier_columns(e, out, push_unique, seen);
+            }
+        }
+        Expression::Exists(q) => {
+            if let Some(w) = &q.where_clause {
+                collect_identifier_columns(w, out, push_unique, seen);
+            }
+            for it in &q.select_list {
+                if let SelectItem::Expression { expr, .. } = it {
+                    collect_identifier_columns(expr, out, push_unique, seen);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn expr_to_short_name(expr: &Expression) -> String {
@@ -285,17 +353,69 @@ pub struct IndexCondition {
     pub value: String,
 }
 
+/// Simple `column = literal` predicate for runtime evaluation (SELECT WHERE on heap rows).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SimpleEqualityFilter {
+    pub column: String,
+    pub literal: Literal,
+}
+
 /// Filter node
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FilterNode {
     /// Filter condition
     pub condition: String,
+    /// Predicate expression (used by executor for runtime evaluation when available).
+    pub predicate: Option<Expression>,
+    /// Structured equality when the planner can derive it from the AST
+    pub equality: Option<SimpleEqualityFilter>,
     /// Input node
     pub input: Box<PlanNode>,
     /// Selectivity estimate
     pub selectivity: f64,
     /// Cost estimate
     pub cost: f64,
+}
+
+pub(crate) fn extract_simple_equality(expr: &Expression) -> Option<SimpleEqualityFilter> {
+    match expr {
+        Expression::BinaryOp {
+            left,
+            op: BinaryOperator::Equal,
+            right,
+        } => match (left.as_ref(), right.as_ref()) {
+            (Expression::Identifier(c), Expression::Literal(l)) => Some(SimpleEqualityFilter {
+                column: c.clone(),
+                literal: l.clone(),
+            }),
+            (Expression::Literal(l), Expression::Identifier(c)) => Some(SimpleEqualityFilter {
+                column: c.clone(),
+                literal: l.clone(),
+            }),
+            (Expression::QualifiedIdentifier { column, .. }, Expression::Literal(l)) => {
+                Some(SimpleEqualityFilter {
+                    column: column.clone(),
+                    literal: l.clone(),
+                })
+            }
+            (Expression::Literal(l), Expression::QualifiedIdentifier { column, .. }) => {
+                Some(SimpleEqualityFilter {
+                    column: column.clone(),
+                    literal: l.clone(),
+                })
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn order_by_expr_column_name(expr: &Expression) -> String {
+    match expr {
+        Expression::Identifier(s) => s.clone(),
+        Expression::QualifiedIdentifier { column, .. } => column.clone(),
+        e => format!("{e:?}"),
+    }
 }
 
 /// Projection node
@@ -315,7 +435,7 @@ pub struct ProjectionColumn {
     /// Column name
     pub name: String,
     /// Expression to compute
-    pub expression: Option<String>,
+    pub expression: Option<Expression>,
     /// Alias
     pub alias: Option<String>,
 }
@@ -599,7 +719,18 @@ impl QueryPlanner {
                     condition: join
                         .condition
                         .as_ref()
-                        .map(|e| format!("{:?}", e))
+                        .and_then(|e| match e {
+                            Expression::BinaryOp {
+                                left,
+                                op: BinaryOperator::Equal,
+                                right,
+                            } => Some(format!(
+                                "{}={}",
+                                expr_to_short_name(left),
+                                expr_to_short_name(right)
+                            )),
+                            _ => None,
+                        })
                         .unwrap_or_default(),
                     left: Box::new(current_plan),
                     right: Box::new(join_plan),
@@ -614,6 +745,8 @@ impl QueryPlanner {
             let sel = estimate_selectivity(&cond);
             current_plan = PlanNode::Filter(FilterNode {
                 condition: cond,
+                predicate: Some(where_clause.clone()),
+                equality: extract_simple_equality(where_clause),
                 input: Box::new(current_plan),
                 selectivity: sel,
                 cost: 0.05 + (1.0 - sel) * 0.15,
@@ -624,7 +757,7 @@ impl QueryPlanner {
         if !select.group_by.is_empty() {
             let gb_cost = rough_subtree_cost(&current_plan) * 0.02 + 2.0;
             current_plan = PlanNode::GroupBy(GroupByNode {
-                group_columns: select.group_by.iter().map(|e| format!("{:?}", e)).collect(),
+                group_columns: select.group_by.iter().map(expr_to_short_name).collect(),
                 aggregates: extract_aggregates_from_select(select),
                 input: Box::new(current_plan),
                 cost: gb_cost,
@@ -637,6 +770,8 @@ impl QueryPlanner {
             let sel = estimate_selectivity(&cond);
             current_plan = PlanNode::Filter(FilterNode {
                 condition: cond,
+                predicate: Some(having.clone()),
+                equality: extract_simple_equality(having),
                 input: Box::new(current_plan),
                 selectivity: sel,
                 cost: 0.05 + (1.0 - sel) * 0.15,
@@ -651,7 +786,7 @@ impl QueryPlanner {
                     .order_by
                     .iter()
                     .map(|item| SortColumn {
-                        column: format!("{:?}", item.expr),
+                        column: order_by_expr_column_name(&item.expr),
                         direction: match item.direction {
                             crate::parser::ast::OrderDirection::Asc => SortDirection::Asc,
                             crate::parser::ast::OrderDirection::Desc => SortDirection::Desc,
@@ -663,21 +798,19 @@ impl QueryPlanner {
             });
         }
 
-        // Add LIMIT
-        if let Some(limit) = select.limit {
-            current_plan = PlanNode::Limit(LimitNode {
-                limit: limit as usize,
-                input: Box::new(current_plan),
-                cost: 0.01,
-            });
-        }
-
-        // Add OFFSET
+        // OFFSET then LIMIT so execution tree Limit(Offset(...)) matches SQL LIMIT n OFFSET m
         if let Some(offset) = select.offset {
             current_plan = PlanNode::Offset(OffsetNode {
                 offset: offset as usize,
                 input: Box::new(current_plan),
                 cost: 0.02,
+            });
+        }
+        if let Some(limit) = select.limit {
+            current_plan = PlanNode::Limit(LimitNode {
+                limit: limit as usize,
+                input: Box::new(current_plan),
+                cost: 0.01,
             });
         }
 
@@ -693,9 +826,10 @@ impl QueryPlanner {
                         alias: None,
                     },
                     crate::parser::ast::SelectItem::Expression { expr, alias } => {
+                        let name = expr_to_short_name(expr);
                         ProjectionColumn {
-                            name: format!("{:?}", expr),
-                            expression: Some(format!("{:?}", expr)),
+                            name,
+                            expression: Some(expr.clone()),
                             alias: alias.clone(),
                         }
                     }

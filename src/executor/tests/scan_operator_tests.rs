@@ -96,8 +96,12 @@ fn test_conditional_scan_operator() -> Result<()> {
 
     let base_operator = TableScanOperator::new("users".to_string(), page_manager, None, schema)?;
 
-    let conditional_operator =
-        ConditionalScanOperator::new(Box::new(base_operator), "name LIKE 'John%'".to_string())?;
+    let conditional_operator = ConditionalScanOperator::new(
+        Box::new(base_operator),
+        "name LIKE 'John%'".to_string(),
+        None,
+        None,
+    )?;
 
     let statistics = conditional_operator.get_statistics();
     assert_eq!(statistics.rows_processed, 0);

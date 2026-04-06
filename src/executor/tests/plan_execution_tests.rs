@@ -105,6 +105,8 @@ fn test_executor_filter() -> crate::common::Result<()> {
     let plan = ExecutionPlan {
         root: PlanNode::Filter(FilterNode {
             condition: "id".to_string(),
+            predicate: None,
+            equality: None,
             input: Box::new(PlanNode::Limit(LimitNode {
                 limit: 8,
                 input: Box::new(PlanNode::TableScan(table_scan_node())),
@@ -129,7 +131,7 @@ fn test_executor_projection() -> crate::common::Result<()> {
         root: PlanNode::Projection(ProjectionNode {
             columns: vec![ProjectionColumn {
                 name: "id".to_string(),
-                expression: None,
+                expression: Some(crate::parser::ast::Expression::Identifier("id".to_string())),
                 alias: None,
             }],
             input: Box::new(PlanNode::Limit(LimitNode {

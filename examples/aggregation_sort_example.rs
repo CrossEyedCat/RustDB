@@ -84,8 +84,7 @@ fn demo_sort_operator() -> rustdb::common::Result<()> {
     let input = Box::new(DemoOperator::new());
     let sort_operator = SortOperator::new(
         input,
-        vec![3],
-        vec![true], // ASC
+        vec![("salary".to_string(), true)],
         vec![
             "id".to_string(),
             "name".to_string(),

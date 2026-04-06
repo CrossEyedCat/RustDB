@@ -223,6 +223,8 @@ fn test_advanced_optimizer_child_nodes_extraction() {
 
     let filter_node = PlanNode::Filter(FilterNode {
         condition: "id > 0".to_string(),
+        predicate: None,
+        equality: None,
         input: Box::new(child_node),
         selectivity: 0.5,
         cost: 25.0,
@@ -247,6 +249,8 @@ fn create_test_execution_plan() -> Result<ExecutionPlan, Box<dyn std::error::Err
 
     let filter_node = PlanNode::Filter(FilterNode {
         condition: "u.age > 18".to_string(),
+        predicate: None,
+        equality: None,
         input: Box::new(users_scan),
         selectivity: 0.7,
         cost: 300.0,

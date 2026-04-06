@@ -268,6 +268,8 @@ impl AdvancedQueryOptimizer {
 
                 Ok(PlanNode::Filter(FilterNode {
                     condition: simplified_condition,
+                    predicate: filter.predicate.clone(),
+                    equality: filter.equality.clone(),
                     input: Box::new(optimized_input),
                     selectivity: filter.selectivity,
                     cost: filter.cost,

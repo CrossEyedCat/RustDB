@@ -2,6 +2,11 @@
 
 use crate::common::types::{ColumnValue, DataType};
 use crate::common::{Error, Result};
+use crate::parser::ast::Literal;
+use crate::parser::ast::{BinaryOperator, Expression, UnaryOperator};
+use crate::planner::planner::AggregateFunction as PlanAggregateFunction;
+use crate::planner::planner::ProjectionColumn;
+use crate::planner::planner::SimpleEqualityFilter;
 use crate::planner::{ExecutionPlan, PlanNode};
 use crate::storage::index::BPlusTree;
 use crate::storage::index::Index;
@@ -43,6 +48,245 @@ pub struct OperatorStatistics {
     pub memory_operations: usize,
     /// Memory used in bytes
     pub memory_used_bytes: usize,
+}
+
+pub struct ProjectionOperator {
+    input: Box<dyn Operator>,
+    columns: Vec<ProjectionColumn>,
+    wildcard: bool,
+    statistics: OperatorStatistics,
+}
+
+fn eval_value_to_column_value(v: EvalValue) -> ColumnValue {
+    match v {
+        EvalValue::Null => ColumnValue::null(),
+        EvalValue::Bool(b) => ColumnValue::new(DataType::Boolean(b)),
+        EvalValue::Int(n) => {
+            if n >= i32::MIN as i64 && n <= i32::MAX as i64 {
+                ColumnValue::new(DataType::Integer(n as i32))
+            } else {
+                ColumnValue::new(DataType::BigInt(n))
+            }
+        }
+        EvalValue::Float(f) => ColumnValue::new(DataType::Double(f)),
+        EvalValue::String(s) => ColumnValue::new(DataType::Varchar(s)),
+    }
+}
+
+impl ProjectionOperator {
+    pub fn new(input: Box<dyn Operator>, columns: Vec<ProjectionColumn>) -> Result<Self> {
+        let wildcard = columns.iter().any(|c| c.name == "*");
+        Ok(Self {
+            input,
+            columns,
+            wildcard,
+            statistics: OperatorStatistics::default(),
+        })
+    }
+}
+
+impl Operator for ProjectionOperator {
+    fn next(&mut self) -> Result<Option<Row>> {
+        let start_time = std::time::Instant::now();
+        let Some(row) = self.input.next()? else {
+            self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+            return Ok(None);
+        };
+        self.statistics.rows_processed += 1;
+
+        if self.wildcard {
+            self.statistics.rows_returned += 1;
+            self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+            return Ok(Some(row));
+        }
+
+        let mut out = Row::new();
+        out.version = row.version;
+        out.created_at = row.created_at;
+        out.updated_at = row.updated_at;
+        for c in &self.columns {
+            let out_name = c.alias.clone().unwrap_or_else(|| c.name.clone());
+            let v = match &c.expression {
+                Some(expr) => eval_expression(&row, expr),
+                None => EvalValue::Null,
+            };
+            out.set_value(&out_name, eval_value_to_column_value(v));
+        }
+
+        self.statistics.rows_returned += 1;
+        self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+        Ok(Some(out))
+    }
+
+    fn reset(&mut self) -> Result<()> {
+        self.input.reset()?;
+        self.statistics = OperatorStatistics::default();
+        Ok(())
+    }
+
+    fn get_schema(&self) -> Result<Vec<String>> {
+        if self.wildcard {
+            return self.input.get_schema();
+        }
+        let mut cols = Vec::new();
+        for c in &self.columns {
+            cols.push(c.alias.clone().unwrap_or_else(|| c.name.clone()));
+        }
+        Ok(cols)
+    }
+
+    fn get_statistics(&self) -> OperatorStatistics {
+        self.statistics.clone()
+    }
+}
+
+pub struct GroupByOperator {
+    input: Box<dyn Operator>,
+    group_columns: Vec<String>,
+    aggregates: Vec<PlanAggregateFunction>,
+    result_schema: Vec<String>,
+    statistics: OperatorStatistics,
+    results: Vec<Row>,
+    cursor: usize,
+}
+
+impl GroupByOperator {
+    pub fn new(
+        input: Box<dyn Operator>,
+        group_columns: Vec<String>,
+        aggregates: Vec<PlanAggregateFunction>,
+        result_schema: Vec<String>,
+    ) -> Result<Self> {
+        Ok(Self {
+            input,
+            group_columns,
+            aggregates,
+            result_schema,
+            statistics: OperatorStatistics::default(),
+            results: Vec::new(),
+            cursor: 0,
+        })
+    }
+
+    fn materialize(&mut self) -> Result<()> {
+        if !self.results.is_empty() {
+            return Ok(());
+        }
+        use std::collections::HashMap;
+        let mut groups: HashMap<Vec<String>, Vec<Row>> = HashMap::new();
+        while let Some(row) = self.input.next()? {
+            self.statistics.rows_processed += 1;
+            let key: Vec<String> = self
+                .group_columns
+                .iter()
+                .map(|c| {
+                    row.values
+                        .get(c)
+                        .map(|cv| format!("{:?}", cv.data_type))
+                        .unwrap_or_else(|| "NULL".to_string())
+                })
+                .collect();
+            groups.entry(key).or_default().push(row);
+        }
+
+        for (key, rows) in groups {
+            let mut out = Row::new();
+            for (i, col) in self.group_columns.iter().enumerate() {
+                let v = key.get(i).cloned().unwrap_or_else(|| "NULL".to_string());
+                out.set_value(col, ColumnValue::new(DataType::Text(v)));
+            }
+            for agg in &self.aggregates {
+                let out_name = agg
+                    .alias
+                    .clone()
+                    .unwrap_or_else(|| format!("{}({})", agg.name, agg.argument));
+                let v = self.eval_aggregate(&rows, agg);
+                out.set_value(&out_name, v.clone());
+                out.set_value(&format!("{}({})", agg.name.to_uppercase(), agg.argument), v);
+            }
+            self.results.push(out);
+        }
+        Ok(())
+    }
+
+    fn eval_aggregate(&self, rows: &[Row], agg: &PlanAggregateFunction) -> ColumnValue {
+        let name = agg.name.to_uppercase();
+        let arg = agg.argument.clone();
+        match name.as_str() {
+            "COUNT" => {
+                if arg == "*" {
+                    ColumnValue::new(DataType::BigInt(rows.len() as i64))
+                } else {
+                    let mut c = 0i64;
+                    for r in rows {
+                        if let Some(v) = r.values.get(&arg) {
+                            if !v.is_null {
+                                c += 1;
+                            }
+                        }
+                    }
+                    ColumnValue::new(DataType::BigInt(c))
+                }
+            }
+            "SUM" | "AVG" => {
+                let mut sum = 0f64;
+                let mut n = 0f64;
+                for r in rows {
+                    let Some(cv) = r.values.get(&arg) else {
+                        continue;
+                    };
+                    match column_value_to_eval(cv) {
+                        EvalValue::Int(i) => {
+                            sum += i as f64;
+                            n += 1.0;
+                        }
+                        EvalValue::Float(f) => {
+                            sum += f;
+                            n += 1.0;
+                        }
+                        _ => {}
+                    }
+                }
+                if n == 0.0 {
+                    ColumnValue::null()
+                } else if name == "SUM" {
+                    ColumnValue::new(DataType::Double(sum))
+                } else {
+                    ColumnValue::new(DataType::Double(sum / n))
+                }
+            }
+            _ => ColumnValue::null(),
+        }
+    }
+}
+
+impl Operator for GroupByOperator {
+    fn next(&mut self) -> Result<Option<Row>> {
+        self.materialize()?;
+        if self.cursor >= self.results.len() {
+            return Ok(None);
+        }
+        let row = self.results[self.cursor].clone();
+        self.cursor += 1;
+        self.statistics.rows_returned += 1;
+        Ok(Some(row))
+    }
+
+    fn reset(&mut self) -> Result<()> {
+        self.input.reset()?;
+        self.results.clear();
+        self.cursor = 0;
+        self.statistics = OperatorStatistics::default();
+        Ok(())
+    }
+
+    fn get_schema(&self) -> Result<Vec<String>> {
+        Ok(self.result_schema.clone())
+    }
+
+    fn get_statistics(&self) -> OperatorStatistics {
+        self.statistics.clone()
+    }
 }
 
 /// Table scan operator — reads heap records via [`StoragePageManager::select`] and deserializes [`Tuple`] to [`Row`].
@@ -496,23 +740,218 @@ pub struct ConditionalScanOperator {
     base_operator: Box<dyn Operator>,
     /// Filter condition
     condition: String,
+    /// Full predicate expression (preferred over string matching).
+    predicate: Option<Expression>,
+    /// Structured equality when available (SELECT WHERE column = literal)
+    equality: Option<SimpleEqualityFilter>,
     /// Statistics
     statistics: OperatorStatistics,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum EvalValue {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(String),
+}
+
+fn column_value_to_eval(cv: &ColumnValue) -> EvalValue {
+    if cv.is_null {
+        return EvalValue::Null;
+    }
+    match &cv.data_type {
+        DataType::Null => EvalValue::Null,
+        DataType::Boolean(b) => EvalValue::Bool(*b),
+        DataType::TinyInt(n) => EvalValue::Int(*n as i64),
+        DataType::SmallInt(n) => EvalValue::Int(*n as i64),
+        DataType::Integer(n) => EvalValue::Int(*n as i64),
+        DataType::BigInt(n) => EvalValue::Int(*n),
+        DataType::Float(f) => EvalValue::Float(*f as f64),
+        DataType::Double(f) => EvalValue::Float(*f),
+        DataType::Char(s)
+        | DataType::Varchar(s)
+        | DataType::Text(s)
+        | DataType::Date(s)
+        | DataType::Time(s)
+        | DataType::Timestamp(s) => EvalValue::String(s.clone()),
+        DataType::Blob(b) => EvalValue::String(format!("{:?}", b)),
+    }
+}
+
+fn literal_to_eval(l: &Literal) -> EvalValue {
+    match l {
+        Literal::Null => EvalValue::Null,
+        Literal::Boolean(b) => EvalValue::Bool(*b),
+        Literal::Integer(n) => EvalValue::Int(*n),
+        Literal::Float(f) => EvalValue::Float(*f),
+        Literal::String(s) => EvalValue::String(s.clone()),
+    }
+}
+
+fn eval_expression(row: &Row, expr: &Expression) -> EvalValue {
+    match expr {
+        Expression::Literal(l) => literal_to_eval(l),
+        Expression::Identifier(name) => row
+            .values
+            .get(name)
+            .map(column_value_to_eval)
+            .unwrap_or(EvalValue::Null),
+        Expression::QualifiedIdentifier { column, .. } => row
+            .values
+            .get(column)
+            .map(column_value_to_eval)
+            .unwrap_or(EvalValue::Null),
+        Expression::Function { name, args } => {
+            let n = name.to_uppercase();
+            let arg = args
+                .first()
+                .map(|e| match e {
+                    Expression::Identifier(s) => s.clone(),
+                    Expression::QualifiedIdentifier { column, .. } => column.clone(),
+                    _ => "*".to_string(),
+                })
+                .unwrap_or_else(|| "*".to_string());
+            let key = format!("{n}({arg})");
+            row.values
+                .get(&key)
+                .map(column_value_to_eval)
+                .unwrap_or(EvalValue::Null)
+        }
+        Expression::UnaryOp {
+            op: UnaryOperator::Not,
+            expr,
+        } => match eval_expression(row, expr) {
+            EvalValue::Bool(b) => EvalValue::Bool(!b),
+            _ => EvalValue::Null,
+        },
+        Expression::BinaryOp { left, op, right } => {
+            let lv = eval_expression(row, left);
+            let rv = eval_expression(row, right);
+            match op {
+                BinaryOperator::And => match (lv, rv) {
+                    (EvalValue::Bool(a), EvalValue::Bool(b)) => EvalValue::Bool(a && b),
+                    _ => EvalValue::Null,
+                },
+                BinaryOperator::Or => match (lv, rv) {
+                    (EvalValue::Bool(a), EvalValue::Bool(b)) => EvalValue::Bool(a || b),
+                    _ => EvalValue::Null,
+                },
+                BinaryOperator::Add
+                | BinaryOperator::Subtract
+                | BinaryOperator::Multiply
+                | BinaryOperator::Divide
+                | BinaryOperator::Modulo => {
+                    let (a, b) = match (lv, rv) {
+                        (EvalValue::Int(a), EvalValue::Int(b)) => (a as f64, b as f64),
+                        (EvalValue::Int(a), EvalValue::Float(b)) => (a as f64, b),
+                        (EvalValue::Float(a), EvalValue::Int(b)) => (a, b as f64),
+                        (EvalValue::Float(a), EvalValue::Float(b)) => (a, b),
+                        _ => return EvalValue::Null,
+                    };
+                    let out = match op {
+                        BinaryOperator::Add => a + b,
+                        BinaryOperator::Subtract => a - b,
+                        BinaryOperator::Multiply => a * b,
+                        BinaryOperator::Divide => a / b,
+                        BinaryOperator::Modulo => a % b,
+                        _ => unreachable!(),
+                    };
+                    EvalValue::Float(out)
+                }
+                BinaryOperator::Equal
+                | BinaryOperator::NotEqual
+                | BinaryOperator::LessThan
+                | BinaryOperator::LessThanOrEqual
+                | BinaryOperator::GreaterThan
+                | BinaryOperator::GreaterThanOrEqual => {
+                    use std::cmp::Ordering;
+                    let ord = match (&lv, &rv) {
+                        (EvalValue::Null, _) | (_, EvalValue::Null) => None,
+                        (EvalValue::Bool(a), EvalValue::Bool(b)) => Some(a.cmp(b)),
+                        (EvalValue::Int(a), EvalValue::Int(b)) => Some(a.cmp(b)),
+                        (EvalValue::Float(a), EvalValue::Float(b)) => a.partial_cmp(b),
+                        (EvalValue::Int(a), EvalValue::Float(b)) => (*a as f64).partial_cmp(b),
+                        (EvalValue::Float(a), EvalValue::Int(b)) => a.partial_cmp(&(*b as f64)),
+                        (EvalValue::String(a), EvalValue::String(b)) => Some(a.cmp(b)),
+                        _ => None,
+                    };
+                    let Some(ord) = ord else {
+                        return EvalValue::Null;
+                    };
+                    let res = match op {
+                        BinaryOperator::Equal => ord == Ordering::Equal,
+                        BinaryOperator::NotEqual => ord != Ordering::Equal,
+                        BinaryOperator::LessThan => ord == Ordering::Less,
+                        BinaryOperator::LessThanOrEqual => {
+                            ord == Ordering::Less || ord == Ordering::Equal
+                        }
+                        BinaryOperator::GreaterThan => ord == Ordering::Greater,
+                        BinaryOperator::GreaterThanOrEqual => {
+                            ord == Ordering::Greater || ord == Ordering::Equal
+                        }
+                        _ => false,
+                    };
+                    EvalValue::Bool(res)
+                }
+                _ => EvalValue::Null,
+            }
+        }
+        _ => EvalValue::Null,
+    }
+}
+
+fn eval_predicate(row: &Row, expr: &Expression) -> bool {
+    matches!(eval_expression(row, expr), EvalValue::Bool(true))
+}
+
+fn filter_literal_to_column_value(l: &Literal) -> ColumnValue {
+    let dt = match l {
+        Literal::Null => DataType::Null,
+        Literal::Boolean(b) => DataType::Boolean(*b),
+        Literal::Integer(n) => {
+            if *n >= i32::MIN as i64 && *n <= i32::MAX as i64 {
+                DataType::Integer(*n as i32)
+            } else {
+                DataType::BigInt(*n)
+            }
+        }
+        Literal::Float(f) => DataType::Double(*f),
+        Literal::String(s) => DataType::Varchar(s.clone()),
+    };
+    ColumnValue::new(dt)
+}
+
 impl ConditionalScanOperator {
     /// Create new conditional scan operator
-    pub fn new(base_operator: Box<dyn Operator>, condition: String) -> Result<Self> {
+    pub fn new(
+        base_operator: Box<dyn Operator>,
+        condition: String,
+        predicate: Option<Expression>,
+        equality: Option<SimpleEqualityFilter>,
+    ) -> Result<Self> {
         Ok(Self {
             base_operator,
             condition,
+            predicate,
+            equality,
             statistics: OperatorStatistics::default(),
         })
     }
 
     /// Evaluate condition for row
     fn evaluate_condition(&self, row: &Row) -> bool {
-        // Simplified implementation - check for substring presence
+        if let Some(ref p) = self.predicate {
+            return eval_predicate(row, p);
+        }
+        if let Some(ref eq) = self.equality {
+            let expected = filter_literal_to_column_value(&eq.literal);
+            let Some(cv) = row.values.get(&eq.column) else {
+                return false;
+            };
+            return cv.data_type == expected.data_type && cv.is_null == expected.is_null;
+        }
         let row_string = format!("{:?}", row);
         row_string.contains(&self.condition)
     }
@@ -1300,7 +1739,8 @@ impl Operator for OffsetOperator {
 /// Factory for creating scan operators
 pub struct ScanOperatorFactory {
     /// Page manager
-    page_manager: Arc<Mutex<StoragePageManager>>,
+    default_page_manager: Arc<Mutex<StoragePageManager>>,
+    table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<StoragePageManager>>>>>,
     /// Indexes: (table_name, index_name) -> B+ tree
     indexes: HashMap<(String, String), Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>>,
 }
@@ -1309,9 +1749,34 @@ impl ScanOperatorFactory {
     /// Create new scan operator factory
     pub fn new(page_manager: Arc<Mutex<StoragePageManager>>) -> Self {
         Self {
-            page_manager,
+            default_page_manager: page_manager,
+            table_page_managers: Arc::new(Mutex::new(HashMap::new())),
             indexes: HashMap::new(),
         }
+    }
+
+    pub fn with_tables(
+        default_page_manager: Arc<Mutex<StoragePageManager>>,
+        table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<StoragePageManager>>>>>,
+    ) -> Self {
+        Self {
+            default_page_manager,
+            table_page_managers,
+            indexes: HashMap::new(),
+        }
+    }
+
+    pub fn register_table_page_manager(
+        &self,
+        table_name: &str,
+        pm: Arc<Mutex<StoragePageManager>>,
+    ) -> Result<()> {
+        let mut g = self
+            .table_page_managers
+            .lock()
+            .map_err(|_| Error::lock("table page managers poisoned"))?;
+        g.insert(table_name.to_string(), pm);
+        Ok(())
     }
 
     /// Add index for table
@@ -1332,8 +1797,16 @@ impl ScanOperatorFactory {
         filter: Option<String>,
         schema: Vec<String>,
     ) -> Result<Box<dyn Operator>> {
-        let operator =
-            TableScanOperator::new(table_name, self.page_manager.clone(), filter, schema)?;
+        let pm = {
+            let g = self
+                .table_page_managers
+                .lock()
+                .map_err(|_| Error::lock("table page managers poisoned"))?;
+            g.get(&table_name)
+                .cloned()
+                .unwrap_or_else(|| self.default_page_manager.clone())
+        };
+        let operator = TableScanOperator::new(table_name, pm, filter, schema)?;
         Ok(Box::new(operator))
     }
 
@@ -1354,7 +1827,7 @@ impl ScanOperatorFactory {
         base_operator: Box<dyn Operator>,
         condition: String,
     ) -> Result<Box<dyn Operator>> {
-        let operator = ConditionalScanOperator::new(base_operator, condition)?;
+        let operator = ConditionalScanOperator::new(base_operator, condition, None, None)?;
         Ok(Box::new(operator))
     }
 
@@ -1372,7 +1845,7 @@ impl ScanOperatorFactory {
                 table_name,
                 index_name,
                 index.clone(),
-                self.page_manager.clone(),
+                self.default_page_manager.clone(),
                 search_conditions,
                 schema,
             )?;
@@ -1551,10 +2024,8 @@ impl Operator for HashGroupByOperator {
 pub struct SortOperator {
     /// Input operator
     input: Box<dyn Operator>,
-    /// Column indices for sorting
-    sort_columns: Vec<usize>,
-    /// Sort direction (true = ASC, false = DESC)
-    sort_directions: Vec<bool>,
+    /// Sort keys: column name and ascending flag
+    sort_keys: Vec<(String, bool)>,
     /// Result schema
     result_schema: Vec<String>,
     /// Statistics
@@ -1569,25 +2040,62 @@ impl SortOperator {
     /// Create new sort operator
     pub fn new(
         input: Box<dyn Operator>,
-        sort_columns: Vec<usize>,
-        sort_directions: Vec<bool>,
+        sort_keys: Vec<(String, bool)>,
         result_schema: Vec<String>,
     ) -> Result<Self> {
-        if sort_columns.len() != sort_directions.len() {
+        if sort_keys.is_empty() {
             return Err(Error::QueryExecution {
-                message: "Number of columns and sort directions does not match".to_string(),
+                message: "Sort requires at least one sort key".to_string(),
             });
         }
 
         Ok(Self {
             input,
-            sort_columns,
-            sort_directions,
+            sort_keys,
             result_schema,
             statistics: OperatorStatistics::default(),
             sorted_rows: Vec::new(),
             current_index: 0,
         })
+    }
+
+    fn compare_by_keys(a: &Row, b: &Row, keys: &[(String, bool)]) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        for (name, ascending) in keys {
+            let va = a
+                .values
+                .get(name)
+                .map(column_value_to_eval)
+                .unwrap_or(EvalValue::Null);
+            let vb = b
+                .values
+                .get(name)
+                .map(column_value_to_eval)
+                .unwrap_or(EvalValue::Null);
+            let ord = match (&va, &vb) {
+                (EvalValue::Null, EvalValue::Null) => Ordering::Equal,
+                (EvalValue::Null, _) => Ordering::Greater,
+                (_, EvalValue::Null) => Ordering::Less,
+                (EvalValue::Bool(a), EvalValue::Bool(b)) => a.cmp(b),
+                (EvalValue::Int(a), EvalValue::Int(b)) => a.cmp(b),
+                (EvalValue::Float(a), EvalValue::Float(b)) => {
+                    a.partial_cmp(b).unwrap_or(Ordering::Equal)
+                }
+                (EvalValue::Int(a), EvalValue::Float(b)) => {
+                    (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal)
+                }
+                (EvalValue::Float(a), EvalValue::Int(b)) => {
+                    a.partial_cmp(&(*b as f64)).unwrap_or(Ordering::Equal)
+                }
+                (EvalValue::String(a), EvalValue::String(b)) => a.cmp(b),
+                // different types: order by type name to keep deterministic
+                _ => format!("{:?}", va).cmp(&format!("{:?}", vb)),
+            };
+            if ord != Ordering::Equal {
+                return if *ascending { ord } else { ord.reverse() };
+            }
+        }
+        Ordering::Equal
     }
 
     /// Load and sort all rows (simplified version)
@@ -1600,8 +2108,8 @@ impl SortOperator {
             self.statistics.rows_processed += 1;
         }
 
-        // Simple sort by version (demonstration version)
-        rows.sort_by(|a, b| a.version.cmp(&b.version));
+        let keys = self.sort_keys.clone();
+        rows.sort_by(|a, b| Self::compare_by_keys(a, b, &keys));
 
         self.sorted_rows = rows;
         self.current_index = 0;
@@ -1824,14 +2332,18 @@ impl AggregationSortOperatorFactory {
     /// Create sort operator
     pub fn create_sort(
         input: Box<dyn Operator>,
-        sort_columns: Vec<usize>,
+        sort_column_indices: Vec<usize>,
         sort_directions: Vec<bool>,
         result_schema: Vec<String>,
     ) -> Result<Box<dyn Operator>> {
+        let sort_keys: Vec<(String, bool)> = sort_column_indices
+            .iter()
+            .zip(sort_directions.iter())
+            .map(|(&i, &asc)| (result_schema.get(i).cloned().unwrap_or_default(), asc))
+            .collect();
         Ok(Box::new(SortOperator::new(
             input,
-            sort_columns,
-            sort_directions,
+            sort_keys,
             result_schema,
         )?))
     }

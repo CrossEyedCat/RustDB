@@ -8,9 +8,8 @@ use crate::planner::{ExecutionPlan, PlanNode, QueryOptimizer, QueryPlanner};
 #[test]
 fn test_planner_multiple_sql_variants() -> Result<()> {
     let mut planner = QueryPlanner::new()?;
-    // UPDATE/DELETE: WHERE is parsed as `parse_simple_expression()` - only one literal/identifier,
-    // not a full comparison; for Boolean you need `true`/`false` (see parser.rs).
-    // SELECT in the simplified parser does not read WHERE - we do not add conditions.
+    // UPDATE/DELETE WHERE uses `parse_where_expression` (comparisons and simple operands).
+    // SELECT parses optional WHERE / ORDER BY / LIMIT / OFFSET after FROM.
     let sqls = [
         "SELECT * FROM users",
         "SELECT name FROM users",

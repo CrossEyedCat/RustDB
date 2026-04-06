@@ -283,7 +283,7 @@ impl SqlParser {
         let mut expressions = Vec::new();
 
         loop {
-            expressions.push(self.parse_simple_expression()?);
+            expressions.push(self.parse_expression()?);
 
             if !self.match_token(&TokenType::Comma) {
                 break;
@@ -292,6 +292,152 @@ impl SqlParser {
         }
 
         Ok(expressions)
+    }
+
+    fn parse_expression(&mut self) -> Result<Expression> {
+        self.parse_or_expression()
+    }
+
+    fn parse_or_expression(&mut self) -> Result<Expression> {
+        let mut left = self.parse_and_expression()?;
+        while self.match_token(&TokenType::Or) {
+            self.advance();
+            let right = self.parse_and_expression()?;
+            left = Expression::BinaryOp {
+                left: Box::new(left),
+                op: BinaryOperator::Or,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_and_expression(&mut self) -> Result<Expression> {
+        let mut left = self.parse_not_expression()?;
+        while self.match_token(&TokenType::And) {
+            self.advance();
+            let right = self.parse_not_expression()?;
+            left = Expression::BinaryOp {
+                left: Box::new(left),
+                op: BinaryOperator::And,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_not_expression(&mut self) -> Result<Expression> {
+        if self.match_token(&TokenType::Not) {
+            self.advance();
+            let expr = self.parse_not_expression()?;
+            return Ok(Expression::UnaryOp {
+                op: UnaryOperator::Not,
+                expr: Box::new(expr),
+            });
+        }
+        self.parse_comparison_expression()
+    }
+
+    fn parse_comparison_expression(&mut self) -> Result<Expression> {
+        let left = self.parse_additive_expression()?;
+        let op = if self.match_token(&TokenType::Equal) {
+            self.advance();
+            Some(BinaryOperator::Equal)
+        } else if self.match_token(&TokenType::NotEqual) {
+            self.advance();
+            Some(BinaryOperator::NotEqual)
+        } else if self.match_token(&TokenType::Less) {
+            self.advance();
+            Some(BinaryOperator::LessThan)
+        } else if self.match_token(&TokenType::Greater) {
+            self.advance();
+            Some(BinaryOperator::GreaterThan)
+        } else if self.match_token(&TokenType::LessEqual) {
+            self.advance();
+            Some(BinaryOperator::LessThanOrEqual)
+        } else if self.match_token(&TokenType::GreaterEqual) {
+            self.advance();
+            Some(BinaryOperator::GreaterThanOrEqual)
+        } else {
+            None
+        };
+
+        let Some(op) = op else {
+            return Ok(left);
+        };
+        let right = self.parse_additive_expression()?;
+        Ok(Expression::BinaryOp {
+            left: Box::new(left),
+            op,
+            right: Box::new(right),
+        })
+    }
+
+    fn parse_additive_expression(&mut self) -> Result<Expression> {
+        let mut left = self.parse_multiplicative_expression()?;
+        loop {
+            let op = if self.match_token(&TokenType::Plus) {
+                self.advance();
+                Some(BinaryOperator::Add)
+            } else if self.match_token(&TokenType::Minus) {
+                self.advance();
+                Some(BinaryOperator::Subtract)
+            } else {
+                None
+            };
+            let Some(op) = op else {
+                break;
+            };
+            let right = self.parse_multiplicative_expression()?;
+            left = Expression::BinaryOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_multiplicative_expression(&mut self) -> Result<Expression> {
+        let mut left = self.parse_primary_expression()?;
+        loop {
+            let op = if self.match_token(&TokenType::Multiply) {
+                self.advance();
+                Some(BinaryOperator::Multiply)
+            } else if self.match_token(&TokenType::Divide) {
+                self.advance();
+                Some(BinaryOperator::Divide)
+            } else if self.match_token(&TokenType::Modulo) {
+                self.advance();
+                Some(BinaryOperator::Modulo)
+            } else {
+                None
+            };
+            let Some(op) = op else {
+                break;
+            };
+            let right = self.parse_primary_expression()?;
+            left = Expression::BinaryOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_primary_expression(&mut self) -> Result<Expression> {
+        if self.match_token(&TokenType::Multiply) {
+            self.advance();
+            return Ok(Expression::Identifier("*".to_string()));
+        }
+        if self.match_token(&TokenType::LeftParen) {
+            self.advance();
+            let expr = self.parse_expression()?;
+            self.expect_token(&TokenType::RightParen)?;
+            return Ok(expr);
+        }
+        self.parse_simple_expression()
     }
 
     /// Parses simple expression (literal or identifier)
@@ -330,8 +476,20 @@ impl SqlParser {
                     self.advance();
                     Ok(Expression::Literal(Literal::Null))
                 }
-                TokenType::Identifier => {
-                    let identifier = self.parse_identifier()?;
+                TokenType::Identifier
+                | TokenType::Count
+                | TokenType::Sum
+                | TokenType::Avg
+                | TokenType::Min
+                | TokenType::Max => {
+                    let identifier = match &token.token_type {
+                        TokenType::Identifier => self.parse_identifier()?,
+                        _ => {
+                            let v = token.value.clone();
+                            self.advance();
+                            v
+                        }
+                    };
 
                     // Check if it's a function or qualified identifier
                     if self.match_token(&TokenType::LeftParen) {
@@ -371,20 +529,8 @@ impl SqlParser {
         }
     }
 
-    /// WHERE / HAVING predicate: `parse_simple_expression` optionally followed by `= rhs` (equality comparison).
     fn parse_where_expression(&mut self) -> Result<Expression> {
-        let left = self.parse_simple_expression()?;
-        if self.match_token(&TokenType::Equal) {
-            self.advance();
-            let right = self.parse_simple_expression()?;
-            Ok(Expression::BinaryOp {
-                left: Box::new(left),
-                op: BinaryOperator::Equal,
-                right: Box::new(right),
-            })
-        } else {
-            Ok(left)
-        }
+        self.parse_expression()
     }
 
     // Main parsing methods
@@ -400,26 +546,14 @@ impl SqlParser {
                 self.advance();
                 select_list.push(SelectItem::Wildcard);
             } else {
-                // Simple expression - identifier or literal
-                let expr = if self.match_token(&TokenType::IntegerLiteral) {
-                    let value = self
-                        .current_token
-                        .as_ref()
-                        .unwrap()
-                        .value
-                        .parse::<i64>()
-                        .map_err(|e| Error::parser(format!("Invalid integer: {}", e)))?;
+                let expr = self.parse_expression()?;
+                let alias = if self.match_keyword("AS") {
                     self.advance();
-                    Expression::Literal(Literal::Integer(value))
-                } else if self.match_token(&TokenType::StringLiteral) {
-                    let value = self.current_token.as_ref().unwrap().value.clone();
-                    self.advance();
-                    Expression::Literal(Literal::String(value))
+                    Some(self.parse_identifier()?)
                 } else {
-                    let identifier = self.parse_identifier()?;
-                    Expression::Identifier(identifier)
+                    None
                 };
-                select_list.push(SelectItem::Expression { expr, alias: None });
+                select_list.push(SelectItem::Expression { expr, alias });
             }
 
             if !self.match_token(&TokenType::Comma) {
@@ -432,26 +566,141 @@ impl SqlParser {
         let from = if self.match_keyword("FROM") {
             self.advance();
             let table_name = self.parse_identifier()?;
-            Some(FromClause {
+            let mut from = FromClause {
                 table: TableReference::Table {
                     name: table_name,
                     alias: None,
                 },
                 joins: Vec::new(),
-            })
+            };
+
+            loop {
+                let join_type = if self.match_token(&TokenType::InnerJoin) {
+                    self.advance();
+                    Some(JoinType::Inner)
+                } else if self.match_token(&TokenType::LeftJoin) {
+                    self.advance();
+                    Some(JoinType::Left)
+                } else if self.match_token(&TokenType::RightJoin) {
+                    self.advance();
+                    Some(JoinType::Right)
+                } else if self.match_token(&TokenType::FullJoin) {
+                    self.advance();
+                    Some(JoinType::Full)
+                } else if self.match_token(&TokenType::CrossJoin) {
+                    self.advance();
+                    Some(JoinType::Cross)
+                } else if self.match_token(&TokenType::Join) {
+                    self.advance();
+                    Some(JoinType::Inner)
+                } else {
+                    None
+                };
+
+                let Some(join_type) = join_type else {
+                    break;
+                };
+
+                let join_table = self.parse_identifier()?;
+                let table = TableReference::Table {
+                    name: join_table,
+                    alias: None,
+                };
+
+                let condition = if self.match_keyword("ON") {
+                    self.advance();
+                    Some(self.parse_expression()?)
+                } else {
+                    None
+                };
+
+                from.joins.push(JoinClause {
+                    join_type,
+                    table,
+                    condition,
+                });
+            }
+
+            Some(from)
         } else {
             None
         };
 
+        let mut where_clause = None;
+        if self.match_keyword("WHERE") {
+            self.advance();
+            where_clause = Some(self.parse_where_expression()?);
+        }
+
+        let mut group_by = Vec::new();
+        if self.match_token(&TokenType::GroupBy) {
+            self.advance();
+            loop {
+                group_by.push(self.parse_expression()?);
+                if !self.match_token(&TokenType::Comma) {
+                    break;
+                }
+                self.advance();
+            }
+        }
+
+        let mut having = None;
+        if self.match_token(&TokenType::Having) {
+            self.advance();
+            having = Some(self.parse_expression()?);
+        }
+
+        let mut order_by = Vec::new();
+        if self.match_token(&TokenType::OrderBy) {
+            self.advance();
+            loop {
+                let expr = self.parse_expression()?;
+                let direction = if self.match_token(&TokenType::Desc) {
+                    self.advance();
+                    OrderDirection::Desc
+                } else if self.match_token(&TokenType::Asc) {
+                    self.advance();
+                    OrderDirection::Asc
+                } else {
+                    OrderDirection::Asc
+                };
+                order_by.push(OrderByItem { expr, direction });
+                if !self.match_token(&TokenType::Comma) {
+                    break;
+                }
+                self.advance();
+            }
+        }
+
+        let mut limit = None;
+        if self.match_token(&TokenType::Limit) {
+            self.advance();
+            let n = self.parse_integer()?;
+            if n < 0 {
+                return Err(Error::parser("LIMIT must be non-negative".to_string()));
+            }
+            limit = Some(n as u64);
+        }
+
+        let mut offset = None;
+        if self.match_token(&TokenType::Offset) {
+            self.advance();
+            let n = self.parse_integer()?;
+            if n < 0 {
+                return Err(Error::parser("OFFSET must be non-negative".to_string()));
+            }
+            offset = Some(n as u64);
+        }
+
         Ok(SqlStatement::Select(SelectStatement {
             select_list,
             from,
-            where_clause: None,
-            group_by: Vec::new(),
-            having: None,
-            order_by: Vec::new(),
-            limit: None,
-            offset: None,
+            where_clause,
+            group_by,
+            having,
+            order_by,
+            limit,
+            offset,
         }))
     }
 

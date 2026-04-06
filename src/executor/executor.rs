@@ -5,9 +5,9 @@
 
 use crate::common::{Error, Result};
 use crate::executor::operators::{
-    ConditionalScanOperator, HashGroupByOperator, IndexCondition, IndexOperator, JoinCondition,
+    ConditionalScanOperator, GroupByOperator, IndexCondition, IndexOperator, JoinCondition,
     JoinOperator, JoinType, LimitOperator, NestedLoopJoinOperator, OffsetOperator, Operator,
-    ScanOperatorFactory, SortOperator,
+    ProjectionOperator, ScanOperatorFactory, SortOperator,
 };
 use crate::planner::planner::{
     ExecutionPlan, FilterNode, GroupByNode, IndexScanNode, JoinNode, LimitNode, OffsetNode,
@@ -130,13 +130,19 @@ impl QueryExecutor {
 
     fn build_filter(&self, f: &FilterNode) -> Result<Box<dyn Operator>> {
         let input = self.build_operator(&f.input)?;
-        let operator = ConditionalScanOperator::new(input, f.condition.clone())?;
+        let operator = ConditionalScanOperator::new(
+            input,
+            f.condition.clone(),
+            f.predicate.clone(),
+            f.equality.clone(),
+        )?;
         Ok(Box::new(operator))
     }
 
     fn build_projection(&self, p: &ProjectionNode) -> Result<Box<dyn Operator>> {
-        // Projection: for now just pass through (full implementation would select columns)
-        self.build_operator(&p.input)
+        let input = self.build_operator(&p.input)?;
+        let operator = ProjectionOperator::new(input, p.columns.clone())?;
+        Ok(Box::new(operator))
     }
 
     fn build_join(&self, j: &JoinNode) -> Result<Box<dyn Operator>> {
@@ -176,27 +182,39 @@ impl QueryExecutor {
 
     fn build_group_by(&self, g: &GroupByNode) -> Result<Box<dyn Operator>> {
         let input = self.build_operator(&g.input)?;
-        let group_keys: Vec<usize> = (0..g.group_columns.len().min(4)).collect();
         let result_schema: Vec<String> = g
             .group_columns
             .iter()
             .cloned()
-            .chain(g.aggregates.iter().map(|a| a.name.clone()))
+            .chain(g.aggregates.iter().map(|a| {
+                a.alias
+                    .clone()
+                    .unwrap_or_else(|| format!("{}({})", a.name, a.argument))
+            }))
             .collect();
-        let operator = HashGroupByOperator::new(input, group_keys, vec![], result_schema)?;
+        let operator = GroupByOperator::new(
+            input,
+            g.group_columns.clone(),
+            g.aggregates.clone(),
+            result_schema,
+        )?;
         Ok(Box::new(operator))
     }
 
     fn build_sort(&self, s: &SortNode) -> Result<Box<dyn Operator>> {
         let input = self.build_operator(&s.input)?;
-        let sort_columns: Vec<usize> = (0..s.sort_columns.len()).collect();
-        let sort_directions: Vec<bool> = s
+        let sort_keys: Vec<(String, bool)> = s
             .sort_columns
             .iter()
-            .map(|c| matches!(c.direction, crate::planner::planner::SortDirection::Asc))
+            .map(|c| {
+                (
+                    c.column.clone(),
+                    matches!(c.direction, crate::planner::planner::SortDirection::Asc),
+                )
+            })
             .collect();
         let schema = input.get_schema()?;
-        let operator = SortOperator::new(input, sort_columns, sort_directions, schema)?;
+        let operator = SortOperator::new(input, sort_keys, schema)?;
         Ok(Box::new(operator))
     }
 

@@ -103,6 +103,8 @@ fn main() -> Result<()> {
     let conditional_scan = ConditionalScanOperator::new(
         Box::new(base_operator_cond),
         "name LIKE 'John%'".to_string(),
+        None,
+        None,
     )?;
 
     println!("Created a ConditionalScan operator with the condition 'name LIKE John%'");
@@ -227,7 +229,7 @@ fn main() -> Result<()> {
     )?;
 
     let final_operator =
-        ConditionalScanOperator::new(Box::new(range_filtered), "age > 18".to_string())?;
+        ConditionalScanOperator::new(Box::new(range_filtered), "age > 18".to_string(), None, None)?;
 
     println!("A chain of operators has been created:");
     println!("   TableScan -> RangeScan -> ConditionalScan");

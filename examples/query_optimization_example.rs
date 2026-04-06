@@ -245,6 +245,8 @@ fn create_test_execution_plan() -> Result<ExecutionPlan, Box<dyn std::error::Err
 
     let filter_node = PlanNode::Filter(FilterNode {
         condition: "u.age > 18 AND o.amount > 100".to_string(),
+        predicate: None,
+        equality: None,
         input: Box::new(users_scan),
         selectivity: 0.3,
         cost: 300.0,

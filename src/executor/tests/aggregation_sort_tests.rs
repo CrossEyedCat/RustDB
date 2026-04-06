@@ -117,9 +117,7 @@ fn test_hash_group_by_operator() -> Result<()> {
 fn test_sort_operator() -> Result<()> {
     let input = Box::new(TestOperator::new());
 
-    // Sort by age (ASC), then by salary (DESC)
-    let sort_columns = vec![2, 3]; // age, salary
-    let sort_directions = vec![true, false]; // ASC, DESC
+    let sort_keys = vec![("age".to_string(), true), ("salary".to_string(), false)];
     let result_schema = vec![
         "id".to_string(),
         "name".to_string(),
@@ -127,7 +125,7 @@ fn test_sort_operator() -> Result<()> {
         "salary".to_string(),
     ];
 
-    let mut operator = SortOperator::new(input, sort_columns, sort_directions, result_schema)?;
+    let mut operator = SortOperator::new(input, sort_keys, result_schema)?;
 
     // Getting sorted results
     let mut results = Vec::new();

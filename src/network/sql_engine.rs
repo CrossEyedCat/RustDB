@@ -20,6 +20,7 @@ use crate::planner::{QueryOptimizer, QueryPlanner};
 use crate::storage::page_manager::{PageManager, PageManagerConfig};
 use crate::storage::tuple::Tuple;
 use crate::Row;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -29,7 +30,9 @@ pub struct SqlEngine {
 }
 
 struct SqlEngineInner {
-    page_manager: Arc<Mutex<PageManager>>,
+    data_dir: PathBuf,
+    default_page_manager: Arc<Mutex<PageManager>>,
+    table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<PageManager>>>>>,
     /// Monotonic id assigned to inserted [`Tuple`] rows (persisted in tuple bytes).
     next_tuple_id: u64,
     planner: QueryPlanner,
@@ -43,15 +46,22 @@ impl SqlEngine {
     pub fn open(data_dir: PathBuf) -> Result<Self, DbError> {
         std::fs::create_dir_all(&data_dir)?;
         let pm = Arc::new(Mutex::new(PageManager::new(
-            data_dir,
+            data_dir.clone(),
             "default",
             PageManagerConfig::default(),
         )?));
-        let factory = Arc::new(ScanOperatorFactory::new(pm.clone()));
+        let table_pms: Arc<Mutex<HashMap<String, Arc<Mutex<PageManager>>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let factory = Arc::new(ScanOperatorFactory::with_tables(
+            pm.clone(),
+            table_pms.clone(),
+        ));
         let executor = QueryExecutor::new(factory)?;
         Ok(Self {
             inner: Mutex::new(SqlEngineInner {
-                page_manager: pm,
+                data_dir,
+                default_page_manager: pm,
+                table_page_managers: table_pms,
                 next_tuple_id: 1,
                 planner: QueryPlanner::new()?,
                 optimizer: QueryOptimizer::new()?,
@@ -93,6 +103,13 @@ impl SqlEngine {
             SqlStatement::Insert(ins) => execute_insert(inner, stmt, ins),
             SqlStatement::Update(upd) => execute_update(inner, stmt, upd),
             SqlStatement::Delete(del) => execute_delete(inner, stmt, del),
+            SqlStatement::CreateTable(ct) => execute_create_table(inner, &ct.table_name),
+            SqlStatement::DropTable(dt) => execute_drop_table(inner, &dt.table_name),
+            SqlStatement::BeginTransaction
+            | SqlStatement::CommitTransaction
+            | SqlStatement::RollbackTransaction => {
+                Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+            }
             _ => Err(EngineError::new(
                 engine_error_code::UNSUPPORTED_SQL,
                 "this SQL statement type is not supported by the server engine yet",
@@ -122,6 +139,59 @@ fn lock_poisoned_engine() -> EngineError {
     EngineError::new(engine_error_code::INTERNAL, "storage lock poisoned")
 }
 
+fn table_page_manager(
+    inner: &mut SqlEngineInner,
+    table: &str,
+) -> Result<Arc<Mutex<PageManager>>, EngineError> {
+    {
+        let g = inner
+            .table_page_managers
+            .lock()
+            .map_err(|_| lock_poisoned_engine())?;
+        if let Some(pm) = g.get(table) {
+            return Ok(pm.clone());
+        }
+    }
+    let pm = match PageManager::open(inner.data_dir.clone(), table, PageManagerConfig::default()) {
+        Ok(pm) => pm,
+        Err(_) => PageManager::new(inner.data_dir.clone(), table, PageManagerConfig::default())
+            .map_err(map_db_err)?,
+    };
+    let pm = Arc::new(Mutex::new(pm));
+    {
+        let mut g = inner
+            .table_page_managers
+            .lock()
+            .map_err(|_| lock_poisoned_engine())?;
+        g.insert(table.to_string(), pm.clone());
+    }
+    Ok(pm)
+}
+
+fn execute_create_table(
+    inner: &mut SqlEngineInner,
+    table: &str,
+) -> Result<EngineOutput, EngineError> {
+    let _ = table_page_manager(inner, table)?;
+    Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+}
+
+fn execute_drop_table(
+    inner: &mut SqlEngineInner,
+    table: &str,
+) -> Result<EngineOutput, EngineError> {
+    {
+        let mut g = inner
+            .table_page_managers
+            .lock()
+            .map_err(|_| lock_poisoned_engine())?;
+        g.remove(table);
+    }
+    let path = inner.data_dir.join(format!("{table}.tbl"));
+    let _ = std::fs::remove_file(path);
+    Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+}
+
 fn validate_plan(inner: &mut SqlEngineInner, stmt: &SqlStatement) -> Result<(), EngineError> {
     let plan = inner.planner.create_plan(stmt).map_err(map_db_err)?;
     let _ = inner.optimizer.optimize(plan).map_err(map_db_err)?;
@@ -135,19 +205,43 @@ fn execute_insert(
 ) -> Result<EngineOutput, EngineError> {
     validate_plan(inner, stmt)?;
     match &insert.values {
-        InsertValues::Select(_) => Err(EngineError::new(
-            engine_error_code::UNSUPPORTED_SQL,
-            "INSERT ... SELECT is not supported by the SQL engine yet",
-        )),
+        InsertValues::Select(sel) => {
+            // Plan/execute the SELECT subquery and insert its resulting rows.
+            let select_stmt = SqlStatement::Select((**sel).clone());
+            let plan = inner
+                .planner
+                .create_plan(&select_stmt)
+                .map_err(map_db_err)?;
+            let optimized = inner.optimizer.optimize(plan).map_err(map_db_err)?;
+            let rows = inner
+                .executor
+                .execute(&optimized.optimized_plan)
+                .map_err(map_db_err)?;
+
+            let pm_for_table = table_page_manager(inner, &insert.table)?;
+            let mut rows_affected = 0u64;
+            for r in rows {
+                let tuple = build_insert_tuple_from_row(inner, insert.columns.as_ref(), &r)?;
+                let bytes = tuple.to_bytes().map_err(map_db_err)?;
+                let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+                pm.insert(&bytes).map_err(map_db_err)?;
+                rows_affected += 1;
+            }
+            Ok(EngineOutput::ExecutionOk { rows_affected })
+        }
         InsertValues::Values(rows) => {
             let mut rows_affected = 0u64;
+            let pm_for_table = table_page_manager(inner, &insert.table)?;
             for row in rows {
                 let tuple = build_insert_tuple(inner, insert.columns.as_ref(), row)?;
                 let bytes = tuple.to_bytes().map_err(map_db_err)?;
                 let mut pm = inner
-                    .page_manager
+                    .default_page_manager
                     .lock()
                     .map_err(|_| lock_poisoned_engine())?;
+                // insert into per-table heap
+                drop(pm);
+                let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
                 pm.insert(&bytes).map_err(map_db_err)?;
                 rows_affected += 1;
             }
@@ -183,16 +277,40 @@ fn build_insert_tuple(
     Ok(tuple)
 }
 
+fn build_insert_tuple_from_row(
+    inner: &mut SqlEngineInner,
+    columns: Option<&Vec<String>>,
+    row: &Row,
+) -> Result<Tuple, EngineError> {
+    let id = inner.next_tuple_id;
+    inner.next_tuple_id = inner.next_tuple_id.saturating_add(1);
+    let mut tuple = Tuple::new(id);
+
+    let col_names: Vec<String> = match columns {
+        Some(cols) => cols.clone(),
+        None => {
+            let mut keys: Vec<String> = row.values.keys().cloned().collect();
+            keys.sort();
+            keys
+        }
+    };
+    for name in col_names {
+        let Some(cv) = row.values.get(&name) else {
+            continue;
+        };
+        tuple.set_value(&name, cv.clone());
+    }
+    Ok(tuple)
+}
+
 fn execute_update(
     inner: &mut SqlEngineInner,
     stmt: &SqlStatement,
     update: &UpdateStatement,
 ) -> Result<EngineOutput, EngineError> {
     validate_plan(inner, stmt)?;
-    let mut pm = inner
-        .page_manager
-        .lock()
-        .map_err(|_| lock_poisoned_engine())?;
+    let pm_for_table = table_page_manager(inner, &update.table)?;
+    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let snapshot = pm.select(None).map_err(map_db_err)?;
     let mut rows_affected = 0u64;
     for (rid, data) in snapshot {
@@ -221,10 +339,8 @@ fn execute_delete(
     delete: &DeleteStatement,
 ) -> Result<EngineOutput, EngineError> {
     validate_plan(inner, stmt)?;
-    let mut pm = inner
-        .page_manager
-        .lock()
-        .map_err(|_| lock_poisoned_engine())?;
+    let pm_for_table = table_page_manager(inner, &delete.table)?;
+    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let snapshot = pm.select(None).map_err(map_db_err)?;
     let mut to_delete: Vec<RecordId> = Vec::new();
     for (rid, data) in snapshot {
