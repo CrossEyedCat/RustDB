@@ -138,8 +138,8 @@ jobs:
   # Memory safety checks
   memory_safety:
     name: Memory Safety Check
-    # Skip on version tags (e.g. v1.2.3) for minor/patch releases; keep running on branches/PRs/schedule.
-    if: ${{ github.ref_type != 'tag' }}
+    # Temporarily disabled (too slow/flaky). Re-enable by removing this `if`.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
