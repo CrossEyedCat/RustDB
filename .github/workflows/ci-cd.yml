@@ -520,7 +520,7 @@ jobs:
             bench-out/bench.png
 
   profile_quic_select_table:
-    name: CPU profile (QUIC select_table @128)
+    name: Trace profile (QUIC select_table @128)
     runs-on: ubuntu-latest
     needs: [test]
     if: github.event_name == 'workflow_dispatch'
@@ -539,31 +539,41 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Install perf
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y linux-tools-common linux-tools-generic
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run profiling script
+      - name: Pull image
+        env:
+          IMAGE: ${{ needs.docker.outputs.image }}
+        run: |
+          set -euo pipefail
+          test -n "$IMAGE"
+          echo "RUSTDB_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker pull "$IMAGE"
+
+      - name: Run trace profiling script
         env:
           CONCURRENCY: ${{ inputs.profile_concurrency }}
           QUERIES: ${{ inputs.profile_queries }}
           OUT_DIR: profile-out
         run: |
           set -euo pipefail
-          chmod +x scripts/profile_quic_select_table.sh
-          ./scripts/profile_quic_select_table.sh
+          chmod +x scripts/profile_quic_select_table_trace_ci.sh
+          ./scripts/profile_quic_select_table_trace_ci.sh
         timeout-minutes: 20
 
       - name: Upload profiling artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cpu-profile-quic-select-table
+          name: trace-profile-quic-select-table
           path: |
-            profile-out/perf_report.txt
-            profile-out/perf.data
             profile-out/load.jsonl
             profile-out/server.der
+            profile-out/trace.json
 
   docs:
     name: Documentation

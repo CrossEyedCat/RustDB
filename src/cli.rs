@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 /// RustDB - Relational database implementation in Rust
 #[derive(Parser)]
@@ -163,12 +165,33 @@ impl Cli {
         port_arg: Option<u16>,
         cert_out: Option<PathBuf>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-            )
-            .try_init();
+        // Logging + optional Chrome trace.
+        // Set `RUSTDB_TRACE_CHROME_PATH=/path/to/trace.json` to enable trace output.
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        let mut chrome_guard: Option<tracing_chrome::FlushGuard> = None;
+        if let Ok(path) = std::env::var("RUSTDB_TRACE_CHROME_PATH") {
+            if !path.trim().is_empty() {
+                let p = std::path::PathBuf::from(path);
+                if let Some(parent) = p.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+                    .file(p)
+                    .include_args(true)
+                    .build();
+                chrome_guard = Some(guard);
+                let _ = tracing_subscriber::registry()
+                    .with(filter)
+                    .with(chrome_layer)
+                    .with(tracing_subscriber::fmt::layer())
+                    .try_init();
+            } else {
+                let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+            }
+        } else {
+            let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+        }
 
         println!("{}", t(MessageKey::Welcome));
 
@@ -240,6 +263,8 @@ impl Cli {
             }
         }
 
+        // Ensure Chrome trace is flushed on shutdown.
+        drop(chrome_guard);
         Ok(())
     }
 
