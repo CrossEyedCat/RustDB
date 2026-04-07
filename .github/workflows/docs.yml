@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Use MSRV-aligned toolchain; repo `rust-toolchain.toml` also pins 1.90.0 for `cargo doc`.
       - name: Setup Rust
