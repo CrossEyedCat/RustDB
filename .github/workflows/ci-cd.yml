@@ -443,10 +443,26 @@ jobs:
           vol="rustdb-bench-vol"
           rm -rf bench-out
           mkdir -p bench-out
+          cat > bench-out/config.toml <<'EOF'
+          name = "rustdb"
+          data_directory = "./data"
+          max_connections = 1000
+          connection_timeout = 30
+          query_timeout = 60
+          language = "en"
+
+          [network]
+          host = "0.0.0.0"
+          port = 5432
+          max_connections = 1000
+          EOF
           docker rm -f "$name" >/dev/null 2>&1 || true
           docker volume rm -f "$vol" >/dev/null 2>&1 || true
           docker volume create "$vol" >/dev/null
-          docker run -d --name "$name" -p 15432:5432/udp -v "$vol:/app/data" "$RUSTDB_IMAGE" \
+          docker run -d --name "$name" -p 15432:5432/udp \
+            -v "$vol:/app/data" \
+            -v "$PWD/bench-out/config.toml:/app/config/config.toml:ro" \
+            "$RUSTDB_IMAGE" \
             sh -c "rustdb --config /app/config/config.toml server --host 0.0.0.0 --port 5432 --cert-out /tmp/server.der" >/dev/null
           for i in $(seq 1 80); do
             if docker exec "$name" sh -c "test -s /tmp/server.der" >/dev/null 2>&1; then

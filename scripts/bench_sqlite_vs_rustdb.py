@@ -110,29 +110,36 @@ def rustdb_bench(repo_root: Path, cert_path: Path, addr: str, server_name: str, 
     # shared: one QUIC connection (many streams); per-worker: one connection per worker.
     rustdb_mode = os.environ.get("RUSTDB_CONNECTION_MODE", "shared")
 
-    cp = run(
-        [
-            str(exe),
-            "--addr",
-            addr,
-            "--cert",
-            str(cert_path),
-            "--server-name",
-            server_name,
-            "--concurrency",
-            str(concurrency),
-            "--queries",
-            str(total),
-            "--sql",
-            sql,
-            "--connection-mode",
-            rustdb_mode,
-            "--json",
-        ],
-        check=True,
-        capture=True,
-        cwd=repo_root,
-    )
+    cmd = [
+        str(exe),
+        "--addr",
+        addr,
+        "--cert",
+        str(cert_path),
+        "--server-name",
+        server_name,
+        "--concurrency",
+        str(concurrency),
+        "--queries",
+        str(total),
+        "--sql",
+        sql,
+        "--connection-mode",
+        rustdb_mode,
+        "--json",
+    ]
+
+    try:
+        cp = run(cmd, check=True, capture=True, cwd=repo_root)
+    except subprocess.CalledProcessError as e:
+        out = (e.stdout or "").strip()
+        err = (e.stderr or "").strip()
+        raise RuntimeError(
+            "rustdb_load failed\n"
+            f"cmd: {' '.join(cmd)}\n"
+            f"exit: {e.returncode}\n"
+            f"stdout:\n{out}\n\nstderr:\n{err}\n"
+        ) from None
 
     line = cp.stdout.strip().splitlines()[-1].strip()
     try:
