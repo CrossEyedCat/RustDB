@@ -36,6 +36,14 @@ for i in $(seq 1 80); do
   fi
   sleep 0.2
 done
+if ! docker exec rustdb-trace-server sh -c "test -s /tmp/server.der" >/dev/null 2>&1; then
+  echo "ERROR: /tmp/server.der was not created by server"
+  echo "==> container logs (last 200 lines)"
+  docker logs rustdb-trace-server 2>&1 | tail -n 200 || true
+  echo "==> /tmp listing"
+  docker exec rustdb-trace-server sh -c "ls -la /tmp || true" 2>&1 || true
+  exit 1
+fi
 docker cp rustdb-trace-server:/tmp/server.der "$OUT_DIR/server.der"
 test -s "$OUT_DIR/server.der"
 
