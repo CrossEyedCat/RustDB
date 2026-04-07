@@ -1,14 +1,13 @@
 import argparse
 import json
 import os
-import re
-import statistics
 import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+import threading
 
 
 @dataclass
@@ -57,15 +56,28 @@ def sqlite_bench(db_path: Path, sql: str, concurrency: int, total: int, setup_sq
     finally:
         con.close()
 
-    # Worker executes one statement per call (new connection to avoid thread-safety issues)
+    is_select = sql.lstrip().upper().startswith("SELECT")
+
+    # One connection per thread (thread-local). Avoid connect/close overhead on each query.
+    tls = threading.local()
+
+    def get_conn():
+        cx = getattr(tls, "cx", None)
+        if cx is None:
+            cx = sqlite3.connect(str(db_path), check_same_thread=True)
+            # Keep settings aligned with setup
+            cx.execute("PRAGMA journal_mode=WAL;")
+            cx.execute("PRAGMA synchronous=NORMAL;")
+            tls.cx = cx
+        return cx
+
     def one_call(i: int) -> float:
         t0 = time.perf_counter()
-        cx = sqlite3.connect(str(db_path), check_same_thread=False)
-        try:
-            cx.execute(sql)
+        cx = get_conn()
+        cx.execute(sql)
+        # For SELECT, commit() adds overhead and is unnecessary.
+        if not is_select:
             cx.commit()
-        finally:
-            cx.close()
         return (time.perf_counter() - t0) * 1000.0
 
     lat_ms = []
@@ -94,6 +106,10 @@ def rustdb_bench(repo_root: Path, cert_path: Path, addr: str, server_name: str, 
     if not exe.exists():
         raise RuntimeError(f"rustdb_load not built at {exe}")
 
+    # Allow toggling connection strategy to make QUIC results comparable to real clients.
+    # shared: one QUIC connection (many streams); per-worker: one connection per worker.
+    rustdb_mode = os.environ.get("RUSTDB_CONNECTION_MODE", "shared")
+
     cp = run(
         [
             str(exe),
@@ -109,6 +125,8 @@ def rustdb_bench(repo_root: Path, cert_path: Path, addr: str, server_name: str, 
             str(total),
             "--sql",
             sql,
+            "--connection-mode",
+            rustdb_mode,
             "--json",
         ],
         check=True,
@@ -173,6 +191,12 @@ def main():
     ap.add_argument("--cert", required=True)
     ap.add_argument("--concurrency", default="1,8,32,128")
     ap.add_argument("--queries", type=int, default=5000)
+    ap.add_argument(
+        "--rustdb-connection-mode",
+        default="shared",
+        choices=["shared", "per-worker"],
+        help="QUIC connection mode for RustDB load generator.",
+    )
     args = ap.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -180,6 +204,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     cert_path = Path(args.cert)
     conc = [int(x.strip()) for x in args.concurrency.split(",") if x.strip()]
+    os.environ["RUSTDB_CONNECTION_MODE"] = args.rustdb_connection_mode
 
     scenarios = [
         ("select_literal", "SELECT 1", [], "SELECT 1"),
@@ -191,8 +216,17 @@ def main():
     # SQLite: for select_literal we still execute a SQL statement against sqlite (SELECT 1).
     for name, sqlite_sql, setup_sql, rustdb_sql in scenarios:
         # RustDB side: `rustdb_load` needs the workload SQL.
+        rustdb_workload = rustdb_sql if name == "select_literal" else "SELECT a FROM bench_t WHERE a = 1"
         for c in conc:
-            p = rustdb_bench(repo_root, cert_path, args.addr, args.server_name, rustdb_sql if name == "select_literal" else "SELECT a FROM bench_t WHERE a = 1", c, args.queries)
+            p = rustdb_bench(
+                repo_root,
+                cert_path,
+                args.addr,
+                args.server_name,
+                rustdb_workload,
+                c,
+                args.queries,
+            )
             p.scenario = name
             points.append(p)
 

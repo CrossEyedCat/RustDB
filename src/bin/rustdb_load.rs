@@ -17,6 +17,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum ConnectionMode {
+    /// One QUIC connection shared across workers (multiple streams).
+    Shared,
+    /// One QUIC connection per worker (more like real clients).
+    PerWorker,
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "rustdb_load")]
 struct Args {
@@ -55,6 +63,10 @@ struct Args {
     /// Emit a single JSON line with metrics to stdout (machine-readable).
     #[arg(long, default_value_t = false)]
     json: bool,
+
+    /// How QUIC connections are established for concurrent workers.
+    #[arg(long, value_enum, default_value_t = ConnectionMode::Shared)]
+    connection_mode: ConnectionMode,
 }
 
 fn quantile(sorted: &[u128], q: f64) -> Option<u128> {
@@ -93,7 +105,7 @@ struct LoadReport {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = Args::parse();
 
     let addr: SocketAddr = args.addr.parse()?;
@@ -101,7 +113,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cert = CertificateDer::from(der);
     let client_cfg = build_quinn_client_config(std::slice::from_ref(&cert))?;
     let endpoint = make_client_endpoint(client_cfg)?;
-    let conn = connect(&endpoint, addr, &args.server_name).await?;
 
     let statements: Arc<Vec<String>> = if let Some(p) = &args.sql_file {
         let raw = fs::read_to_string(p)?;
@@ -119,22 +130,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(vec![args.sql.clone()])
     };
 
-    let sem = Arc::new(Semaphore::new(args.concurrency.max(1)));
     let start = Instant::now();
-    let mut handles = Vec::with_capacity(args.queries);
+    let concurrency = args.concurrency.max(1);
+    let total_queries = args.queries.max(1);
 
-    for i in 0..args.queries {
+    // Establish shared connection once (if requested).
+    let shared_conn = match args.connection_mode {
+        ConnectionMode::Shared => Some(connect(&endpoint, addr, &args.server_name).await?),
+        ConnectionMode::PerWorker => None,
+    };
+
+    // Worker model: N workers execute roughly total_queries/N sequentially.
+    // This makes "per_worker connection" meaningful and avoids spawning 10k tasks.
+    let sem = Arc::new(Semaphore::new(concurrency));
+    let mut handles = Vec::with_capacity(concurrency);
+
+    for worker_id in 0..concurrency {
         let permit = sem.clone().acquire_owned().await?;
-        let conn = conn.clone();
         let statements = statements.clone();
-        let print = i < args.print_first;
+        let mode = args.connection_mode.clone();
+        let endpoint = endpoint.clone();
+        let server_name = args.server_name.clone();
+        let print_first = args.print_first;
+        let shared_conn = shared_conn.clone();
+
+        let base = total_queries / concurrency;
+        let extra = (worker_id < (total_queries % concurrency)) as usize;
+        let my_queries = base + extra;
+        let start_index = worker_id * base + worker_id.min(total_queries % concurrency);
+
         handles.push(tokio::spawn(async move {
             let _permit = permit;
-            let sql = &statements[i % statements.len()];
-            let t0 = Instant::now();
-            let msg = query_once(&conn, sql).await;
-            let dt = t0.elapsed();
-            (i, sql.clone(), dt, msg, print)
+
+            let worker_conn = match mode {
+                ConnectionMode::Shared => shared_conn.expect("shared connection"),
+                ConnectionMode::PerWorker => connect(&endpoint, addr, &server_name).await?,
+            };
+
+            let mut out = Vec::with_capacity(my_queries);
+            for j in 0..my_queries {
+                let global_i = start_index + j;
+                let sql = statements[global_i % statements.len()].clone();
+                let t0 = Instant::now();
+
+                let msg = query_once(&worker_conn, &sql).await;
+
+                let dt = t0.elapsed();
+                let print = global_i < print_first;
+                out.push((global_i, sql, dt, msg, print));
+            }
+
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(out)
         }));
     }
 
@@ -144,37 +190,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut first_err: Option<String> = None;
 
     for h in handles {
-        let (i, sql, dt, msg, print) = h.await?;
-        let us = dt.as_micros();
-        durations_us.push(us);
-        match msg {
-            Ok(m) => {
-                ok += 1;
-                if print {
-                    match &m {
-                        ServerMessage::ResultSet(p) => {
-                            println!(
-                                "#{i} OK ResultSet cols={} rows={}",
-                                p.columns.len(),
-                                p.rows.len()
-                            );
-                        }
-                        ServerMessage::ExecutionOk(p) => {
-                            println!("#{i} OK ExecutionOk rows_affected={}", p.rows_affected);
-                        }
-                        ServerMessage::Error(p) => {
-                            println!("#{i} OK Error code={} message={}", p.code, p.message);
-                        }
-                        ServerMessage::ServerReady(p) => {
-                            println!("#{i} OK ServerReady {}", p.server_version);
+        let rows = h.await??;
+        for (i, sql, dt, msg, print) in rows {
+            let us = dt.as_micros();
+            durations_us.push(us);
+            match msg {
+                Ok(m) => {
+                    ok += 1;
+                    if print {
+                        match &m {
+                            ServerMessage::ResultSet(p) => {
+                                println!(
+                                    "#{i} OK ResultSet cols={} rows={}",
+                                    p.columns.len(),
+                                    p.rows.len()
+                                );
+                            }
+                            ServerMessage::ExecutionOk(p) => {
+                                println!("#{i} OK ExecutionOk rows_affected={}", p.rows_affected);
+                            }
+                            ServerMessage::Error(p) => {
+                                println!("#{i} OK Error code={} message={}", p.code, p.message);
+                            }
+                            ServerMessage::ServerReady(p) => {
+                                println!("#{i} OK ServerReady {}", p.server_version);
+                            }
                         }
                     }
                 }
-            }
-            Err(e) => {
-                err += 1;
-                if first_err.is_none() {
-                    first_err = Some(format!("query #{i} failed: {e}; sql={sql}"));
+                Err(e) => {
+                    err += 1;
+                    if first_err.is_none() {
+                        first_err = Some(format!("query #{i} failed: {e}; sql={sql}"));
+                    }
                 }
             }
         }
