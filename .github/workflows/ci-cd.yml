@@ -380,6 +380,113 @@ jobs:
           ./scripts/sql_quic_smoke.sh
         timeout-minutes: 15
 
+  bench_sqlite_vs_rustdb:
+    name: Benchmark SQLite vs RustDB (charts)
+    runs-on: ubuntu-latest
+    needs: [docker]
+    # Benchmarks are relatively heavy; run on main pushes only.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust (load generator)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sqlite3 python3 python3-pip
+
+      - name: Install Python deps (matplotlib)
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install matplotlib
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull image
+        env:
+          IMAGE: ${{ needs.docker.outputs.image }}
+        run: |
+          set -euo pipefail
+          test -n "$IMAGE"
+          echo "RUSTDB_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker pull "$IMAGE"
+
+      - name: Build rustdb_load (host)
+        run: cargo build -q --bin rustdb_load
+
+      - name: Start RustDB server (docker)
+        run: |
+          set -euo pipefail
+          name="rustdb-bench-server"
+          vol="rustdb-bench-vol"
+          rm -rf bench-out
+          mkdir -p bench-out
+          docker rm -f "$name" >/dev/null 2>&1 || true
+          docker volume rm -f "$vol" >/dev/null 2>&1 || true
+          docker volume create "$vol" >/dev/null
+          docker run -d --name "$name" -p 15432:5432/udp -v "$vol:/app/data" "$RUSTDB_IMAGE" \
+            sh -c "rustdb --config /app/config/config.toml server --host 0.0.0.0 --port 5432 --cert-out /tmp/server.der" >/dev/null
+          for i in $(seq 1 80); do
+            if docker exec "$name" sh -c "test -s /tmp/server.der" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.2
+          done
+          docker cp "$name:/tmp/server.der" bench-out/server.der
+          test -s bench-out/server.der
+          echo "RUSTDB_CERT=$PWD/bench-out/server.der" >> "$GITHUB_ENV"
+          echo "RUSTDB_SERVER_CONTAINER=$name" >> "$GITHUB_ENV"
+          echo "RUSTDB_SERVER_VOLUME=$vol" >> "$GITHUB_ENV"
+
+      - name: Warmup (create table in RustDB)
+        run: |
+          set -euo pipefail
+          ./target/debug/rustdb_quic_client --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "CREATE TABLE bench_t (a INTEGER)"
+          ./target/debug/rustdb_quic_client --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "INSERT INTO bench_t (a) VALUES (1)"
+
+      - name: Run comparison + charts
+        run: |
+          set -euo pipefail
+          python3 scripts/bench_sqlite_vs_rustdb.py \
+            --out-dir bench-out \
+            --cert "$RUSTDB_CERT" \
+            --addr 127.0.0.1:15432 \
+            --server-name localhost \
+            --concurrency 1,8,32,128 \
+            --queries 5000
+
+      - name: Stop RustDB server (docker)
+        if: always()
+        run: |
+          docker rm -f "$RUSTDB_SERVER_CONTAINER" >/dev/null 2>&1 || true
+          docker volume rm -f "$RUSTDB_SERVER_VOLUME" >/dev/null 2>&1 || true
+
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlite-vs-rustdb-bench
+          path: |
+            bench-out/bench.md
+            bench-out/bench.csv
+            bench-out/bench.png
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest
@@ -476,7 +583,7 @@ jobs:
   deploy:
     name: Deploy to GitHub Releases
     runs-on: ubuntu-latest
-    needs: [build, docker, docker_stateful_sql, docker_quic_sql]
+    needs: [build, docker, docker_stateful_sql, docker_quic_sql, bench_sqlite_vs_rustdb]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
