@@ -153,7 +153,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if print {
                     match &m {
                         ServerMessage::ResultSet(p) => {
-                            println!("#{i} OK ResultSet cols={} rows={}", p.columns.len(), p.rows.len());
+                            println!(
+                                "#{i} OK ResultSet cols={} rows={}",
+                                p.columns.len(),
+                                p.rows.len()
+                            );
                         }
                         ServerMessage::ExecutionOk(p) => {
                             println!("#{i} OK ExecutionOk rows_affected={}", p.rows_affected);
@@ -216,11 +220,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("concurrency: {}", report.concurrency);
         println!("queries: {}", report.queries);
         println!("ok: {}  err: {}", report.ok, report.err);
-        println!(
-            "wall: {:.2?}  throughput: {:.1} qps",
-            wall,
-            report.qps
-        );
+        println!("wall: {:.2?}  throughput: {:.1} qps", wall, report.qps);
         println!(
             "latency: p50={} p95={} p99={} max={}",
             fmt_us(report.p50_us),
@@ -245,4 +245,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = Duration::from_secs(0);
     Ok(())
 }
-
