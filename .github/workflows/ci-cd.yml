@@ -430,7 +430,11 @@ jobs:
           docker pull "$IMAGE"
 
       - name: Build rustdb_load (host)
-        run: cargo build -q --bin rustdb_load
+        run: |
+          set -euo pipefail
+          cargo build -q --bin rustdb_load
+          cargo build -q --bin rustdb_quic_client
+          test -x ./target/debug/rustdb_quic_client || (echo "missing ./target/debug/rustdb_quic_client" && ls -la ./target/debug && exit 1)
 
       - name: Start RustDB server (docker)
         run: |
@@ -459,8 +463,8 @@ jobs:
       - name: Warmup (create table in RustDB)
         run: |
           set -euo pipefail
-          ./target/debug/rustdb_quic_client --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "CREATE TABLE bench_t (a INTEGER)"
-          ./target/debug/rustdb_quic_client --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "INSERT INTO bench_t (a) VALUES (1)"
+          cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "CREATE TABLE bench_t (a INTEGER)"
+          cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "INSERT INTO bench_t (a) VALUES (1)"
 
       - name: Run comparison + charts
         run: |
