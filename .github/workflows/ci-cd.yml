@@ -238,6 +238,8 @@ jobs:
     name: Docker Build
     runs-on: ubuntu-latest
     needs: [format, clippy, msrv, coverage]
+    outputs:
+      image: ${{ steps.set_image.outputs.image }}
     permissions:
       contents: read
       packages: write
@@ -266,6 +268,26 @@ jobs:
             type:ref,event=pr
             type:sha,prefix={{branch}}-
             type:raw,value=latest,enable={{is_default_branch}}
+
+      - name: Choose image tag for downstream jobs
+        id: set_image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Prefer the deterministic sha tag (<ref_name>-<sha>) when present.
+          preferred="ghcr.io/${{ github.repository }}:${REF_NAME}-${SHA}"
+          if echo "$TAGS" | tr -d '\r' | grep -Fxq "$preferred"; then
+            image="$preferred"
+          else
+            # Fallback: first generated tag.
+            image="$(echo "$TAGS" | head -n1 | tr -d '\r')"
+          fi
+          test -n "$image"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Selected image: $image"
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -298,23 +320,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve image tag (same as docker build)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable={{is_default_branch}}
-
       - name: Pull image
         env:
-          TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE: ${{ needs.docker.outputs.image }}
         run: |
           set -euo pipefail
-          IMAGE="$(echo "$TAGS" | head -n1 | tr -d '\r')"
           test -n "$IMAGE"
           echo "RUSTDB_IMAGE=$IMAGE" >> "$GITHUB_ENV"
           docker pull "$IMAGE"
