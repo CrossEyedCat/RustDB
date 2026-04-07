@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["fmt_us","main","quantile"],"struct":["Args","LoadReport"]};
+window.SIDEBAR_ITEMS = {"enum":["ConnectionMode"],"fn":["fmt_us","main","quantile"],"struct":["Args","LoadReport"]};
