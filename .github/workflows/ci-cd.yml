@@ -101,7 +101,7 @@ jobs:
       contents: read
     env:
       # Ignore coverage for large internal modules plus CLI/binaries (they're exercised via e2e smoke, not unit tests).
-      COV_REGEX: '(executor[/\\]operators|analyzer[/\\]semantic_analyzer|analyzer[/\\]access_checker|analyzer[/\\]type_checker|analyzer[/\\]metadata_cache|core[/\\]recovery_manager|core[/\\]acid_manager|core[/\\]buffer|core[/\\]transaction|core[/\\]advanced_lock_manager|core[/\\]recovery\.rs|storage[/\\]page_manager|storage[/\\]schema_manager|storage[/\\]index[/\\]btree|storage[/\\]io_optimization|storage[/\\]block|storage[/\\]row|storage[/\\]tuple|storage[/\\]page\.rs|planner[/\\]planner|logging[/\\]compaction|logging[/\\]recovery|parser[/\\]parser)\.rs$|[/\\]src[/\\](cli|main)\.rs$|^bin[/\\].*\.rs$'
+      COV_REGEX: '(executor[/\\]operators|analyzer[/\\]semantic_analyzer|analyzer[/\\]access_checker|analyzer[/\\]type_checker|analyzer[/\\]metadata_cache|core[/\\]recovery_manager|core[/\\]acid_manager|core[/\\]buffer|core[/\\]transaction|core[/\\]advanced_lock_manager|core[/\\]recovery\.rs|storage[/\\]page_manager|storage[/\\]schema_manager|storage[/\\]index[/\\]btree|storage[/\\]io_optimization|storage[/\\]block|storage[/\\]row|storage[/\\]tuple|storage[/\\]page\.rs|planner[/\\]planner|logging[/\\]compaction|logging[/\\]recovery|parser[/\\]parser)\.rs$|[/\\]src[/\\](cli|main)\.rs$|(^|[/\\])bin[/\\].*\.rs$'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
