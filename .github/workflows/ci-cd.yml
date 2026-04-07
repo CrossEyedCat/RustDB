@@ -492,7 +492,7 @@ jobs:
             --server-name localhost \
             --concurrency 1,8,32,128 \
             --queries 5000 \
-            --rustdb-connection-mode per-worker
+            --rustdb-connection-modes shared,per-worker
 
       - name: Stop RustDB server (docker)
         if: always()

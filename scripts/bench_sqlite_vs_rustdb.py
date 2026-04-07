@@ -12,7 +12,7 @@ import threading
 
 @dataclass
 class Point:
-    system: str  # "rustdb" | "sqlite"
+    system: str  # "rustdb(shared)" | "rustdb(per-worker)" | "sqlite"
     scenario: str
     concurrency: int
     qps: float
@@ -101,14 +101,12 @@ def sqlite_bench(db_path: Path, sql: str, concurrency: int, total: int, setup_sq
     )
 
 
-def rustdb_bench(repo_root: Path, cert_path: Path, addr: str, server_name: str, sql: str, concurrency: int, total: int) -> Point:
+def rustdb_bench(repo_root: Path, cert_path: Path, addr: str, server_name: str, sql: str, concurrency: int, total: int, mode: str) -> Point:
     exe = repo_root / "target" / "debug" / ("rustdb_load.exe" if os.name == "nt" else "rustdb_load")
     if not exe.exists():
         raise RuntimeError(f"rustdb_load not built at {exe}")
 
-    # Allow toggling connection strategy to make QUIC results comparable to real clients.
-    # shared: one QUIC connection (many streams); per-worker: one connection per worker.
-    rustdb_mode = os.environ.get("RUSTDB_CONNECTION_MODE", "shared")
+    rustdb_mode = mode
 
     cmd = [
         str(exe),
@@ -148,7 +146,7 @@ def rustdb_bench(repo_root: Path, cert_path: Path, addr: str, server_name: str, 
         raise RuntimeError(f"failed to parse rustdb_load JSON: {e}\nstdout:\n{cp.stdout}\nstderr:\n{cp.stderr}")
 
     return Point(
-        system="rustdb",
+        system=f"rustdb({rustdb_mode})",
         scenario="",
         concurrency=concurrency,
         qps=float(data["qps"]),
@@ -165,7 +163,7 @@ def plot(points: list[Point], out_png: Path):
     import matplotlib.pyplot as plt
 
     scenarios = sorted(set(p.scenario for p in points))
-    systems = ["rustdb", "sqlite"]
+    systems = ["rustdb(shared)", "rustdb(per-worker)", "sqlite"]
 
     fig, axes = plt.subplots(len(scenarios), 2, figsize=(12, 4 * len(scenarios)))
     if len(scenarios) == 1:
@@ -199,10 +197,9 @@ def main():
     ap.add_argument("--concurrency", default="1,8,32,128")
     ap.add_argument("--queries", type=int, default=5000)
     ap.add_argument(
-        "--rustdb-connection-mode",
-        default="shared",
-        choices=["shared", "per-worker"],
-        help="QUIC connection mode for RustDB load generator.",
+        "--rustdb-connection-modes",
+        default="shared,per-worker",
+        help="Comma-separated RustDB QUIC connection modes to benchmark: shared,per-worker.",
     )
     args = ap.parse_args()
 
@@ -211,7 +208,10 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     cert_path = Path(args.cert)
     conc = [int(x.strip()) for x in args.concurrency.split(",") if x.strip()]
-    os.environ["RUSTDB_CONNECTION_MODE"] = args.rustdb_connection_mode
+    rustdb_modes = [m.strip() for m in args.rustdb_connection_modes.split(",") if m.strip()]
+    for m in rustdb_modes:
+        if m not in ("shared", "per-worker"):
+            raise SystemExit(f"invalid rustdb mode: {m}")
 
     scenarios = [
         ("select_literal", "SELECT 1", [], "SELECT 1"),
@@ -224,18 +224,20 @@ def main():
     for name, sqlite_sql, setup_sql, rustdb_sql in scenarios:
         # RustDB side: `rustdb_load` needs the workload SQL.
         rustdb_workload = rustdb_sql if name == "select_literal" else "SELECT a FROM bench_t WHERE a = 1"
-        for c in conc:
-            p = rustdb_bench(
-                repo_root,
-                cert_path,
-                args.addr,
-                args.server_name,
-                rustdb_workload,
-                c,
-                args.queries,
-            )
-            p.scenario = name
-            points.append(p)
+        for mode in rustdb_modes:
+            for c in conc:
+                p = rustdb_bench(
+                    repo_root,
+                    cert_path,
+                    args.addr,
+                    args.server_name,
+                    rustdb_workload,
+                    c,
+                    args.queries,
+                    mode,
+                )
+                p.scenario = name
+                points.append(p)
 
         for c in conc:
             db_path = out_dir / f"sqlite_{name}_{c}.db"
@@ -260,11 +262,12 @@ def main():
         f.write("## SQLite vs RustDB benchmark (smoke)\n\n")
         f.write(f"- queries per point: **{args.queries}**\n")
         f.write(f"- concurrency: **{', '.join(map(str, conc))}**\n\n")
+        f.write(f"- rustdb modes: **{', '.join(rustdb_modes)}**\n\n")
         for sc, pts in by_scenario.items():
             f.write(f"### {sc}\n\n")
             f.write("| system | concurrency | qps | p50 (ms) | p95 (ms) | p99 (ms) |\n")
             f.write("|---|---:|---:|---:|---:|---:|\n")
-            for sysname in ["rustdb", "sqlite"]:
+            for sysname in ["rustdb(shared)", "rustdb(per-worker)", "sqlite"]:
                 rows = [p for p in pts if p.system == sysname]
                 rows.sort(key=lambda p: p.concurrency)
                 for p in rows:
