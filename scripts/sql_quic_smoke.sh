@@ -14,7 +14,11 @@ set -euo pipefail
 
 RUSTDB_IMAGE="${RUSTDB_IMAGE:-ghcr.io/crosseyedcat/rustdb:main-type-sha}"
 HOST_PORT="${HOST_PORT:-15432}"
-SERVER_NAME="${SERVER_NAME:-127.0.0.1}"
+# QUIC dial address (where we connect) vs TLS name (certificate SAN).
+# When the server is started with `--host 0.0.0.0`, it generates a dev cert for `localhost`
+# (see `tls_subject_name`), so the default TLS name must be `localhost`.
+DIAL_HOST="${DIAL_HOST:-127.0.0.1}"
+TLS_SERVER_NAME="${TLS_SERVER_NAME:-localhost}"
 
 name="rustdb-quic-smoke-$$"
 vol="rustdb-quic-smoke-vol-$$"
@@ -62,9 +66,9 @@ client() {
   echo ""
   echo ">>> ${sql}"
   ./target/debug/rustdb_quic_client \
-    --addr "${SERVER_NAME}:${HOST_PORT}" \
+    --addr "${DIAL_HOST}:${HOST_PORT}" \
     --cert "$cert_path" \
-    --server-name "$SERVER_NAME" \
+    --server-name "$TLS_SERVER_NAME" \
     "$sql"
 }
 
