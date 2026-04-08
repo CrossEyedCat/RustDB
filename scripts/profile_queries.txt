@@ -1,0 +1,15 @@
+SELECT 1
+SELECT 1 + 2 AS x
+SELECT 42 AS a, 'hi' AS b
+CREATE TABLE prof_t (a INT, b TEXT)
+INSERT INTO prof_t (a, b) VALUES (1, 'x'), (2, 'y'), (3, 'z'), (2, 'q')
+SELECT a, b FROM prof_t ORDER BY a ASC
+SELECT a FROM prof_t WHERE a = 2
+SELECT a FROM prof_t WHERE a = 2 AND NOT (b = 'y')
+UPDATE prof_t SET b = 'yy' WHERE a = 2
+DELETE FROM prof_t WHERE a = 3
+SELECT a, a + 1 AS a1 FROM prof_t ORDER BY a DESC LIMIT 2
+CREATE TABLE prof_s (a INT)
+INSERT INTO prof_s (a) VALUES (2), (2), (1)
+SELECT COUNT(*) AS c FROM prof_s
+SELECT a, COUNT(*) AS c FROM prof_s GROUP BY a HAVING COUNT(*) > 1

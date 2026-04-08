@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use quinn::{Connection, RecvStream, SendStream};
 use thiserror::Error;
 use tokio::sync::OwnedSemaphorePermit;
-use tracing::{info, warn};
+use tracing::{info, info_span, warn};
 
 use crate::network::engine::{
     engine_error_code, EngineError, EngineHandle, EngineOutput, SessionContext,
@@ -126,6 +126,12 @@ pub fn dispatch_client_frame(
     let msg = decode_client_frame_v1(frame)?;
     match msg {
         ClientMessage::Query(q) => {
+            let span = info_span!(
+                "sql.query",
+                sql_len = q.sql.len(),
+                sql = %summarize_sql(&q.sql)
+            );
+            let _g = span.enter();
             if q.sql.len() > policy.max_sql_bytes {
                 return Err(EngineError::new(
                     engine_error_code::SQL_TOO_LONG,
@@ -145,6 +151,15 @@ pub fn dispatch_client_frame(
         )
         .into()),
     }
+}
+
+fn summarize_sql(sql: &str) -> String {
+    let s = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    const MAX: usize = 120;
+    if s.len() <= MAX {
+        return s;
+    }
+    format!("{}…", &s[..MAX])
 }
 
 fn enforce_max_result_rows(

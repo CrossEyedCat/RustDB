@@ -22,19 +22,21 @@ use crate::storage::tuple::Tuple;
 use crate::Row;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use tracing::info_span;
 
 /// Engine backed by the in-process planner, optimizer, and executor (single default table file per data directory).
 pub struct SqlEngine {
-    inner: Mutex<SqlEngineInner>,
+    state: Arc<SqlEngineState>,
 }
 
-struct SqlEngineInner {
+struct SqlEngineState {
     data_dir: PathBuf,
     default_page_manager: Arc<Mutex<PageManager>>,
     table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<PageManager>>>>>,
     /// Monotonic id assigned to inserted [`Tuple`] rows (persisted in tuple bytes).
-    next_tuple_id: u64,
+    next_tuple_id: AtomicU64,
     planner: QueryPlanner,
     optimizer: QueryOptimizer,
     executor: QueryExecutor,
@@ -60,11 +62,11 @@ impl SqlEngine {
         ));
         let executor = QueryExecutor::new(factory)?;
         Ok(Self {
-            inner: Mutex::new(SqlEngineInner {
+            state: Arc::new(SqlEngineState {
                 data_dir,
                 default_page_manager: pm,
                 table_page_managers: table_pms,
-                next_tuple_id: 1,
+                next_tuple_id: AtomicU64::new(1),
                 planner: QueryPlanner::new()?,
                 optimizer: QueryOptimizer::new()?,
                 executor,
@@ -72,12 +74,20 @@ impl SqlEngine {
         })
     }
 
-    fn execute_sql_inner(
-        inner: &mut SqlEngineInner,
-        sql: &str,
-    ) -> Result<EngineOutput, EngineError> {
+    fn execute_sql_inner(state: &SqlEngineState, sql: &str) -> Result<EngineOutput, EngineError> {
+        let span = info_span!(
+            "sql.execute",
+            sql_len = sql.len(),
+            sql = %summarize_sql(sql)
+        );
+        let _g = span.enter();
+
         let mut parser = SqlParser::new(sql).map_err(map_db_err)?;
-        let stmts = parser.parse_multiple().map_err(map_db_err)?;
+        let stmts = {
+            let s = info_span!("sql.parse");
+            let _sg = s.enter();
+            parser.parse_multiple().map_err(map_db_err)?
+        };
         if stmts.is_empty() {
             return Err(EngineError::new(
                 engine_error_code::PROTOCOL,
@@ -94,19 +104,55 @@ impl SqlEngine {
         match stmt {
             SqlStatement::Select(sel) if sel.from.is_none() => eval_select_without_from(sel),
             SqlStatement::Select(_) => {
-                let plan = inner.planner.create_plan(stmt).map_err(map_db_err)?;
-                let optimized = inner.optimizer.optimize(plan).map_err(map_db_err)?;
-                let rows = inner
-                    .executor
-                    .execute(&optimized.optimized_plan)
-                    .map_err(map_db_err)?;
-                rows_to_engine_output(rows)
+                let plan = {
+                    let s = info_span!("sql.plan");
+                    let _sg = s.enter();
+                    state.planner.create_plan(stmt).map_err(map_db_err)?
+                };
+                let optimized = {
+                    let s = info_span!("sql.optimize");
+                    let _sg = s.enter();
+                    state.optimizer.optimize(plan).map_err(map_db_err)?
+                };
+                let rows = {
+                    let s = info_span!("sql.exec_plan");
+                    let _sg = s.enter();
+                    state
+                        .executor
+                        .execute(&optimized.optimized_plan)
+                        .map_err(map_db_err)?
+                };
+                {
+                    let s = info_span!("sql.encode_rows", row_count = rows.len());
+                    let _eg = s.enter();
+                    rows_to_engine_output(rows)
+                }
             }
-            SqlStatement::Insert(ins) => execute_insert(inner, stmt, ins),
-            SqlStatement::Update(upd) => execute_update(inner, stmt, upd),
-            SqlStatement::Delete(del) => execute_delete(inner, stmt, del),
-            SqlStatement::CreateTable(ct) => execute_create_table(inner, &ct.table_name),
-            SqlStatement::DropTable(dt) => execute_drop_table(inner, &dt.table_name),
+            SqlStatement::Insert(ins) => {
+                let s = info_span!("sql.insert", table = %ins.table);
+                let _sg = s.enter();
+                execute_insert(state, stmt, ins)
+            }
+            SqlStatement::Update(upd) => {
+                let s = info_span!("sql.update", table = %upd.table);
+                let _sg = s.enter();
+                execute_update(state, stmt, upd)
+            }
+            SqlStatement::Delete(del) => {
+                let s = info_span!("sql.delete", table = %del.table);
+                let _sg = s.enter();
+                execute_delete(state, stmt, del)
+            }
+            SqlStatement::CreateTable(ct) => {
+                let s = info_span!("sql.create_table", table = %ct.table_name);
+                let _sg = s.enter();
+                execute_create_table(state, &ct.table_name)
+            }
+            SqlStatement::DropTable(dt) => {
+                let s = info_span!("sql.drop_table", table = %dt.table_name);
+                let _sg = s.enter();
+                execute_drop_table(state, &dt.table_name)
+            }
             SqlStatement::BeginTransaction
             | SqlStatement::CommitTransaction
             | SqlStatement::RollbackTransaction => {
@@ -120,16 +166,22 @@ impl SqlEngine {
     }
 }
 
+fn summarize_sql(sql: &str) -> String {
+    let s = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    const MAX: usize = 160;
+    if s.len() <= MAX {
+        return s;
+    }
+    format!("{}…", &s[..MAX])
+}
+
 impl EngineHandle for SqlEngine {
     fn execute_sql(
         &self,
         sql: &str,
         _ctx: &mut SessionContext,
     ) -> Result<EngineOutput, EngineError> {
-        let mut g = self.inner.lock().map_err(|_| {
-            EngineError::new(engine_error_code::INTERNAL, "SQL engine lock poisoned")
-        })?;
-        Self::execute_sql_inner(&mut g, sql)
+        Self::execute_sql_inner(self.state.as_ref(), sql)
     }
 }
 
@@ -142,11 +194,11 @@ fn lock_poisoned_engine() -> EngineError {
 }
 
 fn table_page_manager(
-    inner: &mut SqlEngineInner,
+    state: &SqlEngineState,
     table: &str,
 ) -> Result<Arc<Mutex<PageManager>>, EngineError> {
     {
-        let g = inner
+        let g = state
             .table_page_managers
             .lock()
             .map_err(|_| lock_poisoned_engine())?;
@@ -154,14 +206,14 @@ fn table_page_manager(
             return Ok(pm.clone());
         }
     }
-    let pm = match PageManager::open(inner.data_dir.clone(), table, PageManagerConfig::default()) {
+    let pm = match PageManager::open(state.data_dir.clone(), table, PageManagerConfig::default()) {
         Ok(pm) => pm,
-        Err(_) => PageManager::new(inner.data_dir.clone(), table, PageManagerConfig::default())
+        Err(_) => PageManager::new(state.data_dir.clone(), table, PageManagerConfig::default())
             .map_err(map_db_err)?,
     };
     let pm = Arc::new(Mutex::new(pm));
     {
-        let mut g = inner
+        let mut g = state
             .table_page_managers
             .lock()
             .map_err(|_| lock_poisoned_engine())?;
@@ -170,60 +222,54 @@ fn table_page_manager(
     Ok(pm)
 }
 
-fn execute_create_table(
-    inner: &mut SqlEngineInner,
-    table: &str,
-) -> Result<EngineOutput, EngineError> {
-    let _ = table_page_manager(inner, table)?;
+fn execute_create_table(state: &SqlEngineState, table: &str) -> Result<EngineOutput, EngineError> {
+    let _ = table_page_manager(state, table)?;
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
-fn execute_drop_table(
-    inner: &mut SqlEngineInner,
-    table: &str,
-) -> Result<EngineOutput, EngineError> {
+fn execute_drop_table(state: &SqlEngineState, table: &str) -> Result<EngineOutput, EngineError> {
     {
-        let mut g = inner
+        let mut g = state
             .table_page_managers
             .lock()
             .map_err(|_| lock_poisoned_engine())?;
         g.remove(table);
     }
-    let path = inner.data_dir.join(format!("{table}.tbl"));
+    let path = state.data_dir.join(format!("{table}.tbl"));
     let _ = std::fs::remove_file(path);
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
-fn validate_plan(inner: &mut SqlEngineInner, stmt: &SqlStatement) -> Result<(), EngineError> {
-    let plan = inner.planner.create_plan(stmt).map_err(map_db_err)?;
-    let _ = inner.optimizer.optimize(plan).map_err(map_db_err)?;
+fn validate_plan(state: &SqlEngineState, stmt: &SqlStatement) -> Result<(), EngineError> {
+    let plan = state.planner.create_plan(stmt).map_err(map_db_err)?;
+    let _ = state.optimizer.optimize(plan).map_err(map_db_err)?;
     Ok(())
 }
 
 fn execute_insert(
-    inner: &mut SqlEngineInner,
+    state: &SqlEngineState,
     stmt: &SqlStatement,
     insert: &InsertStatement,
 ) -> Result<EngineOutput, EngineError> {
-    validate_plan(inner, stmt)?;
+    validate_plan(state, stmt)?;
     match &insert.values {
         InsertValues::Select(sel) => {
             // Plan/execute the SELECT subquery and insert its resulting rows.
             let select_stmt = SqlStatement::Select((**sel).clone());
-            let plan = inner
+            let plan = state
                 .planner
                 .create_plan(&select_stmt)
                 .map_err(map_db_err)?;
-            let optimized = inner.optimizer.optimize(plan).map_err(map_db_err)?;
-            let rows = inner
+            let optimized = state.optimizer.optimize(plan).map_err(map_db_err)?;
+            let rows = state
                 .executor
                 .execute(&optimized.optimized_plan)
                 .map_err(map_db_err)?;
 
-            let pm_for_table = table_page_manager(inner, &insert.table)?;
+            let pm_for_table = table_page_manager(state, &insert.table)?;
             let mut rows_affected = 0u64;
             for r in rows {
-                let tuple = build_insert_tuple_from_row(inner, insert.columns.as_ref(), &r)?;
+                let tuple = build_insert_tuple_from_row(state, insert.columns.as_ref(), &r)?;
                 let bytes = tuple.to_bytes().map_err(map_db_err)?;
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
                 pm.insert(&bytes).map_err(map_db_err)?;
@@ -237,11 +283,11 @@ fn execute_insert(
         }
         InsertValues::Values(rows) => {
             let mut rows_affected = 0u64;
-            let pm_for_table = table_page_manager(inner, &insert.table)?;
+            let pm_for_table = table_page_manager(state, &insert.table)?;
             for row in rows {
-                let tuple = build_insert_tuple(inner, insert.columns.as_ref(), row)?;
+                let tuple = build_insert_tuple(state, insert.columns.as_ref(), row)?;
                 let bytes = tuple.to_bytes().map_err(map_db_err)?;
-                let mut pm = inner
+                let mut pm = state
                     .default_page_manager
                     .lock()
                     .map_err(|_| lock_poisoned_engine())?;
@@ -261,12 +307,11 @@ fn execute_insert(
 }
 
 fn build_insert_tuple(
-    inner: &mut SqlEngineInner,
+    state: &SqlEngineState,
     columns: Option<&Vec<String>>,
     row: &[Expression],
 ) -> Result<Tuple, EngineError> {
-    let id = inner.next_tuple_id;
-    inner.next_tuple_id = inner.next_tuple_id.saturating_add(1);
+    let id = state.next_tuple_id.fetch_add(1, Ordering::Relaxed);
     let mut tuple = Tuple::new(id);
     let col_names: Vec<String> = match columns {
         Some(cols) => {
@@ -288,12 +333,11 @@ fn build_insert_tuple(
 }
 
 fn build_insert_tuple_from_row(
-    inner: &mut SqlEngineInner,
+    state: &SqlEngineState,
     columns: Option<&Vec<String>>,
     row: &Row,
 ) -> Result<Tuple, EngineError> {
-    let id = inner.next_tuple_id;
-    inner.next_tuple_id = inner.next_tuple_id.saturating_add(1);
+    let id = state.next_tuple_id.fetch_add(1, Ordering::Relaxed);
     let mut tuple = Tuple::new(id);
 
     let col_names: Vec<String> = match columns {
@@ -314,12 +358,12 @@ fn build_insert_tuple_from_row(
 }
 
 fn execute_update(
-    inner: &mut SqlEngineInner,
+    state: &SqlEngineState,
     stmt: &SqlStatement,
     update: &UpdateStatement,
 ) -> Result<EngineOutput, EngineError> {
-    validate_plan(inner, stmt)?;
-    let pm_for_table = table_page_manager(inner, &update.table)?;
+    validate_plan(state, stmt)?;
+    let pm_for_table = table_page_manager(state, &update.table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let snapshot = pm.select(None).map_err(map_db_err)?;
     let mut rows_affected = 0u64;
@@ -345,12 +389,12 @@ fn execute_update(
 }
 
 fn execute_delete(
-    inner: &mut SqlEngineInner,
+    state: &SqlEngineState,
     stmt: &SqlStatement,
     delete: &DeleteStatement,
 ) -> Result<EngineOutput, EngineError> {
-    validate_plan(inner, stmt)?;
-    let pm_for_table = table_page_manager(inner, &delete.table)?;
+    validate_plan(state, stmt)?;
+    let pm_for_table = table_page_manager(state, &delete.table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let snapshot = pm.select(None).map_err(map_db_err)?;
     let mut to_delete: Vec<RecordId> = Vec::new();

@@ -7,7 +7,7 @@ use crate::planner::{ExecutionPlan, PlanNode, QueryOptimizer, QueryPlanner};
 
 #[test]
 fn test_planner_multiple_sql_variants() -> Result<()> {
-    let mut planner = QueryPlanner::new()?;
+    let planner = QueryPlanner::new()?;
     // UPDATE/DELETE WHERE uses `parse_where_expression` (comparisons and simple operands).
     // SELECT parses optional WHERE / ORDER BY / LIMIT / OFFSET after FROM.
     let sqls = [
@@ -27,8 +27,8 @@ fn test_planner_multiple_sql_variants() -> Result<()> {
 
 #[test]
 fn test_optimizer_multiple_plans() -> Result<()> {
-    let mut planner = QueryPlanner::new()?;
-    let mut opt = QueryOptimizer::new()?;
+    let planner = QueryPlanner::new()?;
+    let opt = QueryOptimizer::new()?;
     let sqls = ["SELECT * FROM users", "SELECT * FROM users WHERE age > 0"];
     for sql in sqls {
         let mut p = SqlParser::new(sql)?;

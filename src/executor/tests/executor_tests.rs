@@ -48,7 +48,7 @@ fn test_executor_simple_table_scan() -> Result<()> {
     ));
     let executor = QueryExecutor::new(factory)?;
 
-    let mut planner = QueryPlanner::new()?;
+    let planner = QueryPlanner::new()?;
     let mut parser = SqlParser::new("SELECT * FROM users")?;
     let stmt = parser.parse()?;
 
@@ -78,7 +78,7 @@ fn test_executor_with_config() -> Result<()> {
     };
     let executor = QueryExecutor::with_config(factory, config)?;
 
-    let mut planner = QueryPlanner::new()?;
+    let planner = QueryPlanner::new()?;
     let mut parser = SqlParser::new("SELECT * FROM users")?;
     let stmt = parser.parse()?;
 

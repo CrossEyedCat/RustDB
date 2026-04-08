@@ -38,12 +38,14 @@ fn main() -> Result<()> {
         "users".to_string(),
         users_page_manager.clone(),
         None,
+        None,
         users_schema.clone(),
     )?;
 
     let emails_operator = TableScanOperator::new(
         "emails".to_string(),
         emails_page_manager.clone(),
+        None,
         None,
         emails_schema.clone(),
     )?;
@@ -73,12 +75,14 @@ fn main() -> Result<()> {
         "users".to_string(),
         users_page_manager.clone(),
         None,
+        None,
         users_schema.clone(),
     )?;
 
     let emails_operator_hash = TableScanOperator::new(
         "emails".to_string(),
         emails_page_manager.clone(),
+        None,
         None,
         emails_schema.clone(),
     )?;
@@ -102,12 +106,14 @@ fn main() -> Result<()> {
         "users".to_string(),
         users_page_manager.clone(),
         None,
+        None,
         users_schema.clone(),
     )?;
 
     let emails_operator_merge = TableScanOperator::new(
         "emails".to_string(),
         emails_page_manager.clone(),
+        None,
         None,
         emails_schema.clone(),
     )?;
@@ -198,12 +204,14 @@ fn main() -> Result<()> {
         "users".to_string(),
         users_page_manager.clone(),
         None,
+        None,
         users_schema.clone(),
     )?;
 
     let emails_operator_trait = TableScanOperator::new(
         "emails".to_string(),
         emails_page_manager.clone(),
+        None,
         None,
         emails_schema.clone(),
     )?;
@@ -236,11 +244,13 @@ fn main() -> Result<()> {
             "users".to_string(),
             users_page_manager.clone(),
             None,
+            None,
             users_schema.clone(),
         )?),
         Box::new(TableScanOperator::new(
             "emails".to_string(),
             emails_page_manager.clone(),
+            None,
             None,
             emails_schema.clone(),
         )?),
@@ -258,11 +268,13 @@ fn main() -> Result<()> {
             "users".to_string(),
             users_page_manager.clone(),
             None,
+            None,
             users_schema.clone(),
         )?),
         Box::new(TableScanOperator::new(
             "emails".to_string(),
             emails_page_manager.clone(),
+            None,
             None,
             emails_schema.clone(),
         )?),
@@ -280,11 +292,13 @@ fn main() -> Result<()> {
             "users".to_string(),
             users_page_manager.clone(),
             None,
+            None,
             users_schema.clone(),
         )?),
         Box::new(TableScanOperator::new(
             "emails".to_string(),
             emails_page_manager.clone(),
+            None,
             None,
             emails_schema.clone(),
         )?),
@@ -312,12 +326,14 @@ fn main() -> Result<()> {
         "users".to_string(),
         users_page_manager.clone(),
         None,
+        None,
         users_schema.clone(),
     )?;
 
     let emails_base = TableScanOperator::new(
         "emails".to_string(),
         emails_page_manager.clone(),
+        None,
         None,
         emails_schema.clone(),
     )?;

@@ -10,6 +10,7 @@ use crate::storage::index_registry::IndexRegistry;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 /// Query optimizer
 pub struct QueryOptimizer {
@@ -18,7 +19,7 @@ pub struct QueryOptimizer {
     /// Optimizer settings
     settings: OptimizerSettings,
     /// Optimization statistics
-    statistics: OptimizationStatistics,
+    statistics: Mutex<OptimizationStatistics>,
     /// Optional index registry for index selection
     index_registry: Option<Arc<IndexRegistry>>,
 }
@@ -91,7 +92,7 @@ impl QueryOptimizer {
         Ok(Self {
             semantic_analyzer,
             settings: OptimizerSettings::default(),
-            statistics: OptimizationStatistics::default(),
+            statistics: Mutex::new(OptimizationStatistics::default()),
             index_registry: None,
         })
     }
@@ -102,7 +103,7 @@ impl QueryOptimizer {
         Ok(Self {
             semantic_analyzer,
             settings,
-            statistics: OptimizationStatistics::default(),
+            statistics: Mutex::new(OptimizationStatistics::default()),
             index_registry: None,
         })
     }
@@ -114,7 +115,7 @@ impl QueryOptimizer {
     }
 
     /// Optimize execution plan
-    pub fn optimize(&mut self, plan: ExecutionPlan) -> Result<OptimizationResult> {
+    pub fn optimize(&self, plan: ExecutionPlan) -> Result<OptimizationResult> {
         let start_time = std::time::Instant::now();
         let original_cost = plan.metadata.estimated_cost;
         let mut optimized_plan = plan;
@@ -162,7 +163,7 @@ impl QueryOptimizer {
             0.0
         };
 
-        self.statistics = OptimizationStatistics {
+        let stats = OptimizationStatistics {
             optimizations_applied,
             optimization_time_ms: optimization_time,
             cost_improvement_percent: cost_improvement,
@@ -182,10 +183,13 @@ impl QueryOptimizer {
                 0
             },
         };
+        if let Ok(mut g) = self.statistics.lock() {
+            *g = stats.clone();
+        }
 
         Ok(OptimizationResult {
             optimized_plan,
-            statistics: self.statistics.clone(),
+            statistics: stats,
             messages,
         })
     }
@@ -533,12 +537,17 @@ impl QueryOptimizer {
     }
 
     /// Get optimization statistics
-    pub fn statistics(&self) -> &OptimizationStatistics {
-        &self.statistics
+    pub fn statistics(&self) -> OptimizationStatistics {
+        self.statistics
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
     }
 
     /// Reset statistics
-    pub fn reset_statistics(&mut self) {
-        self.statistics = OptimizationStatistics::default();
+    pub fn reset_statistics(&self) {
+        if let Ok(mut g) = self.statistics.lock() {
+            *g = OptimizationStatistics::default();
+        }
     }
 }

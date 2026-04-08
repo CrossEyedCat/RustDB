@@ -28,6 +28,7 @@ fn main() -> Result<()> {
         "users".to_string(),
         page_manager.clone(),
         None,
+        None,
         schema.clone(),
     )?;
 
@@ -42,6 +43,7 @@ fn main() -> Result<()> {
         "users".to_string(),
         page_manager.clone(),
         Some("age > 18".to_string()),
+        None,
         schema.clone(),
     )?;
 
@@ -78,6 +80,7 @@ fn main() -> Result<()> {
         "users".to_string(),
         page_manager.clone(),
         None,
+        None,
         schema.clone(),
     )?;
 
@@ -96,6 +99,7 @@ fn main() -> Result<()> {
     let base_operator_cond = TableScanOperator::new(
         "users".to_string(),
         page_manager.clone(),
+        None,
         None,
         schema.clone(),
     )?;
@@ -121,7 +125,7 @@ fn main() -> Result<()> {
 
     // Creating operators through a factory
     let table_scan_from_factory =
-        factory.create_table_scan("users".to_string(), None, schema.clone())?;
+        factory.create_table_scan("users".to_string(), None, None, schema.clone())?;
 
     println!("Created TableScan via factory");
     println!("Scheme: {:?}", table_scan_from_factory.get_schema()?);
@@ -141,6 +145,7 @@ fn main() -> Result<()> {
     let mut operator: Box<dyn Operator> = Box::new(TableScanOperator::new(
         "users".to_string(),
         page_manager.clone(),
+        None,
         None,
         schema.clone(),
     )?);
@@ -201,8 +206,13 @@ fn main() -> Result<()> {
 
     // Example 9: Execution Statistics
     println!("9. Execution statistics:");
-    let operator_for_stats =
-        TableScanOperator::new("users".to_string(), page_manager.clone(), None, schema)?;
+    let operator_for_stats = TableScanOperator::new(
+        "users".to_string(),
+        page_manager.clone(),
+        None,
+        None,
+        schema,
+    )?;
 
     let stats = operator_for_stats.get_statistics();
     println!("Rows processed: {}", stats.rows_processed);
@@ -218,6 +228,7 @@ fn main() -> Result<()> {
     let base = TableScanOperator::new(
         "users".to_string(),
         page_manager.clone(),
+        None,
         None,
         vec!["id".to_string(), "name".to_string(), "age".to_string()],
     )?;

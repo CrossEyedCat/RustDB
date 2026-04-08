@@ -111,8 +111,8 @@ fn test_optimizer_all_flags_off_still_runs() -> Result<()> {
         cost_threshold: 1.0,
         enable_debug_logging: false,
     };
-    let mut opt = QueryOptimizer::with_settings(settings)?;
-    let mut planner = QueryPlanner::new()?;
+    let opt = QueryOptimizer::with_settings(settings)?;
+    let planner = QueryPlanner::new()?;
     let mut p = SqlParser::new("SELECT * FROM users")?;
     let stmt = p.parse()?;
     let plan = planner.create_plan(&stmt)?;

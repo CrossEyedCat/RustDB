@@ -14,7 +14,13 @@ fn test_table_scan_operator_creation() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
 
-    let operator = TableScanOperator::new("users".to_string(), page_manager, None, schema.clone())?;
+    let operator = TableScanOperator::new(
+        "users".to_string(),
+        page_manager,
+        None,
+        None,
+        schema.clone(),
+    )?;
 
     let operator_schema = operator.get_schema()?;
     assert_eq!(operator_schema, schema);
@@ -31,6 +37,7 @@ fn test_table_scan_with_filter() -> Result<()> {
         "users".to_string(),
         page_manager,
         Some("age > 18".to_string()),
+        None,
         schema,
     )?;
 
@@ -74,7 +81,8 @@ fn test_range_scan_operator() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
 
-    let base_operator = TableScanOperator::new("users".to_string(), page_manager, None, schema)?;
+    let base_operator =
+        TableScanOperator::new("users".to_string(), page_manager, None, None, schema)?;
 
     let range_operator = RangeScanOperator::new(
         Box::new(base_operator),
@@ -94,7 +102,8 @@ fn test_conditional_scan_operator() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
 
-    let base_operator = TableScanOperator::new("users".to_string(), page_manager, None, schema)?;
+    let base_operator =
+        TableScanOperator::new("users".to_string(), page_manager, None, None, schema)?;
 
     let conditional_operator = ConditionalScanOperator::new(
         Box::new(base_operator),
@@ -118,7 +127,7 @@ fn test_scan_operator_factory() -> Result<()> {
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
 
     // Testing the creation of TableScan
-    let table_scan = factory.create_table_scan("users".to_string(), None, schema.clone())?;
+    let table_scan = factory.create_table_scan("users".to_string(), None, None, schema.clone())?;
 
     let table_scan_schema = table_scan.get_schema()?;
     assert_eq!(table_scan_schema, schema);
@@ -131,7 +140,7 @@ fn test_scan_operator_factory() -> Result<()> {
     assert_eq!(range_scan_schema, schema);
 
     // Testing the creation of ConditionalScan
-    let base_operator = factory.create_table_scan("users".to_string(), None, schema)?;
+    let base_operator = factory.create_table_scan("users".to_string(), None, None, schema)?;
 
     let conditional_scan =
         factory.create_conditional_scan(base_operator, "age > 18".to_string())?;
@@ -147,7 +156,8 @@ fn test_operator_reset() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
 
-    let mut operator = TableScanOperator::new("users".to_string(), page_manager, None, schema)?;
+    let mut operator =
+        TableScanOperator::new("users".to_string(), page_manager, None, None, schema)?;
 
     // Resetting the operator
     operator.reset()?;
@@ -165,7 +175,7 @@ fn test_operator_statistics() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
 
-    let operator = TableScanOperator::new("users".to_string(), page_manager, None, schema)?;
+    let operator = TableScanOperator::new("users".to_string(), page_manager, None, None, schema)?;
 
     let statistics = operator.get_statistics();
 
@@ -216,6 +226,7 @@ fn test_operator_trait_implementation() -> Result<()> {
     let mut operator: Box<dyn Operator> = Box::new(TableScanOperator::new(
         "users".to_string(),
         page_manager,
+        None,
         None,
         schema,
     )?);

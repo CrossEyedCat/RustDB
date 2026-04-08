@@ -277,6 +277,12 @@ impl PageManager {
 
         // Scan all pages (use dirty_pages when present for consistent read)
         let page_ids = self.get_all_page_ids()?;
+        let span = tracing::info_span!(
+            "storage.page_manager.select",
+            pages = page_ids.len(),
+            has_predicate = condition.is_some()
+        );
+        let _g = span.enter();
 
         for page_id in page_ids {
             // Fine-grained lock: read latch per page
@@ -298,7 +304,23 @@ impl PageManager {
             }
         }
 
+        tracing::info!(selected = results.len(), "select done");
         Ok(results)
+    }
+
+    /// Returns all page IDs currently present in the table heap.
+    ///
+    /// This is a streaming-scan building block for executors that want to avoid materializing
+    /// all records at once (see `TableScanOperator`).
+    pub fn all_page_ids(&mut self) -> Result<Vec<PageId>> {
+        self.get_all_page_ids()
+    }
+
+    /// Returns raw record payloads from a single page (offset + bytes).
+    ///
+    /// Uses dirty pages when present; otherwise reads from disk without polluting `dirty_pages`.
+    pub fn records_from_page(&mut self, page_id: PageId) -> Result<Vec<(u32, Vec<u8>)>> {
+        self.get_records_from_page(page_id)
     }
 
     /// Updates a record

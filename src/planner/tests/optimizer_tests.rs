@@ -19,8 +19,8 @@ fn test_optimizer_creation() -> Result<()> {
 
 #[test]
 fn test_optimize_simple_plan() -> Result<()> {
-    let mut planner = QueryPlanner::new()?;
-    let mut optimizer = QueryOptimizer::new()?;
+    let planner = QueryPlanner::new()?;
+    let optimizer = QueryOptimizer::new()?;
     let mut parser = SqlParser::new("SELECT * FROM users")?;
 
     let statement = parser.parse()?;
@@ -36,8 +36,8 @@ fn test_optimize_simple_plan() -> Result<()> {
 
 #[test]
 fn test_optimize_plan_with_where() -> Result<()> {
-    let mut planner = QueryPlanner::new()?;
-    let mut optimizer = QueryOptimizer::new()?;
+    let planner = QueryPlanner::new()?;
+    let optimizer = QueryOptimizer::new()?;
     let mut parser = SqlParser::new("SELECT name FROM users WHERE age > 18")?;
 
     let statement = parser.parse()?;
@@ -82,7 +82,7 @@ fn test_reset_statistics() -> Result<()> {
     let mut optimizer = QueryOptimizer::new()?;
 
     // Capture statistics before reset
-    let _initial_stats = optimizer.statistics().clone();
+    let _initial_stats = optimizer.statistics();
 
     // Reset statistics
     optimizer.reset_statistics();

@@ -333,6 +333,24 @@ impl Row {
         }
     }
 
+    /// Creates a new row with preallocated column capacity.
+    ///
+    /// Intended for hot-path operators (scan/projection) where we already know how many columns
+    /// will be inserted and we don't want to update timestamps on every column insert.
+    pub fn with_capacity(column_capacity: usize) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Self {
+            values: HashMap::with_capacity(column_capacity),
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     /// Sets a column value
     pub fn set_value(&mut self, column: &str, value: ColumnValue) {
         self.values.insert(column.to_string(), value);
@@ -340,6 +358,11 @@ impl Row {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
+    }
+
+    /// Sets a column value **without** touching timestamps.
+    pub fn set_value_fast(&mut self, column: &str, value: ColumnValue) {
+        self.values.insert(column.to_string(), value);
     }
 
     /// Gets a column value

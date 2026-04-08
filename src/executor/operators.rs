@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 /// Base trait for all operators
 pub trait Operator {
@@ -297,11 +298,15 @@ pub struct TableScanOperator {
     table_name: String,
     page_manager: Arc<Mutex<StoragePageManager>>,
     filter_condition: Option<String>,
+    pushdown_equality: Option<SimpleEqualityFilter>,
     /// Projection column names from the plan (`*` = all tuple columns).
     schema: Vec<String>,
     statistics: OperatorStatistics,
-    cached_rows: Option<Vec<Row>>,
-    cursor: usize,
+    // Streaming scan state (avoid materializing all rows).
+    page_ids: Option<Vec<u64>>,
+    page_pos: usize,
+    page_records: Vec<(u32, Vec<u8>)>,
+    record_pos: usize,
 }
 
 impl TableScanOperator {
@@ -310,60 +315,95 @@ impl TableScanOperator {
         table_name: String,
         page_manager: Arc<Mutex<StoragePageManager>>,
         filter_condition: Option<String>,
+        pushdown_equality: Option<SimpleEqualityFilter>,
         schema: Vec<String>,
     ) -> Result<Self> {
         Ok(Self {
             table_name,
             page_manager,
             filter_condition,
+            pushdown_equality,
             schema,
             statistics: OperatorStatistics::default(),
-            cached_rows: None,
-            cursor: 0,
+            page_ids: None,
+            page_pos: 0,
+            page_records: Vec::new(),
+            record_pos: 0,
         })
     }
 
-    fn materialize(&mut self) -> Result<()> {
-        if self.cached_rows.is_some() {
+    fn ensure_initialized(&mut self) -> Result<()> {
+        if self.page_ids.is_some() {
             return Ok(());
         }
+        let span = tracing::info_span!(
+            "operator.table_scan.init",
+            table = %self.table_name
+        );
+        let _g = span.enter();
         let mut pm = self
             .page_manager
             .lock()
             .map_err(|_| Error::lock("page manager poisoned"))?;
-        let records = pm.select(None)?;
+        let ids = pm.all_page_ids()?;
         self.statistics.io_operations = self.statistics.io_operations.saturating_add(1);
-        let mut rows = Vec::new();
-        for (_rid, data) in records {
-            let tuple = match Tuple::from_bytes(&data) {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            if tuple.is_deleted {
-                continue;
-            }
-            rows.push(Self::tuple_to_row(&tuple, &self.schema));
-        }
-        self.cached_rows = Some(rows);
+        self.page_ids = Some(ids);
+        self.page_pos = 0;
+        self.page_records.clear();
+        self.record_pos = 0;
         Ok(())
     }
 
+    fn load_next_page(&mut self) -> Result<bool> {
+        let Some(ids) = self.page_ids.as_ref() else {
+            return Ok(false);
+        };
+        if self.page_pos >= ids.len() {
+            return Ok(false);
+        }
+        let page_id = ids[self.page_pos];
+        self.page_pos += 1;
+
+        let span = tracing::info_span!(
+            "operator.table_scan.load_page",
+            table = %self.table_name,
+            page_id
+        );
+        let _g = span.enter();
+
+        let mut pm = self
+            .page_manager
+            .lock()
+            .map_err(|_| Error::lock("page manager poisoned"))?;
+        self.page_records = pm.records_from_page(page_id)?;
+        self.record_pos = 0;
+        self.statistics.io_operations = self.statistics.io_operations.saturating_add(1);
+        Ok(true)
+    }
+
     fn tuple_to_row(tuple: &Tuple, projection: &[String]) -> Row {
-        let mut row = Row::new();
+        let wildcard = projection.is_empty() || projection.iter().any(|c| c == "*");
+        let cap = if wildcard {
+            tuple.values.len().saturating_add(1)
+        } else {
+            projection.len().saturating_add(1)
+        };
+
+        // Avoid per-column timestamp updates in the scan hot-path.
+        let mut row = Row::with_capacity(cap);
         row.version = tuple.version;
         row.created_at = tuple.created_at;
         row.updated_at = tuple.updated_at;
 
-        let wildcard = projection.is_empty() || projection.iter().any(|c| c == "*");
         if wildcard {
             if !tuple.values.contains_key("id") {
-                row.set_value("id", ColumnValue::new(DataType::BigInt(tuple.id as i64)));
+                row.set_value_fast("id", ColumnValue::new(DataType::BigInt(tuple.id as i64)));
             }
             let mut keys: Vec<_> = tuple.values.keys().cloned().collect();
             keys.sort();
             for k in keys {
                 if let Some(v) = tuple.values.get(&k) {
-                    row.set_value(&k, v.clone());
+                    row.set_value_fast(&k, v.clone());
                 }
             }
         } else {
@@ -374,13 +414,47 @@ impl TableScanOperator {
                         .get("id")
                         .cloned()
                         .unwrap_or_else(|| ColumnValue::new(DataType::BigInt(tuple.id as i64)));
-                    row.set_value("id", cv);
+                    row.set_value_fast("id", cv);
                 } else if let Some(v) = tuple.values.get(p) {
-                    row.set_value(p, v.clone());
+                    row.set_value_fast(p, v.clone());
                 }
             }
         }
         row
+    }
+
+    fn tuple_matches_simple_equality(tuple: &Tuple, eq: &SimpleEqualityFilter) -> bool {
+        let col = eq.column.as_str();
+        let cv = if col == "id" {
+            // Tuple id is implicit; may or may not be stored in tuple.values.
+            ColumnValue::new(DataType::BigInt(tuple.id as i64))
+        } else {
+            let Some(v) = tuple.values.get(col) else {
+                return false;
+            };
+            v.clone()
+        };
+
+        match (&eq.literal, &cv.data_type) {
+            (Literal::Null, DataType::Null) => true,
+            (Literal::Boolean(a), DataType::Boolean(b)) => a == b,
+            (Literal::Integer(a), DataType::TinyInt(b)) => *a == *b as i64,
+            (Literal::Integer(a), DataType::SmallInt(b)) => *a == *b as i64,
+            (Literal::Integer(a), DataType::Integer(b)) => *a == *b as i64,
+            (Literal::Integer(a), DataType::BigInt(b)) => *a == *b,
+            (Literal::Float(a), DataType::Float(b)) => (*a - *b as f64).abs() < f64::EPSILON,
+            (Literal::Float(a), DataType::Double(b)) => (*a - *b).abs() < f64::EPSILON,
+            (Literal::String(a), DataType::Char(b))
+            | (Literal::String(a), DataType::Varchar(b))
+            | (Literal::String(a), DataType::Text(b)) => a == b,
+            // Allow comparing string literal to numeric stored as text (best-effort).
+            (Literal::Integer(a), DataType::Text(b))
+            | (Literal::Integer(a), DataType::Varchar(b))
+            | (Literal::Integer(a), DataType::Char(b)) => b == &a.to_string(),
+            (Literal::String(a), DataType::Integer(b)) => a == &b.to_string(),
+            (Literal::String(a), DataType::BigInt(b)) => a == &b.to_string(),
+            _ => false,
+        }
     }
 
     fn apply_filter(&self, row: &Row) -> bool {
@@ -395,43 +469,57 @@ impl TableScanOperator {
 
 impl Operator for TableScanOperator {
     fn next(&mut self) -> Result<Option<Row>> {
-        self.materialize()?;
-        let rows = self
-            .cached_rows
-            .as_ref()
-            .ok_or_else(|| Error::query_execution("table scan cache missing"))?;
         let start_time = std::time::Instant::now();
+        self.ensure_initialized()?;
 
-        while self.cursor < rows.len() {
-            let row = &rows[self.cursor];
-            self.cursor += 1;
-            self.statistics.rows_processed += 1;
-            if self.apply_filter(row) {
-                self.statistics.rows_returned += 1;
-                self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
-                return Ok(Some(row.clone()));
+        loop {
+            // Need a page loaded?
+            if self.record_pos >= self.page_records.len() {
+                if !self.load_next_page()? {
+                    self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+                    return Ok(None);
+                }
+            }
+
+            while self.record_pos < self.page_records.len() {
+                let (_off, data) = &self.page_records[self.record_pos];
+                self.record_pos += 1;
+
+                let tuple = match Tuple::from_bytes(data) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                if tuple.is_deleted {
+                    continue;
+                }
+
+                if let Some(eq) = self.pushdown_equality.as_ref() {
+                    if !Self::tuple_matches_simple_equality(&tuple, eq) {
+                        continue;
+                    }
+                }
+
+                let row = Self::tuple_to_row(&tuple, &self.schema);
+                self.statistics.rows_processed += 1;
+                if self.apply_filter(&row) {
+                    self.statistics.rows_returned += 1;
+                    self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+                    return Ok(Some(row));
+                }
             }
         }
-
-        self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
-        Ok(None)
     }
 
     fn reset(&mut self) -> Result<()> {
-        self.cursor = 0;
-        self.cached_rows = None;
+        self.page_ids = None;
+        self.page_pos = 0;
+        self.page_records.clear();
+        self.record_pos = 0;
         self.statistics = OperatorStatistics::default();
         Ok(())
     }
 
     fn get_schema(&self) -> Result<Vec<String>> {
-        if let Some(cache) = &self.cached_rows {
-            if let Some(first) = cache.first() {
-                let mut keys: Vec<_> = first.values.keys().cloned().collect();
-                keys.sort();
-                return Ok(keys);
-            }
-        }
         if self.schema.iter().any(|c| c == "*") {
             Ok(vec!["*".to_string()])
         } else if !self.schema.is_empty() {
@@ -1832,10 +1920,11 @@ impl ScanOperatorFactory {
         &self,
         table_name: String,
         filter: Option<String>,
+        pushdown_equality: Option<SimpleEqualityFilter>,
         schema: Vec<String>,
     ) -> Result<Box<dyn Operator>> {
         let pm = self.page_manager_for_table(&table_name)?;
-        let operator = TableScanOperator::new(table_name, pm, filter, schema)?;
+        let operator = TableScanOperator::new(table_name, pm, filter, pushdown_equality, schema)?;
         Ok(Box::new(operator))
     }
 

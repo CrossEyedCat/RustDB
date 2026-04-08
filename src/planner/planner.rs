@@ -8,6 +8,7 @@ use crate::parser::ast::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 /// Heuristic predicate selectivity for cost estimation (0.001–0.95).
 pub(crate) fn estimate_selectivity(condition: &str) -> f64 {
@@ -601,11 +602,11 @@ pub struct DeleteNode {
 /// Query planner
 pub struct QueryPlanner {
     /// Semantic analyzer
-    semantic_analyzer: SemanticAnalyzer,
+    semantic_analyzer: Mutex<SemanticAnalyzer>,
     /// Planner settings
     settings: PlannerSettings,
     /// Plan cache
-    plan_cache: HashMap<String, ExecutionPlan>,
+    plan_cache: Mutex<HashMap<String, ExecutionPlan>>,
 }
 
 /// Planner settings
@@ -640,9 +641,9 @@ impl QueryPlanner {
     pub fn new() -> Result<Self> {
         let semantic_analyzer = SemanticAnalyzer::default();
         Ok(Self {
-            semantic_analyzer,
+            semantic_analyzer: Mutex::new(semantic_analyzer),
             settings: PlannerSettings::default(),
-            plan_cache: HashMap::new(),
+            plan_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -650,17 +651,21 @@ impl QueryPlanner {
     pub fn with_settings(settings: PlannerSettings) -> Result<Self> {
         let semantic_analyzer = SemanticAnalyzer::default();
         Ok(Self {
-            semantic_analyzer,
+            semantic_analyzer: Mutex::new(semantic_analyzer),
             settings,
-            plan_cache: HashMap::new(),
+            plan_cache: Mutex::new(HashMap::new()),
         })
     }
 
     /// Creates execution plan for SQL query
-    pub fn create_plan(&mut self, sql_statement: &SqlStatement) -> Result<ExecutionPlan> {
+    pub fn create_plan(&self, sql_statement: &SqlStatement) -> Result<ExecutionPlan> {
         // First perform semantic analysis
         let context = AnalysisContext::default();
-        let analysis_result = self.semantic_analyzer.analyze(sql_statement, &context)?;
+        let analysis_result = self
+            .semantic_analyzer
+            .lock()
+            .map_err(|_| Error::semantic_analysis("planner semantic analyzer lock poisoned"))?
+            .analyze(sql_statement, &context)?;
 
         if !analysis_result.errors.is_empty() {
             return Err(Error::semantic_analysis(format!(
@@ -1075,14 +1080,17 @@ impl QueryPlanner {
     }
 
     /// Clears plan cache
-    pub fn clear_cache(&mut self) {
-        self.plan_cache.clear();
+    pub fn clear_cache(&self) {
+        if let Ok(mut g) = self.plan_cache.lock() {
+            g.clear();
+        }
     }
 
     /// Gets cache statistics
     pub fn cache_stats(&self) -> CacheStats {
+        let size = self.plan_cache.lock().map(|g| g.len()).unwrap_or(0);
         CacheStats {
-            size: self.plan_cache.len(),
+            size,
             max_size: self.settings.max_cache_size,
         }
     }

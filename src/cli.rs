@@ -193,6 +193,12 @@ impl Cli {
             let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
         }
 
+        // Ensure there's at least one long-lived span when Chrome tracing is enabled;
+        // otherwise the trace file may legitimately stay empty if only events are emitted.
+        let _trace_root = chrome_guard
+            .is_some()
+            .then(|| tracing::info_span!("rustdb_server").entered());
+
         println!("{}", t(MessageKey::Welcome));
 
         let db = self.load_config()?;

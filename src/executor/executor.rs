@@ -15,6 +15,7 @@ use crate::planner::planner::{
 };
 use crate::Row;
 use std::sync::{Arc, Mutex};
+use tracing::info_span;
 
 /// Configuration for query execution
 #[derive(Debug, Clone)]
@@ -64,11 +65,20 @@ impl QueryExecutor {
 
     /// Executes the plan and returns all result rows
     pub fn execute(&self, plan: &ExecutionPlan) -> Result<Vec<Row>> {
-        let mut operator = self.build_operator(&plan.root)?;
+        let span = info_span!("executor.execute");
+        let _g = span.enter();
+
+        let mut operator = {
+            let s = info_span!("executor.build_operator");
+            let _sg = s.enter();
+            self.build_operator(&plan.root)?
+        };
+
         let mut results = Vec::new();
         while let Some(row) = operator.next()? {
             results.push(row);
         }
+        tracing::info!(rows = results.len(), "executor done");
         Ok(results)
     }
 
@@ -98,7 +108,7 @@ impl QueryExecutor {
             ts.columns.clone()
         };
         self.scan_factory
-            .create_table_scan(ts.table_name.clone(), ts.filter.clone(), schema)
+            .create_table_scan(ts.table_name.clone(), ts.filter.clone(), None, schema)
     }
 
     fn build_index_scan(&self, idx: &IndexScanNode) -> Result<Box<dyn Operator>> {
@@ -129,6 +139,34 @@ impl QueryExecutor {
     }
 
     fn build_filter(&self, f: &FilterNode) -> Result<Box<dyn Operator>> {
+        // Predicate pushdown: for a simple `col = literal` predicate over a base table scan,
+        // build the scan operator with `pushdown_equality` so it can reject tuples before
+        // constructing `Row` objects.
+        if let (Some(eq), Some(pred)) = (f.equality.clone(), f.predicate.as_ref()) {
+            let is_simple_eq = matches!(
+                pred,
+                crate::parser::ast::Expression::BinaryOp {
+                    op: crate::parser::ast::BinaryOperator::Equal,
+                    ..
+                }
+            );
+            if is_simple_eq {
+                if let PlanNode::TableScan(ts) = f.input.as_ref() {
+                    let schema = if ts.columns.is_empty() || ts.columns[0] == "*" {
+                        vec!["id".to_string(), "data".to_string()]
+                    } else {
+                        ts.columns.clone()
+                    };
+                    return self.scan_factory.create_table_scan(
+                        ts.table_name.clone(),
+                        ts.filter.clone(),
+                        Some(eq),
+                        schema,
+                    );
+                }
+            }
+        }
+
         let input = self.build_operator(&f.input)?;
         let operator = ConditionalScanOperator::new(
             input,

@@ -13,11 +13,16 @@ fn test_nested_loop_join_creation() -> Result<()> {
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
 
-    let left_operator =
-        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+    let left_operator = TableScanOperator::new(
+        "users".to_string(),
+        page_manager.clone(),
+        None,
+        None,
+        left_schema,
+    )?;
 
     let right_operator =
-        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+        TableScanOperator::new("emails".to_string(), page_manager, None, None, right_schema)?;
 
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
@@ -46,11 +51,16 @@ fn test_hash_join_creation() -> Result<()> {
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
 
-    let left_operator =
-        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+    let left_operator = TableScanOperator::new(
+        "users".to_string(),
+        page_manager.clone(),
+        None,
+        None,
+        left_schema,
+    )?;
 
     let right_operator =
-        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+        TableScanOperator::new("emails".to_string(), page_manager, None, None, right_schema)?;
 
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
@@ -78,11 +88,16 @@ fn test_merge_join_creation() -> Result<()> {
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
 
-    let left_operator =
-        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+    let left_operator = TableScanOperator::new(
+        "users".to_string(),
+        page_manager.clone(),
+        None,
+        None,
+        left_schema,
+    )?;
 
     let right_operator =
-        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+        TableScanOperator::new("emails".to_string(), page_manager, None, None, right_schema)?;
 
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
@@ -161,11 +176,16 @@ fn test_nested_loop_join_reset() -> Result<()> {
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
 
-    let left_operator =
-        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+    let left_operator = TableScanOperator::new(
+        "users".to_string(),
+        page_manager.clone(),
+        None,
+        None,
+        left_schema,
+    )?;
 
     let right_operator =
-        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+        TableScanOperator::new("emails".to_string(), page_manager, None, None, right_schema)?;
 
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
@@ -199,11 +219,16 @@ fn test_hash_join_reset() -> Result<()> {
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
 
-    let left_operator =
-        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+    let left_operator = TableScanOperator::new(
+        "users".to_string(),
+        page_manager.clone(),
+        None,
+        None,
+        left_schema,
+    )?;
 
     let right_operator =
-        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+        TableScanOperator::new("emails".to_string(), page_manager, None, None, right_schema)?;
 
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
@@ -236,11 +261,16 @@ fn test_merge_join_reset() -> Result<()> {
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
 
-    let left_operator =
-        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+    let left_operator = TableScanOperator::new(
+        "users".to_string(),
+        page_manager.clone(),
+        None,
+        None,
+        left_schema,
+    )?;
 
     let right_operator =
-        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+        TableScanOperator::new("emails".to_string(), page_manager, None, None, right_schema)?;
 
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
@@ -272,11 +302,16 @@ fn test_join_operator_statistics() -> Result<()> {
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
 
-    let left_operator =
-        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+    let left_operator = TableScanOperator::new(
+        "users".to_string(),
+        page_manager.clone(),
+        None,
+        None,
+        left_schema,
+    )?;
 
     let right_operator =
-        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+        TableScanOperator::new("emails".to_string(), page_manager, None, None, right_schema)?;
 
     let join_condition = JoinCondition {
         left_column: "id".to_string(),
@@ -311,11 +346,16 @@ fn test_join_operator_trait_implementation() -> Result<()> {
     let left_schema = vec!["id".to_string(), "name".to_string()];
     let right_schema = vec!["user_id".to_string(), "email".to_string()];
 
-    let left_operator =
-        TableScanOperator::new("users".to_string(), page_manager.clone(), None, left_schema)?;
+    let left_operator = TableScanOperator::new(
+        "users".to_string(),
+        page_manager.clone(),
+        None,
+        None,
+        left_schema,
+    )?;
 
     let right_operator =
-        TableScanOperator::new("emails".to_string(), page_manager, None, right_schema)?;
+        TableScanOperator::new("emails".to_string(), page_manager, None, None, right_schema)?;
 
     let join_condition = JoinCondition {
         left_column: "id".to_string(),

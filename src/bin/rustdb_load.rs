@@ -56,6 +56,29 @@ struct Args {
     #[arg(long, default_value = "SELECT 1")]
     sql: String,
 
+    /// If set, generates a sequence of batched INSERT statements instead of using --sql/--sql-file.
+    ///
+    /// This avoids Windows command-line length limits and is useful for preloading large tables
+    /// (e.g. 100k rows) efficiently.
+    #[arg(long)]
+    insert_table: Option<String>,
+
+    /// Column name for generated INSERTs.
+    #[arg(long, default_value = "a")]
+    insert_column: String,
+
+    /// Literal value for generated INSERTs (SQL integer literal).
+    #[arg(long, default_value = "2")]
+    insert_value: String,
+
+    /// Total rows to generate across all INSERT statements.
+    #[arg(long, default_value_t = 0)]
+    insert_rows: usize,
+
+    /// Rows per INSERT statement (VALUES list length).
+    #[arg(long, default_value_t = 1000)]
+    insert_batch: usize,
+
     /// Print the first N responses (useful for debugging).
     #[arg(long, default_value_t = 0)]
     print_first: usize,
@@ -114,7 +137,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let client_cfg = build_quinn_client_config(std::slice::from_ref(&cert))?;
     let endpoint = make_client_endpoint(client_cfg)?;
 
-    let statements: Arc<Vec<String>> = if let Some(p) = &args.sql_file {
+    let statements: Arc<Vec<String>> = if let Some(table) = &args.insert_table {
+        let total = args.insert_rows.max(1);
+        let batch = args.insert_batch.max(1);
+        let col = args.insert_column.trim();
+        let val = args.insert_value.trim();
+
+        let mut out: Vec<String> = Vec::with_capacity((total + batch - 1) / batch);
+        let mut remaining = total;
+        while remaining > 0 {
+            let n = remaining.min(batch);
+            remaining -= n;
+
+            // Rough capacity: "INSERT INTO t (a) VALUES " + n * "(2)," chars
+            let mut sql = String::with_capacity(64 + n * 4);
+            sql.push_str("INSERT INTO ");
+            sql.push_str(table);
+            sql.push_str(" (");
+            sql.push_str(col);
+            sql.push_str(") VALUES ");
+            for i in 0..n {
+                if i > 0 {
+                    sql.push(',');
+                }
+                sql.push('(');
+                sql.push_str(val);
+                sql.push(')');
+            }
+            out.push(sql);
+        }
+
+        Arc::new(out)
+    } else if let Some(p) = &args.sql_file {
         let raw = fs::read_to_string(p)?;
         let mut v: Vec<String> = raw
             .lines()

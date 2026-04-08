@@ -7,7 +7,7 @@ use crate::planner::{ExecutionPlan, PlanNode, QueryPlanner};
 
 #[test]
 fn test_create_simple_select_plan() -> Result<()> {
-    let mut planner = QueryPlanner::new()?;
+    let planner = QueryPlanner::new()?;
     let mut parser = SqlParser::new("SELECT * FROM users")?;
 
     let statement = parser.parse()?;
@@ -20,7 +20,7 @@ fn test_create_simple_select_plan() -> Result<()> {
 
 #[test]
 fn test_create_select_with_where_plan() -> Result<()> {
-    let mut planner = QueryPlanner::new()?;
+    let planner = QueryPlanner::new()?;
     let mut parser = SqlParser::new("SELECT name, age FROM users WHERE age > 18")?;
 
     let statement = parser.parse()?;
@@ -34,7 +34,7 @@ fn test_create_select_with_where_plan() -> Result<()> {
 
 #[test]
 fn test_create_insert_plan() -> Result<()> {
-    let mut planner = QueryPlanner::new()?;
+    let planner = QueryPlanner::new()?;
     let mut parser = SqlParser::new("INSERT INTO users (name, age) VALUES ('John', 25)")?;
 
     let statement = parser.parse()?;
@@ -47,7 +47,7 @@ fn test_create_insert_plan() -> Result<()> {
 
 #[test]
 fn test_insert_select_plan_has_subplan() -> Result<()> {
-    let mut planner = QueryPlanner::new()?;
+    let planner = QueryPlanner::new()?;
     let mut parser = SqlParser::new("INSERT INTO t (a) SELECT id FROM users WHERE id > 0")?;
 
     let statement = parser.parse()?;
@@ -73,7 +73,7 @@ fn test_create_select_plan_columns_and_groupby_aggregates() -> Result<()> {
         Expression, FromClause, SelectItem, SelectStatement, SqlStatement, TableReference,
     };
 
-    let mut planner = QueryPlanner::new()?;
+    let planner = QueryPlanner::new()?;
     // Parser `parse_select` is minimal (no functions/GROUP BY); build AST for planner coverage.
     let statement = SqlStatement::Select(SelectStatement {
         select_list: vec![
@@ -126,7 +126,7 @@ fn test_create_select_plan_columns_and_groupby_aggregates() -> Result<()> {
 
 #[test]
 fn test_create_update_plan() -> Result<()> {
-    let mut planner = QueryPlanner::new()?;
+    let planner = QueryPlanner::new()?;
     let mut parser = SqlParser::new("UPDATE users SET age = 26")?;
 
     let statement = parser.parse()?;
@@ -139,7 +139,7 @@ fn test_create_update_plan() -> Result<()> {
 
 #[test]
 fn test_create_delete_plan() -> Result<()> {
-    let mut planner = QueryPlanner::new()?;
+    let planner = QueryPlanner::new()?;
     let mut parser = SqlParser::new("DELETE FROM users")?;
 
     let statement = parser.parse()?;
@@ -152,7 +152,7 @@ fn test_create_delete_plan() -> Result<()> {
 
 #[test]
 fn test_plan_metadata() -> Result<()> {
-    let mut planner = QueryPlanner::new()?;
+    let planner = QueryPlanner::new()?;
     let mut parser = SqlParser::new("SELECT * FROM users")?;
 
     let statement = parser.parse()?;
