@@ -24,8 +24,7 @@ docker volume rm -f rustdb-trace-vol >/dev/null 2>&1 || true
 docker volume create rustdb-trace-vol >/dev/null
 docker run -d --name rustdb-trace-server -p 15432:5432/udp \
   -v rustdb-trace-vol:/app/data \
-  -v "$PWD/$OUT_DIR:/out" \
-  -e RUSTDB_TRACE_CHROME_PATH=/out/trace.json \
+  -e RUSTDB_TRACE_CHROME_PATH=/tmp/trace.json \
   "$RUSTDB_IMAGE" \
   sh -c "rustdb --config /app/config/config.toml server --host 0.0.0.0 --port 5432 --cert-out /tmp/server.der" >/dev/null
 
@@ -64,6 +63,13 @@ echo "==> run load (shared + 128 concurrency)"
   | tee "$OUT_DIR/load.jsonl"
 
 echo "==> stop server (flush trace)"
+docker stop -t 8 rustdb-trace-server >/dev/null 2>&1 || true
+docker wait rustdb-trace-server >/dev/null 2>&1 || true
+
+echo "==> collect trace"
+docker cp rustdb-trace-server:/tmp/trace.json "$OUT_DIR/trace.json" >/dev/null 2>&1 || true
+
+echo "==> remove server container"
 docker rm -f rustdb-trace-server >/dev/null 2>&1 || true
 
 echo "==> done"

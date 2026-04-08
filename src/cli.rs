@@ -249,9 +249,30 @@ impl Cli {
             }
         });
 
+        // Docker sends SIGTERM on `docker stop`. Handle it as a graceful shutdown so we can flush
+        // artifacts like Chrome tracing output.
+        #[cfg(unix)]
+        let mut term_signal =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        let term = async {
+            #[cfg(unix)]
+            {
+                let _ = term_signal.recv().await;
+            }
+            #[cfg(not(unix))]
+            {
+                std::future::pending::<()>().await;
+            }
+        };
+
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("shutdown requested");
+                QuicServer::initiate_shutdown(&endpoint);
+                QuicServer::wait_idle(&endpoint).await;
+            }
+            _ = term => {
+                info!("shutdown requested (SIGTERM)");
                 QuicServer::initiate_shutdown(&endpoint);
                 QuicServer::wait_idle(&endpoint).await;
             }

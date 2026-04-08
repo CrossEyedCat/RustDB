@@ -16,6 +16,9 @@ Thumbs.db
 
 # Logs
 *.log
+/logs/
+/test_logs/
+/profile-out/
 
 # Database files
 *.db
