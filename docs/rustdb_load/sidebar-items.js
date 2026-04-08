@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ConnectionMode"],"fn":["fmt_us","main","quantile"],"struct":["Args","LoadReport"]};
+window.SIDEBAR_ITEMS = {"enum":["ConnectionMode"],"fn":["fmt_us","main","quantile","query_many_on_one_stream"],"struct":["Args","LoadReport"],"type":["WorkerRow"]};
