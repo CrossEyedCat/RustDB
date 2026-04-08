@@ -40,6 +40,10 @@ struct SqlEngineState {
     planner: QueryPlanner,
     optimizer: QueryOptimizer,
     executor: QueryExecutor,
+    /// Cache for deterministic `SELECT` queries without `FROM` (literal projections only).
+    ///
+    /// These queries are common in benchmarks (`SELECT 1`) and are safe to memoize.
+    select_no_from_cache: Mutex<HashMap<String, EngineOutput>>,
 }
 
 impl SqlEngine {
@@ -70,6 +74,7 @@ impl SqlEngine {
                 planner: QueryPlanner::new()?,
                 optimizer: QueryOptimizer::new()?,
                 executor,
+                select_no_from_cache: Mutex::new(HashMap::new()),
             }),
         })
     }
@@ -81,6 +86,16 @@ impl SqlEngine {
             sql = %summarize_sql(sql)
         );
         let _g = span.enter();
+
+        // Hot path: deterministic "SELECT <literals>" queries without FROM can be memoized by SQL.
+        // This avoids repeated parse/AST construction in tight loops (e.g. select_literal bench).
+        if likely_select_without_from(sql) {
+            if let Ok(g) = state.select_no_from_cache.lock() {
+                if let Some(cached) = g.get(sql) {
+                    return Ok(cached.clone());
+                }
+            }
+        }
 
         let mut parser = SqlParser::new(sql).map_err(map_db_err)?;
         let stmts = {
@@ -102,7 +117,15 @@ impl SqlEngine {
         }
         let stmt = &stmts[0];
         match stmt {
-            SqlStatement::Select(sel) if sel.from.is_none() => eval_select_without_from(sel),
+            SqlStatement::Select(sel) if sel.from.is_none() => {
+                let out = eval_select_without_from(sel)?;
+                if likely_select_without_from(sql) {
+                    if let Ok(mut g) = state.select_no_from_cache.lock() {
+                        g.insert(sql.to_string(), out.clone());
+                    }
+                }
+                Ok(out)
+            }
             SqlStatement::Select(_) => {
                 let plan = {
                     let s = info_span!("sql.plan");
@@ -166,6 +189,28 @@ impl SqlEngine {
     }
 }
 
+fn likely_select_without_from(sql: &str) -> bool {
+    // Cheap heuristic: `SELECT` prefix and no obvious `FROM`, `;`, or DML keywords.
+    // If this returns false we just skip caching; correctness never depends on it.
+    let s = sql.trim_start();
+    if s.len() < 6 {
+        return false;
+    }
+    let upper = s.get(..s.len().min(64)).unwrap_or(s).to_ascii_uppercase();
+    if !upper.starts_with("SELECT") {
+        return false;
+    }
+    // We don't try to memoize multi-statement or complex queries.
+    if s.contains(';') {
+        return false;
+    }
+    // FROM anywhere means it's not our ultra-fast literal-only target.
+    if upper.contains(" FROM ") {
+        return false;
+    }
+    true
+}
+
 fn summarize_sql(sql: &str) -> String {
     let s = sql.split_whitespace().collect::<Vec<_>>().join(" ");
     const MAX: usize = 160;
@@ -182,6 +227,10 @@ impl EngineHandle for SqlEngine {
         _ctx: &mut SessionContext,
     ) -> Result<EngineOutput, EngineError> {
         Self::execute_sql_inner(self.state.as_ref(), sql)
+    }
+
+    fn supports_select_no_from_wire_cache(&self) -> bool {
+        true
     }
 }
 

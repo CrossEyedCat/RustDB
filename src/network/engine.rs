@@ -94,6 +94,14 @@ impl EngineOutput {
 pub trait EngineHandle: Send + Sync {
     fn execute_sql(&self, sql: &str, ctx: &mut SessionContext)
         -> Result<EngineOutput, EngineError>;
+
+    /// Whether the network layer may memoize and serve **pre-encoded** wire frames for deterministic
+    /// `SELECT` queries without `FROM` (literal projections).
+    ///
+    /// Default is `false` (safe for tests/stubs). The real SQL engine can opt in.
+    fn supports_select_no_from_wire_cache(&self) -> bool {
+        false
+    }
 }
 
 /// Configurable stub engine for tests and early server bring-up (no `Database` required).

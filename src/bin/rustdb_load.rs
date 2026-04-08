@@ -4,10 +4,15 @@
 //! throughput and latency percentiles.
 
 use clap::Parser;
+use quinn::Connection;
 use rustdb::network::client::{
     build_quinn_client_config, connect, make_client_endpoint, query_once,
 };
-use rustdb::network::framing::ServerMessage;
+use rustdb::network::framing::{
+    decode_server_frame_v1, encode_client_message_v1, ClientMessage, QueryPayload, ServerMessage,
+    MAX_FRAME_PAYLOAD_BYTES,
+};
+use rustdb::network::query_stream::read_application_frame;
 use rustls::pki_types::CertificateDer;
 use serde::Serialize;
 use std::fs;
@@ -16,6 +21,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
+
+type WorkerRow = (usize, String, Duration, Result<ServerMessage, String>, bool);
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 enum ConnectionMode {
@@ -90,6 +97,13 @@ struct Args {
     /// How QUIC connections are established for concurrent workers.
     #[arg(long, value_enum, default_value_t = ConnectionMode::Shared)]
     connection_mode: ConnectionMode,
+
+    /// How many queries to send on a single bidirectional stream before opening a new one.
+    ///
+    /// `1` (default) matches Variant A (one query per stream). Higher values reduce QUIC stream
+    /// overhead and can significantly improve `select_literal` throughput.
+    #[arg(long, default_value_t = 1)]
+    stream_batch: usize,
 }
 
 fn quantile(sorted: &[u128], q: f64) -> Option<u128> {
@@ -109,6 +123,25 @@ fn fmt_us(us: u128) -> String {
     } else {
         format!("{us} µs")
     }
+}
+
+async fn query_many_on_one_stream(
+    connection: &Connection,
+    sqls: &[String],
+) -> Result<Vec<(ServerMessage, Duration)>, Box<dyn std::error::Error + Send + Sync>> {
+    let (mut send, mut recv) = connection.open_bi().await?;
+    let mut out = Vec::with_capacity(sqls.len());
+    for sql in sqls {
+        let t0 = Instant::now();
+        let frame = encode_client_message_v1(&ClientMessage::Query(QueryPayload {
+            sql: sql.to_string(),
+        }))?;
+        send.write_all(&frame).await?;
+        let response = read_application_frame(&mut recv, MAX_FRAME_PAYLOAD_BYTES).await?;
+        out.push((decode_server_frame_v1(&response)?, t0.elapsed()));
+    }
+    let _ = send.finish();
+    Ok(out)
 }
 
 #[derive(Debug, Serialize)]
@@ -221,17 +254,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 ConnectionMode::PerWorker => connect(&endpoint, addr, &server_name).await?,
             };
 
-            let mut out = Vec::with_capacity(my_queries);
-            for j in 0..my_queries {
-                let global_i = start_index + j;
-                let sql = statements[global_i % statements.len()].clone();
+            // (global_i, sql, wall_time, result, print)
+            let mut out: Vec<WorkerRow> = Vec::with_capacity(my_queries);
+            let batch = args.stream_batch.max(1);
+            let mut j = 0usize;
+            while j < my_queries {
+                let n = (my_queries - j).min(batch);
+                let mut sqls = Vec::with_capacity(n);
+                let mut idxs = Vec::with_capacity(n);
+                for k in 0..n {
+                    let global_i = start_index + j + k;
+                    idxs.push(global_i);
+                    sqls.push(statements[global_i % statements.len()].clone());
+                }
+
                 let t0 = Instant::now();
+                let results: Result<Vec<(ServerMessage, Duration)>, String> = if batch == 1 {
+                    let m = query_once(&worker_conn, &sqls[0])
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    Ok(vec![(m, t0.elapsed())])
+                } else {
+                    query_many_on_one_stream(&worker_conn, &sqls)
+                        .await
+                        .map_err(|e| e.to_string())
+                };
 
-                let msg = query_once(&worker_conn, &sql).await;
+                match results {
+                    Ok(msgs) => {
+                        for (k, (msg, dt)) in msgs.into_iter().enumerate() {
+                            let global_i = idxs[k];
+                            let sql = sqls[k].clone();
+                            let print = global_i < print_first;
+                            out.push((global_i, sql, dt, Ok(msg), print));
+                        }
+                    }
+                    Err(e) => {
+                        let dt = t0.elapsed();
+                        for k in 0..n {
+                            let global_i = idxs[k];
+                            let sql = sqls[k].clone();
+                            let print = global_i < print_first;
+                            out.push((global_i, sql, dt, Err(e.clone()), print));
+                        }
+                    }
+                }
 
-                let dt = t0.elapsed();
-                let print = global_i < print_first;
-                out.push((global_i, sql, dt, msg, print));
+                j += n;
             }
 
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(out)
