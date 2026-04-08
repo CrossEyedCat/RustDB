@@ -58,7 +58,7 @@ fn bench_sql_parse_and_plan(c: &mut Criterion) {
         ("delete", "DELETE FROM users"),
     ];
 
-    let mut planner = QueryPlanner::new().unwrap();
+    let planner = QueryPlanner::new().unwrap();
 
     for (name, sql) in queries {
         group.bench_function(name, |b| {
@@ -88,8 +88,8 @@ fn bench_sql_full_pipeline(c: &mut Criterion) {
         ("delete", "DELETE FROM users"),
     ];
 
-    let mut planner = QueryPlanner::new().unwrap();
-    let mut optimizer = QueryOptimizer::new().unwrap();
+    let planner = QueryPlanner::new().unwrap();
+    let optimizer = QueryOptimizer::new().unwrap();
 
     for (name, sql) in queries {
         group.bench_function(name, |b| {
@@ -111,8 +111,8 @@ fn bench_sql_insert_batch(c: &mut Criterion) {
 
     for count in [100, 1000, 10000] {
         group.bench_with_input(BenchmarkId::new("inserts", count), &count, |b, &count| {
-            let mut planner = QueryPlanner::new().unwrap();
-            let mut optimizer = QueryOptimizer::new().unwrap();
+            let planner = QueryPlanner::new().unwrap();
+            let optimizer = QueryOptimizer::new().unwrap();
 
             b.iter(|| {
                 for i in 1..=count {
@@ -143,8 +143,8 @@ fn bench_sql_select_batch(c: &mut Criterion) {
             BenchmarkId::new("select_simple", count),
             &count,
             |b, &count| {
-                let mut planner = QueryPlanner::new().unwrap();
-                let mut optimizer = QueryOptimizer::new().unwrap();
+                let planner = QueryPlanner::new().unwrap();
+                let optimizer = QueryOptimizer::new().unwrap();
 
                 b.iter(|| {
                     for _ in 0..count {
@@ -161,8 +161,8 @@ fn bench_sql_select_batch(c: &mut Criterion) {
             BenchmarkId::new("select_where", count),
             &count,
             |b, &count| {
-                let mut planner = QueryPlanner::new().unwrap();
-                let mut optimizer = QueryOptimizer::new().unwrap();
+                let planner = QueryPlanner::new().unwrap();
+                let optimizer = QueryOptimizer::new().unwrap();
 
                 b.iter(|| {
                     for _ in 0..count {
@@ -191,8 +191,8 @@ fn bench_sql_mixed_oltp(c: &mut Criterion) {
 
     for count in [100, 500, 1000] {
         group.bench_with_input(BenchmarkId::new("mixed", count), &count, |b, &count| {
-            let mut planner = QueryPlanner::new().unwrap();
-            let mut optimizer = QueryOptimizer::new().unwrap();
+            let planner = QueryPlanner::new().unwrap();
+            let optimizer = QueryOptimizer::new().unwrap();
             let queries: Vec<_> = (0..count).map(|i| operations[i % 4]).collect();
 
             b.iter(|| {

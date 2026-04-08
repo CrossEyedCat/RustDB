@@ -143,7 +143,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let col = args.insert_column.trim();
         let val = args.insert_value.trim();
 
-        let mut out: Vec<String> = Vec::with_capacity((total + batch - 1) / batch);
+        let mut out: Vec<String> = Vec::with_capacity(total.div_ceil(batch));
         let mut remaining = total;
         while remaining > 0 {
             let n = remaining.min(batch);

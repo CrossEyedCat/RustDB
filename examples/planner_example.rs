@@ -8,8 +8,8 @@ fn main() -> Result<()> {
     println!("=== Example of using the query planner ===\n");
 
     // Creating a scheduler and optimizer
-    let mut planner = QueryPlanner::new()?;
-    let mut optimizer = QueryOptimizer::new()?;
+    let planner = QueryPlanner::new()?;
+    let optimizer = QueryOptimizer::new()?;
 
     // Example 1: Simple SELECT query
     println!("1. Creating a plan for a simple SELECT query:");

@@ -38,10 +38,10 @@ async fn execute_insert_e2e(
     let mut parser = SqlParser::new(sql)?;
     let stmt = parser.parse()?;
 
-    let mut planner = QueryPlanner::new()?;
+    let planner = QueryPlanner::new()?;
     let plan = planner.create_plan(&stmt)?;
 
-    let mut optimizer = QueryOptimizer::new()?;
+    let optimizer = QueryOptimizer::new()?;
     let optimized = optimizer.optimize(plan)?;
 
     let PlanNode::Insert(insert_node) = &optimized.optimized_plan.root else {
@@ -201,8 +201,8 @@ fn bench_e2e_insert_single(c: &mut Criterion) {
                         .begin_transaction(IsolationLevel::ReadCommitted)
                         .await
                         .unwrap();
-                    let mut planner = QueryPlanner::new().unwrap();
-                    let mut optimizer = QueryOptimizer::new().unwrap();
+                    let planner = QueryPlanner::new().unwrap();
+                    let optimizer = QueryOptimizer::new().unwrap();
 
                     for i in 1..=count {
                         let sql = format!(
@@ -273,8 +273,8 @@ fn bench_e2e_insert_batch(c: &mut Criterion) {
                             .begin_transaction(IsolationLevel::ReadCommitted)
                             .await
                             .unwrap();
-                        let mut planner = QueryPlanner::new().unwrap();
-                        let mut optimizer = QueryOptimizer::new().unwrap();
+                        let planner = QueryPlanner::new().unwrap();
+                        let optimizer = QueryOptimizer::new().unwrap();
 
                         for i in 1..=count {
                             let sql =
