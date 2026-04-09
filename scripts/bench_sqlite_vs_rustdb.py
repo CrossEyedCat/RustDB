@@ -317,8 +317,17 @@ def main():
         default="",
         help="Optional PostgreSQL DSN for additional baseline, e.g. 'postgresql://postgres:postgres@127.0.0.1:15440/postgres'.",
     )
-    ap.add_argument("--concurrency", default="1,8,32,128")
+    ap.add_argument(
+        "--concurrency",
+        default="1,8,32,128",
+        help="Comma-separated concurrency levels (e.g. `128` only for a quick stream-batch check).",
+    )
     ap.add_argument("--queries", type=int, default=5000)
+    ap.add_argument(
+        "--scenarios",
+        default="select_literal,select_table",
+        help="Comma-separated: `select_literal`, `select_table`. Example: `--scenarios select_table --concurrency 128 --rustdb-stream-batch 1,8`.",
+    )
     ap.add_argument(
         "--rustdb-connection-modes",
         default="shared,per-worker",
@@ -361,17 +370,30 @@ def main():
         if m not in ("shared", "per-worker"):
             raise SystemExit(f"invalid rustdb mode: {m}")
 
-    scenarios = [
-        ("select_literal", "SELECT 1", [], "SELECT 1"),
-        ("select_table", "SELECT a FROM bench_t WHERE a = 1", ["CREATE TABLE bench_t (a INTEGER)", "INSERT INTO bench_t (a) VALUES (1)"], "SELECT 1"),
+    # (scenario_name, query_sql, sqlite_setup_statements). RustDB and Postgres use the same `query_sql`.
+    scenario_catalog = [
+        ("select_literal", "SELECT 1", []),
+        (
+            "select_table",
+            "SELECT a FROM bench_t WHERE a = 1",
+            ["CREATE TABLE bench_t (a INTEGER)", "INSERT INTO bench_t (a) VALUES (1)"],
+        ),
     ]
+    catalog_by_name = {s[0]: s for s in scenario_catalog}
+    requested_raw = [x.strip() for x in args.scenarios.split(",") if x.strip()]
+    if not requested_raw:
+        raise SystemExit("no scenarios in --scenarios")
+    unknown = [n for n in requested_raw if n not in catalog_by_name]
+    if unknown:
+        raise SystemExit(f"unknown scenario(s): {unknown}; expected: {', '.join(catalog_by_name)}")
+    requested_names = list(dict.fromkeys(requested_raw))
+    scenarios = [catalog_by_name[n] for n in requested_names]
 
     points: list[Point] = []
 
-    # SQLite: for select_literal we still execute a SQL statement against sqlite (SELECT 1).
-    for name, sqlite_sql, setup_sql, rustdb_sql in scenarios:
-        # RustDB side: `rustdb_load` needs the workload SQL.
-        rustdb_workload = rustdb_sql if name == "select_literal" else "SELECT a FROM bench_t WHERE a = 1"
+    # SQLite + same SQL for rustdb_load + postgres_bench (per scenario).
+    for name, sqlite_sql, setup_sql in scenarios:
+        rustdb_workload = sqlite_sql
         for mode in rustdb_modes:
             for sb in stream_batches:
                 for c in conc:
@@ -426,6 +448,7 @@ def main():
 
     with md_path.open("w", encoding="utf-8") as f:
         f.write("## SQLite vs RustDB benchmark (smoke)\n\n")
+        f.write(f"- scenarios (this run): **{', '.join(requested_names)}**\n\n")
         f.write(f"- queries per point: **{args.queries}**\n")
         f.write(f"- concurrency: **{', '.join(map(str, conc))}**\n\n")
         f.write(f"- rustdb modes: **{', '.join(rustdb_modes)}**\n\n")
@@ -464,7 +487,10 @@ def main():
             names.sort(key=sort_key)
             return names
 
-        for sc, pts in by_scenario.items():
+        for sc in requested_names:
+            pts = by_scenario.get(sc)
+            if not pts:
+                continue
             f.write(f"### {sc}\n\n")
             f.write("| system | concurrency | qps | p50 (ms) | p95 (ms) | p99 (ms) |\n")
             f.write("|---|---:|---:|---:|---:|---:|\n")
