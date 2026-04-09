@@ -192,6 +192,7 @@ def rustdb_bench(
     stream_batch: int = 1,
     quic_max_streams: int = 32,
     quic_idle_secs: int = 30,
+    distinguish_batches: bool = False,
 ) -> Point:
     exe = repo_root / "target" / "debug" / ("rustdb_load.exe" if os.name == "nt" else "rustdb_load")
     if not exe.exists():
@@ -243,7 +244,7 @@ def rustdb_bench(
         raise RuntimeError(f"failed to parse rustdb_load JSON: {e}\nstdout:\n{cp.stdout}\nstderr:\n{cp.stderr}")
 
     return Point(
-        system=f"rustdb({rustdb_mode})",
+        system=rustdb_system_label(rustdb_mode, stream_batch, distinguish_batches),
         scenario="",
         concurrency=concurrency,
         qps=float(data["qps"]),
@@ -253,6 +254,13 @@ def rustdb_bench(
     )
 
 
+def rustdb_system_label(mode: str, stream_batch: int, distinguish_batches: bool) -> str:
+    """Keep `rustdb(shared)` when only the default batch=1 is used; add `sbN` when comparing batches."""
+    if distinguish_batches:
+        return f"rustdb({mode},sb{stream_batch})"
+    return f"rustdb({mode})"
+
+
 def plot(points: list[Point], out_png: Path):
     import matplotlib
 
@@ -260,13 +268,26 @@ def plot(points: list[Point], out_png: Path):
     import matplotlib.pyplot as plt
 
     scenarios = sorted(set(p.scenario for p in points))
-    systems = ["rustdb(shared)", "rustdb(per-worker)", "sqlite", "postgres"]
 
     fig, axes = plt.subplots(len(scenarios), 2, figsize=(12, 4 * len(scenarios)))
     if len(scenarios) == 1:
         axes = [axes]  # normalize
 
+    def systems_for_scenario(sc: str) -> list[str]:
+        names = sorted({p.system for p in points if p.scenario == sc})
+
+        def sort_key(s: str) -> tuple:
+            if s == "sqlite":
+                return (0, s)
+            if s == "postgres":
+                return (1, s)
+            return (2, s)
+
+        names.sort(key=sort_key)
+        return names
+
     for r, sc in enumerate(scenarios):
+        systems = systems_for_scenario(sc)
         for c, metric in enumerate(["qps", "p95_ms"]):
             ax = axes[r][c]
             ax.set_title(f"{sc} — {metric}")
@@ -305,9 +326,8 @@ def main():
     )
     ap.add_argument(
         "--rustdb-stream-batch",
-        type=int,
-        default=1,
-        help="Forwarded to rustdb_load --stream-batch (queries per QUIC bidi stream).",
+        default="1",
+        help="Comma-separated values forwarded to rustdb_load --stream-batch (e.g. `1,8` to compare stream batching).",
     )
     ap.add_argument(
         "--rustdb-quic-max-streams",
@@ -328,6 +348,14 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     cert_path = Path(args.cert)
     conc = [int(x.strip()) for x in args.concurrency.split(",") if x.strip()]
+    stream_batches = [int(x.strip()) for x in args.rustdb_stream_batch.split(",") if x.strip()]
+    if not stream_batches:
+        raise SystemExit("no values in --rustdb-stream-batch")
+    for sb in stream_batches:
+        if sb < 1:
+            raise SystemExit(f"invalid stream_batch: {sb}")
+    distinguish_batches = len(stream_batches) > 1 or (len(stream_batches) == 1 and stream_batches[0] != 1)
+
     rustdb_modes = [m.strip() for m in args.rustdb_connection_modes.split(",") if m.strip()]
     for m in rustdb_modes:
         if m not in ("shared", "per-worker"):
@@ -345,22 +373,24 @@ def main():
         # RustDB side: `rustdb_load` needs the workload SQL.
         rustdb_workload = rustdb_sql if name == "select_literal" else "SELECT a FROM bench_t WHERE a = 1"
         for mode in rustdb_modes:
-            for c in conc:
-                p = rustdb_bench(
-                    repo_root,
-                    cert_path,
-                    args.addr,
-                    args.server_name,
-                    rustdb_workload,
-                    c,
-                    args.queries,
-                    mode,
-                    stream_batch=args.rustdb_stream_batch,
-                    quic_max_streams=args.rustdb_quic_max_streams,
-                    quic_idle_secs=args.rustdb_quic_idle_secs,
-                )
-                p.scenario = name
-                points.append(p)
+            for sb in stream_batches:
+                for c in conc:
+                    p = rustdb_bench(
+                        repo_root,
+                        cert_path,
+                        args.addr,
+                        args.server_name,
+                        rustdb_workload,
+                        c,
+                        args.queries,
+                        mode,
+                        stream_batch=sb,
+                        quic_max_streams=args.rustdb_quic_max_streams,
+                        quic_idle_secs=args.rustdb_quic_idle_secs,
+                        distinguish_batches=distinguish_batches,
+                    )
+                    p.scenario = name
+                    points.append(p)
 
         for c in conc:
             db_path = out_dir / f"sqlite_{name}_{c}.db"
@@ -400,9 +430,9 @@ def main():
         f.write(f"- concurrency: **{', '.join(map(str, conc))}**\n\n")
         f.write(f"- rustdb modes: **{', '.join(rustdb_modes)}**\n\n")
         f.write(
-            f"- rustdb_load QUIC settings (this run): **stream_batch={args.rustdb_stream_batch}**, "
+            f"- rustdb_load QUIC settings (this run): **stream_batch** = {', '.join(map(str, stream_batches))}, "
             f"**quic_max_streams={args.rustdb_quic_max_streams}**, **quic_idle_secs={args.rustdb_quic_idle_secs}** "
-            f"(see `rustdb_load --help`).\n\n"
+            f"(see `rustdb_load --help`). Use e.g. `--rustdb-stream-batch 1,8` to compare QUIC stream batching.\n\n"
         )
         f.write(
             "- Comparing RustDB to PostgreSQL or SQLite is only roughly comparable: RustDB uses QUIC + custom framing; "
@@ -421,11 +451,24 @@ def main():
                 "- For `SELECT`, results are fully read via `fetchall()` to include server response costs.\n\n"
             )
 
+        def systems_in_scenario(pts: list[Point]) -> list[str]:
+            names = sorted({p.system for p in pts})
+
+            def sort_key(s: str) -> tuple:
+                if s == "sqlite":
+                    return (0, s)
+                if s == "postgres":
+                    return (1, s)
+                return (2, s)
+
+            names.sort(key=sort_key)
+            return names
+
         for sc, pts in by_scenario.items():
             f.write(f"### {sc}\n\n")
             f.write("| system | concurrency | qps | p50 (ms) | p95 (ms) | p99 (ms) |\n")
             f.write("|---|---:|---:|---:|---:|---:|\n")
-            for sysname in ["rustdb(shared)", "rustdb(per-worker)", "sqlite", "postgres"]:
+            for sysname in systems_in_scenario(pts):
                 rows = [p for p in pts if p.system == sysname]
                 rows.sort(key=lambda p: p.concurrency)
                 for p in rows:
