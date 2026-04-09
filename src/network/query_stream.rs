@@ -196,7 +196,7 @@ pub fn dispatch_client_frame(
                     buf.reserve(256 - cap);
                 }
                 encode_server_message_write(PROTOCOL_VERSION_V1, &server, &mut *buf)?;
-                let owned = std::mem::replace(&mut *buf, Vec::new());
+                let owned = std::mem::take(&mut *buf);
                 Ok::<_, DispatchError>(Arc::from(owned.into_boxed_slice()))
             })?;
             if engine.supports_select_no_from_wire_cache() && likely_select_without_from(&q.sql) {
