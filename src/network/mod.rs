@@ -8,6 +8,7 @@ pub mod metrics;
 pub mod query_stream;
 pub mod server;
 pub mod sql_engine;
+pub mod transport;
 
 pub use metrics::{QueryHandledOutcome, QuicNetworkMetrics, QuicNetworkSnapshot};
 pub use sql_engine::SqlEngine;

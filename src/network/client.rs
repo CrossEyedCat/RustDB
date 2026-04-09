@@ -2,6 +2,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use quinn::Connection;
 use rustls::pki_types::CertificateDer;
@@ -12,11 +13,28 @@ use crate::network::framing::{
     ServerMessage, MAX_FRAME_PAYLOAD_BYTES,
 };
 use crate::network::query_stream::read_application_frame;
-use crate::network::server::{ensure_rustls_crypto_provider, ALPN_RUSTDB_V1};
+use crate::network::server::{ensure_rustls_crypto_provider, ServerConfig, ALPN_RUSTDB_V1};
+use crate::network::transport::transport_config_arc;
 
 /// Build a [`quinn::ClientConfig`] that trusts the given certificates (e.g. dev server leaf) and uses [`ALPN_RUSTDB_V1`].
+///
+/// Transport limits match [`ServerConfig::default`] so benchmarks are not asymmetric vs the stock listener.
 pub fn build_quinn_client_config(
     trusted_certs: &[CertificateDer<'_>],
+) -> Result<quinn::ClientConfig, QuicClientError> {
+    let d = ServerConfig::default();
+    build_quinn_client_config_with_limits(
+        trusted_certs,
+        d.max_concurrent_streams_per_connection,
+        d.connection_timeout,
+    )
+}
+
+/// Same as [`build_quinn_client_config`], but with explicit stream and idle limits (mirror the server's [`ServerConfig`]).
+pub fn build_quinn_client_config_with_limits(
+    trusted_certs: &[CertificateDer<'_>],
+    max_concurrent_streams: usize,
+    idle_timeout: Duration,
 ) -> Result<quinn::ClientConfig, QuicClientError> {
     ensure_rustls_crypto_provider();
     let mut roots = rustls::RootCertStore::empty();
@@ -28,7 +46,10 @@ pub fn build_quinn_client_config(
         .with_no_client_auth();
     rustls_client.alpn_protocols = vec![ALPN_RUSTDB_V1.to_vec()];
     let quic = quinn::crypto::rustls::QuicClientConfig::try_from(rustls_client)?;
-    Ok(quinn::ClientConfig::new(Arc::new(quic)))
+    let mut cfg = quinn::ClientConfig::new(Arc::new(quic));
+    let transport = transport_config_arc(max_concurrent_streams, idle_timeout)?;
+    cfg.transport_config(transport);
+    Ok(cfg)
 }
 
 /// Create a client [`quinn::Endpoint`] bound to an ephemeral UDP port with `client_config` as default.
@@ -87,6 +108,8 @@ pub enum QuicClientError {
     QuicCrypto(#[from] quinn::crypto::rustls::NoInitialCipherSuite),
     #[error("read frame: {0}")]
     ReadFrame(String),
+    #[error("QUIC transport parameter out of bounds: {0}")]
+    QuicBounds(#[from] quinn::VarIntBoundsExceeded),
 }
 
 impl From<crate::network::query_stream::ReadFrameError> for QuicClientError {

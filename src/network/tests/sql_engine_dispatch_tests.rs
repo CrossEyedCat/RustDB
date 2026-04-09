@@ -21,7 +21,7 @@ fn dispatch_sql_engine_inserts_and_returns_select() {
     }))
     .expect("encode");
     let resp = dispatch_client_frame(&req, &eng, &StreamPolicy::default()).expect("dispatch");
-    match decode_server_frame_v1(&resp).expect("decode") {
+    match decode_server_frame_v1(resp.as_ref()).expect("decode") {
         ServerMessage::ResultSet(p) => {
             assert_eq!(p.columns, vec!["a"]);
             assert_eq!(p.rows.len(), 1);
@@ -44,7 +44,7 @@ fn dispatch_sql_engine_execution_ok() {
     }))
     .expect("encode");
     let resp = dispatch_client_frame(&req, &eng, &StreamPolicy::default()).expect("dispatch");
-    match decode_server_frame_v1(&resp).expect("decode") {
+    match decode_server_frame_v1(resp.as_ref()).expect("decode") {
         ServerMessage::ExecutionOk(p) => assert_eq!(p.rows_affected, 1),
         _ => panic!("expected ExecutionOk"),
     }

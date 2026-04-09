@@ -14,6 +14,7 @@ use crate::network::engine::EngineHandle;
 use crate::network::framing::MAX_FRAME_PAYLOAD_BYTES;
 use crate::network::metrics::{QuicMetrics, QuicNetworkMetrics};
 use crate::network::query_stream::{run_connection_streams, StreamPolicy};
+use crate::network::transport::build_rustdb_transport_config;
 
 /// ALPN token for RustDB over QUIC (must match the client). See `docs/network/quic-and-quinn.md`.
 pub const ALPN_RUSTDB_V1: &[u8] = b"rustdb-v1";
@@ -81,8 +82,8 @@ pub enum QuicServerError {
     Rcgen(#[from] rcgen::Error),
     #[error("QUIC crypto layer: {0}")]
     QuicCrypto(#[from] quinn::crypto::rustls::NoInitialCipherSuite),
-    #[error("idle timeout out of QUIC bounds: {0}")]
-    IdleTimeout(#[from] quinn::VarIntBoundsExceeded),
+    #[error("QUIC transport parameter out of bounds: {0}")]
+    QuicBounds(#[from] quinn::VarIntBoundsExceeded),
 }
 
 /// Result type for QUIC bind/config helpers (distinct from [`crate::common::Result`]).
@@ -120,11 +121,10 @@ pub fn build_quinn_server_config(
     let quic_crypto = QuicServerConfig::try_from(rustls_config)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_crypto));
 
-    let idle = quinn::IdleTimeout::try_from(config.connection_timeout)?;
-    let mut transport = quinn::TransportConfig::default();
-    transport.max_idle_timeout(Some(idle));
-    let bidi = (config.max_concurrent_streams_per_connection as u32).clamp(4, 10_000);
-    transport.max_concurrent_bidi_streams(bidi.into());
+    let transport = build_rustdb_transport_config(
+        config.max_concurrent_streams_per_connection,
+        config.connection_timeout,
+    )?;
     server_config.transport_config(Arc::new(transport));
 
     Ok((server_config, pinned))

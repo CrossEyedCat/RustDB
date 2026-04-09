@@ -179,7 +179,20 @@ def postgres_bench(dsn: str, sql: str, concurrency: int, total: int, setup_sql: 
     )
 
 
-def rustdb_bench(repo_root: Path, cert_path: Path, addr: str, server_name: str, sql: str, concurrency: int, total: int, mode: str) -> Point:
+def rustdb_bench(
+    repo_root: Path,
+    cert_path: Path,
+    addr: str,
+    server_name: str,
+    sql: str,
+    concurrency: int,
+    total: int,
+    mode: str,
+    *,
+    stream_batch: int = 1,
+    quic_max_streams: int = 32,
+    quic_idle_secs: int = 30,
+) -> Point:
     exe = repo_root / "target" / "debug" / ("rustdb_load.exe" if os.name == "nt" else "rustdb_load")
     if not exe.exists():
         raise RuntimeError(f"rustdb_load not built at {exe}")
@@ -202,6 +215,12 @@ def rustdb_bench(repo_root: Path, cert_path: Path, addr: str, server_name: str, 
         sql,
         "--connection-mode",
         rustdb_mode,
+        "--stream-batch",
+        str(stream_batch),
+        "--quic-max-streams",
+        str(quic_max_streams),
+        "--quic-idle-secs",
+        str(quic_idle_secs),
         "--json",
     ]
 
@@ -284,6 +303,24 @@ def main():
         default="shared,per-worker",
         help="Comma-separated RustDB QUIC connection modes to benchmark: shared,per-worker.",
     )
+    ap.add_argument(
+        "--rustdb-stream-batch",
+        type=int,
+        default=1,
+        help="Forwarded to rustdb_load --stream-batch (queries per QUIC bidi stream).",
+    )
+    ap.add_argument(
+        "--rustdb-quic-max-streams",
+        type=int,
+        default=32,
+        help="Forwarded to rustdb_load --quic-max-streams; should be >= server max concurrent streams per connection when using many parallel streams.",
+    )
+    ap.add_argument(
+        "--rustdb-quic-idle-secs",
+        type=int,
+        default=30,
+        help="Forwarded to rustdb_load --quic-idle-secs (client transport idle; align with server connection_timeout).",
+    )
     args = ap.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -318,6 +355,9 @@ def main():
                     c,
                     args.queries,
                     mode,
+                    stream_batch=args.rustdb_stream_batch,
+                    quic_max_streams=args.rustdb_quic_max_streams,
+                    quic_idle_secs=args.rustdb_quic_idle_secs,
                 )
                 p.scenario = name
                 points.append(p)
@@ -359,6 +399,15 @@ def main():
         f.write(f"- queries per point: **{args.queries}**\n")
         f.write(f"- concurrency: **{', '.join(map(str, conc))}**\n\n")
         f.write(f"- rustdb modes: **{', '.join(rustdb_modes)}**\n\n")
+        f.write(
+            f"- rustdb_load QUIC settings (this run): **stream_batch={args.rustdb_stream_batch}**, "
+            f"**quic_max_streams={args.rustdb_quic_max_streams}**, **quic_idle_secs={args.rustdb_quic_idle_secs}** "
+            f"(see `rustdb_load --help`).\n\n"
+        )
+        f.write(
+            "- Comparing RustDB to PostgreSQL or SQLite is only roughly comparable: RustDB uses QUIC + custom framing; "
+            "Postgres uses TCP + libpq/psycopg; SQLite is in-process. Record these `rustdb_load` flags when publishing numbers.\n\n"
+        )
         f.write(f"- postgres: **{'enabled' if args.postgres_dsn else 'disabled'}**\n\n")
 
         if args.postgres_dsn:

@@ -6,13 +6,13 @@
 use clap::Parser;
 use quinn::Connection;
 use rustdb::network::client::{
-    build_quinn_client_config, connect, make_client_endpoint, query_once,
+    build_quinn_client_config_with_limits, connect, make_client_endpoint, query_once,
 };
 use rustdb::network::framing::{
     decode_server_frame_v1, encode_client_message_v1, ClientMessage, QueryPayload, ServerMessage,
     MAX_FRAME_PAYLOAD_BYTES,
 };
-use rustdb::network::query_stream::read_application_frame;
+use rustdb::network::query_stream::read_application_frame_into;
 use rustls::pki_types::CertificateDer;
 use serde::Serialize;
 use std::fs;
@@ -104,6 +104,15 @@ struct Args {
     /// overhead and can significantly improve `select_literal` throughput.
     #[arg(long, default_value_t = 1)]
     stream_batch: usize,
+
+    /// Max concurrent bidirectional streams (local QUIC transport). Should be >= server
+    /// `max_concurrent_streams_per_connection` when opening many streams (e.g. shared connection + high concurrency).
+    #[arg(long, default_value_t = 32)]
+    quic_max_streams: usize,
+
+    /// QUIC max idle timeout (seconds), mirrored into the client transport to match `rustdb server` defaults.
+    #[arg(long, default_value_t = 30)]
+    quic_idle_secs: u64,
 }
 
 fn quantile(sorted: &[u128], q: f64) -> Option<u128> {
@@ -131,14 +140,15 @@ async fn query_many_on_one_stream(
 ) -> Result<Vec<(ServerMessage, Duration)>, Box<dyn std::error::Error + Send + Sync>> {
     let (mut send, mut recv) = connection.open_bi().await?;
     let mut out = Vec::with_capacity(sqls.len());
+    let mut recv_buf = Vec::new();
     for sql in sqls {
         let t0 = Instant::now();
         let frame = encode_client_message_v1(&ClientMessage::Query(QueryPayload {
             sql: sql.to_string(),
         }))?;
         send.write_all(&frame).await?;
-        let response = read_application_frame(&mut recv, MAX_FRAME_PAYLOAD_BYTES).await?;
-        out.push((decode_server_frame_v1(&response)?, t0.elapsed()));
+        read_application_frame_into(&mut recv, MAX_FRAME_PAYLOAD_BYTES, &mut recv_buf).await?;
+        out.push((decode_server_frame_v1(&recv_buf)?, t0.elapsed()));
     }
     let _ = send.finish();
     Ok(out)
@@ -158,6 +168,11 @@ struct LoadReport {
     p95_us: u128,
     p99_us: u128,
     max_us: u128,
+    /// For cross-benchmark notes (e.g. vs TCP/Postgres): QUIC connection layout and batching.
+    connection_mode: String,
+    stream_batch: usize,
+    quic_max_streams: usize,
+    quic_idle_secs: u64,
 }
 
 #[tokio::main]
@@ -167,7 +182,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr: SocketAddr = args.addr.parse()?;
     let der = fs::read(&args.cert)?;
     let cert = CertificateDer::from(der);
-    let client_cfg = build_quinn_client_config(std::slice::from_ref(&cert))?;
+    let client_cfg = build_quinn_client_config_with_limits(
+        std::slice::from_ref(&cert),
+        args.quic_max_streams,
+        Duration::from_secs(args.quic_idle_secs),
+    )?;
     let endpoint = make_client_endpoint(client_cfg)?;
 
     let statements: Arc<Vec<String>> = if let Some(table) = &args.insert_table {
@@ -379,6 +398,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         p95_us: p95,
         p99_us: p99,
         max_us: max,
+        connection_mode: format!("{:?}", args.connection_mode),
+        stream_batch: args.stream_batch,
+        quic_max_streams: args.quic_max_streams,
+        quic_idle_secs: args.quic_idle_secs,
     };
 
     if args.json {
@@ -389,6 +412,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("addr: {}", report.addr);
         println!("server_name: {}", report.server_name);
         println!("concurrency: {}", report.concurrency);
+        println!(
+            "connection_mode: {}  stream_batch: {}  quic_max_streams: {}  quic_idle_secs: {}",
+            report.connection_mode,
+            report.stream_batch,
+            report.quic_max_streams,
+            report.quic_idle_secs
+        );
         println!("queries: {}", report.queries);
         println!("ok: {}  err: {}", report.ok, report.err);
         println!("wall: {:.2?}  throughput: {:.1} qps", wall, report.qps);

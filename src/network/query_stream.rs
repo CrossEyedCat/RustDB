@@ -3,13 +3,14 @@
 //! See `docs/network/stream-models.md`.
 
 use std::cell::RefCell;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
+use parking_lot::RwLock;
 use quinn::{Connection, RecvStream, SendStream};
 use thiserror::Error;
 use tokio::sync::OwnedSemaphorePermit;
-use tracing::{info, info_span, warn};
+use tracing::{info, info_span, instrument, warn, Instrument};
 
 use crate::network::engine::{
     engine_error_code, EngineError, EngineHandle, EngineOutput, SessionContext,
@@ -58,8 +59,8 @@ pub enum DispatchError {
 /// Small cache for `SELECT` without `FROM` wire responses (hot path for `select_literal` benchmark).
 ///
 /// Key is the raw SQL string (must match exactly). Value is a full server frame (header + postcard payload).
-static SELECT_NO_FROM_WIRE_CACHE: LazyLock<Mutex<std::collections::HashMap<String, Vec<u8>>>> =
-    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+static SELECT_NO_FROM_WIRE_CACHE: LazyLock<RwLock<std::collections::HashMap<String, Arc<[u8]>>>> =
+    LazyLock::new(|| RwLock::new(std::collections::HashMap::new()));
 
 const SELECT_NO_FROM_WIRE_CACHE_MAX_ENTRIES: usize = 1024;
 
@@ -92,15 +93,17 @@ impl DispatchError {
     }
 }
 
-/// Read one full application frame from the receive half (12-byte header + payload).
+/// Read one full application frame into `out` (reused by callers to avoid per-frame allocations on hot paths).
 ///
 /// `max_payload` is the maximum payload length allowed (typically from [`StreamPolicy::max_frame_payload_bytes`],
 /// never greater than [`MAX_FRAME_PAYLOAD_BYTES`]).
-pub async fn read_application_frame(
+pub async fn read_application_frame_into(
     recv: &mut RecvStream,
     max_payload: u32,
-) -> Result<Vec<u8>, ReadFrameError> {
+    out: &mut Vec<u8>,
+) -> Result<(), ReadFrameError> {
     let max_payload = max_payload.min(MAX_FRAME_PAYLOAD_BYTES);
+    out.clear();
     let mut header = [0u8; FRAME_HEADER_LEN];
     recv.read_exact(&mut header)
         .await
@@ -109,16 +112,27 @@ pub async fn read_application_frame(
     if fh.payload_len > max_payload {
         return Err(ReadFrameError::PayloadTooLarge(fh.payload_len));
     }
-    let mut body = vec![0u8; fh.payload_len as usize];
-    if !body.is_empty() {
-        recv.read_exact(&mut body)
+    out.reserve(FRAME_HEADER_LEN + fh.payload_len as usize);
+    out.extend_from_slice(&header);
+    let plen = fh.payload_len as usize;
+    if plen > 0 {
+        let start = out.len();
+        out.resize(start + plen, 0);
+        recv.read_exact(&mut out[start..])
             .await
             .map_err(ReadFrameError::Recv)?;
     }
-    let mut frame = Vec::with_capacity(FRAME_HEADER_LEN + body.len());
-    frame.extend_from_slice(&header);
-    frame.extend_from_slice(&body);
-    Ok(frame)
+    Ok(())
+}
+
+/// Read one full application frame from the receive half (allocates a new [`Vec`]).
+pub async fn read_application_frame(
+    recv: &mut RecvStream,
+    max_payload: u32,
+) -> Result<Vec<u8>, ReadFrameError> {
+    let mut out = Vec::new();
+    read_application_frame_into(recv, max_payload, &mut out).await?;
+    Ok(out)
 }
 
 #[derive(Debug, Error)]
@@ -132,11 +146,14 @@ pub enum ReadFrameError {
 }
 
 /// Sync dispatch: decode → engine → encode (used inside per-query timeout).
+///
+/// Returned [`Arc`] is cheap to clone on wire-cache hits (shared frame bytes).
+#[instrument(level = "trace", skip(frame, engine, policy), fields(frame_len = frame.len()))]
 pub fn dispatch_client_frame(
     frame: &[u8],
     engine: &dyn EngineHandle,
     policy: &StreamPolicy,
-) -> Result<Vec<u8>, DispatchError> {
+) -> Result<Arc<[u8]>, DispatchError> {
     let msg = decode_client_frame_v1(frame)?;
     match msg {
         ClientMessage::Query(q) => {
@@ -157,10 +174,9 @@ pub fn dispatch_client_frame(
             // Ultra-hot path: deterministic literal projections without FROM.
             // Serve the already encoded frame to skip engine + postcard encode overhead.
             if engine.supports_select_no_from_wire_cache() && likely_select_without_from(&q.sql) {
-                if let Ok(g) = SELECT_NO_FROM_WIRE_CACHE.lock() {
-                    if let Some(bytes) = g.get(&q.sql) {
-                        return Ok(bytes.clone());
-                    }
+                let g = SELECT_NO_FROM_WIRE_CACHE.read();
+                if let Some(bytes) = g.get(&q.sql) {
+                    return Ok(Arc::clone(bytes));
                 }
             }
 
@@ -171,7 +187,7 @@ pub fn dispatch_client_frame(
 
             // Encode using a thread-local buffer (still allocates postcard payload internally,
             // but avoids reallocating the frame buffer each request).
-            let mut bytes = TL_ENCODE_BUF.with(|b| {
+            let bytes: Arc<[u8]> = TL_ENCODE_BUF.with(|b| {
                 let mut buf = b.borrow_mut();
                 buf.clear();
                 // Keep a small minimum capacity for common tiny responses.
@@ -180,17 +196,17 @@ pub fn dispatch_client_frame(
                     buf.reserve(256 - cap);
                 }
                 encode_server_message_write(PROTOCOL_VERSION_V1, &server, &mut *buf)?;
-                Ok::<_, DispatchError>(buf.clone())
+                let owned = std::mem::replace(&mut *buf, Vec::new());
+                Ok::<_, DispatchError>(Arc::from(owned.into_boxed_slice()))
             })?;
             if engine.supports_select_no_from_wire_cache() && likely_select_without_from(&q.sql) {
-                if let Ok(mut g) = SELECT_NO_FROM_WIRE_CACHE.lock() {
-                    if g.len() >= SELECT_NO_FROM_WIRE_CACHE_MAX_ENTRIES && !g.contains_key(&q.sql) {
-                        // Simple cap: drop the whole map when it grows beyond a bound.
-                        // (Avoids adding an LRU dependency; literal SELECTs are typically tiny in variety.)
-                        g.clear();
-                    }
-                    g.insert(q.sql.clone(), bytes.clone());
+                let mut g = SELECT_NO_FROM_WIRE_CACHE.write();
+                if g.len() >= SELECT_NO_FROM_WIRE_CACHE_MAX_ENTRIES && !g.contains_key(&q.sql) {
+                    // Simple cap: drop the whole map when it grows beyond a bound.
+                    // (Avoids adding an LRU dependency; literal SELECTs are typically tiny in variety.)
+                    g.clear();
                 }
+                g.insert(q.sql.clone(), Arc::clone(&bytes));
             }
             Ok(bytes)
         }
@@ -254,7 +270,7 @@ fn enforce_max_result_rows(
 async fn write_error_response(
     send: &mut SendStream,
     err: &DispatchError,
-) -> Result<(), quinn::WriteError> {
+) -> Result<u64, quinn::WriteError> {
     let msg = err.to_error_message();
     let bytes = match encode_server_message_v1(&msg) {
         Ok(b) => b,
@@ -263,14 +279,9 @@ async fn write_error_response(
             return Err(quinn::WriteError::ClosedStream);
         }
     };
-    send.write_all(&bytes).await
-}
-
-fn error_response_wire_len(err: &DispatchError) -> u64 {
-    let msg = err.to_error_message();
-    encode_server_message_v1(&msg)
-        .map(|b| b.len() as u64)
-        .unwrap_or(0)
+    let len = bytes.len() as u64;
+    send.write_all(&bytes).await?;
+    Ok(len)
 }
 
 /// One bidirectional stream: read one request frame, run engine (with timeout), write one response.
@@ -289,9 +300,14 @@ pub async fn handle_query_bidi_stream(
     // multiple frames on the same stream for better throughput.
     const MAX_FRAMES_PER_STREAM: usize = 1024;
 
+    let mut frame_buf = Vec::new();
+
     for _ in 0..MAX_FRAMES_PER_STREAM {
-        let frame = match read_application_frame(&mut recv, max_frame).await {
-            Ok(f) => f,
+        let read_res = read_application_frame_into(&mut recv, max_frame, &mut frame_buf)
+            .instrument(tracing::trace_span!("network.read_frame"))
+            .await;
+        match read_res {
+            Ok(()) => {}
             Err(ReadFrameError::Recv(_)) => {
                 // Client closed the stream (EOF / reset). Treat as graceful end-of-stream.
                 let _ = send.finish();
@@ -305,11 +321,11 @@ pub async fn handle_query_bidi_stream(
                 let _ = send.reset(quinn::VarInt::from_u32(0));
                 return;
             }
-        };
+        }
 
         let t0 = Instant::now();
         let result = tokio::time::timeout(policy.query_timeout, async {
-            dispatch_client_frame(&frame, engine.as_ref(), policy.as_ref())
+            dispatch_client_frame(&frame_buf, engine.as_ref(), policy.as_ref())
         })
         .await;
 
@@ -323,18 +339,22 @@ pub async fn handle_query_bidi_stream(
         };
 
         let latency_ns = t0.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+        let frame_len = frame_buf.len() as u64;
         let record_metrics = |outcome: QueryHandledOutcome, bytes_out: u64| {
             if let Some(m) = metrics.as_ref() {
                 let ms = latency_ns / 1_000_000;
                 crate::debug::record_network_query_latency_ms(ms);
-                m.record_query_handled(outcome, frame.len() as u64, bytes_out, latency_ns);
+                m.record_query_handled(outcome, frame_len, bytes_out, latency_ns);
             }
         };
 
         match result {
             Ok(bytes) => {
                 let out_len = bytes.len() as u64;
-                if let Err(e) = send.write_all(&bytes).await {
+                if let Err(e) = async { send.write_all(bytes.as_ref()).await }
+                    .instrument(tracing::trace_span!("network.write_response"))
+                    .await
+                {
                     warn!(error = %e, "write response failed");
                     record_metrics(QueryHandledOutcome::WriteFailed, 0);
                     return;
@@ -342,13 +362,16 @@ pub async fn handle_query_bidi_stream(
                 record_metrics(QueryHandledOutcome::Ok, out_len);
             }
             Err(ref e) => {
-                let expected_out = error_response_wire_len(e);
-                if write_error_response(&mut send, e).await.is_ok() {
-                    record_metrics(QueryHandledOutcome::ErrorResponse, expected_out);
-                } else {
-                    let _ = send.reset(quinn::VarInt::from_u32(0));
-                    record_metrics(QueryHandledOutcome::WriteFailed, 0);
-                    return;
+                match write_error_response(&mut send, e)
+                    .instrument(tracing::trace_span!("network.write_response"))
+                    .await
+                {
+                    Ok(len) => record_metrics(QueryHandledOutcome::ErrorResponse, len),
+                    Err(_) => {
+                        let _ = send.reset(quinn::VarInt::from_u32(0));
+                        record_metrics(QueryHandledOutcome::WriteFailed, 0);
+                        return;
+                    }
                 }
             }
         }
@@ -359,6 +382,9 @@ pub async fn handle_query_bidi_stream(
 }
 
 /// Accept bidirectional streams on `connection` until closed (Variant A).
+///
+/// The semaphore capacity matches [`StreamPolicy::max_concurrent_streams_per_connection`], which is
+/// kept in sync with QUIC `max_concurrent_bidi_streams` via [`crate::network::transport::build_rustdb_transport_config`].
 pub async fn run_connection_streams(
     connection: Connection,
     engine: Arc<dyn EngineHandle>,

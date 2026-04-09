@@ -19,7 +19,7 @@ fn dispatch_query_returns_result_set() {
     .expect("encode");
     let policy = StreamPolicy::default();
     let resp = dispatch_client_frame(&req, &engine, &policy).expect("dispatch");
-    match decode_server_frame_v1(&resp).expect("decode") {
+    match decode_server_frame_v1(resp.as_ref()).expect("decode") {
         ServerMessage::ResultSet(p) => {
             assert_eq!(p.columns, vec!["n"]);
             assert_eq!(p.rows, vec![vec!["1"]]);

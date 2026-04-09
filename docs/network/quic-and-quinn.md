@@ -91,9 +91,40 @@ These map conceptually to existing [`ServerConfig`](../../src/network/server.rs)
 | Per-query timeout | application | Close stream or cancel task if engine does not respond (not QUIC-specific). |
 | Ops metrics | application | `QuicServer::metrics()` — handshakes, refuse, read-frame errors, `queries_ok` / `queries_error_response` / `queries_write_failed`, bytes, latency sum. |
 
-## UDP buffer sizes
+## Shared transport configuration (server and client)
 
-Operating systems may default to small UDP receive buffers; high throughput can require increasing buffer sizes via socket options where quinn exposes them. Call this out in deployment notes when tuning for benchmarks.
+RustDB builds a single [`TransportConfig`](https://docs.rs/quinn) shape from [`build_rustdb_transport_config`](../../src/network/transport.rs) for both the listener and [`build_quinn_client_config`](../../src/network/client.rs) / [`build_quinn_client_config_with_limits`](../../src/network/client.rs), so benchmarks are not skewed by asymmetric flow-control defaults.
+
+- **`max_concurrent_bidi_streams`** is set from the same cap as [`ServerConfig::max_concurrent_streams_per_connection`](../../src/network/server.rs), which also drives the Tokio [`Semaphore`](../../src/network/query_stream.rs) in `run_connection_streams`. The QUIC limit should never be *below* the app’s concurrent stream work (here they match).
+- **`keep_alive_interval`** is derived from `connection_timeout` / idle settings so long-lived connections send periodic traffic when needed.
+- **`send_fairness(false)`** matches quinn’s guidance for many small request/response streams.
+
+## Profiling (tracing)
+
+To separate **QUIC/framing** from **SQL execution** in traces or Chrome JSON output, filter on these `tracing` spans (see [`query_stream.rs`](../../src/network/query_stream.rs)):
+
+| Span | Phase |
+|------|--------|
+| `network.read_frame` | Reading one application frame from the QUIC stream |
+| `sql.query` | Parse/plan/execute inside `dispatch_client_frame` |
+| `network.write_response` | Writing the response bytes to the send half |
+
+Suggested load scenarios when comparing numbers: `rustdb_load --stream-batch 1` vs higher values; `shared` vs `per-worker` connection mode; sweep concurrency against server `max_concurrent_streams_per_connection`.
+
+## UDP buffer sizes and connection limits
+
+Operating systems often default to **small UDP receive (and sometimes send) buffers**. Under high QPS, increase **`SO_RCVBUF` / `SO_SNDBUF`** on the listening socket and on client endpoints where the platform allows (Linux: `sysctl net.core.rmem_max` / `wmem_max`; Windows: registry or socket APIs). Quinn may not expose every knob; tuning at the OS level is still the first fix when the UDP path drops datagrams before user space.
+
+Also ensure the benchmark does not hit **`ServerConfig::max_connections`**: the accept loop refuses new QUIC handshakes when `endpoint.open_connections()` reaches that cap (see [`QuicServer::run`](../../src/network/server.rs)).
+
+## Benchmark fairness (`rustdb_load` vs TCP baselines)
+
+When publishing comparisons against PostgreSQL (TCP) or SQLite (in-process), record at least:
+
+- `rustdb_load` **`--connection-mode`**, **`--stream-batch`**, **`--quic-max-streams`**, **`--quic-idle-secs`** (defaults and overrides).
+- Server-side **`max_concurrent_streams_per_connection`** and **`max_connections`** relative to client concurrency.
+
+The script [`scripts/bench_sqlite_vs_rustdb.py`](../../scripts/bench_sqlite_vs_rustdb.py) forwards QUIC-related flags into `rustdb_load` and writes them into the generated `bench.md` for reproducibility.
 
 ## References
 
