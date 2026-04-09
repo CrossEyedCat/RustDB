@@ -12,7 +12,7 @@ import threading
 
 @dataclass
 class Point:
-    system: str  # "rustdb(shared)" | "rustdb(per-worker)" | "sqlite"
+    system: str  # "rustdb(shared)" | "rustdb(per-worker)" | "sqlite" | "postgres"
     scenario: str
     concurrency: int
     qps: float
@@ -101,6 +101,69 @@ def sqlite_bench(db_path: Path, sql: str, concurrency: int, total: int, setup_sq
     )
 
 
+def postgres_bench(dsn: str, sql: str, concurrency: int, total: int, setup_sql: list[str]) -> Point:
+    """
+    PostgreSQL client-server baseline (optional).
+
+    Uses one connection per thread (thread-local) and measures per-call latency.
+    Requires `psycopg` (psycopg3).
+    """
+    try:
+        import psycopg  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "psycopg is required for --postgres-dsn benchmarks. "
+            "Install with: python3 -m pip install 'psycopg[binary]'\n"
+            f"import error: {e}"
+        )
+
+    # One-time setup
+    with psycopg.connect(dsn, autocommit=True) as con:
+        with con.cursor() as cur:
+            for s in setup_sql:
+                cur.execute(s)
+
+    tls = threading.local()
+
+    def get_conn():
+        cx = getattr(tls, "cx", None)
+        if cx is None:
+            cx = psycopg.connect(dsn, autocommit=True)
+            tls.cx = cx
+        return cx
+
+    is_select = sql.lstrip().upper().startswith("SELECT")
+
+    def one_call(i: int) -> float:
+        t0 = time.perf_counter()
+        cx = get_conn()
+        with cx.cursor() as cur:
+            cur.execute(sql)
+            if is_select:
+                cur.fetchall()
+        return (time.perf_counter() - t0) * 1000.0
+
+    lat_ms = []
+    t_start = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=concurrency) as ex:
+        futs = [ex.submit(one_call, i) for i in range(total)]
+        for f in as_completed(futs):
+            lat_ms.append(f.result())
+    wall = time.perf_counter() - t_start
+    lat_ms.sort()
+    qps = total / wall if wall > 0 else 0.0
+
+    return Point(
+        system="postgres",
+        scenario="",
+        concurrency=concurrency,
+        qps=qps,
+        p50_ms=quantile(lat_ms, 0.50),
+        p95_ms=quantile(lat_ms, 0.95),
+        p99_ms=quantile(lat_ms, 0.99),
+    )
+
+
 def rustdb_bench(repo_root: Path, cert_path: Path, addr: str, server_name: str, sql: str, concurrency: int, total: int, mode: str) -> Point:
     exe = repo_root / "target" / "debug" / ("rustdb_load.exe" if os.name == "nt" else "rustdb_load")
     if not exe.exists():
@@ -163,7 +226,7 @@ def plot(points: list[Point], out_png: Path):
     import matplotlib.pyplot as plt
 
     scenarios = sorted(set(p.scenario for p in points))
-    systems = ["rustdb(shared)", "rustdb(per-worker)", "sqlite"]
+    systems = ["rustdb(shared)", "rustdb(per-worker)", "sqlite", "postgres"]
 
     fig, axes = plt.subplots(len(scenarios), 2, figsize=(12, 4 * len(scenarios)))
     if len(scenarios) == 1:
@@ -194,6 +257,11 @@ def main():
     ap.add_argument("--addr", default="127.0.0.1:15432")
     ap.add_argument("--server-name", default="localhost")
     ap.add_argument("--cert", required=True)
+    ap.add_argument(
+        "--postgres-dsn",
+        default="",
+        help="Optional PostgreSQL DSN for additional baseline, e.g. 'postgresql://postgres:postgres@127.0.0.1:15440/postgres'.",
+    )
     ap.add_argument("--concurrency", default="1,8,32,128")
     ap.add_argument("--queries", type=int, default=5000)
     ap.add_argument(
@@ -245,6 +313,19 @@ def main():
             p2.scenario = name
             points.append(p2)
 
+        if args.postgres_dsn:
+            pg_setup: list[str] = []
+            if name == "select_table":
+                pg_setup = [
+                    "DROP TABLE IF EXISTS bench_t",
+                    "CREATE TABLE bench_t (a INTEGER)",
+                    "INSERT INTO bench_t (a) VALUES (1)",
+                ]
+            for c in conc:
+                p3 = postgres_bench(args.postgres_dsn, sqlite_sql, c, args.queries, pg_setup)
+                p3.scenario = name
+                points.append(p3)
+
     # Write CSV
     csv_path = out_dir / "bench.csv"
     with csv_path.open("w", encoding="utf-8") as f:
@@ -263,11 +344,24 @@ def main():
         f.write(f"- queries per point: **{args.queries}**\n")
         f.write(f"- concurrency: **{', '.join(map(str, conc))}**\n\n")
         f.write(f"- rustdb modes: **{', '.join(rustdb_modes)}**\n\n")
+        f.write(f"- postgres: **{'enabled' if args.postgres_dsn else 'disabled'}**\n\n")
+
+        if args.postgres_dsn:
+            f.write("### PostgreSQL baseline\n\n")
+            f.write(
+                "PostgreSQL is included as an additional **client-server** baseline to better compare network/protocol overhead. "
+                "Unlike SQLite (embedded), Postgres runs out-of-process and is accessed over TCP.\n\n"
+            )
+            f.write(
+                "- Measurement model: **one connection per worker thread** (thread-local), reused across requests.\n"
+                "- For `SELECT`, results are fully read via `fetchall()` to include server response costs.\n\n"
+            )
+
         for sc, pts in by_scenario.items():
             f.write(f"### {sc}\n\n")
             f.write("| system | concurrency | qps | p50 (ms) | p95 (ms) | p99 (ms) |\n")
             f.write("|---|---:|---:|---:|---:|---:|\n")
-            for sysname in ["rustdb(shared)", "rustdb(per-worker)", "sqlite"]:
+            for sysname in ["rustdb(shared)", "rustdb(per-worker)", "sqlite", "postgres"]:
                 rows = [p for p in pts if p.system == sysname]
                 rows.sort(key=lambda p: p.concurrency)
                 for p in rows:

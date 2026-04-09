@@ -421,7 +421,7 @@ jobs:
       - name: Install Python deps (matplotlib)
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install matplotlib
+          python3 -m pip install matplotlib "psycopg[binary]"
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -486,11 +486,42 @@ jobs:
           echo "RUSTDB_SERVER_CONTAINER=$name" >> "$GITHUB_ENV"
           echo "RUSTDB_SERVER_VOLUME=$vol" >> "$GITHUB_ENV"
 
+      - name: Start PostgreSQL (docker)
+        run: |
+          set -euo pipefail
+          name="postgres-bench"
+          docker rm -f "$name" >/dev/null 2>&1 || true
+          docker run -d --name "$name" -p 15440:5432 \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=postgres \
+            postgres:16-alpine >/dev/null
+          for i in $(seq 1 80); do
+            if docker exec "$name" pg_isready -U postgres >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.2
+          done
+          docker exec "$name" pg_isready -U postgres
+          echo "POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:15440/postgres" >> "$GITHUB_ENV"
+
       - name: Warmup (create table in RustDB)
         run: |
           set -euo pipefail
           cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "CREATE TABLE bench_t (a INTEGER)"
           cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "INSERT INTO bench_t (a) VALUES (1)"
+
+      - name: Capture RustDB data directory snapshot
+        run: |
+          set -euo pipefail
+          mkdir -p bench-out
+          echo "==> rustdb info" > bench-out/rustdb_info.txt
+          docker exec "$RUSTDB_SERVER_CONTAINER" sh -c "rustdb --config /app/config/config.toml info || true" >> bench-out/rustdb_info.txt 2>&1
+          echo "" >> bench-out/rustdb_info.txt
+          echo "==> /app/data listing" > bench-out/rustdb_data_snapshot.txt
+          docker exec "$RUSTDB_SERVER_CONTAINER" sh -c "ls -la /app/data || true" >> bench-out/rustdb_data_snapshot.txt 2>&1
+          echo "" >> bench-out/rustdb_data_snapshot.txt
+          echo "==> /app/data usage" >> bench-out/rustdb_data_snapshot.txt
+          docker exec "$RUSTDB_SERVER_CONTAINER" sh -c "du -sh /app/data || true; du -a /app/data 2>/dev/null | sort -n | tail -n 50 || true" >> bench-out/rustdb_data_snapshot.txt 2>&1
 
       - name: Run comparison + charts
         run: |
@@ -502,13 +533,19 @@ jobs:
             --server-name localhost \
             --concurrency 1,8,32,128 \
             --queries 5000 \
-            --rustdb-connection-modes shared,per-worker
+            --rustdb-connection-modes shared,per-worker \
+            --postgres-dsn "$POSTGRES_DSN"
 
       - name: Stop RustDB server (docker)
         if: always()
         run: |
           docker rm -f "$RUSTDB_SERVER_CONTAINER" >/dev/null 2>&1 || true
           docker volume rm -f "$RUSTDB_SERVER_VOLUME" >/dev/null 2>&1 || true
+
+      - name: Stop PostgreSQL (docker)
+        if: always()
+        run: |
+          docker rm -f postgres-bench >/dev/null 2>&1 || true
 
       - name: Upload benchmark report
         uses: actions/upload-artifact@v4
@@ -518,6 +555,8 @@ jobs:
             bench-out/bench.md
             bench-out/bench.csv
             bench-out/bench.png
+            bench-out/rustdb_info.txt
+            bench-out/rustdb_data_snapshot.txt
 
   profile_quic_select_table:
     name: Trace profile (QUIC select_table @128)
