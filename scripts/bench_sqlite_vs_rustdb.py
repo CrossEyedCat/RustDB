@@ -124,12 +124,16 @@ def postgres_bench(dsn: str, sql: str, concurrency: int, total: int, setup_sql: 
                 cur.execute(s)
 
     tls = threading.local()
+    created = []
+    created_lock = threading.Lock()
 
     def get_conn():
         cx = getattr(tls, "cx", None)
         if cx is None:
             cx = psycopg.connect(dsn, autocommit=True)
             tls.cx = cx
+            with created_lock:
+                created.append(cx)
         return cx
 
     is_select = sql.lstrip().upper().startswith("SELECT")
@@ -145,10 +149,21 @@ def postgres_bench(dsn: str, sql: str, concurrency: int, total: int, setup_sql: 
 
     lat_ms = []
     t_start = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=concurrency) as ex:
-        futs = [ex.submit(one_call, i) for i in range(total)]
-        for f in as_completed(futs):
-            lat_ms.append(f.result())
+    try:
+        with ThreadPoolExecutor(max_workers=concurrency) as ex:
+            futs = [ex.submit(one_call, i) for i in range(total)]
+            for f in as_completed(futs):
+                lat_ms.append(f.result())
+    finally:
+        # Avoid leaking connections across points (CI will run many points).
+        with created_lock:
+            conns = list(created)
+            created.clear()
+        for cx in conns:
+            try:
+                cx.close()
+            except Exception:
+                pass
     wall = time.perf_counter() - t_start
     lat_ms.sort()
     qps = total / wall if wall > 0 else 0.0

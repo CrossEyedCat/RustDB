@@ -494,7 +494,8 @@ jobs:
           docker run -d --name "$name" -p 15440:5432 \
             -e POSTGRES_PASSWORD=postgres \
             -e POSTGRES_DB=postgres \
-            postgres:16-alpine >/dev/null
+            postgres:16-alpine \
+            -c max_connections=500 >/dev/null
           # Wait until Postgres is ready to accept connections.
           # During init it may report "rejecting connections" with non-zero exit code.
           ready=0
