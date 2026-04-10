@@ -11,8 +11,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
 
 /// RustDB - Relational database implementation in Rust
 #[derive(Parser)]
@@ -51,6 +49,11 @@ pub enum Commands {
         /// Write the dev TLS leaf certificate (DER) to this path for `rustdb_quic_client --cert`
         #[arg(long, value_name = "PATH")]
         cert_out: Option<PathBuf>,
+
+        /// Gracefully exit the server after this many seconds (useful for automated tracing so
+        /// `tracing-chrome` flushes the JSON file on shutdown).
+        #[arg(long, value_name = "SECS")]
+        exit_after_secs: Option<u64>,
     },
 
     /// Interface language management
@@ -145,7 +148,11 @@ impl Cli {
                 port,
                 host,
                 cert_out,
-            }) => self.run_server(host.clone(), *port, cert_out.clone()).await,
+                exit_after_secs,
+            }) => {
+                self.run_server(host.clone(), *port, cert_out.clone(), *exit_after_secs)
+                    .await
+            }
             Some(Commands::Language { action }) => self.handle_language_command(action).await,
             Some(Commands::Info) => self.show_info().await,
             Some(Commands::Create { name, data_dir }) => {
@@ -164,39 +171,15 @@ impl Cli {
         host_arg: Option<String>,
         port_arg: Option<u16>,
         cert_out: Option<PathBuf>,
+        exit_after_secs: Option<u64>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Logging + optional Chrome trace.
-        // Set `RUSTDB_TRACE_CHROME_PATH=/path/to/trace.json` to enable trace output.
-        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-        let mut chrome_guard: Option<tracing_chrome::FlushGuard> = None;
-        if let Ok(path) = std::env::var("RUSTDB_TRACE_CHROME_PATH") {
-            if !path.trim().is_empty() {
-                let p = std::path::PathBuf::from(path);
-                if let Some(parent) = p.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
-                    .file(p)
-                    .include_args(true)
-                    .build();
-                chrome_guard = Some(guard);
-                let _ = tracing_subscriber::registry()
-                    .with(filter)
-                    .with(chrome_layer)
-                    .with(tracing_subscriber::fmt::layer())
-                    .try_init();
-            } else {
-                let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
-            }
-        } else {
-            let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
-        }
+        // `tracing` + `tracing-subscriber`: see [`crate::tracing_setup`].
+        let tracing_handle = crate::tracing_setup::init_server_tracing()?;
 
         // Do **not** hold a session-long `entered()` span here: it would dominate Chrome's
         // "Wall duration" totals (~time until Ctrl+C) and look like a 2-minute hotspot while
         // real work is only the short `network.*` / `dispatch_client_frame` / `sql.query` spans.
-        if chrome_guard.is_some() {
+        if tracing_handle.chrome_trace_enabled() {
             info!("Chrome trace: judge query cost from short spans (network.read_frame, dispatch_client_frame, sql.query); ignore any huge parent totals.");
         }
 
@@ -272,6 +255,14 @@ impl Cli {
             }
         };
 
+        let exit_after = async {
+            if let Some(secs) = exit_after_secs {
+                tokio::time::sleep(Duration::from_secs(secs.max(1))).await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
+
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("shutdown requested");
@@ -280,6 +271,11 @@ impl Cli {
             }
             _ = term => {
                 info!("shutdown requested (SIGTERM)");
+                QuicServer::initiate_shutdown(&endpoint);
+                QuicServer::wait_idle(&endpoint).await;
+            }
+            _ = exit_after => {
+                info!(exit_after_secs, "shutdown requested (exit-after-secs)");
                 QuicServer::initiate_shutdown(&endpoint);
                 QuicServer::wait_idle(&endpoint).await;
             }
@@ -292,7 +288,7 @@ impl Cli {
         }
 
         // Ensure Chrome trace is flushed on shutdown.
-        drop(chrome_guard);
+        drop(tracing_handle);
         Ok(())
     }
 

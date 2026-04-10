@@ -58,6 +58,7 @@ pub mod network;
 pub mod parser;
 pub mod planner;
 pub mod storage;
+pub mod tracing_setup;
 
 pub use network::SqlEngine;
 

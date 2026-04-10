@@ -288,6 +288,14 @@ async fn write_error_response(
 }
 
 /// One bidirectional stream: read one request frame, run engine (with timeout), write one response.
+///
+/// Parent span **`network.query_stream`** groups per-stream work in `tracing` / Chrome traces;
+/// nested spans include `network.read_frame`, `dispatch_client_frame`, `sql.query`, `network.write_response`.
+#[instrument(
+    level = "info",
+    name = "network.query_stream",
+    skip(send, recv, engine, policy, metrics, _permit),
+)]
 pub async fn handle_query_bidi_stream(
     mut send: SendStream,
     mut recv: RecvStream,
@@ -306,6 +314,7 @@ pub async fn handle_query_bidi_stream(
     let mut frame_buf = Vec::new();
 
     for _ in 0..MAX_FRAMES_PER_STREAM {
+        // Includes socket/stream wait time (dominant under load). Helps distinguish pure compute spans below.
         let read_res = read_application_frame_into(&mut recv, max_frame, &mut frame_buf)
             .instrument(tracing::info_span!("network.read_frame"))
             .await;
@@ -326,9 +335,17 @@ pub async fn handle_query_bidi_stream(
             }
         }
 
+        // Decode cost (no network wait) so we can compare with `network.read_frame`.
+        // Kept outside `dispatch_client_frame` for time-slicing in Chrome traces.
+        let decode_span = info_span!("network.decode_frame", frame_len = frame_buf.len());
+        let decoded = decode_span.in_scope(|| decode_client_frame_v1(&frame_buf));
+
         let t0 = Instant::now();
         let result = tokio::time::timeout(policy.query_timeout, async {
-            dispatch_client_frame(&frame_buf, engine.as_ref(), policy.as_ref())
+            match decoded {
+                Ok(_) => dispatch_client_frame(&frame_buf, engine.as_ref(), policy.as_ref()),
+                Err(e) => Err(e.into()),
+            }
         })
         .await;
 
@@ -354,8 +371,9 @@ pub async fn handle_query_bidi_stream(
         match result {
             Ok(bytes) => {
                 let out_len = bytes.len() as u64;
+                // Includes QUIC send backpressure/wait; encode cost is tracked inside dispatch (TLS buffer).
                 if let Err(e) = async { send.write_all(bytes.as_ref()).await }
-                    .instrument(tracing::info_span!("network.write_response"))
+                    .instrument(tracing::info_span!("network.write_response", out_len))
                     .await
                 {
                     warn!(error = %e, "write response failed");
@@ -399,7 +417,12 @@ pub async fn run_connection_streams(
     let remote = connection.remote_address();
 
     loop {
-        let incoming = match connection.accept_bi().await {
+        // Includes waiting for the peer to open a stream.
+        let incoming = match connection
+            .accept_bi()
+            .instrument(tracing::info_span!("network.accept_bi"))
+            .await
+        {
             Ok(s) => s,
             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
                 info!(%remote, "connection closed (application)");
@@ -416,7 +439,16 @@ pub async fn run_connection_streams(
         };
 
         let (mut send, recv) = incoming;
-        let permit = match sem.clone().acquire_owned().await {
+        // Separates "scheduler/queueing due to max streams" from network I/O.
+        let permit = match sem
+            .clone()
+            .acquire_owned()
+            .instrument(tracing::info_span!(
+                "network.acquire_stream_permit",
+                max = max
+            ))
+            .await
+        {
             Ok(p) => p,
             Err(_) => break,
         };

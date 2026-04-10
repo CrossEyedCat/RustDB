@@ -1430,6 +1430,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-chrome",
+ "tracing-log",
  "tracing-subscriber",
  "twox-hash",
  "uuid",

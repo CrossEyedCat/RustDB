@@ -129,6 +129,8 @@ cargo run -- server --host 127.0.0.1 --port 5432 --cert-out server.der
 
 Open `target/rustdb-chrome-trace.json` in `chrome://tracing` (Load). Spans above are emitted at **info**, so the default `RUST_LOG=info` is enough.
 
+Subscriber setup lives in [`tracing_setup`](../../src/tracing_setup.rs): [`tracing-subscriber`](https://docs.rs/tracing-subscriber) (`RUST_LOG`), optional [`tracing-chrome`](https://docs.rs/tracing-chrome), [`tracing-log`](https://docs.rs/tracing-log) so legacy `log::` calls are merged into the same pipeline — see [tokio-rs/tracing](https://github.com/tokio-rs/tracing).
+
 **Reading totals:** the **Totals** row can be misleading if a parent span used to wrap the whole process (now avoided). For “where did one query spend time?”, use **average wall duration** of `dispatch_client_frame`, `sql.query`, `network.read_frame`, and `network.write_response`, and **zoom** the timeline to the short bars when `rustdb_load` was running — not the long idle gap while the server waited for Ctrl+C.
 
 On Windows, use [`scripts/run_server_chrome_trace.ps1`](../../scripts/run_server_chrome_trace.ps1).
