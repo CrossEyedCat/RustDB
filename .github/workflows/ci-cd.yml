@@ -275,10 +275,11 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type:ref,event=branch
-            type:ref,event=pr
-            type:sha,prefix={{branch}}-
-            type:raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=pr
+            # Short digest tag (valid even when `branch` is empty on some PR/fork flows; avoid `prefix={{branch}}-` → leading `-`).
+            type=sha,format=short,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Choose image tag for downstream jobs
         id: set_image
@@ -288,13 +289,23 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # Prefer the deterministic sha tag (<ref_name>-<sha>) when present.
-          preferred="ghcr.io/${{ github.repository }}:${REF_NAME}-${SHA}"
-          if echo "$TAGS" | tr -d '\r' | grep -Fxq "$preferred"; then
-            image="$preferred"
+          # docker/metadata-action does not emit `${ref}-${full_40_char_sha}` by default; `type=sha`
+          # yields `sha-<short>`. Match that first, then legacy `ref-fullsha` if ever present.
+          repo="ghcr.io/${{ github.repository }}"
+          short_sha=$(printf '%s' "$SHA" | cut -c1-7)
+          preferred_digest="${repo}:sha-${short_sha}"
+          preferred_ref_fullsha="${repo}:${REF_NAME}-${SHA}"
+          image=""
+          if echo "$TAGS" | tr -d '\r' | grep -Fxq "$preferred_digest"; then
+            image="$preferred_digest"
+          elif echo "$TAGS" | tr -d '\r' | grep -Fxq "$preferred_ref_fullsha"; then
+            image="$preferred_ref_fullsha"
           else
-            # Fallback: first generated tag.
-            image="$(echo "$TAGS" | head -n1 | tr -d '\r')"
+            # PR pipelines: prefer stable `pr-<n>` if metadata produced it.
+            image=$(echo "$TAGS" | tr -d '\r' | grep -E ":pr-[0-9]+\$" | head -n1 || true)
+            if [ -z "${image:-}" ]; then
+              image="$(echo "$TAGS" | head -n1 | tr -d '\r')"
+            fi
           fi
           test -n "$image"
           echo "image=$image" >> "$GITHUB_OUTPUT"
