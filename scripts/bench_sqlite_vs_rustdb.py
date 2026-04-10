@@ -190,7 +190,7 @@ def rustdb_bench(
     mode: str,
     *,
     stream_batch: int = 1,
-    quic_max_streams: int = 32,
+    quic_max_streams: int = 256,
     quic_idle_secs: int = 30,
     distinguish_batches: bool = False,
 ) -> Point:
@@ -341,8 +341,8 @@ def main():
     ap.add_argument(
         "--rustdb-quic-max-streams",
         type=int,
-        default=32,
-        help="Forwarded to rustdb_load --quic-max-streams; should be >= server max concurrent streams per connection when using many parallel streams.",
+        default=256,
+        help="Forwarded to rustdb_load --quic-max-streams; should be >= server max concurrent streams per connection when using many parallel streams (default matches stock ServerConfig).",
     )
     ap.add_argument(
         "--rustdb-quic-idle-secs",

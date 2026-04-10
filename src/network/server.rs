@@ -48,7 +48,7 @@ impl Default for ServerConfig {
             max_connections: 100,
             connection_timeout: std::time::Duration::from_secs(30),
             enable_tls: false,
-            max_concurrent_streams_per_connection: 32,
+            max_concurrent_streams_per_connection: 256,
             query_timeout: std::time::Duration::from_secs(30),
             max_sql_bytes: 1024 * 1024,
             max_result_rows: 65_536,

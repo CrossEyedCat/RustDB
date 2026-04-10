@@ -107,7 +107,8 @@ struct Args {
 
     /// Max concurrent bidirectional streams (local QUIC transport). Should be >= server
     /// `max_concurrent_streams_per_connection` when opening many streams (e.g. shared connection + high concurrency).
-    #[arg(long, default_value_t = 32)]
+    /// In **`shared`** mode the effective value is raised to at least `--concurrency` so workers are not stream-starved.
+    #[arg(long, default_value_t = 256)]
     quic_max_streams: usize,
 
     /// QUIC max idle timeout (seconds), mirrored into the client transport to match `rustdb server` defaults.
@@ -179,12 +180,24 @@ struct LoadReport {
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = Args::parse();
 
+    let concurrency = args.concurrency.max(1);
+    let quic_max_effective = match args.connection_mode {
+        ConnectionMode::Shared => args.quic_max_streams.max(concurrency),
+        ConnectionMode::PerWorker => args.quic_max_streams.max(1),
+    };
+    if quic_max_effective != args.quic_max_streams {
+        eprintln!(
+            "rustdb_load: raised --quic-max-streams from {} to {} ({:?} + concurrency {})",
+            args.quic_max_streams, quic_max_effective, args.connection_mode, concurrency
+        );
+    }
+
     let addr: SocketAddr = args.addr.parse()?;
     let der = fs::read(&args.cert)?;
     let cert = CertificateDer::from(der);
     let client_cfg = build_quinn_client_config_with_limits(
         std::slice::from_ref(&cert),
-        args.quic_max_streams,
+        quic_max_effective,
         Duration::from_secs(args.quic_idle_secs),
     )?;
     let endpoint = make_client_endpoint(client_cfg)?;
@@ -237,7 +250,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     let start = Instant::now();
-    let concurrency = args.concurrency.max(1);
     let total_queries = args.queries.max(1);
 
     // Establish shared connection once (if requested).
@@ -388,7 +400,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let report = LoadReport {
         addr: args.addr.clone(),
         server_name: args.server_name.clone(),
-        concurrency: args.concurrency,
+        concurrency,
         queries: args.queries,
         ok,
         err,
@@ -400,7 +412,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         max_us: max,
         connection_mode: format!("{:?}", args.connection_mode),
         stream_batch: args.stream_batch,
-        quic_max_streams: args.quic_max_streams,
+        quic_max_streams: quic_max_effective,
         quic_idle_secs: args.quic_idle_secs,
     };
 

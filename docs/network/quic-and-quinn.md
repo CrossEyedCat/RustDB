@@ -106,8 +106,34 @@ To separate **QUIC/framing** from **SQL execution** in traces or Chrome JSON out
 | Span | Phase |
 |------|--------|
 | `network.read_frame` | Reading one application frame from the QUIC stream |
+| `dispatch_client_frame` | Decode → engine → encode (parent of `sql.query` for queries) |
 | `sql.query` | Parse/plan/execute inside `dispatch_client_frame` |
 | `network.write_response` | Writing the response bytes to the send half |
+
+### Working hypothesis (before measuring)
+
+A simple first guess: for **small** queries (e.g. `SELECT 1` or one-row lookups), **most wall time per request is inside `dispatch_client_frame` / `sql.query`**, not in `network.read_frame` or `network.write_response`, unless concurrency is so high that scheduling/QUIC dominates. **Validate only with a trace** — open the Chrome JSON and compare inclusive durations of those spans.
+
+### Chrome trace file (server)
+
+The server writes a **Chrome tracing** JSON when the env var is set (see [`cli.rs`](../../src/cli.rs)):
+
+```bash
+export RUSTDB_TRACE_CHROME_PATH="$PWD/target/rustdb-chrome-trace.json"
+export RUST_LOG=info
+cargo run -- server --host 127.0.0.1 --port 5432 --cert-out server.der
+# In another terminal (TLS name must match cert SAN — use 127.0.0.1, not localhost):
+# cargo run --bin rustdb_load -- --addr 127.0.0.1:5432 --cert server.der --server-name 127.0.0.1 --queries 30 --concurrency 1 --sql "SELECT 1"
+# Then Ctrl+C the server to flush the trace.
+```
+
+Open `target/rustdb-chrome-trace.json` in `chrome://tracing` (Load). Spans above are emitted at **info**, so the default `RUST_LOG=info` is enough.
+
+**Reading totals:** the **Totals** row can be misleading if a parent span used to wrap the whole process (now avoided). For “where did one query spend time?”, use **average wall duration** of `dispatch_client_frame`, `sql.query`, `network.read_frame`, and `network.write_response`, and **zoom** the timeline to the short bars when `rustdb_load` was running — not the long idle gap while the server waited for Ctrl+C.
+
+On Windows, use [`scripts/run_server_chrome_trace.ps1`](../../scripts/run_server_chrome_trace.ps1).
+
+Suggested load (not for comparing systems, only for slicing time): a short `rustdb_load --queries 50 --concurrency 1` so the trace stays small.
 
 Suggested load scenarios when comparing numbers: `rustdb_load --stream-batch 1` vs higher values; `shared` vs `per-worker` connection mode; sweep concurrency against server `max_concurrent_streams_per_connection`.
 
@@ -125,6 +151,19 @@ When publishing comparisons against PostgreSQL (TCP) or SQLite (in-process), rec
 - Server-side **`max_concurrent_streams_per_connection`** and **`max_connections`** relative to client concurrency.
 
 The script [`scripts/bench_sqlite_vs_rustdb.py`](../../scripts/bench_sqlite_vs_rustdb.py) forwards QUIC-related flags into `rustdb_load` and writes them into the generated `bench.md` for reproducibility.
+
+### Optimization matrix (stream batch vs latency)
+
+For **`select_table`**, **`shared`**, **`concurrency 128`**, sweep **`--stream-batch`** `1` vs `8` vs `16` and record **QPS** and **p50 / p95 / p99** from `bench.csv` / `bench.md`:
+
+- Windows: [`scripts/run_optimization_matrix.ps1`](../../scripts/run_optimization_matrix.ps1)
+- Unix: [`scripts/run_optimization_matrix.sh`](../../scripts/run_optimization_matrix.sh)
+
+Requires a running server at the chosen `--addr` and a matching `--cert`. Stock **`rustdb server`** defaults to **`max_concurrent_streams_per_connection = 256`**, aligned with `rustdb_load --quic-max-streams` (and with automatic raise in **`shared`** mode so the cap is at least **`--concurrency`**).
+
+### Trace under load
+
+For Chrome tracing with **more than one in-flight query** (or a long run), start the traced server ([`scripts/run_server_chrome_trace.ps1`](../../scripts/run_server_chrome_trace.ps1)), optionally with **`-LoadConcurrency 128`** to print a ready-made `rustdb_load` line, or run [`scripts/trace_under_load.ps1`](../../scripts/trace_under_load.ps1) / [`scripts/trace_under_load.sh`](../../scripts/trace_under_load.sh) in a second terminal. Compare relative time in **`network.read_frame`**, **`dispatch_client_frame`**, and **`sql.query`** spans (see § Profiling above).
 
 ## References
 

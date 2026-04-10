@@ -36,7 +36,7 @@ pub struct StreamPolicy {
 impl Default for StreamPolicy {
     fn default() -> Self {
         Self {
-            max_concurrent_streams_per_connection: 32,
+            max_concurrent_streams_per_connection: 256,
             query_timeout: Duration::from_secs(30),
             max_sql_bytes: 1024 * 1024,
             max_result_rows: 65_536,
@@ -148,7 +148,10 @@ pub enum ReadFrameError {
 /// Sync dispatch: decode → engine → encode (used inside per-query timeout).
 ///
 /// Returned [`Arc`] is cheap to clone on wire-cache hits (shared frame bytes).
-#[instrument(level = "trace", skip(frame, engine, policy), fields(frame_len = frame.len()))]
+///
+/// Span `dispatch_client_frame` is emitted at **info** so Chrome traces (`RUSTDB_TRACE_CHROME_PATH`)
+/// include engine time with default `RUST_LOG=info`.
+#[instrument(level = "info", skip(frame, engine, policy), fields(frame_len = frame.len()))]
 pub fn dispatch_client_frame(
     frame: &[u8],
     engine: &dyn EngineHandle,
@@ -304,7 +307,7 @@ pub async fn handle_query_bidi_stream(
 
     for _ in 0..MAX_FRAMES_PER_STREAM {
         let read_res = read_application_frame_into(&mut recv, max_frame, &mut frame_buf)
-            .instrument(tracing::trace_span!("network.read_frame"))
+            .instrument(tracing::info_span!("network.read_frame"))
             .await;
         match read_res {
             Ok(()) => {}
@@ -352,7 +355,7 @@ pub async fn handle_query_bidi_stream(
             Ok(bytes) => {
                 let out_len = bytes.len() as u64;
                 if let Err(e) = async { send.write_all(bytes.as_ref()).await }
-                    .instrument(tracing::trace_span!("network.write_response"))
+                    .instrument(tracing::info_span!("network.write_response"))
                     .await
                 {
                     warn!(error = %e, "write response failed");
@@ -363,7 +366,7 @@ pub async fn handle_query_bidi_stream(
             }
             Err(ref e) => {
                 match write_error_response(&mut send, e)
-                    .instrument(tracing::trace_span!("network.write_response"))
+                    .instrument(tracing::info_span!("network.write_response"))
                     .await
                 {
                     Ok(len) => record_metrics(QueryHandledOutcome::ErrorResponse, len),

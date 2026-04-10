@@ -193,11 +193,12 @@ impl Cli {
             let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
         }
 
-        // Ensure there's at least one long-lived span when Chrome tracing is enabled;
-        // otherwise the trace file may legitimately stay empty if only events are emitted.
-        let _trace_root = chrome_guard
-            .is_some()
-            .then(|| tracing::info_span!("rustdb_server").entered());
+        // Do **not** hold a session-long `entered()` span here: it would dominate Chrome's
+        // "Wall duration" totals (~time until Ctrl+C) and look like a 2-minute hotspot while
+        // real work is only the short `network.*` / `dispatch_client_frame` / `sql.query` spans.
+        if chrome_guard.is_some() {
+            info!("Chrome trace: judge query cost from short spans (network.read_frame, dispatch_client_frame, sql.query); ignore any huge parent totals.");
+        }
 
         println!("{}", t(MessageKey::Welcome));
 

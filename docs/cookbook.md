@@ -154,6 +154,26 @@ export RUSTDB_IMAGE="ghcr.io/crosseyedcat/rustdb@sha256:1f10f604c6355b6ef93c2431
 ./scripts/verify-cookbook-docker.sh
 ```
 
+### Бенчмарк через образ GHCR (QUIC + SQLite)
+
+Скрипт [`scripts/bench_via_ghcr_image.sh`](../scripts/bench_via_ghcr_image.sh): `docker pull`, том с данными, `CREATE`/`INSERT` для `bench_t`, сервер `rustdb server` с `--cert-out`, копирование leaf DER на хост и запуск [`scripts/bench_sqlite_vs_rustdb.py`](../scripts/bench_sqlite_vs_rustdb.py).
+
+```bash
+export RUSTDB_IMAGE="ghcr.io/crosseyedcat/rustdb:main"   # или тег вида main-<sha> с страницы пакета
+./scripts/bench_via_ghcr_image.sh
+```
+
+На **Windows** с Docker Desktop удобнее PowerShell-скрипт (если команда `bash` указывает на WSL без дистрибутива):
+
+```powershell
+$env:RUSTDB_IMAGE = "ghcr.io/crosseyedcat/rustdb:main-type-sha"   # при необходимости
+.\scripts\bench_via_ghcr_image.ps1
+```
+
+Либо Git Bash: `"C:\Program Files\Git\bin\bash.exe" -lc './scripts/bench_via_ghcr_image.sh'`.
+
+Опционально: `POSTGRES_DSN=...` для строки Postgres в отчёте. Результаты: `target/bench_docker_ghcr/bench.md` (или `OUT_DIR`).
+
 ---
 
 ## См. также
