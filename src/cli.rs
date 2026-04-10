@@ -447,6 +447,7 @@ mod tests {
             port,
             host,
             cert_out,
+            ..
         }) = cli.command
         {
             assert_eq!(port, Some(9000));
@@ -464,6 +465,7 @@ mod tests {
             port,
             host,
             cert_out,
+            ..
         }) = cli.command
         {
             assert!(port.is_none());
