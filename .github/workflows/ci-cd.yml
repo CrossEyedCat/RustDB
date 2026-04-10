@@ -275,10 +275,10 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type:ref,event=branch
-            type:ref,event=pr
-            type:sha,prefix={{branch}}-
-            type:raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Choose image tag for downstream jobs
         id: set_image
