@@ -145,19 +145,19 @@ pub enum ReadFrameError {
     PayloadTooLarge(u32),
 }
 
-/// Sync dispatch: decode → engine → encode (used inside per-query timeout).
+/// Engine + encode path for an already-decoded [`ClientMessage`] (single decode on the QUIC hot path).
 ///
-/// Returned [`Arc`] is cheap to clone on wire-cache hits (shared frame bytes).
-///
-/// Span `dispatch_client_frame` is emitted at **info** so Chrome traces (`RUSTDB_TRACE_CHROME_PATH`)
-/// include engine time with default `RUST_LOG=info`.
-#[instrument(level = "info", skip(frame, engine, policy), fields(frame_len = frame.len()))]
-pub fn dispatch_client_frame(
-    frame: &[u8],
+/// Span name stays **`dispatch_client_frame`** so Chrome traces stay comparable to older runs.
+#[instrument(
+    level = "info",
+    name = "dispatch_client_frame",
+    skip(msg, engine, policy)
+)]
+pub fn dispatch_client_message(
+    msg: ClientMessage,
     engine: &dyn EngineHandle,
     policy: &StreamPolicy,
 ) -> Result<Arc<[u8]>, DispatchError> {
-    let msg = decode_client_frame_v1(frame)?;
     match msg {
         ClientMessage::Query(q) => {
             let span = info_span!(
@@ -219,6 +219,21 @@ pub fn dispatch_client_frame(
         )
         .into()),
     }
+}
+
+/// Sync dispatch: decode → engine → encode (used inside per-query timeout).
+///
+/// Returned [`Arc`] is cheap to clone on wire-cache hits (shared frame bytes).
+///
+/// For callers that decode separately (e.g. to attribute decode in `network.decode_frame`), use
+/// [`dispatch_client_message`] instead to avoid decoding twice.
+pub fn dispatch_client_frame(
+    frame: &[u8],
+    engine: &dyn EngineHandle,
+    policy: &StreamPolicy,
+) -> Result<Arc<[u8]>, DispatchError> {
+    let msg = decode_client_frame_v1(frame)?;
+    dispatch_client_message(msg, engine, policy)
 }
 
 fn likely_select_without_from(sql: &str) -> bool {
@@ -343,7 +358,7 @@ pub async fn handle_query_bidi_stream(
         let t0 = Instant::now();
         let result = tokio::time::timeout(policy.query_timeout, async {
             match decoded {
-                Ok(_) => dispatch_client_frame(&frame_buf, engine.as_ref(), policy.as_ref()),
+                Ok(msg) => dispatch_client_message(msg, engine.as_ref(), policy.as_ref()),
                 Err(e) => Err(e.into()),
             }
         })
