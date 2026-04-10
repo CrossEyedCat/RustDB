@@ -4,7 +4,7 @@
 //! - [`EnvFilter`](tracing_subscriber::EnvFilter) from **`RUST_LOG`** (default `info`);
 //! - optional [`tracing-chrome`](https://docs.rs/tracing-chrome) JSON when **`RUSTDB_TRACE_CHROME_PATH`** is set
 //!   (open in Chrome’s **chrome://tracing**);
-//! - [`fmt`](tracing_subscriber::fmt) for human-readable stderr logs.
+//! - [`fmt`](mod@tracing_subscriber::fmt) for human-readable stderr logs.
 //!
 //! After the subscriber is installed, [`tracing-log`](https://docs.rs/tracing-log) bridges the legacy
 //! [`log`](https://docs.rs/log) crate so `log::info!` etc. are recorded by the same pipeline.

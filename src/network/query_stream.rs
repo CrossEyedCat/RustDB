@@ -294,7 +294,7 @@ async fn write_error_response(
 #[instrument(
     level = "info",
     name = "network.query_stream",
-    skip(send, recv, engine, policy, metrics, _permit),
+    skip(send, recv, engine, policy, metrics, _permit)
 )]
 pub async fn handle_query_bidi_stream(
     mut send: SendStream,

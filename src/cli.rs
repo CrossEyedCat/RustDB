@@ -447,12 +447,13 @@ mod tests {
             port,
             host,
             cert_out,
-            ..
+            exit_after_secs,
         }) = cli.command
         {
             assert_eq!(port, Some(9000));
             assert_eq!(host, Some("127.0.0.1".to_string()));
             assert!(cert_out.is_none());
+            assert!(exit_after_secs.is_none());
         } else {
             panic!();
         }
@@ -465,12 +466,13 @@ mod tests {
             port,
             host,
             cert_out,
-            ..
+            exit_after_secs,
         }) = cli.command
         {
             assert!(port.is_none());
             assert!(host.is_none());
             assert!(cert_out.is_none());
+            assert!(exit_after_secs.is_none());
         } else {
             panic!();
         }
