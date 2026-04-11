@@ -270,6 +270,7 @@ def rustdb_bench(
         raise RuntimeError(f"failed to parse rustdb_load JSON: {e}\nstdout:\n{cp.stdout}\nstderr:\n{cp.stderr}")
 
     max_us = int(data.get("max_us", 0))
+    mean_us = int(data.get("mean_us", 0))
     ok = int(data.get("ok", 0))
     err = int(data.get("err", 0))
 
@@ -282,7 +283,7 @@ def rustdb_bench(
         p95_ms=float(data["p95_us"]) / 1000.0,
         p99_ms=float(data["p99_us"]) / 1000.0,
         max_ms=float(max_us) / 1000.0,
-        mean_ms=0.0,
+        mean_ms=float(mean_us) / 1000.0,
         wall_ms=float(data.get("wall_ms", 0.0)),
         ok_count=ok,
         err_count=err,
@@ -615,7 +616,7 @@ def main():
             f.write("### RustDB-only: stream_batch sweep\n\n")
             f.write(
                 f"Second phase: same scenarios, **stream_batch** ∈ **{sweep_batches}** (labels include `sbN`). "
-                "Compare QPS and tail latency vs batching; `mean_ms` is omitted for RustDB (not in JSON).\n\n"
+                "Compare QPS and tail latency vs batching; mean latency from `rustdb_load` JSON (`mean_us`).\n\n"
             )
             for sc in requested_names:
                 pts = [p for p in sweep_pts if p.scenario == sc]
@@ -623,8 +624,8 @@ def main():
                     continue
                 f.write(f"#### {sc}\n\n")
                 f.write(
-                    "| system | c | qps | p50 | p95 | p99 | max | wall (ms) | ok | err |\n"
-                    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
+                    "| system | c | qps | p50 | p95 | p99 | max | mean | wall (ms) | ok | err |\n"
+                    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
                 )
                 for sysname in systems_in_scenario(pts):
                     rows = [p for p in pts if p.system == sysname]
@@ -632,7 +633,7 @@ def main():
                     for p in rows:
                         f.write(
                             f"| {p.system} | {p.concurrency} | {p.qps:.1f} | {p.p50_ms:.3f} | {p.p95_ms:.3f} | {p.p99_ms:.3f} | "
-                            f"{p.max_ms:.3f} | {p.wall_ms:.1f} | {p.ok_count} | {p.err_count} |\n"
+                            f"{p.max_ms:.3f} | {p.mean_ms:.3f} | {p.wall_ms:.1f} | {p.ok_count} | {p.err_count} |\n"
                         )
                 f.write("\n")
 
