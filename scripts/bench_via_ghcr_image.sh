@@ -75,7 +75,8 @@ fi
   --scenarios select_literal,select_table \
   --concurrency "$CONCURRENCY" \
   --queries "$QUERIES_PER_POINT" \
-  --rustdb-stream-batch 1 \
+  --rustdb-baseline-stream-batch 1 \
+  --rustdb-stream-sweep none \
   "${POSTGRES_ARGS[@]}"
 
 echo "==> wrote $OUT_DIR/bench.md and bench.csv"
