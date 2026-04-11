@@ -554,6 +554,8 @@ jobs:
             --concurrency 1,8,32,128 \
             --queries 5000 \
             --rustdb-connection-modes shared,per-worker \
+            --rustdb-baseline-stream-batch 1 \
+            --rustdb-stream-sweep 1,8,16 \
             --postgres-dsn "$POSTGRES_DSN"
 
       - name: Stop RustDB server (docker)
@@ -575,6 +577,7 @@ jobs:
             bench-out/bench.md
             bench-out/bench.csv
             bench-out/bench.png
+            bench-out/bench_stream_batch.png
             bench-out/rustdb_info.txt
             bench-out/rustdb_data_snapshot.txt
 

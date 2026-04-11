@@ -19,6 +19,13 @@ class Point:
     p50_ms: float
     p95_ms: float
     p99_ms: float
+    max_ms: float = 0.0
+    mean_ms: float = 0.0
+    wall_ms: float = 0.0
+    ok_count: int = 0
+    err_count: int = 0
+    suite: str = "baseline"  # "baseline" | "stream_sweep"
+    stream_batch: int | None = None
 
 
 def run(cmd: list[str], *, check=True, capture=True, cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -39,7 +46,7 @@ def quantile(sorted_vals, q: float):
     return float(sorted_vals[int(idx)])
 
 
-def sqlite_bench(db_path: Path, sql: str, concurrency: int, total: int, setup_sql: list[str]) -> Point:
+def sqlite_bench(db_path: Path, sql: str, concurrency: int, total: int, setup_sql: list[str], *, suite: str) -> Point:
     import sqlite3
 
     if db_path.exists():
@@ -89,6 +96,8 @@ def sqlite_bench(db_path: Path, sql: str, concurrency: int, total: int, setup_sq
     wall = time.perf_counter() - t_start
     lat_ms.sort()
     qps = total / wall if wall > 0 else 0.0
+    mean_ms = sum(lat_ms) / len(lat_ms) if lat_ms else 0.0
+    max_ms = lat_ms[-1] if lat_ms else 0.0
 
     return Point(
         system="sqlite",
@@ -98,10 +107,17 @@ def sqlite_bench(db_path: Path, sql: str, concurrency: int, total: int, setup_sq
         p50_ms=quantile(lat_ms, 0.50),
         p95_ms=quantile(lat_ms, 0.95),
         p99_ms=quantile(lat_ms, 0.99),
+        max_ms=max_ms,
+        mean_ms=mean_ms,
+        wall_ms=wall * 1000.0,
+        ok_count=total,
+        err_count=0,
+        suite=suite,
+        stream_batch=None,
     )
 
 
-def postgres_bench(dsn: str, sql: str, concurrency: int, total: int, setup_sql: list[str]) -> Point:
+def postgres_bench(dsn: str, sql: str, concurrency: int, total: int, setup_sql: list[str], *, suite: str) -> Point:
     """
     PostgreSQL client-server baseline (optional).
 
@@ -167,6 +183,8 @@ def postgres_bench(dsn: str, sql: str, concurrency: int, total: int, setup_sql: 
     wall = time.perf_counter() - t_start
     lat_ms.sort()
     qps = total / wall if wall > 0 else 0.0
+    mean_ms = sum(lat_ms) / len(lat_ms) if lat_ms else 0.0
+    max_ms = lat_ms[-1] if lat_ms else 0.0
 
     return Point(
         system="postgres",
@@ -176,6 +194,13 @@ def postgres_bench(dsn: str, sql: str, concurrency: int, total: int, setup_sql: 
         p50_ms=quantile(lat_ms, 0.50),
         p95_ms=quantile(lat_ms, 0.95),
         p99_ms=quantile(lat_ms, 0.99),
+        max_ms=max_ms,
+        mean_ms=mean_ms,
+        wall_ms=wall * 1000.0,
+        ok_count=total,
+        err_count=0,
+        suite=suite,
+        stream_batch=None,
     )
 
 
@@ -193,6 +218,7 @@ def rustdb_bench(
     quic_max_streams: int = 256,
     quic_idle_secs: int = 30,
     distinguish_batches: bool = False,
+    suite: str = "baseline",
 ) -> Point:
     exe = repo_root / "target" / "debug" / ("rustdb_load.exe" if os.name == "nt" else "rustdb_load")
     if not exe.exists():
@@ -243,6 +269,10 @@ def rustdb_bench(
     except Exception as e:
         raise RuntimeError(f"failed to parse rustdb_load JSON: {e}\nstdout:\n{cp.stdout}\nstderr:\n{cp.stderr}")
 
+    max_us = int(data.get("max_us", 0))
+    ok = int(data.get("ok", 0))
+    err = int(data.get("err", 0))
+
     return Point(
         system=rustdb_system_label(rustdb_mode, stream_batch, distinguish_batches),
         scenario="",
@@ -251,6 +281,13 @@ def rustdb_bench(
         p50_ms=float(data["p50_us"]) / 1000.0,
         p95_ms=float(data["p95_us"]) / 1000.0,
         p99_ms=float(data["p99_us"]) / 1000.0,
+        max_ms=float(max_us) / 1000.0,
+        mean_ms=0.0,
+        wall_ms=float(data.get("wall_ms", 0.0)),
+        ok_count=ok,
+        err_count=err,
+        suite=suite,
+        stream_batch=stream_batch,
     )
 
 
@@ -261,7 +298,7 @@ def rustdb_system_label(mode: str, stream_batch: int, distinguish_batches: bool)
     return f"rustdb({mode})"
 
 
-def plot(points: list[Point], out_png: Path):
+def plot(points: list[Point], out_png: Path, *, title_suffix: str = ""):
     import matplotlib
 
     matplotlib.use("Agg")
@@ -288,9 +325,12 @@ def plot(points: list[Point], out_png: Path):
 
     for r, sc in enumerate(scenarios):
         systems = systems_for_scenario(sc)
-        for c, metric in enumerate(["qps", "p95_ms"]):
+        for c, metric in enumerate(["qps", "p99_ms"]):
             ax = axes[r][c]
-            ax.set_title(f"{sc} — {metric}")
+            st = f"{sc} — {metric}"
+            if title_suffix:
+                st = f"{st} ({title_suffix})"
+            ax.set_title(st)
             ax.set_xlabel("concurrency")
             ax.set_ylabel(metric)
             for sysname in systems:
@@ -304,6 +344,17 @@ def plot(points: list[Point], out_png: Path):
 
     fig.tight_layout()
     fig.savefig(out_png)
+
+
+def parse_stream_sweep(raw: str) -> list[int]:
+    s = raw.strip()
+    if not s or s.lower() in ("none", "off", "-"):
+        return []
+    out = [int(x.strip()) for x in s.split(",") if x.strip()]
+    for sb in out:
+        if sb < 1:
+            raise SystemExit(f"invalid stream_batch in sweep: {sb}")
+    return out
 
 
 def main():
@@ -326,7 +377,7 @@ def main():
     ap.add_argument(
         "--scenarios",
         default="select_literal,select_table",
-        help="Comma-separated: `select_literal`, `select_table`. Example: `--scenarios select_table --concurrency 128 --rustdb-stream-batch 1,8`.",
+        help="Comma-separated: `select_literal`, `select_table`.",
     )
     ap.add_argument(
         "--rustdb-connection-modes",
@@ -334,9 +385,15 @@ def main():
         help="Comma-separated RustDB QUIC connection modes to benchmark: shared,per-worker.",
     )
     ap.add_argument(
-        "--rustdb-stream-batch",
-        default="1",
-        help="Comma-separated values forwarded to rustdb_load --stream-batch (e.g. `1,8` to compare stream batching).",
+        "--rustdb-baseline-stream-batch",
+        type=int,
+        default=1,
+        help="rustdb_load --stream-batch for the cross-engine baseline phase (SQLite/Postgres/RustDB @ same scenarios).",
+    )
+    ap.add_argument(
+        "--rustdb-stream-sweep",
+        default="1,8,16",
+        help="Optional second RustDB-only phase: comma-separated --stream-batch values (e.g. `1,8,16`). Empty or `none` disables.",
     )
     ap.add_argument(
         "--rustdb-quic-max-streams",
@@ -357,13 +414,12 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     cert_path = Path(args.cert)
     conc = [int(x.strip()) for x in args.concurrency.split(",") if x.strip()]
-    stream_batches = [int(x.strip()) for x in args.rustdb_stream_batch.split(",") if x.strip()]
-    if not stream_batches:
-        raise SystemExit("no values in --rustdb-stream-batch")
-    for sb in stream_batches:
-        if sb < 1:
-            raise SystemExit(f"invalid stream_batch: {sb}")
-    distinguish_batches = len(stream_batches) > 1 or (len(stream_batches) == 1 and stream_batches[0] != 1)
+    baseline_sb = args.rustdb_baseline_stream_batch
+    if baseline_sb < 1:
+        raise SystemExit(f"invalid --rustdb-baseline-stream-batch: {baseline_sb}")
+
+    sweep_batches = parse_stream_sweep(args.rustdb_stream_sweep)
+    distinguish_baseline_batch = baseline_sb != 1
 
     rustdb_modes = [m.strip() for m in args.rustdb_connection_modes.split(",") if m.strip()]
     for m in rustdb_modes:
@@ -391,32 +447,32 @@ def main():
 
     points: list[Point] = []
 
-    # SQLite + same SQL for rustdb_load + postgres_bench (per scenario).
+    # Phase 1: baseline — RustDB @ baseline_sb (fair vs SQLite/Postgres), then SQLite, then Postgres.
     for name, sqlite_sql, setup_sql in scenarios:
         rustdb_workload = sqlite_sql
         for mode in rustdb_modes:
-            for sb in stream_batches:
-                for c in conc:
-                    p = rustdb_bench(
-                        repo_root,
-                        cert_path,
-                        args.addr,
-                        args.server_name,
-                        rustdb_workload,
-                        c,
-                        args.queries,
-                        mode,
-                        stream_batch=sb,
-                        quic_max_streams=args.rustdb_quic_max_streams,
-                        quic_idle_secs=args.rustdb_quic_idle_secs,
-                        distinguish_batches=distinguish_batches,
-                    )
-                    p.scenario = name
-                    points.append(p)
+            for c in conc:
+                p = rustdb_bench(
+                    repo_root,
+                    cert_path,
+                    args.addr,
+                    args.server_name,
+                    rustdb_workload,
+                    c,
+                    args.queries,
+                    mode,
+                    stream_batch=baseline_sb,
+                    quic_max_streams=args.rustdb_quic_max_streams,
+                    quic_idle_secs=args.rustdb_quic_idle_secs,
+                    distinguish_batches=distinguish_baseline_batch,
+                    suite="baseline",
+                )
+                p.scenario = name
+                points.append(p)
 
         for c in conc:
             db_path = out_dir / f"sqlite_{name}_{c}.db"
-            p2 = sqlite_bench(db_path, sqlite_sql, c, args.queries, setup_sql)
+            p2 = sqlite_bench(db_path, sqlite_sql, c, args.queries, setup_sql, suite="baseline")
             p2.scenario = name
             points.append(p2)
 
@@ -429,16 +485,50 @@ def main():
                     "INSERT INTO bench_t (a) VALUES (1)",
                 ]
             for c in conc:
-                p3 = postgres_bench(args.postgres_dsn, sqlite_sql, c, args.queries, pg_setup)
+                p3 = postgres_bench(args.postgres_dsn, sqlite_sql, c, args.queries, pg_setup, suite="baseline")
                 p3.scenario = name
                 points.append(p3)
+
+    # Phase 2: RustDB-only stream_batch sweep (e.g. 1, 8, 16).
+    if sweep_batches:
+        distinguish_sweep = len(sweep_batches) > 1 or (len(sweep_batches) == 1 and sweep_batches[0] != 1)
+        for name, sqlite_sql, setup_sql in scenarios:
+            _ = setup_sql
+            rustdb_workload = sqlite_sql
+            for mode in rustdb_modes:
+                for sb in sweep_batches:
+                    for c in conc:
+                        p = rustdb_bench(
+                            repo_root,
+                            cert_path,
+                            args.addr,
+                            args.server_name,
+                            rustdb_workload,
+                            c,
+                            args.queries,
+                            mode,
+                            stream_batch=sb,
+                            quic_max_streams=args.rustdb_quic_max_streams,
+                            quic_idle_secs=args.rustdb_quic_idle_secs,
+                            distinguish_batches=distinguish_sweep,
+                            suite="stream_sweep",
+                        )
+                        p.scenario = name
+                        points.append(p)
 
     # Write CSV
     csv_path = out_dir / "bench.csv"
     with csv_path.open("w", encoding="utf-8") as f:
-        f.write("system,scenario,concurrency,qps,p50_ms,p95_ms,p99_ms\n")
+        f.write(
+            "suite,system,scenario,concurrency,stream_batch,qps,p50_ms,p95_ms,p99_ms,max_ms,mean_ms,wall_ms,ok,err\n"
+        )
         for p in points:
-            f.write(f"{p.system},{p.scenario},{p.concurrency},{p.qps:.3f},{p.p50_ms:.3f},{p.p95_ms:.3f},{p.p99_ms:.3f}\n")
+            sb = "" if p.stream_batch is None else str(p.stream_batch)
+            f.write(
+                f"{p.suite},{p.system},{p.scenario},{p.concurrency},{sb},"
+                f"{p.qps:.3f},{p.p50_ms:.3f},{p.p95_ms:.3f},{p.p99_ms:.3f},"
+                f"{p.max_ms:.3f},{p.mean_ms:.3f},{p.wall_ms:.3f},{p.ok_count},{p.err_count}\n"
+            )
 
     # Markdown summary
     md_path = out_dir / "bench.md"
@@ -446,16 +536,25 @@ def main():
     for p in points:
         by_scenario.setdefault(p.scenario, []).append(p)
 
+    baseline_pts = [p for p in points if p.suite == "baseline"]
+    sweep_pts = [p for p in points if p.suite == "stream_sweep"]
+
     with md_path.open("w", encoding="utf-8") as f:
-        f.write("## SQLite vs RustDB benchmark (smoke)\n\n")
+        f.write("## Benchmark SQLite vs RustDB (charts)\n\n")
+        f.write(
+            "Two phases: **baseline** (SQLite, optional Postgres, RustDB at a single `stream_batch`) and "
+            "optional **RustDB-only stream_batch sweep**.\n\n"
+        )
         f.write(f"- scenarios (this run): **{', '.join(requested_names)}**\n\n")
         f.write(f"- queries per point: **{args.queries}**\n")
         f.write(f"- concurrency: **{', '.join(map(str, conc))}**\n\n")
         f.write(f"- rustdb modes: **{', '.join(rustdb_modes)}**\n\n")
         f.write(
-            f"- rustdb_load QUIC settings (this run): **stream_batch** = {', '.join(map(str, stream_batches))}, "
-            f"**quic_max_streams={args.rustdb_quic_max_streams}**, **quic_idle_secs={args.rustdb_quic_idle_secs}** "
-            f"(see `rustdb_load --help`). Use e.g. `--rustdb-stream-batch 1,8` to compare QUIC stream batching.\n\n"
+            f"- baseline RustDB: **stream_batch={baseline_sb}**; sweep: **{sweep_batches or '(disabled)'}**\n\n"
+        )
+        f.write(
+            f"- rustdb_load QUIC (this run): **quic_max_streams={args.rustdb_quic_max_streams}**, "
+            f"**quic_idle_secs={args.rustdb_quic_idle_secs}**.\n\n"
         )
         f.write(
             "- Comparing RustDB to PostgreSQL or SQLite is only roughly comparable: RustDB uses QUIC + custom framing; "
@@ -487,32 +586,78 @@ def main():
             names.sort(key=sort_key)
             return names
 
+        f.write("### Baseline (cross-engine)\n\n")
+        f.write(
+            f"RustDB uses **stream_batch={baseline_sb}** here; SQLite and Postgres are unchanged. "
+            f"Extra columns: max/mean latency, wall clock, ok/err (RustDB from `rustdb_load` JSON).\n\n"
+        )
+
         for sc in requested_names:
-            pts = by_scenario.get(sc)
+            pts = [p for p in baseline_pts if p.scenario == sc]
             if not pts:
                 continue
-            f.write(f"### {sc}\n\n")
-            f.write("| system | concurrency | qps | p50 (ms) | p95 (ms) | p99 (ms) |\n")
-            f.write("|---|---:|---:|---:|---:|---:|\n")
+            f.write(f"#### {sc}\n\n")
+            f.write(
+                "| system | c | qps | p50 | p95 | p99 | max | mean | wall (ms) | ok | err |\n"
+                "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
+            )
             for sysname in systems_in_scenario(pts):
                 rows = [p for p in pts if p.system == sysname]
                 rows.sort(key=lambda p: p.concurrency)
                 for p in rows:
-                    f.write(f"| {p.system} | {p.concurrency} | {p.qps:.1f} | {p.p50_ms:.3f} | {p.p95_ms:.3f} | {p.p99_ms:.3f} |\n")
+                    f.write(
+                        f"| {p.system} | {p.concurrency} | {p.qps:.1f} | {p.p50_ms:.3f} | {p.p95_ms:.3f} | {p.p99_ms:.3f} | "
+                        f"{p.max_ms:.3f} | {p.mean_ms:.3f} | {p.wall_ms:.1f} | {p.ok_count} | {p.err_count} |\n"
+                    )
             f.write("\n")
 
-        f.write("### Graphs\n\n")
-        f.write("- `bench.png` contains QPS and p95 latency vs concurrency for each scenario.\n")
+        if sweep_pts:
+            f.write("### RustDB-only: stream_batch sweep\n\n")
+            f.write(
+                f"Second phase: same scenarios, **stream_batch** ∈ **{sweep_batches}** (labels include `sbN`). "
+                "Compare QPS and tail latency vs batching; `mean_ms` is omitted for RustDB (not in JSON).\n\n"
+            )
+            for sc in requested_names:
+                pts = [p for p in sweep_pts if p.scenario == sc]
+                if not pts:
+                    continue
+                f.write(f"#### {sc}\n\n")
+                f.write(
+                    "| system | c | qps | p50 | p95 | p99 | max | wall (ms) | ok | err |\n"
+                    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
+                )
+                for sysname in systems_in_scenario(pts):
+                    rows = [p for p in pts if p.system == sysname]
+                    rows.sort(key=lambda p: (p.concurrency, p.stream_batch or 0))
+                    for p in rows:
+                        f.write(
+                            f"| {p.system} | {p.concurrency} | {p.qps:.1f} | {p.p50_ms:.3f} | {p.p95_ms:.3f} | {p.p99_ms:.3f} | "
+                            f"{p.max_ms:.3f} | {p.wall_ms:.1f} | {p.ok_count} | {p.err_count} |\n"
+                        )
+                f.write("\n")
 
-    # Plot
+        f.write("### Graphs\n\n")
+        f.write("- `bench.png`: baseline phase — QPS and **p99** vs concurrency per scenario.\n")
+        if sweep_pts:
+            f.write(
+                "- `bench_stream_batch.png`: stream_batch sweep — QPS and **p99** vs concurrency (RustDB only, `sbN` labels).\n"
+            )
+
+    # Plots
     png_path = out_dir / "bench.png"
-    plot(points, png_path)
+    if baseline_pts:
+        plot(baseline_pts, png_path, title_suffix="baseline")
+
+    png_sweep = out_dir / "bench_stream_batch.png"
+    if sweep_pts:
+        plot(sweep_pts, png_sweep, title_suffix="stream_batch sweep")
 
     print(f"Wrote: {md_path}")
     print(f"Wrote: {csv_path}")
     print(f"Wrote: {png_path}")
+    if sweep_pts:
+        print(f"Wrote: {png_sweep}")
 
 
 if __name__ == "__main__":
     sys.exit(main())
-

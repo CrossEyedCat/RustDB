@@ -42,7 +42,8 @@ $py = @(
   "--concurrency", "128",
   "--queries", "$Queries",
   "--rustdb-connection-modes", "shared",
-  "--rustdb-stream-batch", "1,8,16",
+  "--rustdb-baseline-stream-batch", "1",
+  "--rustdb-stream-sweep", "1,8,16",
   "--rustdb-quic-max-streams", "256"
 )
 
