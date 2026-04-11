@@ -168,6 +168,8 @@ struct LoadReport {
     p50_us: u128,
     p95_us: u128,
     p99_us: u128,
+    /// Arithmetic mean of per-query latencies (all scheduled queries, same set as percentiles).
+    mean_us: u128,
     max_us: u128,
     /// For cross-benchmark notes (e.g. vs TCP/Postgres): QUIC connection layout and batching.
     connection_mode: String,
@@ -383,6 +385,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     let wall = start.elapsed();
+    let sum_us: u128 = durations_us.iter().copied().sum();
+    let n_lat = durations_us.len();
+    let mean_us = if n_lat == 0 {
+        0u128
+    } else {
+        sum_us / (n_lat as u128)
+    };
     durations_us.sort_unstable();
 
     let total = ok + err;
@@ -409,6 +418,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         p50_us: p50,
         p95_us: p95,
         p99_us: p99,
+        mean_us,
         max_us: max,
         connection_mode: format!("{:?}", args.connection_mode),
         stream_batch: args.stream_batch,
@@ -435,10 +445,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("ok: {}  err: {}", report.ok, report.err);
         println!("wall: {:.2?}  throughput: {:.1} qps", wall, report.qps);
         println!(
-            "latency: p50={} p95={} p99={} max={}",
+            "latency: p50={} p95={} p99={} mean={} max={}",
             fmt_us(report.p50_us),
             fmt_us(report.p95_us),
             fmt_us(report.p99_us),
+            fmt_us(report.mean_us),
             fmt_us(report.max_us)
         );
     }
