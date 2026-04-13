@@ -1,50 +1,51 @@
-# Cookbook RustDB
+# RustDB cookbook
 
-Практические примеры для образа **GitHub Container Registry** [`ghcr.io/crosseyedcat/rustdb`](https://github.com/CrossEyedCat/RustDB/pkgs/container/rustdb). Команды ниже **проверялись** через `docker pull` и `docker run` (см. раздел «Проверка»).
+Hands-on examples for the **GitHub Container Registry** image [`ghcr.io/crosseyedcat/rustdb`](https://github.com/CrossEyedCat/RustDB/pkgs/container/rustdb). Commands below match the current CLI and packaged `config.toml`; re-verify after upgrading images (see [Verification](#verification)).
 
-## Образ и теги
+## Image and tags
 
-CI публикует теги вида:
+CI publishes several tag styles (see [`.github/workflows/ci-cd.yml`](../.github/workflows/ci-cd.yml) and `docker/metadata-action`):
 
-| Тег | Назначение |
-|-----|------------|
-| `latest` | Ветка по умолчанию (`main`), если включён в metadata |
-| `main` | Последняя сборка ветки `main` |
-| `main-<git-sha>` | Фиксация на коммит (`type=sha,prefix={{branch}}-` в workflow) |
+| Tag / pattern | Purpose |
+|----------------|---------|
+| `latest` | Default branch when enabled by metadata |
+| `main`, `develop` | Branch builds |
+| `sha-<short>` | Short Git SHA (reproducible alongside branch tags) |
+| `pr-<n>` | Pull-request pipelines |
 
-Подставляйте свой тег или **digest** для воспроизводимости:
+For bit-for-bit reproducibility, pin by **digest** from the package page:
 
 ```bash
 export RUSTDB_IMAGE="ghcr.io/crosseyedcat/rustdb:main"
-# или, например: ghcr.io/crosseyedcat/rustdb:main-7a3b2c1d
 docker pull "$RUSTDB_IMAGE"
+# Optional: export RUSTDB_IMAGE="ghcr.io/crosseyedcat/rustdb@sha256:<digest>"
 ```
 
-**Важно:** бинарь в образе может **отставать** от `main` в git (сборка по расписанию CI). Флаги `rustdb server --help` и порты смотрите в контейнере; для QUIC/фрейминга актуальное описание — в [docs/network/README.md](network/README.md).
+**Note:** the binary in the image may lag behind `main` in Git. Always check `rustdb server --help` and `/app/config/config.toml` inside the container. For QUIC framing, TLS leaf export, and clients, see [docs/network/README.md](network/README.md).
 
 ---
 
-## 1. Версия
+## 1. Version
 
 ```bash
 docker run --rm "$RUSTDB_IMAGE" rustdb --version
 ```
 
-Ожидаемо: строка вида `rustdb 0.1.0`.
+Expected: `rustdb 0.1.0` (or the version in the image’s `Cargo.toml`).
 
 ---
 
-## 2. Системная информация
+## 2. System information
 
 ```bash
 docker run --rm "$RUSTDB_IMAGE" rustdb info
 ```
 
-Печатает версию, язык по умолчанию, ОС и архитектуру внутри контейнера (обычно `linux` / `x86_64` или `aarch64`).
+Prints version, default language, OS, and architecture inside the container (typically `linux` / `x86_64` or `aarch64`).
 
 ---
 
-## 3. Язык интерфейса (i18n)
+## 3. Interface language (i18n)
 
 ```bash
 docker run --rm "$RUSTDB_IMAGE" rustdb language list
@@ -54,130 +55,145 @@ docker run --rm "$RUSTDB_IMAGE" rustdb language set en
 
 ---
 
-## 4. Запрос SQL (CLI, упрощённый путь)
+## 4. SQL via CLI (`query`)
 
-В текущем виде подкоманда `query` **не выполняет** полноценный SQL через движок (см. [README](../README.md) — публичный API и e2e в разработке); команда полезна для проверки CLI и локализации.
+`rustdb query` runs SQL **locally** through `SqlEngine` (same parse → plan → execute path as the QUIC server), using the configured data directory.
 
 ```bash
 docker run --rm "$RUSTDB_IMAGE" rustdb query "SELECT 1"
 docker run --rm "$RUSTDB_IMAGE" rustdb query "SELECT 1" -d mydb
 ```
 
+The second form uses `-d` / `--database` to resolve data under `data_directory` from config (default `./data`, i.e. `/app/data` when using the image layout).
+
+Coverage of SQL features is still growing; see [README.md](../README.md) for project status and test limitations.
+
 ---
 
-## 5. Создание «базы» (заглушка)
+## 5. Create a database directory (`create`)
+
+`rustdb create` creates a **directory** for a named database and writes a small `.rustdb` marker file. It does not register a full catalog entry everywhere in the stack—treat it as a filesystem helper.
 
 ```bash
 docker run --rm "$RUSTDB_IMAGE" rustdb create demo --data-dir /app/data
 ```
 
-Каталог `/app/data` в одноразовом контейнере не сохраняется; для данных смонтируйте volume (см. ниже).
+Ephemeral containers lose `/app/data` unless you mount a volume (next sections).
 
 ---
 
-## 6. Сервер в фоне (UDP)
+## 6. Server in the background (QUIC / UDP)
 
-Протокол доступа к сетевому слою в актуальном коде — **QUIC поверх UDP** (ALPN `rustdb-v1`). Для публикации порта хоста используйте **`/udp`**.
+The network entrypoint is **QUIC over UDP** with ALPN `rustdb-v1`. Map ports with **`/udp`**.
 
-В **проверенном** образе `rustdb server` по умолчанию слушает порт **8080** (см. `rustdb server --help` внутри контейнера). Пример:
+The image ships [`config.toml`](../config.toml) at `/app/config/config.toml` with **`network.port = 5432`**. Recommended invocation:
 
 ```bash
 docker rm -f rustdb-server 2>/dev/null || true
 docker run -d --name rustdb-server \
-  -p 8080:8080/udp \
+  -p 15432:5432/udp \
+  -v rustdb-data:/app/data \
   "$RUSTDB_IMAGE" \
-  rustdb server --host 0.0.0.0 --port 8080
-
-docker logs rustdb-server
+  rustdb --config /app/config/config.toml server --host 0.0.0.0 --cert-out /tmp/server.der
 ```
 
-Остановка:
+- `--host 0.0.0.0` is required for connections from the host or other containers.
+- `--cert-out` writes the dev TLS leaf (DER) for `rustdb_quic_client --cert` (copy out with `docker cp` if needed).
+
+Stop:
 
 ```bash
 docker stop rustdb-server && docker rm rustdb-server
 ```
 
-В **свежем коде** репозитория порт по умолчанию в `config.toml` — **5432**; после обновления образа проверьте `--help` и `config.toml` в образе.
+`Dockerfile` still **EXPOSE**s `8080`/`8081` for historical layout; the **QUIC listener port** comes from config or `--port`. To use another port: `--port 8080` and `-p 18080:8080/udp`.
 
 ---
 
-## 7. Данные и конфиг на диске
+## 7. Data and config on disk
 
-Пример с томом и конфигом только для чтения (пути как в [Dockerfile](../Dockerfile)):
+Example: named volume for data and a read-only host config (paths follow the [Dockerfile](../Dockerfile)):
 
 ```bash
 docker run --rm \
   -v rustdb-data:/app/data \
   -v "$(pwd)/config.toml:/app/config/config.toml:ro" \
   "$RUSTDB_IMAGE" \
-  rustdb info
+  rustdb --config /app/config/config.toml info
 ```
 
 ---
 
-## 8. QUIC-клиент (из исходников репозитория)
+## 8. QUIC client (build from this repository)
 
-Образ на GHCR содержит только бинарь **`rustdb`**. Отдельный пример **`rustdb_quic_client`** собирается из этого же репозитория:
+The GHCR image contains only the **`rustdb`** binary. Build **`rustdb_quic_client`** (and optionally **`rustdb_load`**) from source:
 
 ```bash
 git clone https://github.com/CrossEyedCat/RustDB.git && cd RustDB
 cargo build --release --bin rustdb_quic_client
 ```
 
-Дальше — по [docs/network/README.md](network/README.md): запуск `rustdb server`, экспорт leaf-сертификата (в новых версиях — `--cert-out`), подключение клиента с `--addr`, `--cert`, `--server-name`.
+Then follow [docs/network/README.md](network/README.md): run `rustdb server`, pass `--cert` / `--server-name`, and use `--addr` for `host:port`.
 
 ---
 
-## Проверка (как гоняли при написании cookbook)
+## Verification
 
-Команды проверялись на хосте с Docker после:
-
-```bash
-docker pull ghcr.io/crosseyedcat/rustdb:main
-```
-
-**Пример digest** на момент проверки (меняется при каждой новой сборке):
-
-```text
-ghcr.io/crosseyedcat/rustdb@sha256:1f10f604c6355b6ef93c243139b89c1ad143cfd6a422720adc913e3e7861c3c7
-```
-
-Закрепить образ по digest:
-
-```bash
-export RUSTDB_IMAGE="ghcr.io/crosseyedcat/rustdb@sha256:1f10f604c6355b6ef93c243139b89c1ad143cfd6a422720adc913e3e7861c3c7"
-```
-
-Автоматический прогон тех же шагов на Linux/macOS:
+The repository script re-runs the main checks against an image (default `ghcr.io/crosseyedcat/rustdb:main`):
 
 ```bash
 ./scripts/verify-cookbook-docker.sh
+# or: RUSTDB_IMAGE=ghcr.io/crosseyedcat/rustdb:sha-abc1234 ./scripts/verify-cookbook-docker.sh
 ```
-
-### Бенчмарк через образ GHCR (QUIC + SQLite)
-
-Скрипт [`scripts/bench_via_ghcr_image.sh`](../scripts/bench_via_ghcr_image.sh): `docker pull`, том с данными, `CREATE`/`INSERT` для `bench_t`, сервер `rustdb server` с `--cert-out`, копирование leaf DER на хост и запуск [`scripts/bench_sqlite_vs_rustdb.py`](../scripts/bench_sqlite_vs_rustdb.py).
-
-```bash
-export RUSTDB_IMAGE="ghcr.io/crosseyedcat/rustdb:main"   # или тег вида main-<sha> с страницы пакета
-./scripts/bench_via_ghcr_image.sh
-```
-
-На **Windows** с Docker Desktop удобнее PowerShell-скрипт (если команда `bash` указывает на WSL без дистрибутива):
-
-```powershell
-$env:RUSTDB_IMAGE = "ghcr.io/crosseyedcat/rustdb:main-type-sha"   # при необходимости
-.\scripts\bench_via_ghcr_image.ps1
-```
-
-Либо Git Bash: `"C:\Program Files\Git\bin\bash.exe" -lc './scripts/bench_via_ghcr_image.sh'`.
-
-Опционально: `POSTGRES_DSN=...` для строки Postgres в отчёте. Результаты: `target/bench_docker_ghcr/bench.md` (или `OUT_DIR`).
 
 ---
 
-## См. также
+## Benchmark via GHCR (QUIC + SQLite comparison)
 
-- [README](../README.md) — статус проекта и ограничения тестов
-- [Сеть (QUIC)](network/README.md)
-- [Dockerfile](../Dockerfile), [docker-compose.yml](../docker-compose.yml) — ориентир для своих compose-стеков (в compose могут быть дополнительные сервисы, не обязательные для минимального cookbook)
+[`scripts/bench_via_ghcr_image.sh`](../scripts/bench_via_ghcr_image.sh) pulls the image, uses a data volume, warms up `bench_t`, starts `rustdb server` with `--cert-out`, copies the leaf cert to the host, and runs [`scripts/bench_sqlite_vs_rustdb.py`](../scripts/bench_sqlite_vs_rustdb.py).
+
+```bash
+export RUSTDB_IMAGE="ghcr.io/crosseyedcat/rustdb:main"
+./scripts/bench_via_ghcr_image.sh
+```
+
+By default this script runs the server on **UDP port 8080** inside the container (`UDP_PORT` on the host maps to `8080/udp`). That differs from the packaged `/app/config/config.toml` default (**5432**) but matches the script’s expectations; set `UDP_PORT` if you need a different host port.
+
+On **Windows** with Docker Desktop, you can use the PowerShell helper:
+
+```powershell
+$env:RUSTDB_IMAGE = "ghcr.io/crosseyedcat/rustdb:main"
+.\scripts\bench_via_ghcr_image.ps1
+```
+
+Or Git Bash: `"C:\Program Files\Git\bin\bash.exe" -lc './scripts/bench_via_ghcr_image.sh'`.
+
+Optional: set `POSTGRES_DSN` for Postgres rows in the report. Output defaults under `target/bench_docker_ghcr/` (or `OUT_DIR` if set).
+
+---
+
+## Profiling image (optional)
+
+The [Dockerfile](../Dockerfile) defines a **`profiler`** stage (Linux `perf` + `cargo flamegraph`). Example:
+
+```bash
+docker build -t rustdb-prof --target profiler .
+# See comments in Dockerfile for run invocation
+```
+
+For CI-style flame graphs and tracing, see [CONTRIBUTING.md](../CONTRIBUTING.md) (`workflow_dispatch` jobs).
+
+---
+
+## `docker-compose.yml` in this repo
+
+[`docker-compose.yml`](../docker-compose.yml) is an **illustrative** stack (Redis, Prometheus, Grafana, etc.). Comments mentioning HTTP/gRPC ports do **not** match the current QUIC/UDP server. For a minimal RustDB setup, prefer the `docker run` examples above and override the service `command` to `rustdb --config /app/config/config.toml server ...` with **UDP** port mappings if you adapt Compose.
+
+---
+
+## See also
+
+- [README.md](../README.md) — goals, status, and test limitations  
+- [Network (QUIC)](network/README.md) — protocol and client/server boundary  
+- [Dockerfile](../Dockerfile), [`docker-compose.yml`](../docker-compose.yml) — build and optional orchestration  
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — CI jobs and contribution workflow  
