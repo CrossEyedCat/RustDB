@@ -35,6 +35,10 @@ on:
         description: "Total queries for trace profile and Flame Graph (rustdb_load)"
         required: false
         default: "20000"
+      saturation_concurrency_steps:
+        description: "Comma-separated concurrency ladder for RustDB vs Postgres saturation benchmark"
+        required: false
+        default: "1,2,4,8,16,32,64,128,256"
 
 env:
   CARGO_TERM_COLOR: always
@@ -580,6 +584,172 @@ jobs:
             bench-out/bench_stream_batch.png
             bench-out/rustdb_info.txt
             bench-out/rustdb_data_snapshot.txt
+
+  # Throughput saturation: ramp concurrency until curves plateau (RustDB QUIC vs Postgres TCP).
+  # Runs on main pushes (same cost tier as the SQLite comparison bench) and on manual dispatch.
+  bench_saturation_rustdb_postgres:
+    name: Benchmark saturation (RustDB vs Postgres)
+    runs-on: ubuntu-latest
+    needs: [docker]
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch'
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust (load generator)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip
+
+      - name: Install Python deps (matplotlib)
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install matplotlib "psycopg[binary]"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull image
+        env:
+          IMAGE: ${{ needs.docker.outputs.image }}
+        run: |
+          set -euo pipefail
+          test -n "$IMAGE"
+          echo "RUSTDB_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker pull "$IMAGE"
+
+      - name: Build rustdb_load (host)
+        run: |
+          set -euo pipefail
+          cargo build -q --bin rustdb_load
+          cargo build -q --bin rustdb_quic_client
+
+      - name: Start RustDB server (docker)
+        run: |
+          set -euo pipefail
+          name="rustdb-saturation-server"
+          vol="rustdb-saturation-vol"
+          rm -rf saturation-out
+          mkdir -p saturation-out
+          cat > saturation-out/config.toml <<'EOF'
+          name = "rustdb"
+          data_directory = "./data"
+          max_connections = 1000
+          connection_timeout = 30
+          query_timeout = 60
+          language = "en"
+
+          [network]
+          host = "0.0.0.0"
+          port = 5432
+          max_connections = 1000
+          EOF
+          docker rm -f "$name" >/dev/null 2>&1 || true
+          docker volume rm -f "$vol" >/dev/null 2>&1 || true
+          docker volume create "$vol" >/dev/null
+          docker run -d --name "$name" -p 15432:5432/udp \
+            -v "$vol:/app/data" \
+            -v "$PWD/saturation-out/config.toml:/app/config/config.toml:ro" \
+            "$RUSTDB_IMAGE" \
+            sh -c "rustdb --config /app/config/config.toml server --host 0.0.0.0 --port 5432 --cert-out /tmp/server.der" >/dev/null
+          for i in $(seq 1 80); do
+            if docker exec "$name" sh -c "test -s /tmp/server.der" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.2
+          done
+          docker cp "$name:/tmp/server.der" saturation-out/server.der
+          test -s saturation-out/server.der
+          echo "RUSTDB_CERT=$PWD/saturation-out/server.der" >> "$GITHUB_ENV"
+          echo "RUSTDB_SERVER_CONTAINER=$name" >> "$GITHUB_ENV"
+          echo "RUSTDB_SERVER_VOLUME=$vol" >> "$GITHUB_ENV"
+
+      - name: Start PostgreSQL (docker)
+        run: |
+          set -euo pipefail
+          name="postgres-saturation"
+          docker rm -f "$name" >/dev/null 2>&1 || true
+          docker run -d --name "$name" -p 15441:5432 \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=postgres \
+            postgres:16-alpine \
+            -c max_connections=500 >/dev/null
+          ready=0
+          for i in $(seq 1 240); do
+            if docker exec "$name" pg_isready -U postgres >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 0.5
+          done
+          if [[ "$ready" -ne 1 ]]; then
+            echo "ERROR: Postgres did not become ready in time"
+            docker logs "$name" 2>&1 | tail -n 200 || true
+            exit 1
+          fi
+          echo "POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:15441/postgres" >> "$GITHUB_ENV"
+
+      - name: Warmup (RustDB table for optional SELECT)
+        run: |
+          set -euo pipefail
+          cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "CREATE TABLE IF NOT EXISTS bench_t (a INTEGER)"
+          cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "INSERT INTO bench_t (a) VALUES (1)" || true
+
+      - name: Run saturation sweep + report
+        env:
+          # `inputs` exists only for workflow_dispatch; on push use the default ladder.
+          SATURATION_STEPS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.saturation_concurrency_steps || '1,2,4,8,16,32,64,128,256' }}
+        run: |
+          set -euo pipefail
+          python3 scripts/bench_saturation_rustdb_postgres.py \
+            --out-dir saturation-out \
+            --cert "$RUSTDB_CERT" \
+            --addr 127.0.0.1:15432 \
+            --server-name localhost \
+            --postgres-dsn "$POSTGRES_DSN" \
+            --sql "SELECT 1" \
+            --concurrency-steps "$SATURATION_STEPS" \
+            --queries-per-step 10000 \
+            --plateau-frac 0.98
+
+      - name: Stop RustDB server (docker)
+        if: always()
+        run: |
+          docker rm -f "$RUSTDB_SERVER_CONTAINER" >/dev/null 2>&1 || true
+          docker volume rm -f "$RUSTDB_SERVER_VOLUME" >/dev/null 2>&1 || true
+
+      - name: Stop PostgreSQL (docker)
+        if: always()
+        run: |
+          docker rm -f postgres-saturation >/dev/null 2>&1 || true
+
+      - name: Upload saturation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdb-postgres-saturation
+          path: |
+            saturation-out/saturation.md
+            saturation-out/saturation.csv
+            saturation-out/saturation.png
 
   profile_quic_select_table:
     name: Trace profile (QUIC select_table @128)
