@@ -186,10 +186,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
 
+      # `rust-toolchain.toml` pins 1.90.0; Miri needs nightly — use +nightly explicitly.
       - name: Run Miri
         run: |
-          cargo miri setup
-          cargo miri test --lib
+          cargo +nightly miri setup
+          cargo +nightly miri test --lib
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation
 
