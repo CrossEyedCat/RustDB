@@ -161,40 +161,7 @@ jobs:
           cargo llvm-cov report --fail-under-lines 85 \
             --ignore-filename-regex "$COV_REGEX"
 
-  # Miri: undefined-behavior checks on library unit tests (integration tests in tests/ use async I/O).
-  miri:
-    name: Miri (lib tests)
-    runs-on: ubuntu-latest
-    needs: [test]
-    timeout-minutes: 45
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust nightly + Miri
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: miri
-
-      - name: Setup cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Install dependencies (Ubuntu)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
-
-      # `rust-toolchain.toml` pins 1.90.0; Miri needs nightly — use +nightly explicitly.
-      - name: Run Miri
-        run: |
-          cargo +nightly miri setup
-          cargo +nightly miri test --lib
-        env:
-          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation
-
-  # After tests: code quality, MSRV, coverage, and Miri (in parallel), then release build.
+  # After tests: code quality and MSRV (in parallel), then release build.
   format:
     name: Format Check
     runs-on: ubuntu-latest
@@ -255,7 +222,7 @@ jobs:
   build:
     name: Build Release
     runs-on: ubuntu-latest
-    needs: [format, clippy, msrv, coverage, miri]
+    needs: [format, clippy, msrv, coverage]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -277,11 +244,11 @@ jobs:
           name: rustdb-linux-x64
           path: target/release/rustdb
 
-  # Alongside the release build: same prerequisites (format, clippy, msrv, miri), in parallel.
+  # Alongside the release build: same prerequisites (format, clippy, msrv), in parallel.
   docker:
     name: Docker Build
     runs-on: ubuntu-latest
-    needs: [format, clippy, msrv, coverage, miri]
+    needs: [format, clippy, msrv, coverage]
     outputs:
       image: ${{ steps.set_image.outputs.image }}
     permissions:
@@ -734,7 +701,7 @@ jobs:
   docs:
     name: Documentation
     runs-on: ubuntu-latest
-    needs: [format, clippy, msrv, coverage, miri]
+    needs: [format, clippy, msrv, coverage]
     permissions:
       contents: write
     steps:

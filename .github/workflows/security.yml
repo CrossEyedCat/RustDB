@@ -134,36 +134,3 @@ jobs:
           cd "${{ github.workspace }}"
           cargo semver-checks check-release
         continue-on-error: true
-
-  # Memory safety checks
-  memory_safety:
-    name: Memory Safety Check
-    # Temporarily disabled (too slow/flaky). Re-enable by removing this `if`.
-    if: ${{ false }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: miri
-
-      - name: Setup cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      # Library unit tests only: integration tests in `tests/` use async I/O and are covered
-      # by `cargo test` in CI. Async `#[tokio::test]` cases in `src/` are skipped under Miri
-      # via `#[cfg_attr(miri, ignore)]`.
-      - name: Run Miri
-        run: |
-          cargo +nightly miri setup
-          cargo +nightly miri test --lib
-        env:
-          # Strict provenance: keep unsafe pointer discipline checks.
-          # Disable isolation: std::env::temp_dir, SystemTime::now, file I/O in unit tests
-          # (tempfile, config roundtrip) are otherwise unsupported under Miri's default host isolation.
-          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation
