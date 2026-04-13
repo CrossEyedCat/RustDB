@@ -239,7 +239,7 @@ jobs:
         run: cargo build --release --verbose
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rustdb-linux-x64
           path: target/release/rustdb
@@ -570,7 +570,7 @@ jobs:
           docker rm -f postgres-bench >/dev/null 2>&1 || true
 
       - name: Upload benchmark report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sqlite-vs-rustdb-bench
           path: |
@@ -629,7 +629,7 @@ jobs:
         timeout-minutes: 20
 
       - name: Upload profiling artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trace-profile-quic-select-table
           path: |
@@ -692,7 +692,7 @@ jobs:
         timeout-minutes: 25
 
       - name: Upload flame graph
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flamegraph-rustdb-load
           path: |
