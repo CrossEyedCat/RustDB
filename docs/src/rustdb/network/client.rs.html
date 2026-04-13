@@ -1,6 +1,6 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/network/client.rs`."><title>client.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-aa0817cf.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustdb" data-themes="" data-resource-suffix="" data-rustdoc-version="1.90.0 (1159e78c4 2025-09-14)" data-channel="1.90.0" data-search-js="search-fa3e91e5.js" data-settings-js="settings-5514c975.js" ><script src="../../../static.files/storage-68b7e25d.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-eebb9057.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-32bb7600.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustdb/network/</div>client.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Minimal QUIC client (TLS + Variant A: one bidirectional stream per query).
 <a href=#2 id=2 data-nosnippet>2</a>
-<a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use </span>std::net::SocketAddr;
+<a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use </span>std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>std::sync::Arc;
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>std::time::Duration;
 <a href=#6 id=6 data-nosnippet>6</a>
@@ -56,64 +56,79 @@
 <a href=#56 id=56 data-nosnippet>56</a></span><span class="kw">pub fn </span>make_client_endpoint(
 <a href=#57 id=57 data-nosnippet>57</a>    client_config: quinn::ClientConfig,
 <a href=#58 id=58 data-nosnippet>58</a>) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Endpoint, std::io::Error&gt; {
-<a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">let </span><span class="kw-2">mut </span>endpoint = quinn::Endpoint::client((std::net::Ipv4Addr::UNSPECIFIED, <span class="number">0</span>).into())<span class="question-mark">?</span>;
-<a href=#60 id=60 data-nosnippet>60</a>    endpoint.set_default_client_config(client_config);
-<a href=#61 id=61 data-nosnippet>61</a>    <span class="prelude-val">Ok</span>(endpoint)
-<a href=#62 id=62 data-nosnippet>62</a>}
-<a href=#63 id=63 data-nosnippet>63</a>
-<a href=#64 id=64 data-nosnippet>64</a><span class="doccomment">/// Dial `addr` using the endpoint default client config; `server_name` must match the server cert SAN (e.g. `127.0.0.1` when the dev cert is issued for that address).
-<a href=#65 id=65 data-nosnippet>65</a></span><span class="kw">pub async fn </span>connect(
-<a href=#66 id=66 data-nosnippet>66</a>    endpoint: <span class="kw-2">&amp;</span>quinn::Endpoint,
-<a href=#67 id=67 data-nosnippet>67</a>    addr: SocketAddr,
-<a href=#68 id=68 data-nosnippet>68</a>    server_name: <span class="kw-2">&amp;</span>str,
-<a href=#69 id=69 data-nosnippet>69</a>) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection, QuicClientError&gt; {
-<a href=#70 id=70 data-nosnippet>70</a>    <span class="kw">let </span>conn = endpoint.connect(addr, server_name)<span class="question-mark">?</span>.<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#71 id=71 data-nosnippet>71</a>    <span class="prelude-val">Ok</span>(conn)
-<a href=#72 id=72 data-nosnippet>72</a>}
-<a href=#73 id=73 data-nosnippet>73</a>
-<a href=#74 id=74 data-nosnippet>74</a><span class="doccomment">/// Variant A: open one bidirectional stream, send a single [`ClientMessage::Query`] frame, read one response frame.
-<a href=#75 id=75 data-nosnippet>75</a></span><span class="kw">pub async fn </span>query_once(
-<a href=#76 id=76 data-nosnippet>76</a>    connection: <span class="kw-2">&amp;</span>Connection,
-<a href=#77 id=77 data-nosnippet>77</a>    sql: <span class="kw-2">&amp;</span>str,
-<a href=#78 id=78 data-nosnippet>78</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ServerMessage, QuicClientError&gt; {
-<a href=#79 id=79 data-nosnippet>79</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = connection.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#80 id=80 data-nosnippet>80</a>    <span class="kw">let </span>frame = encode_client_message_v1(<span class="kw-2">&amp;</span>ClientMessage::Query(QueryPayload {
-<a href=#81 id=81 data-nosnippet>81</a>        sql: sql.to_string(),
-<a href=#82 id=82 data-nosnippet>82</a>    }))<span class="question-mark">?</span>;
-<a href=#83 id=83 data-nosnippet>83</a>    send.write_all(<span class="kw-2">&amp;</span>frame).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">let _ </span>= send.finish();
-<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">let </span>response = read_application_frame(<span class="kw-2">&amp;mut </span>recv, MAX_FRAME_PAYLOAD_BYTES)
-<a href=#86 id=86 data-nosnippet>86</a>        .<span class="kw">await
-<a href=#87 id=87 data-nosnippet>87</a>        </span>.map_err(QuicClientError::from)<span class="question-mark">?</span>;
-<a href=#88 id=88 data-nosnippet>88</a>    <span class="prelude-val">Ok</span>(decode_server_frame_v1(<span class="kw-2">&amp;</span>response)<span class="question-mark">?</span>)
-<a href=#89 id=89 data-nosnippet>89</a>}
-<a href=#90 id=90 data-nosnippet>90</a>
-<a href=#91 id=91 data-nosnippet>91</a><span class="attr">#[derive(Debug, Error)]
-<a href=#92 id=92 data-nosnippet>92</a></span><span class="kw">pub enum </span>QuicClientError {
-<a href=#93 id=93 data-nosnippet>93</a>    <span class="attr">#[error(<span class="string">"rustls: {0}"</span>)]
-<a href=#94 id=94 data-nosnippet>94</a>    </span>Rustls(<span class="attr">#[from] </span>rustls::Error),
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="attr">#[error(<span class="string">"QUIC connect: {0}"</span>)]
-<a href=#96 id=96 data-nosnippet>96</a>    </span>Connect(<span class="attr">#[from] </span>quinn::ConnectError),
-<a href=#97 id=97 data-nosnippet>97</a>    <span class="attr">#[error(<span class="string">"QUIC connection: {0}"</span>)]
-<a href=#98 id=98 data-nosnippet>98</a>    </span>Connection(<span class="attr">#[from] </span>quinn::ConnectionError),
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="attr">#[error(<span class="string">"read stream: {0}"</span>)]
-<a href=#100 id=100 data-nosnippet>100</a>    </span>Read(<span class="attr">#[from] </span>quinn::ReadExactError),
-<a href=#101 id=101 data-nosnippet>101</a>    <span class="attr">#[error(<span class="string">"write stream: {0}"</span>)]
-<a href=#102 id=102 data-nosnippet>102</a>    </span>Write(<span class="attr">#[from] </span>quinn::WriteError),
-<a href=#103 id=103 data-nosnippet>103</a>    <span class="attr">#[error(<span class="string">"frame protocol: {0}"</span>)]
-<a href=#104 id=104 data-nosnippet>104</a>    </span>Protocol(<span class="attr">#[from] </span>ProtocolError),
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="attr">#[error(<span class="string">"encode: {0}"</span>)]
-<a href=#106 id=106 data-nosnippet>106</a>    </span>Encode(<span class="attr">#[from] </span><span class="kw">crate</span>::network::framing::EncodeError),
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="attr">#[error(<span class="string">"QUIC crypto: {0}"</span>)]
-<a href=#108 id=108 data-nosnippet>108</a>    </span>QuicCrypto(<span class="attr">#[from] </span>quinn::crypto::rustls::NoInitialCipherSuite),
-<a href=#109 id=109 data-nosnippet>109</a>    <span class="attr">#[error(<span class="string">"read frame: {0}"</span>)]
-<a href=#110 id=110 data-nosnippet>110</a>    </span>ReadFrame(String),
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="attr">#[error(<span class="string">"QUIC transport parameter out of bounds: {0}"</span>)]
-<a href=#112 id=112 data-nosnippet>112</a>    </span>QuicBounds(<span class="attr">#[from] </span>quinn::VarIntBoundsExceeded),
-<a href=#113 id=113 data-nosnippet>113</a>}
-<a href=#114 id=114 data-nosnippet>114</a>
-<a href=#115 id=115 data-nosnippet>115</a><span class="kw">impl </span>From&lt;<span class="kw">crate</span>::network::query_stream::ReadFrameError&gt; <span class="kw">for </span>QuicClientError {
-<a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">fn </span>from(e: <span class="kw">crate</span>::network::query_stream::ReadFrameError) -&gt; <span class="self">Self </span>{
-<a href=#117 id=117 data-nosnippet>117</a>        QuicClientError::ReadFrame(e.to_string())
-<a href=#118 id=118 data-nosnippet>118</a>    }
-<a href=#119 id=119 data-nosnippet>119</a>}</code></pre></div></section></main></body></html>
+<a href=#59 id=59 data-nosnippet>59</a>    <span class="comment">// Prefer IPv6 unspecified so the client can connect to both IPv6 and IPv4 targets
+<a href=#60 id=60 data-nosnippet>60</a>    // (e.g. Docker Desktop may resolve `host.docker.internal` to an IPv6-only address).
+<a href=#61 id=61 data-nosnippet>61</a>    // Fall back to IPv4 unspecified if IPv6 bind is unavailable on the platform.
+<a href=#62 id=62 data-nosnippet>62</a>    </span><span class="kw">let </span>candidates = [
+<a href=#63 id=63 data-nosnippet>63</a>        SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), <span class="number">0</span>),
+<a href=#64 id=64 data-nosnippet>64</a>        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), <span class="number">0</span>),
+<a href=#65 id=65 data-nosnippet>65</a>    ];
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">let </span><span class="kw-2">mut </span>last_err: <span class="prelude-ty">Option</span>&lt;std::io::Error&gt; = <span class="prelude-val">None</span>;
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">for </span>addr <span class="kw">in </span>candidates {
+<a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">match </span>quinn::Endpoint::client(addr) {
+<a href=#69 id=69 data-nosnippet>69</a>            <span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>endpoint) =&gt; {
+<a href=#70 id=70 data-nosnippet>70</a>                endpoint.set_default_client_config(client_config);
+<a href=#71 id=71 data-nosnippet>71</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(endpoint);
+<a href=#72 id=72 data-nosnippet>72</a>            }
+<a href=#73 id=73 data-nosnippet>73</a>            <span class="prelude-val">Err</span>(e) =&gt; last_err = <span class="prelude-val">Some</span>(e),
+<a href=#74 id=74 data-nosnippet>74</a>        }
+<a href=#75 id=75 data-nosnippet>75</a>    }
+<a href=#76 id=76 data-nosnippet>76</a>    <span class="prelude-val">Err</span>(last_err.unwrap_or_else(|| std::io::Error::other(<span class="string">"failed to create QUIC client endpoint"</span>)))
+<a href=#77 id=77 data-nosnippet>77</a>}
+<a href=#78 id=78 data-nosnippet>78</a>
+<a href=#79 id=79 data-nosnippet>79</a><span class="doccomment">/// Dial `addr` using the endpoint default client config; `server_name` must match the server cert SAN (e.g. `127.0.0.1` when the dev cert is issued for that address).
+<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">pub async fn </span>connect(
+<a href=#81 id=81 data-nosnippet>81</a>    endpoint: <span class="kw-2">&amp;</span>quinn::Endpoint,
+<a href=#82 id=82 data-nosnippet>82</a>    addr: SocketAddr,
+<a href=#83 id=83 data-nosnippet>83</a>    server_name: <span class="kw-2">&amp;</span>str,
+<a href=#84 id=84 data-nosnippet>84</a>) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection, QuicClientError&gt; {
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">let </span>conn = endpoint.connect(addr, server_name)<span class="question-mark">?</span>.<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#86 id=86 data-nosnippet>86</a>    <span class="prelude-val">Ok</span>(conn)
+<a href=#87 id=87 data-nosnippet>87</a>}
+<a href=#88 id=88 data-nosnippet>88</a>
+<a href=#89 id=89 data-nosnippet>89</a><span class="doccomment">/// Variant A: open one bidirectional stream, send a single [`ClientMessage::Query`] frame, read one response frame.
+<a href=#90 id=90 data-nosnippet>90</a></span><span class="kw">pub async fn </span>query_once(
+<a href=#91 id=91 data-nosnippet>91</a>    connection: <span class="kw-2">&amp;</span>Connection,
+<a href=#92 id=92 data-nosnippet>92</a>    sql: <span class="kw-2">&amp;</span>str,
+<a href=#93 id=93 data-nosnippet>93</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ServerMessage, QuicClientError&gt; {
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = connection.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">let </span>frame = encode_client_message_v1(<span class="kw-2">&amp;</span>ClientMessage::Query(QueryPayload {
+<a href=#96 id=96 data-nosnippet>96</a>        sql: sql.to_string(),
+<a href=#97 id=97 data-nosnippet>97</a>    }))<span class="question-mark">?</span>;
+<a href=#98 id=98 data-nosnippet>98</a>    send.write_all(<span class="kw-2">&amp;</span>frame).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">let _ </span>= send.finish();
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">let </span>response = read_application_frame(<span class="kw-2">&amp;mut </span>recv, MAX_FRAME_PAYLOAD_BYTES)
+<a href=#101 id=101 data-nosnippet>101</a>        .<span class="kw">await
+<a href=#102 id=102 data-nosnippet>102</a>        </span>.map_err(QuicClientError::from)<span class="question-mark">?</span>;
+<a href=#103 id=103 data-nosnippet>103</a>    <span class="prelude-val">Ok</span>(decode_server_frame_v1(<span class="kw-2">&amp;</span>response)<span class="question-mark">?</span>)
+<a href=#104 id=104 data-nosnippet>104</a>}
+<a href=#105 id=105 data-nosnippet>105</a>
+<a href=#106 id=106 data-nosnippet>106</a><span class="attr">#[derive(Debug, Error)]
+<a href=#107 id=107 data-nosnippet>107</a></span><span class="kw">pub enum </span>QuicClientError {
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="attr">#[error(<span class="string">"rustls: {0}"</span>)]
+<a href=#109 id=109 data-nosnippet>109</a>    </span>Rustls(<span class="attr">#[from] </span>rustls::Error),
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="attr">#[error(<span class="string">"QUIC connect: {0}"</span>)]
+<a href=#111 id=111 data-nosnippet>111</a>    </span>Connect(<span class="attr">#[from] </span>quinn::ConnectError),
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="attr">#[error(<span class="string">"QUIC connection: {0}"</span>)]
+<a href=#113 id=113 data-nosnippet>113</a>    </span>Connection(<span class="attr">#[from] </span>quinn::ConnectionError),
+<a href=#114 id=114 data-nosnippet>114</a>    <span class="attr">#[error(<span class="string">"read stream: {0}"</span>)]
+<a href=#115 id=115 data-nosnippet>115</a>    </span>Read(<span class="attr">#[from] </span>quinn::ReadExactError),
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="attr">#[error(<span class="string">"write stream: {0}"</span>)]
+<a href=#117 id=117 data-nosnippet>117</a>    </span>Write(<span class="attr">#[from] </span>quinn::WriteError),
+<a href=#118 id=118 data-nosnippet>118</a>    <span class="attr">#[error(<span class="string">"frame protocol: {0}"</span>)]
+<a href=#119 id=119 data-nosnippet>119</a>    </span>Protocol(<span class="attr">#[from] </span>ProtocolError),
+<a href=#120 id=120 data-nosnippet>120</a>    <span class="attr">#[error(<span class="string">"encode: {0}"</span>)]
+<a href=#121 id=121 data-nosnippet>121</a>    </span>Encode(<span class="attr">#[from] </span><span class="kw">crate</span>::network::framing::EncodeError),
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="attr">#[error(<span class="string">"QUIC crypto: {0}"</span>)]
+<a href=#123 id=123 data-nosnippet>123</a>    </span>QuicCrypto(<span class="attr">#[from] </span>quinn::crypto::rustls::NoInitialCipherSuite),
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="attr">#[error(<span class="string">"read frame: {0}"</span>)]
+<a href=#125 id=125 data-nosnippet>125</a>    </span>ReadFrame(String),
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="attr">#[error(<span class="string">"QUIC transport parameter out of bounds: {0}"</span>)]
+<a href=#127 id=127 data-nosnippet>127</a>    </span>QuicBounds(<span class="attr">#[from] </span>quinn::VarIntBoundsExceeded),
+<a href=#128 id=128 data-nosnippet>128</a>}
+<a href=#129 id=129 data-nosnippet>129</a>
+<a href=#130 id=130 data-nosnippet>130</a><span class="kw">impl </span>From&lt;<span class="kw">crate</span>::network::query_stream::ReadFrameError&gt; <span class="kw">for </span>QuicClientError {
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="kw">fn </span>from(e: <span class="kw">crate</span>::network::query_stream::ReadFrameError) -&gt; <span class="self">Self </span>{
+<a href=#132 id=132 data-nosnippet>132</a>        QuicClientError::ReadFrame(e.to_string())
+<a href=#133 id=133 data-nosnippet>133</a>    }
+<a href=#134 id=134 data-nosnippet>134</a>}</code></pre></div></section></main></body></html>
