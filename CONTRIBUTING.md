@@ -77,7 +77,6 @@ Workflow: [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml). Pushes a
 |------------------------------|---------|
 | **Test Suite** (`test`) | **Ubuntu** matrix: `stable` and `beta`. `cargo test`, integration tests, doc tests. On **stable** additionally: `cargo audit`, **cargo-deny** (licenses, duplicates, advisories). |
 | **Coverage** | `cargo llvm-cov`, upload to **Codecov**, **≥85%** line threshold with `ignore-filename-regex` for heavy/internal modules. |
-| **Miri (lib tests)** | **Nightly** toolchain: `cargo miri setup` and `cargo miri test --lib` with strict provenance (integration tests in `tests/` are not run; async cases in `src/` are skipped via `#[cfg_attr(miri, ignore)]`). Depends on `test`. Gates **build**, **docker**, and **docs**. |
 | **Format Check** | `cargo fmt --all -- --check`. Depends on successful `test`. |
 | **Clippy Check** | `cargo clippy --all-targets -- -D warnings`. Depends on `test`. |
 | **MSRV** | `cargo check` on **Rust 1.90.0** (minimum supported Rust). Depends on `test`. |

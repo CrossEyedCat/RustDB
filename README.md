@@ -104,7 +104,7 @@ A more detailed component diagram (PlantUML) lives in [`architecture.puml`](arch
 | **Parallelism** | rayon, crossbeam, dashmap, parking_lot |
 | **Storage helpers** | memmap2, lz4_flex, twox-hash, uuid |
 | **Config** | TOML |
-| **CI** | GitHub Actions: tests, Miri (lib, nightly), clippy, fmt, MSRV, coverage (llvm-cov + Codecov), cargo-deny, cargo-audit, Docker build & smoke, benchmarks, optional trace + flamegraph (see [CONTRIBUTING.md](CONTRIBUTING.md)) |
+| **CI** | GitHub Actions: tests, clippy, fmt, MSRV, coverage (llvm-cov + Codecov), cargo-deny, cargo-audit, Docker build & smoke, benchmarks, optional trace + flamegraph (see [CONTRIBUTING.md](CONTRIBUTING.md)) |
 | **Containers** | Multi-stage Dockerfile; images pushed to **GHCR** |
 
 **Supported platform for “production-style” experiments:** **Linux**. Other OSes are not a supported deployment target.
