@@ -73,9 +73,7 @@ pub fn make_client_endpoint(
             Err(e) => last_err = Some(e),
         }
     }
-    Err(last_err.unwrap_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::Other, "failed to create QUIC client endpoint")
-    }))
+    Err(last_err.unwrap_or_else(|| std::io::Error::other("failed to create QUIC client endpoint")))
 }
 
 /// Dial `addr` using the endpoint default client config; `server_name` must match the server cert SAN (e.g. `127.0.0.1` when the dev cert is issued for that address).
