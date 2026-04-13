@@ -17,6 +17,27 @@ COPY benches ./benches
 
 RUN cargo build --release --bin rustdb
 
+# Profiling image (Linux perf + cargo flamegraph).
+# Usage:
+#   docker build -t rustdb-prof --target profiler .
+#   docker run --rm --privileged -v "$PWD:/app" -w /app rustdb-prof \
+#     cargo flamegraph --output profile-out/flame.svg --bin rustdb_load -- <args...>
+FROM rust:1.90-slim AS profiler
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    git \
+    pkg-config \
+    libssl-dev \
+    iproute2 \
+    linux-perf \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+
+# Install cargo-flamegraph into the image.
+RUN cargo install flamegraph
+
 # Final image — must match builder glibc (rust:1.90-slim uses newer Debian than bookworm).
 FROM debian:trixie-slim
 

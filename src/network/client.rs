@@ -1,6 +1,6 @@
 //! Minimal QUIC client (TLS + Variant A: one bidirectional stream per query).
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -56,9 +56,26 @@ pub fn build_quinn_client_config_with_limits(
 pub fn make_client_endpoint(
     client_config: quinn::ClientConfig,
 ) -> Result<quinn::Endpoint, std::io::Error> {
-    let mut endpoint = quinn::Endpoint::client((std::net::Ipv4Addr::UNSPECIFIED, 0).into())?;
-    endpoint.set_default_client_config(client_config);
-    Ok(endpoint)
+    // Prefer IPv6 unspecified so the client can connect to both IPv6 and IPv4 targets
+    // (e.g. Docker Desktop may resolve `host.docker.internal` to an IPv6-only address).
+    // Fall back to IPv4 unspecified if IPv6 bind is unavailable on the platform.
+    let candidates = [
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+    ];
+    let mut last_err: Option<std::io::Error> = None;
+    for addr in candidates {
+        match quinn::Endpoint::client(addr) {
+            Ok(mut endpoint) => {
+                endpoint.set_default_client_config(client_config);
+                return Ok(endpoint);
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::Other, "failed to create QUIC client endpoint")
+    }))
 }
 
 /// Dial `addr` using the endpoint default client config; `server_name` must match the server cert SAN (e.g. `127.0.0.1` when the dev cert is issued for that address).
