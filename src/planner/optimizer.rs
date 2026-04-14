@@ -300,11 +300,13 @@ impl QueryOptimizer {
             }
             PlanNode::Projection(p) => {
                 let input = self.pushdown_predicates_recursive(&p.input)?;
-                Ok(PlanNode::Projection(crate::planner::planner::ProjectionNode {
-                    columns: p.columns.clone(),
-                    input: Box::new(input),
-                    cost: p.cost,
-                }))
+                Ok(PlanNode::Projection(
+                    crate::planner::planner::ProjectionNode {
+                        columns: p.columns.clone(),
+                        input: Box::new(input),
+                        cost: p.cost,
+                    },
+                ))
             }
             PlanNode::Sort(s) => {
                 let input = self.pushdown_predicates_recursive(&s.input)?;

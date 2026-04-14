@@ -198,7 +198,9 @@ fn test_planner_rejects_set_operations_for_now() -> Result<()> {
     let err = planner.create_plan(&statement).unwrap_err();
     let msg = format!("{err:?}");
     assert!(
-        msg.contains("Set operations") || msg.contains("UNION") || msg.contains("parsed but not planned"),
+        msg.contains("Set operations")
+            || msg.contains("UNION")
+            || msg.contains("parsed but not planned"),
         "unexpected error message: {msg}"
     );
     Ok(())
