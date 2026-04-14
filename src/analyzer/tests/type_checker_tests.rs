@@ -1,6 +1,7 @@
 //! Tests for the type checker
 
 use crate::analyzer::{TypeChecker, TypeCompatibility};
+use crate::analyzer::type_checker::TypeWarningType;
 use crate::common::Result;
 use crate::parser::ast::*;
 
@@ -219,6 +220,38 @@ fn test_expression_types_sql92_predicates() -> Result<()> {
     let stmt = p.parse()?;
     let out = checker.check_statement(&stmt, &ctx)?;
     assert!(out.is_valid);
+
+    Ok(())
+}
+
+#[test]
+fn test_cast_strategy_records_conversions_and_warns_on_null_comparison() -> Result<()> {
+    let mut checker = TypeChecker::new();
+    let ctx = crate::analyzer::AnalysisContext::default();
+
+    // Integer + Real should require an implicit cast (recorded in type_conversions).
+    let stmt_sql = "SELECT 1 + 2.5";
+    let mut p = crate::parser::SqlParser::new(stmt_sql)?;
+    let stmt = p.parse()?;
+    let out = checker.check_statement(&stmt, &ctx)?;
+    assert!(out.is_valid);
+    assert!(
+        !out.type_info.type_conversions.is_empty(),
+        "expected at least one recorded implicit conversion"
+    );
+
+    // `= NULL` is a SQL footgun; we should emit a NULL semantics warning.
+    let stmt_sql = "SELECT 1 WHERE a = NULL";
+    let mut p = crate::parser::SqlParser::new(stmt_sql)?;
+    let stmt = p.parse()?;
+    let out = checker.check_statement(&stmt, &ctx)?;
+    assert!(out.is_valid);
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| matches!(w.warning_type, TypeWarningType::NullSemantics)),
+        "expected a NullSemantics warning for `= NULL`"
+    );
 
     Ok(())
 }

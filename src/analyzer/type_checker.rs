@@ -65,6 +65,8 @@ pub enum TypeWarningType {
     ImplicitConversion,
     PrecisionLoss,
     PerformanceImpact,
+    /// SQL NULL-related semantic caveat (e.g. `= NULL` yields UNKNOWN).
+    NullSemantics,
 }
 
 /// Type compatibility
@@ -556,17 +558,9 @@ impl TypeChecker {
                     return Ok(DataType::Text); // Return placeholder to continue analysis
                 }
 
-                // Add warning about implicit conversion
-                if matches!(compatibility, TypeCompatibility::CompatibleWithConversion) {
-                    result.add_warning(TypeCheckWarning {
-                        message: format!(
-                            "Implicit type conversion from {:?} to {:?}",
-                            right_type, left_type
-                        ),
-                        location: Some("binary expression".to_string()),
-                        warning_type: TypeWarningType::ImplicitConversion,
-                    });
-                }
+                // Record cast strategy and NULL semantics warnings.
+                self.maybe_record_cast(&eff_left, &eff_right, compatibility.clone(), result, "binary expression");
+                self.maybe_warn_null_comparisons(left, op, right, result);
 
                 self.get_binary_operation_result_type(&eff_left, &eff_right, op)
             }
@@ -702,21 +696,20 @@ impl TypeChecker {
                     result_type = Some(match &result_type {
                         None => then_t,
                         Some(acc) => {
-                            if matches!(
-                                self.check_compatibility(&then_t, acc),
-                                TypeCompatibility::Incompatible
-                            ) {
+                            let compat = self.check_compatibility(&then_t, acc);
+                            if matches!(compat, TypeCompatibility::Incompatible) {
                                 result.add_error(TypeCheckError {
                                     message:
                                         "CASE result expressions must have compatible types".to_string(),
                                     location: Some("CASE THEN".to_string()),
                                     expected_type: Some(acc.clone()),
-                                    actual_type: Some(then_t),
+                                    actual_type: Some(then_t.clone()),
                                     suggested_fix: Some(
                                         "Cast CASE branches to a common type".to_string(),
                                     ),
                                 });
                             }
+                            self.maybe_record_cast(&then_t, acc, compat, result, "CASE THEN");
                             acc.clone()
                         }
                     });
@@ -727,19 +720,18 @@ impl TypeChecker {
                     result_type = Some(match &result_type {
                         None => else_t,
                         Some(acc) => {
-                            if matches!(
-                                self.check_compatibility(&else_t, acc),
-                                TypeCompatibility::Incompatible
-                            ) {
+                            let compat = self.check_compatibility(&else_t, acc);
+                            if matches!(compat, TypeCompatibility::Incompatible) {
                                 result.add_error(TypeCheckError {
                                     message: "CASE ELSE expression must be compatible with THEN expressions"
                                         .to_string(),
                                     location: Some("CASE ELSE".to_string()),
                                     expected_type: Some(acc.clone()),
-                                    actual_type: Some(else_t),
+                                    actual_type: Some(else_t.clone()),
                                     suggested_fix: Some("Cast ELSE to match THEN type".to_string()),
                                 });
                             }
+                            self.maybe_record_cast(&else_t, acc, compat, result, "CASE ELSE");
                             acc.clone()
                         }
                     });
@@ -747,6 +739,91 @@ impl TypeChecker {
 
                 Ok(result_type.unwrap_or(DataType::Text))
             }
+        }
+    }
+
+    /// Minimal cast strategy: when types are compatible via conversion/loss, record it in
+    /// `TypeInformation.type_conversions` and emit a warning (unless strict mode escalates later).
+    fn maybe_record_cast(
+        &self,
+        from_type: &DataType,
+        to_type: &DataType,
+        compatibility: TypeCompatibility,
+        result: &mut TypeCheckResult,
+        location: &str,
+    ) {
+        match compatibility {
+            TypeCompatibility::Compatible => {}
+            TypeCompatibility::CompatibleWithConversion => {
+                result.type_info.type_conversions.push(TypeConversion {
+                    from_type: from_type.clone(),
+                    to_type: to_type.clone(),
+                    is_implicit: true,
+                    location: location.to_string(),
+                });
+                result.add_warning(TypeCheckWarning {
+                    message: format!(
+                        "Implicit cast required: {:?} -> {:?}",
+                        from_type, to_type
+                    ),
+                    location: Some(location.to_string()),
+                    warning_type: TypeWarningType::ImplicitConversion,
+                });
+            }
+            TypeCompatibility::CompatibleWithLoss => {
+                result.type_info.type_conversions.push(TypeConversion {
+                    from_type: from_type.clone(),
+                    to_type: to_type.clone(),
+                    is_implicit: true,
+                    location: location.to_string(),
+                });
+                result.add_warning(TypeCheckWarning {
+                    message: format!(
+                        "Implicit cast with potential precision loss: {:?} -> {:?}",
+                        from_type, to_type
+                    ),
+                    location: Some(location.to_string()),
+                    warning_type: TypeWarningType::PrecisionLoss,
+                });
+            }
+            TypeCompatibility::Incompatible => {}
+        }
+    }
+
+    /// SQL NULL behavior (3-valued logic) reminders.
+    ///
+    /// We don't evaluate expressions here, but we can flag a common footgun:
+    /// `col = NULL` and `col <> NULL` are UNKNOWN in SQL; use `IS NULL`.
+    fn maybe_warn_null_comparisons(
+        &self,
+        left: &Expression,
+        op: &BinaryOperator,
+        right: &Expression,
+        result: &mut TypeCheckResult,
+    ) {
+        let is_cmp = matches!(
+            op,
+            BinaryOperator::Equal
+                | BinaryOperator::NotEqual
+                | BinaryOperator::LessThan
+                | BinaryOperator::LessThanOrEqual
+                | BinaryOperator::GreaterThan
+                | BinaryOperator::GreaterThanOrEqual
+        );
+        if !is_cmp {
+            return;
+        }
+
+        fn is_null_literal(e: &Expression) -> bool {
+            matches!(e, Expression::Literal(Literal::Null))
+        }
+
+        if is_null_literal(left) || is_null_literal(right) {
+            result.add_warning(TypeCheckWarning {
+                message: "Comparison with NULL yields UNKNOWN in SQL (use IS NULL / IS NOT NULL)".to_string(),
+                location: Some("NULL comparison".to_string()),
+                warning_type: TypeWarningType::NullSemantics,
+            });
         }
     }
 

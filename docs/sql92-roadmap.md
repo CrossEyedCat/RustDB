@@ -75,9 +75,9 @@ This document is a practical, file-by-file plan for incrementally expanding Rust
 - **Type checking**
   - [x] `CASE` result type unification
   - [x] Predicate typing for `IN/EXISTS/LIKE/BETWEEN/IS NULL`
-  - [ ] Implicit/explicit casts strategy (even if minimal)
+  - [x] Implicit/explicit casts strategy (even if minimal)
 - **SQL NULL behavior**
-  - [ ] 3-valued logic (TRUE/FALSE/UNKNOWN) model and rules for predicates
+  - [x] 3-valued logic (TRUE/FALSE/UNKNOWN) model and rules for predicates
   - [x] Consistent handling of `NULL` in comparisons
 
 ## Phase 3 — Planner: plan nodes and rewrites
