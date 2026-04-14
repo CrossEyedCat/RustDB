@@ -559,7 +559,13 @@ impl TypeChecker {
                 }
 
                 // Record cast strategy and NULL semantics warnings.
-                self.maybe_record_cast(&eff_left, &eff_right, compatibility.clone(), result, "binary expression");
+                self.maybe_record_cast(
+                    &eff_left,
+                    &eff_right,
+                    compatibility.clone(),
+                    result,
+                    "binary expression",
+                );
                 self.maybe_warn_null_comparisons(left, op, right, result);
 
                 self.get_binary_operation_result_type(&eff_left, &eff_right, op)
@@ -583,11 +589,7 @@ impl TypeChecker {
                 let _ = self.check_expression_types(expr, result)?;
                 Ok(DataType::Boolean)
             }
-            Expression::Like {
-                expr,
-                pattern,
-                ..
-            } => {
+            Expression::Like { expr, pattern, .. } => {
                 let _ = self.check_expression_types(expr, result)?;
                 let pat_t = self.check_expression_types(pattern, result)?;
                 if !matches!(pat_t, DataType::Text | DataType::Varchar { .. }) {
@@ -631,11 +633,14 @@ impl TypeChecker {
                                 TypeCompatibility::Incompatible
                             ) {
                                 result.add_error(TypeCheckError {
-                                    message: "IN list value type is not comparable to expression".to_string(),
+                                    message: "IN list value type is not comparable to expression"
+                                        .to_string(),
                                     location: Some("IN".to_string()),
                                     expected_type: Some(t_expr.clone()),
                                     actual_type: Some(t_v),
-                                    suggested_fix: Some("Cast values to a compatible type".to_string()),
+                                    suggested_fix: Some(
+                                        "Cast values to a compatible type".to_string(),
+                                    ),
                                 });
                             }
                         }
@@ -670,7 +675,8 @@ impl TypeChecker {
                             TypeCompatibility::Incompatible
                         ) {
                             result.add_error(TypeCheckError {
-                                message: "CASE operand and WHEN expression must be comparable".to_string(),
+                                message: "CASE operand and WHEN expression must be comparable"
+                                    .to_string(),
                                 location: Some("CASE WHEN".to_string()),
                                 expected_type: Some(ct.clone()),
                                 actual_type: Some(when_t),
@@ -699,8 +705,8 @@ impl TypeChecker {
                             let compat = self.check_compatibility(&then_t, acc);
                             if matches!(compat, TypeCompatibility::Incompatible) {
                                 result.add_error(TypeCheckError {
-                                    message:
-                                        "CASE result expressions must have compatible types".to_string(),
+                                    message: "CASE result expressions must have compatible types"
+                                        .to_string(),
                                     location: Some("CASE THEN".to_string()),
                                     expected_type: Some(acc.clone()),
                                     actual_type: Some(then_t.clone()),
@@ -762,10 +768,7 @@ impl TypeChecker {
                     location: location.to_string(),
                 });
                 result.add_warning(TypeCheckWarning {
-                    message: format!(
-                        "Implicit cast required: {:?} -> {:?}",
-                        from_type, to_type
-                    ),
+                    message: format!("Implicit cast required: {:?} -> {:?}", from_type, to_type),
                     location: Some(location.to_string()),
                     warning_type: TypeWarningType::ImplicitConversion,
                 });
@@ -820,7 +823,8 @@ impl TypeChecker {
 
         if is_null_literal(left) || is_null_literal(right) {
             result.add_warning(TypeCheckWarning {
-                message: "Comparison with NULL yields UNKNOWN in SQL (use IS NULL / IS NOT NULL)".to_string(),
+                message: "Comparison with NULL yields UNKNOWN in SQL (use IS NULL / IS NOT NULL)"
+                    .to_string(),
                 location: Some("NULL comparison".to_string()),
                 warning_type: TypeWarningType::NullSemantics,
             });

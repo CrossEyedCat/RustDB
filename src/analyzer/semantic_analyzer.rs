@@ -468,7 +468,9 @@ impl SemanticAnalyzer {
                 name
             }
             TableReference::Subquery { query, alias } => {
-                scope.table_refs.insert(alias.clone(), "<subquery>".to_string());
+                scope
+                    .table_refs
+                    .insert(alias.clone(), "<subquery>".to_string());
                 // Recurse into subquery.
                 self.check_select_objects(query, context, result)?;
                 // No schema existence check for subquery itself.
@@ -478,17 +480,17 @@ impl SemanticAnalyzer {
 
         if !table_name.is_empty() {
             if let Some(schema) = &context.schema {
-            let object_result = self.object_checker.check_table_exists(table_name, schema)?;
-            if !object_result.exists {
-                result.add_error(SemanticError {
-                    error_type: SemanticErrorType::ObjectNotFound,
-                    message: format!("Table '{}' does not exist", table_name),
-                    location: Some("FROM clause".to_string()),
-                    suggested_fix: Some(
-                        "Check table name spelling or create the table".to_string(),
-                    ),
-                });
-            }
+                let object_result = self.object_checker.check_table_exists(table_name, schema)?;
+                if !object_result.exists {
+                    result.add_error(SemanticError {
+                        error_type: SemanticErrorType::ObjectNotFound,
+                        message: format!("Table '{}' does not exist", table_name),
+                        location: Some("FROM clause".to_string()),
+                        suggested_fix: Some(
+                            "Check table name spelling or create the table".to_string(),
+                        ),
+                    });
+                }
             }
         }
 
@@ -503,7 +505,9 @@ impl SemanticAnalyzer {
                     name
                 }
                 TableReference::Subquery { query, alias } => {
-                    scope.table_refs.insert(alias.clone(), "<subquery>".to_string());
+                    scope
+                        .table_refs
+                        .insert(alias.clone(), "<subquery>".to_string());
                     self.check_select_objects(query, context, result)?;
                     continue;
                 }
@@ -570,7 +574,9 @@ impl SemanticAnalyzer {
                         error_type: SemanticErrorType::InvalidOperation,
                         message: format!("Unknown table reference/alias '{}'", table),
                         location: Some("qualified identifier".to_string()),
-                        suggested_fix: Some("Check FROM/JOIN aliases or qualify the correct table".to_string()),
+                        suggested_fix: Some(
+                            "Check FROM/JOIN aliases or qualify the correct table".to_string(),
+                        ),
                     });
                 }
             }

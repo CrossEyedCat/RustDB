@@ -81,8 +81,7 @@ fn test_analyze_select_with_columns() -> Result<()> {
 
 #[test]
 fn test_analyze_select_with_alias_and_qualified_identifiers() -> Result<()> {
-    let mut parser =
-        SqlParser::new("SELECT u.name FROM users AS u WHERE u.active IS NOT NULL")?;
+    let mut parser = SqlParser::new("SELECT u.name FROM users AS u WHERE u.active IS NOT NULL")?;
     let statement = parser.parse()?;
 
     let mut analyzer = SemanticAnalyzer::default();

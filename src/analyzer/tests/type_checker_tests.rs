@@ -1,7 +1,7 @@
 //! Tests for the type checker
 
-use crate::analyzer::{TypeChecker, TypeCompatibility};
 use crate::analyzer::type_checker::TypeWarningType;
+use crate::analyzer::{TypeChecker, TypeCompatibility};
 use crate::common::Result;
 use crate::parser::ast::*;
 
