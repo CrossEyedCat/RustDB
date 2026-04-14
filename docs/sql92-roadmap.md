@@ -38,25 +38,25 @@ This document is a practical, file-by-file plan for incrementally expanding Rust
 ### TODO (Parser/AST)
 
 - **Predicates / expressions**
-  - [ ] `IS NULL` / `IS NOT NULL`
-  - [ ] `LIKE` (and later `ESCAPE`)
-  - [ ] `BETWEEN`
-  - [ ] `IN (value, ...)`
-  - [ ] `IN (subquery)`
-  - [ ] `EXISTS (subquery)`
-  - [ ] `CASE ... WHEN ... THEN ... ELSE ... END`
+  - [x] `IS NULL` / `IS NOT NULL`
+  - [x] `LIKE` (and later `ESCAPE`)
+  - [x] `BETWEEN`
+  - [x] `IN (value, ...)`
+  - [x] `IN (subquery)`
+  - [x] `EXISTS (subquery)`
+  - [x] `CASE ... WHEN ... THEN ... ELSE ... END`
 - **Subqueries**
-  - [ ] Subquery in `FROM`: `FROM (SELECT ...) AS alias`
+  - [x] Subquery in `FROM`: `FROM (SELECT ...) AS alias`
   - [ ] Correlated subquery placeholders in the AST (scoping will be analyzer work)
 - **JOIN**
-  - [ ] `JOIN ... USING(col, ...)` (syntax + AST representation)
+  - [x] `JOIN ... USING(col, ...)` (syntax + AST representation)
 - **Set operations**
-  - [ ] `UNION [ALL]`
-  - [ ] `INTERSECT`
-  - [ ] `EXCEPT`
+  - [x] `UNION [ALL]`
+  - [x] `INTERSECT`
+  - [x] `EXCEPT`
 - **CREATE TABLE constraints (syntax)**
-  - [ ] Column constraints: `NOT NULL`, `DEFAULT`, `CHECK`, `UNIQUE`, `PRIMARY KEY`, `REFERENCES`
-  - [ ] Table constraints: `PRIMARY KEY(...)`, `UNIQUE(...)`, `FOREIGN KEY(...) REFERENCES ...`, `CHECK(...)`
+  - [x] Column constraints: `NOT NULL`, `DEFAULT`, `CHECK`, `UNIQUE`, `PRIMARY KEY`, `REFERENCES`
+  - [x] Table constraints: `PRIMARY KEY(...)`, `UNIQUE(...)`, `FOREIGN KEY(...) REFERENCES ...`, `CHECK(...)`
 
 ## Phase 2 — Analyzer: names, types, and NULL semantics
 
