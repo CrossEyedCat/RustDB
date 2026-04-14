@@ -187,6 +187,18 @@ impl SqlParser {
                         "PREPARE" => token.token_type == TokenType::Prepare,
                         "EXECUTE" => token.token_type == TokenType::Execute,
                         "AS" => token.token_type == TokenType::As,
+                        "KEY" => token.token_type == TokenType::Key,
+                        "REFERENCES" => token.token_type == TokenType::References,
+                        "DEFAULT" => token.token_type == TokenType::Default,
+                        "CHECK" => token.token_type == TokenType::Check,
+                        "PRIMARY" => token.token_type == TokenType::Primary,
+                        "FOREIGN" => token.token_type == TokenType::Foreign,
+                        "UNIQUE" => token.token_type == TokenType::Unique,
+                        "CASE" => token.token_type == TokenType::Case,
+                        "WHEN" => token.token_type == TokenType::When,
+                        "THEN" => token.token_type == TokenType::Then,
+                        "ELSE" => token.token_type == TokenType::Else,
+                        "END" => token.token_type == TokenType::End,
                         "INDEX" => token.token_type == TokenType::Index,
                         "ON" => token.token_type == TokenType::On,
                         "TABLE" => token.token_type == TokenType::Table,
@@ -339,7 +351,84 @@ impl SqlParser {
     }
 
     fn parse_comparison_expression(&mut self) -> Result<Expression> {
-        let left = self.parse_additive_expression()?;
+        let mut left = self.parse_additive_expression()?;
+
+        // SQL predicates (postfix-ish forms) take precedence here.
+        if self.match_token(&TokenType::IsNull) || self.match_token(&TokenType::IsNotNull) {
+            let negated = self.match_token(&TokenType::IsNotNull);
+            self.advance();
+            return Ok(Expression::IsNull {
+                expr: Box::new(left),
+                negated,
+            });
+        }
+
+        // [NOT] LIKE
+        if self.match_token(&TokenType::Not)
+            && matches!(
+                self.peek_token.as_ref().map(|t| t.token_type),
+                Some(TokenType::Like)
+            )
+        {
+            self.advance(); // NOT
+            self.advance(); // LIKE
+            let pattern = self.parse_additive_expression()?;
+            return Ok(Expression::Like {
+                expr: Box::new(left),
+                pattern: Box::new(pattern),
+                negated: true,
+            });
+        }
+        if self.match_token(&TokenType::Like) {
+            self.advance();
+            let pattern = self.parse_additive_expression()?;
+            return Ok(Expression::Like {
+                expr: Box::new(left),
+                pattern: Box::new(pattern),
+                negated: false,
+            });
+        }
+
+        // BETWEEN
+        if self.match_token(&TokenType::Between) {
+            self.advance();
+            let low = self.parse_additive_expression()?;
+            self.expect_keyword("AND")?;
+            let high = self.parse_additive_expression()?;
+            return Ok(Expression::Between {
+                expr: Box::new(left),
+                low: Box::new(low),
+                high: Box::new(high),
+            });
+        }
+
+        // IN ( ... )
+        if self.match_token(&TokenType::In) {
+            self.advance();
+            self.expect_token(&TokenType::LeftParen)?;
+            let list = if self.match_keyword("SELECT") {
+                let stmt = self.parse_select()?;
+                let SqlStatement::Select(sel) = stmt else {
+                    return Err(Error::parser("Expected SELECT in IN(subquery)".to_string()));
+                };
+                self.expect_token(&TokenType::RightParen)?;
+                InList::Subquery(Box::new(sel))
+            } else {
+                let vals = if self.match_token(&TokenType::RightParen) {
+                    Vec::new()
+                } else {
+                    self.parse_expression_list()?
+                };
+                self.expect_token(&TokenType::RightParen)?;
+                InList::Values(vals)
+            };
+            return Ok(Expression::In {
+                expr: Box::new(left),
+                list,
+            });
+        }
+
+        // Standard binary comparisons.
         let op = if self.match_token(&TokenType::Equal) {
             self.advance();
             Some(BinaryOperator::Equal)
@@ -366,11 +455,12 @@ impl SqlParser {
             return Ok(left);
         };
         let right = self.parse_additive_expression()?;
-        Ok(Expression::BinaryOp {
+        left = Expression::BinaryOp {
             left: Box::new(left),
             op,
             right: Box::new(right),
-        })
+        };
+        Ok(left)
     }
 
     fn parse_additive_expression(&mut self) -> Result<Expression> {
@@ -444,6 +534,47 @@ impl SqlParser {
     fn parse_simple_expression(&mut self) -> Result<Expression> {
         match &self.current_token {
             Some(token) => match &token.token_type {
+                TokenType::Exists => {
+                    self.advance();
+                    self.expect_token(&TokenType::LeftParen)?;
+                    let stmt = self.parse_select()?;
+                    let SqlStatement::Select(sel) = stmt else {
+                        return Err(Error::parser(
+                            "Expected SELECT in EXISTS(subquery)".to_string(),
+                        ));
+                    };
+                    self.expect_token(&TokenType::RightParen)?;
+                    Ok(Expression::Exists(Box::new(sel)))
+                }
+                TokenType::Case => {
+                    self.advance();
+                    // CASE [expr] WHEN ... THEN ... [ELSE ...] END
+                    let expr = if self.match_token(&TokenType::When) {
+                        None
+                    } else {
+                        Some(Box::new(self.parse_expression()?))
+                    };
+                    let mut when_clauses = Vec::new();
+                    while self.match_token(&TokenType::When) {
+                        self.advance();
+                        let condition = self.parse_expression()?;
+                        self.expect_keyword("THEN")?;
+                        let result = self.parse_expression()?;
+                        when_clauses.push(WhenClause { condition, result });
+                    }
+                    let else_clause = if self.match_token(&TokenType::Else) {
+                        self.advance();
+                        Some(Box::new(self.parse_expression()?))
+                    } else {
+                        None
+                    };
+                    self.expect_keyword("END")?;
+                    Ok(Expression::Case {
+                        expr,
+                        when_clauses,
+                        else_clause,
+                    })
+                }
                 TokenType::IntegerLiteral => {
                     let value = token
                         .value
@@ -565,12 +696,41 @@ impl SqlParser {
         // Parse FROM clause (optional)
         let from = if self.match_keyword("FROM") {
             self.advance();
-            let table_name = self.parse_identifier()?;
+
+            fn parse_table_ref(p: &mut SqlParser) -> Result<TableReference> {
+                if p.match_token(&TokenType::LeftParen) {
+                    // Subquery in FROM: (SELECT ...) [AS] alias
+                    p.advance();
+                    let stmt = p.parse_select()?;
+                    let SqlStatement::Select(sel) = stmt else {
+                        return Err(Error::parser("Expected SELECT in subquery".to_string()));
+                    };
+                    p.expect_token(&TokenType::RightParen)?;
+                    if p.match_keyword("AS") {
+                        p.advance();
+                    }
+                    let alias = p.parse_identifier()?;
+                    Ok(TableReference::Subquery {
+                        query: Box::new(sel),
+                        alias,
+                    })
+                } else {
+                    // Simple table reference with optional alias.
+                    let name = p.parse_identifier()?;
+                    let alias = if matches!(
+                        p.current_token.as_ref().map(|t| t.token_type),
+                        Some(TokenType::Identifier)
+                    ) {
+                        Some(p.parse_identifier()?)
+                    } else {
+                        None
+                    };
+                    Ok(TableReference::Table { name, alias })
+                }
+            }
+
             let mut from = FromClause {
-                table: TableReference::Table {
-                    name: table_name,
-                    alias: None,
-                },
+                table: parse_table_ref(self)?,
                 joins: Vec::new(),
             };
 
@@ -601,15 +761,26 @@ impl SqlParser {
                     break;
                 };
 
-                let join_table = self.parse_identifier()?;
-                let table = TableReference::Table {
-                    name: join_table,
-                    alias: None,
-                };
+                let table = parse_table_ref(self)?;
 
                 let condition = if self.match_keyword("ON") {
                     self.advance();
                     Some(self.parse_expression()?)
+                } else if self.match_token(&TokenType::Using) {
+                    self.advance();
+                    self.expect_token(&TokenType::LeftParen)?;
+                    let cols = self.parse_identifier_list()?;
+                    self.expect_token(&TokenType::RightParen)?;
+                    // Represent USING at the join clause level; semantic expansion happens later.
+                    // We store the columns separately and leave `condition` empty.
+                    // (Planner/analyzer can rewrite USING into equality predicates.)
+                    from.joins.push(JoinClause {
+                        join_type,
+                        table,
+                        condition: None,
+                        using_columns: Some(cols),
+                    });
+                    continue;
                 } else {
                     None
                 };
@@ -618,6 +789,7 @@ impl SqlParser {
                     join_type,
                     table,
                     condition,
+                    using_columns: None,
                 });
             }
 
@@ -692,7 +864,7 @@ impl SqlParser {
             offset = Some(n as u64);
         }
 
-        Ok(SqlStatement::Select(SelectStatement {
+        let base = SelectStatement {
             select_list,
             from,
             where_clause,
@@ -701,7 +873,53 @@ impl SqlParser {
             order_by,
             limit,
             offset,
-        }))
+        };
+
+        // SQL-92 set operations: UNION [ALL], INTERSECT, EXCEPT.
+        if self.match_token(&TokenType::Union)
+            || self.match_token(&TokenType::Intersect)
+            || self.match_token(&TokenType::Except)
+        {
+            let op = if self.match_token(&TokenType::Union) {
+                self.advance();
+                SetOperator::Union
+            } else if self.match_token(&TokenType::Intersect) {
+                self.advance();
+                SetOperator::Intersect
+            } else {
+                self.advance();
+                SetOperator::Except
+            };
+
+            let all = if op == SetOperator::Union && self.match_token(&TokenType::All) {
+                self.advance();
+                true
+            } else {
+                false
+            };
+
+            // Right operand must be a SELECT (parentheses not yet supported here).
+            if !self.match_keyword("SELECT") {
+                return Err(Error::parser(
+                    "Expected SELECT after set operator".to_string(),
+                ));
+            }
+            let rhs_stmt = self.parse_select()?;
+            let SqlStatement::Select(right) = rhs_stmt else {
+                return Err(Error::parser(
+                    "Expected SELECT after set operator".to_string(),
+                ));
+            };
+
+            return Ok(SqlStatement::SetOperation(SetOperationStatement {
+                left: base,
+                op,
+                all,
+                right,
+            }));
+        }
+
+        Ok(SqlStatement::Select(base))
     }
 
     fn parse_insert(&mut self) -> Result<SqlStatement> {
@@ -899,22 +1117,136 @@ impl SqlParser {
 
         self.expect_token(&TokenType::LeftParen)?;
 
-        let mut columns = Vec::new();
+        let mut columns: Vec<ColumnDefinition> = Vec::new();
+        let mut constraints: Vec<TableConstraint> = Vec::new();
 
+        // CREATE TABLE t ( <coldef or table constraint>, ... )
         loop {
-            let column_name = self.parse_identifier()?;
-            let data_type = self.parse_data_type()?;
+            // Table-level constraints start with keywords.
+            if self.match_token(&TokenType::Primary)
+                || self.match_token(&TokenType::Unique)
+                || self.match_token(&TokenType::Foreign)
+                || self.match_token(&TokenType::Check)
+                || self.match_token(&TokenType::Constraint)
+            {
+                // Optional CONSTRAINT <name> prefix (name currently ignored at AST level).
+                if self.match_token(&TokenType::Constraint) {
+                    self.advance();
+                    let _name = self.parse_identifier()?;
+                }
 
-            columns.push(ColumnDefinition {
-                name: column_name,
-                data_type,
-                constraints: Vec::new(),
-            });
+                let tc = if self.match_token(&TokenType::Primary) {
+                    self.advance();
+                    self.expect_keyword("KEY")?;
+                    self.expect_token(&TokenType::LeftParen)?;
+                    let cols = self.parse_identifier_list()?;
+                    self.expect_token(&TokenType::RightParen)?;
+                    TableConstraint::PrimaryKey(cols)
+                } else if self.match_token(&TokenType::Unique) {
+                    self.advance();
+                    self.expect_token(&TokenType::LeftParen)?;
+                    let cols = self.parse_identifier_list()?;
+                    self.expect_token(&TokenType::RightParen)?;
+                    TableConstraint::Unique(cols)
+                } else if self.match_token(&TokenType::Foreign) {
+                    self.advance();
+                    self.expect_keyword("KEY")?;
+                    self.expect_token(&TokenType::LeftParen)?;
+                    let cols = self.parse_identifier_list()?;
+                    self.expect_token(&TokenType::RightParen)?;
+                    self.expect_keyword("REFERENCES")?;
+                    let ref_table = self.parse_identifier()?;
+                    let ref_cols = if self.match_token(&TokenType::LeftParen) {
+                        self.advance();
+                        let cols2 = self.parse_identifier_list()?;
+                        self.expect_token(&TokenType::RightParen)?;
+                        cols2
+                    } else {
+                        Vec::new()
+                    };
+                    TableConstraint::ForeignKey {
+                        columns: cols,
+                        referenced_table: ref_table,
+                        referenced_columns: ref_cols,
+                    }
+                } else if self.match_token(&TokenType::Check) {
+                    self.advance();
+                    self.expect_token(&TokenType::LeftParen)?;
+                    let expr = self.parse_expression()?;
+                    self.expect_token(&TokenType::RightParen)?;
+                    TableConstraint::Check(expr)
+                } else {
+                    return Err(Error::parser("Unsupported table constraint".to_string()));
+                };
 
-            if !self.match_token(&TokenType::Comma) {
-                break;
+                constraints.push(tc);
+            } else {
+                // Column definition: name type [constraints...]
+                let column_name = self.parse_identifier()?;
+                let data_type = self.parse_data_type()?;
+
+                let mut col_constraints: Vec<ColumnConstraint> = Vec::new();
+                loop {
+                    if self.match_token(&TokenType::NotNull) {
+                        self.advance();
+                        col_constraints.push(ColumnConstraint::NotNull);
+                        continue;
+                    }
+                    if self.match_token(&TokenType::Unique) {
+                        self.advance();
+                        col_constraints.push(ColumnConstraint::Unique);
+                        continue;
+                    }
+                    if self.match_token(&TokenType::Primary) {
+                        self.advance();
+                        self.expect_keyword("KEY")?;
+                        col_constraints.push(ColumnConstraint::PrimaryKey);
+                        continue;
+                    }
+                    if self.match_token(&TokenType::Default) {
+                        self.advance();
+                        let expr = self.parse_expression()?;
+                        col_constraints.push(ColumnConstraint::Default(expr));
+                        continue;
+                    }
+                    if self.match_token(&TokenType::Check) {
+                        self.advance();
+                        self.expect_token(&TokenType::LeftParen)?;
+                        let expr = self.parse_expression()?;
+                        self.expect_token(&TokenType::RightParen)?;
+                        col_constraints.push(ColumnConstraint::Check(expr));
+                        continue;
+                    }
+                    if self.match_token(&TokenType::References) {
+                        self.advance();
+                        let table = self.parse_identifier()?;
+                        let column = if self.match_token(&TokenType::LeftParen) {
+                            self.advance();
+                            let c = self.parse_identifier()?;
+                            self.expect_token(&TokenType::RightParen)?;
+                            Some(c)
+                        } else {
+                            None
+                        };
+                        col_constraints.push(ColumnConstraint::References { table, column });
+                        continue;
+                    }
+
+                    break;
+                }
+
+                columns.push(ColumnDefinition {
+                    name: column_name,
+                    data_type,
+                    constraints: col_constraints,
+                });
             }
-            self.advance();
+
+            if self.match_token(&TokenType::Comma) {
+                self.advance();
+                continue;
+            }
+            break;
         }
 
         self.expect_token(&TokenType::RightParen)?;
@@ -922,7 +1254,7 @@ impl SqlParser {
         Ok(SqlStatement::CreateTable(CreateTableStatement {
             table_name,
             columns,
-            constraints: Vec::new(),
+            constraints,
             if_not_exists: false,
         }))
     }

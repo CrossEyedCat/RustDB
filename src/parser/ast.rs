@@ -34,6 +34,27 @@ pub enum SqlStatement {
     Prepare(PrepareStatement),
     /// EXECUTE prepared statement
     Execute(ExecuteStatement),
+
+    /// Set operations over SELECT statements (SQL-92: UNION/INTERSECT/EXCEPT).
+    ///
+    /// Note: currently represented as a single binary operation at the AST level.
+    SetOperation(SetOperationStatement),
+}
+
+/// Set operation statement: `<left> (UNION|INTERSECT|EXCEPT) [ALL] <right>`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetOperationStatement {
+    pub left: SelectStatement,
+    pub op: SetOperator,
+    pub all: bool,
+    pub right: SelectStatement,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SetOperator {
+    Union,
+    Intersect,
+    Except,
 }
 
 /// PREPARE statement: PREPARE name AS SELECT ...
@@ -99,7 +120,10 @@ pub enum TableReference {
 pub struct JoinClause {
     pub join_type: JoinType,
     pub table: TableReference,
+    /// `ON <expr>` condition (when present).
     pub condition: Option<Expression>,
+    /// `USING (<cols...>)` columns (when present).
+    pub using_columns: Option<Vec<String>>,
 }
 
 /// JOIN type

@@ -12,6 +12,8 @@
 
 **Contributions are welcome.** See [CONTRIBUTING.md](CONTRIBUTING.md) for workflow rules, CI job descriptions, and how to open issues and pull requests.
 
+**SQL coverage tracking:** the SQL-92-oriented implementation roadmap and checklist live in [`docs/sql92-roadmap.md`](docs/sql92-roadmap.md).
+
 ---
 
 ## Goals

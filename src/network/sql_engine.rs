@@ -181,6 +181,10 @@ impl SqlEngine {
             | SqlStatement::RollbackTransaction => {
                 Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
             }
+            SqlStatement::SetOperation(_) => Err(EngineError::new(
+                engine_error_code::UNSUPPORTED_SQL,
+                "set operations (UNION/INTERSECT/EXCEPT) are parsed but not executed yet",
+            )),
             _ => Err(EngineError::new(
                 engine_error_code::UNSUPPORTED_SQL,
                 "this SQL statement type is not supported by the server engine yet",
