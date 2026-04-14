@@ -100,6 +100,10 @@ fn test_optimizer_filter_over_join_pushdown_path() -> Result<()> {
     Ok(())
 }
 
+// NOTE: Do not push string conditions into TableScan.filter in optimizer: the executor's
+// `TableScanOperator` uses `contains()` on the row debug string, and pushing Debug-formatted
+// AST conditions would change semantics.
+
 #[test]
 fn test_optimizer_all_flags_off_still_runs() -> Result<()> {
     let settings = OptimizerSettings {

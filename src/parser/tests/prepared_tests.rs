@@ -9,6 +9,7 @@ use crate::parser::prepared::PreparedStatementCache;
 
 fn minimal_select_stmt() -> SqlStatement {
     SqlStatement::Select(SelectStatement {
+        distinct: false,
         select_list: vec![SelectItem::Wildcard],
         from: Some(FromClause {
             table: TableReference::Table {

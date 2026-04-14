@@ -74,6 +74,8 @@ pub struct ExecuteStatement {
 /// SELECT query
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelectStatement {
+    #[serde(default)]
+    pub distinct: bool,
     pub select_list: Vec<SelectItem>,
     pub from: Option<FromClause>,
     pub where_clause: Option<Expression>,
@@ -443,6 +445,7 @@ impl AstBuilder {
         });
 
         Ok(SqlStatement::Select(SelectStatement {
+            distinct: false,
             select_list,
             from,
             where_clause: None,

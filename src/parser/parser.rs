@@ -668,6 +668,13 @@ impl SqlParser {
     fn parse_select(&mut self) -> Result<SqlStatement> {
         self.expect_keyword("SELECT")?;
 
+        let distinct = if self.match_token(&TokenType::Distinct) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
         // Simple SELECT implementation
         let mut select_list = Vec::new();
 
@@ -868,6 +875,7 @@ impl SqlParser {
         }
 
         let base = SelectStatement {
+            distinct,
             select_list,
             from,
             where_clause,

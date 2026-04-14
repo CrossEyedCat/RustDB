@@ -17,6 +17,7 @@ fn assert_select(sql: &str) -> SelectStatement {
 #[test]
 fn select_parses_where_greater_than() {
     let s = assert_select("SELECT a FROM t WHERE a > 0");
+    assert!(!s.distinct);
     assert_eq!(
         s.where_clause,
         Some(Expression::BinaryOp {
@@ -60,6 +61,12 @@ fn select_parses_limit_offset() {
     let s = assert_select("SELECT * FROM t LIMIT 10 OFFSET 3");
     assert_eq!(s.limit, Some(10));
     assert_eq!(s.offset, Some(3));
+}
+
+#[test]
+fn select_parses_distinct() {
+    let s = assert_select("SELECT DISTINCT a FROM t");
+    assert!(s.distinct);
 }
 
 #[test]

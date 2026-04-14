@@ -680,6 +680,11 @@ impl QueryPlanner {
             SqlStatement::Insert(insert) => self.create_insert_plan(insert)?,
             SqlStatement::Update(update) => self.create_update_plan(update)?,
             SqlStatement::Delete(delete) => self.create_delete_plan(delete)?,
+            SqlStatement::SetOperation(_) => {
+                return Err(Error::semantic_analysis(
+                    "Set operations (UNION/INTERSECT/EXCEPT) are parsed but not planned yet",
+                ));
+            }
             _ => return Err(Error::semantic_analysis("Unsupported query type")),
         };
 

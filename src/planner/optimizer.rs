@@ -256,12 +256,23 @@ impl QueryOptimizer {
                         });
                     }
 
-                    Ok(PlanNode::Join(JoinNode {
+                    let new_join = PlanNode::Join(JoinNode {
                         join_type: join.join_type.clone(),
                         condition: join.condition.clone(),
                         left: Box::new(left),
                         right: Box::new(right),
                         cost: join.cost,
+                    });
+
+                    // Keep the original filter unless we can prove it was fully pushed down.
+                    // (Today, split_join_condition is conservative and may return None/None.)
+                    Ok(PlanNode::Filter(FilterNode {
+                        condition: filter.condition.clone(),
+                        predicate: filter.predicate.clone(),
+                        equality: filter.equality.clone(),
+                        input: Box::new(new_join),
+                        selectivity: filter.selectivity,
+                        cost: filter.cost,
                     }))
                 } else {
                     // For other nodes, simply apply the filter
@@ -285,6 +296,38 @@ impl QueryOptimizer {
                     left: Box::new(left),
                     right: Box::new(right),
                     cost: join.cost,
+                }))
+            }
+            PlanNode::Projection(p) => {
+                let input = self.pushdown_predicates_recursive(&p.input)?;
+                Ok(PlanNode::Projection(crate::planner::planner::ProjectionNode {
+                    columns: p.columns.clone(),
+                    input: Box::new(input),
+                    cost: p.cost,
+                }))
+            }
+            PlanNode::Sort(s) => {
+                let input = self.pushdown_predicates_recursive(&s.input)?;
+                Ok(PlanNode::Sort(crate::planner::planner::SortNode {
+                    sort_columns: s.sort_columns.clone(),
+                    input: Box::new(input),
+                    cost: s.cost,
+                }))
+            }
+            PlanNode::Limit(l) => {
+                let input = self.pushdown_predicates_recursive(&l.input)?;
+                Ok(PlanNode::Limit(crate::planner::planner::LimitNode {
+                    limit: l.limit,
+                    input: Box::new(input),
+                    cost: l.cost,
+                }))
+            }
+            PlanNode::Offset(o) => {
+                let input = self.pushdown_predicates_recursive(&o.input)?;
+                Ok(PlanNode::Offset(crate::planner::planner::OffsetNode {
+                    offset: o.offset,
+                    input: Box::new(input),
+                    cost: o.cost,
                 }))
             }
             _ => {

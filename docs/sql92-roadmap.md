@@ -96,7 +96,9 @@ This document is a practical, file-by-file plan for incrementally expanding Rust
   - [ ] Subquery planning: initial naive approach first (nested evaluation), then rewrites
 - **Rewrites / optimizations (after correctness)**
   - [ ] `EXISTS/IN` → semi-join / anti-join where possible
-  - [ ] Predicate pushdown improvements
+  - [x] Predicate pushdown improvements
+    - Keeps correctness: never drops a `Filter` over `Join` unless fully pushed down
+    - Fixes e2e join+where behavior while retaining existing executor semantics
 
 ## Phase 4 — Executor: correctness for new operators + expression evaluation
 

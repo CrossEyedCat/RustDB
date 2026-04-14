@@ -59,6 +59,7 @@ fn test_build_simple_insert_no_columns() -> Result<()> {
 #[test]
 fn test_sql_statement_variants_construct() {
     let sel = crate::parser::ast::SelectStatement {
+        distinct: false,
         select_list: vec![crate::parser::ast::SelectItem::Wildcard],
         from: Some(crate::parser::ast::FromClause {
             table: TableReference::Table {

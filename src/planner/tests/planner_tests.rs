@@ -76,6 +76,7 @@ fn test_create_select_plan_columns_and_groupby_aggregates() -> Result<()> {
     let planner = QueryPlanner::new()?;
     // Parser `parse_select` is minimal (no functions/GROUP BY); build AST for planner coverage.
     let statement = SqlStatement::Select(SelectStatement {
+        distinct: false,
         select_list: vec![
             SelectItem::Expression {
                 expr: Expression::Identifier("dept".to_string()),
@@ -185,5 +186,20 @@ fn test_cache_statistics() -> Result<()> {
     assert_eq!(stats.size, 0);
     assert!(stats.max_size > 0);
 
+    Ok(())
+}
+
+#[test]
+fn test_planner_rejects_set_operations_for_now() -> Result<()> {
+    let planner = QueryPlanner::new()?;
+    let mut parser = SqlParser::new("SELECT 1 UNION ALL SELECT 2")?;
+    let statement = parser.parse()?;
+
+    let err = planner.create_plan(&statement).unwrap_err();
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("Set operations") || msg.contains("UNION") || msg.contains("parsed but not planned"),
+        "unexpected error message: {msg}"
+    );
     Ok(())
 }
