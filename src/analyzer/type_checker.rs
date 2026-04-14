@@ -394,6 +394,44 @@ impl TypeChecker {
         for column in &create.columns {
             // Check data type validity
             self.validate_data_type(&column.data_type, result)?;
+
+            // Check column constraints with expressions.
+            for c in &column.constraints {
+                match c {
+                    ColumnConstraint::Default(expr) => {
+                        let _ = self.check_expression_types(expr, result)?;
+                    }
+                    ColumnConstraint::Check(expr) => {
+                        let t = self.check_expression_types(expr, result)?;
+                        if !matches!(t, DataType::Boolean) {
+                            result.add_error(TypeCheckError {
+                                message: "CHECK constraint must be boolean".to_string(),
+                                location: Some("CREATE TABLE column CHECK".to_string()),
+                                expected_type: Some(DataType::Boolean),
+                                actual_type: Some(t),
+                                suggested_fix: Some("Use a boolean predicate in CHECK".to_string()),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Check table constraints with expressions.
+        for tc in &create.constraints {
+            if let TableConstraint::Check(expr) = tc {
+                let t = self.check_expression_types(expr, result)?;
+                if !matches!(t, DataType::Boolean) {
+                    result.add_error(TypeCheckError {
+                        message: "Table CHECK constraint must be boolean".to_string(),
+                        location: Some("CREATE TABLE CHECK".to_string()),
+                        expected_type: Some(DataType::Boolean),
+                        actual_type: Some(t),
+                        suggested_fix: Some("Use a boolean predicate in CHECK".to_string()),
+                    });
+                }
+            }
         }
 
         Ok(())
@@ -547,9 +585,167 @@ impl TypeChecker {
                 // Determine function result type
                 self.get_function_result_type(name, &arg_types, result)
             }
-            _ => {
-                // Simplified handling of other expressions
-                Ok(DataType::Text)
+            Expression::IsNull { expr, .. } => {
+                let _ = self.check_expression_types(expr, result)?;
+                Ok(DataType::Boolean)
+            }
+            Expression::Like {
+                expr,
+                pattern,
+                ..
+            } => {
+                let _ = self.check_expression_types(expr, result)?;
+                let pat_t = self.check_expression_types(pattern, result)?;
+                if !matches!(pat_t, DataType::Text | DataType::Varchar { .. }) {
+                    result.add_warning(TypeCheckWarning {
+                        message: format!("LIKE pattern is typically text, got {:?}", pat_t),
+                        location: Some("LIKE".to_string()),
+                        warning_type: TypeWarningType::ImplicitConversion,
+                    });
+                }
+                Ok(DataType::Boolean)
+            }
+            Expression::Between { expr, low, high } => {
+                let t_expr = self.check_expression_types(expr, result)?;
+                let t_low = self.check_expression_types(low, result)?;
+                let t_high = self.check_expression_types(high, result)?;
+                if matches!(
+                    self.check_compatibility(&t_low, &t_expr),
+                    TypeCompatibility::Incompatible
+                ) || matches!(
+                    self.check_compatibility(&t_high, &t_expr),
+                    TypeCompatibility::Incompatible
+                ) {
+                    result.add_error(TypeCheckError {
+                        message: "BETWEEN bounds must be comparable to the expression".to_string(),
+                        location: Some("BETWEEN".to_string()),
+                        expected_type: Some(t_expr),
+                        actual_type: Some(t_low),
+                        suggested_fix: Some("Cast bounds to a compatible type".to_string()),
+                    });
+                }
+                Ok(DataType::Boolean)
+            }
+            Expression::In { expr, list } => {
+                let t_expr = self.check_expression_types(expr, result)?;
+                match list {
+                    InList::Values(vals) => {
+                        for v in vals {
+                            let t_v = self.check_expression_types(v, result)?;
+                            if matches!(
+                                self.check_compatibility(&t_v, &t_expr),
+                                TypeCompatibility::Incompatible
+                            ) {
+                                result.add_error(TypeCheckError {
+                                    message: "IN list value type is not comparable to expression".to_string(),
+                                    location: Some("IN".to_string()),
+                                    expected_type: Some(t_expr.clone()),
+                                    actual_type: Some(t_v),
+                                    suggested_fix: Some("Cast values to a compatible type".to_string()),
+                                });
+                            }
+                        }
+                    }
+                    InList::Subquery(sel) => {
+                        self.check_select_types(sel, result)?;
+                    }
+                }
+                Ok(DataType::Boolean)
+            }
+            Expression::Exists(sel) => {
+                self.check_select_types(sel, result)?;
+                Ok(DataType::Boolean)
+            }
+            Expression::Case {
+                expr,
+                when_clauses,
+                else_clause,
+            } => {
+                let case_expr_type = if let Some(e) = expr {
+                    Some(self.check_expression_types(e, result)?)
+                } else {
+                    None
+                };
+
+                let mut result_type: Option<DataType> = None;
+                for wc in when_clauses {
+                    if let Some(ct) = &case_expr_type {
+                        let when_t = self.check_expression_types(&wc.condition, result)?;
+                        if matches!(
+                            self.check_compatibility(&when_t, ct),
+                            TypeCompatibility::Incompatible
+                        ) {
+                            result.add_error(TypeCheckError {
+                                message: "CASE operand and WHEN expression must be comparable".to_string(),
+                                location: Some("CASE WHEN".to_string()),
+                                expected_type: Some(ct.clone()),
+                                actual_type: Some(when_t),
+                                suggested_fix: Some(
+                                    "Cast WHEN expression to match CASE operand type".to_string(),
+                                ),
+                            });
+                        }
+                    } else {
+                        let cond_t = self.check_expression_types(&wc.condition, result)?;
+                        if !matches!(cond_t, DataType::Boolean) {
+                            result.add_error(TypeCheckError {
+                                message: "CASE WHEN condition must be boolean".to_string(),
+                                location: Some("CASE WHEN".to_string()),
+                                expected_type: Some(DataType::Boolean),
+                                actual_type: Some(cond_t),
+                                suggested_fix: Some("Use a boolean predicate in WHEN".to_string()),
+                            });
+                        }
+                    }
+
+                    let then_t = self.check_expression_types(&wc.result, result)?;
+                    result_type = Some(match &result_type {
+                        None => then_t,
+                        Some(acc) => {
+                            if matches!(
+                                self.check_compatibility(&then_t, acc),
+                                TypeCompatibility::Incompatible
+                            ) {
+                                result.add_error(TypeCheckError {
+                                    message:
+                                        "CASE result expressions must have compatible types".to_string(),
+                                    location: Some("CASE THEN".to_string()),
+                                    expected_type: Some(acc.clone()),
+                                    actual_type: Some(then_t),
+                                    suggested_fix: Some(
+                                        "Cast CASE branches to a common type".to_string(),
+                                    ),
+                                });
+                            }
+                            acc.clone()
+                        }
+                    });
+                }
+
+                if let Some(e) = else_clause {
+                    let else_t = self.check_expression_types(e, result)?;
+                    result_type = Some(match &result_type {
+                        None => else_t,
+                        Some(acc) => {
+                            if matches!(
+                                self.check_compatibility(&else_t, acc),
+                                TypeCompatibility::Incompatible
+                            ) {
+                                result.add_error(TypeCheckError {
+                                    message: "CASE ELSE expression must be compatible with THEN expressions"
+                                        .to_string(),
+                                    location: Some("CASE ELSE".to_string()),
+                                    expected_type: Some(acc.clone()),
+                                    actual_type: Some(else_t),
+                                    suggested_fix: Some("Cast ELSE to match THEN type".to_string()),
+                                });
+                            }
+                            acc.clone()
+                        }
+                    });
+                }
+
+                Ok(result_type.unwrap_or(DataType::Text))
             }
         }
     }

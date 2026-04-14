@@ -717,6 +717,9 @@ impl SqlParser {
                 } else {
                     // Simple table reference with optional alias.
                     let name = p.parse_identifier()?;
+                    if p.match_keyword("AS") {
+                        p.advance();
+                    }
                     let alias = if matches!(
                         p.current_token.as_ref().map(|t| t.token_type),
                         Some(TokenType::Identifier)

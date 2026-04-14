@@ -421,24 +421,27 @@ impl AccessChecker {
     ) -> Result<()> {
         result.checks_performed += 1;
 
-        // Check access to tables in FROM
+        // Check access to tables in FROM (and recurse into subqueries).
         if let Some(from) = &select.from {
-            let table_name = match &from.table {
-                TableReference::Table { name, .. } => name,
-                TableReference::Subquery { .. } => {
-                    // Subqueries require separate processing
-                    return Ok(());
+            match &from.table {
+                TableReference::Table { name, .. } => {
+                    self.check_table_access(name, username, &Permission::Select, result)?;
                 }
-            };
-            self.check_table_access(table_name, username, &Permission::Select, result)?;
+                TableReference::Subquery { query, .. } => {
+                    self.check_select_access(query, username, result)?;
+                }
+            }
 
             // Check access to JOIN tables
             for join in &from.joins {
-                let join_table_name = match &join.table {
-                    TableReference::Table { name, .. } => name,
-                    TableReference::Subquery { .. } => continue, // Skip subqueries
-                };
-                self.check_table_access(join_table_name, username, &Permission::Select, result)?;
+                match &join.table {
+                    TableReference::Table { name, .. } => {
+                        self.check_table_access(name, username, &Permission::Select, result)?;
+                    }
+                    TableReference::Subquery { query, .. } => {
+                        self.check_select_access(query, username, result)?;
+                    }
+                }
             }
         }
 

@@ -8,6 +8,12 @@ use std::collections::HashMap;
 
 use super::{AccessChecker, MetadataCache, ObjectChecker, TypeChecker};
 
+#[derive(Debug, Clone, Default)]
+struct SelectScope {
+    /// Known table names and aliases visible in this SELECT (FROM + JOIN + subquery aliases).
+    table_refs: std::collections::HashMap<String, String>, // ref -> base name or "<subquery>"
+}
+
 /// Semantic analyzer settings
 #[derive(Debug, Clone)]
 pub struct SemanticAnalyzerSettings {
@@ -417,14 +423,29 @@ impl SemanticAnalyzer {
     ) -> Result<()> {
         result.statistics.objects_checked += 1;
 
-        // Check tables in FROM
+        let mut scope = SelectScope::default();
+
+        // Check tables in FROM (and populate scope for qualified identifiers).
         if let Some(from) = &select.from {
-            self.check_from_clause_objects(from, context, result)?;
+            self.check_from_clause_objects(from, context, result, &mut scope)?;
         }
 
         // Check columns in SELECT
         for item in &select.select_list {
-            self.check_select_item_objects(item, context, result)?;
+            self.check_select_item_objects(item, context, result, &scope)?;
+        }
+
+        if let Some(where_clause) = &select.where_clause {
+            self.check_expression_objects(where_clause, context, result, &scope)?;
+        }
+        for expr in &select.group_by {
+            self.check_expression_objects(expr, context, result, &scope)?;
+        }
+        if let Some(having) = &select.having {
+            self.check_expression_objects(having, context, result, &scope)?;
+        }
+        for order in &select.order_by {
+            self.check_expression_objects(&order.expr, context, result, &scope)?;
         }
 
         Ok(())
@@ -435,17 +456,28 @@ impl SemanticAnalyzer {
         from: &FromClause,
         context: &AnalysisContext,
         result: &mut AnalysisResult,
+        scope: &mut SelectScope,
     ) -> Result<()> {
-        // Check main table
+        // Check main table (or subquery) + populate scope.
         let table_name = match &from.table {
-            TableReference::Table { name, .. } => name,
-            TableReference::Subquery { .. } => {
-                // Subqueries require separate processing
-                return Ok(());
+            TableReference::Table { name, alias } => {
+                scope.table_refs.insert(name.clone(), name.clone());
+                if let Some(a) = alias {
+                    scope.table_refs.insert(a.clone(), name.clone());
+                }
+                name
+            }
+            TableReference::Subquery { query, alias } => {
+                scope.table_refs.insert(alias.clone(), "<subquery>".to_string());
+                // Recurse into subquery.
+                self.check_select_objects(query, context, result)?;
+                // No schema existence check for subquery itself.
+                ""
             }
         };
 
-        if let Some(schema) = &context.schema {
+        if !table_name.is_empty() {
+            if let Some(schema) = &context.schema {
             let object_result = self.object_checker.check_table_exists(table_name, schema)?;
             if !object_result.exists {
                 result.add_error(SemanticError {
@@ -457,13 +489,24 @@ impl SemanticAnalyzer {
                     ),
                 });
             }
+            }
         }
 
         // Check JOIN tables
         for join in &from.joins {
             let join_table_name = match &join.table {
-                TableReference::Table { name, .. } => name,
-                TableReference::Subquery { .. } => continue, // Skip subqueries
+                TableReference::Table { name, alias } => {
+                    scope.table_refs.insert(name.clone(), name.clone());
+                    if let Some(a) = alias {
+                        scope.table_refs.insert(a.clone(), name.clone());
+                    }
+                    name
+                }
+                TableReference::Subquery { query, alias } => {
+                    scope.table_refs.insert(alias.clone(), "<subquery>".to_string());
+                    self.check_select_objects(query, context, result)?;
+                    continue;
+                }
             };
 
             if let Some(schema) = &context.schema {
@@ -481,6 +524,10 @@ impl SemanticAnalyzer {
                     });
                 }
             }
+
+            if let Some(cond) = &join.condition {
+                self.check_expression_objects(cond, context, result, scope)?;
+            }
         }
 
         Ok(())
@@ -491,10 +538,11 @@ impl SemanticAnalyzer {
         item: &SelectItem,
         context: &AnalysisContext,
         result: &mut AnalysisResult,
+        scope: &SelectScope,
     ) -> Result<()> {
         match item {
             SelectItem::Expression { expr, .. } => {
-                self.check_expression_objects(expr, context, result)?;
+                self.check_expression_objects(expr, context, result, scope)?;
             }
             SelectItem::Wildcard => {
                 // Wildcard does not require special checking
@@ -508,22 +556,78 @@ impl SemanticAnalyzer {
         expr: &Expression,
         context: &AnalysisContext,
         result: &mut AnalysisResult,
+        scope: &SelectScope,
     ) -> Result<()> {
         match expr {
-            Expression::Identifier(_) | Expression::QualifiedIdentifier { .. } => {
+            Expression::Identifier(_) => {
                 // Check column existence
                 result.statistics.objects_checked += 1;
             }
+            Expression::QualifiedIdentifier { table, .. } => {
+                result.statistics.objects_checked += 1;
+                if !scope.table_refs.is_empty() && !scope.table_refs.contains_key(table) {
+                    result.add_error(SemanticError {
+                        error_type: SemanticErrorType::InvalidOperation,
+                        message: format!("Unknown table reference/alias '{}'", table),
+                        location: Some("qualified identifier".to_string()),
+                        suggested_fix: Some("Check FROM/JOIN aliases or qualify the correct table".to_string()),
+                    });
+                }
+            }
             Expression::BinaryOp { left, right, .. } => {
-                self.check_expression_objects(left, context, result)?;
-                self.check_expression_objects(right, context, result)?;
+                self.check_expression_objects(left, context, result, scope)?;
+                self.check_expression_objects(right, context, result, scope)?;
             }
             Expression::UnaryOp { expr: operand, .. } => {
-                self.check_expression_objects(operand, context, result)?;
+                self.check_expression_objects(operand, context, result, scope)?;
             }
             Expression::Function { args, .. } => {
                 for arg in args {
-                    self.check_expression_objects(arg, context, result)?;
+                    self.check_expression_objects(arg, context, result, scope)?;
+                }
+            }
+            Expression::IsNull { expr, .. } => {
+                self.check_expression_objects(expr, context, result, scope)?;
+            }
+            Expression::Like { expr, pattern, .. } => {
+                self.check_expression_objects(expr, context, result, scope)?;
+                self.check_expression_objects(pattern, context, result, scope)?;
+            }
+            Expression::Between { expr, low, high } => {
+                self.check_expression_objects(expr, context, result, scope)?;
+                self.check_expression_objects(low, context, result, scope)?;
+                self.check_expression_objects(high, context, result, scope)?;
+            }
+            Expression::In { expr, list } => {
+                self.check_expression_objects(expr, context, result, scope)?;
+                match list {
+                    InList::Values(vals) => {
+                        for v in vals {
+                            self.check_expression_objects(v, context, result, scope)?;
+                        }
+                    }
+                    InList::Subquery(sel) => {
+                        self.check_select_objects(sel, context, result)?;
+                    }
+                }
+            }
+            Expression::Exists(sel) => {
+                self.check_select_objects(sel, context, result)?;
+            }
+            Expression::Case {
+                expr,
+                when_clauses,
+                else_clause,
+            } => {
+                if let Some(e) = expr {
+                    self.check_expression_objects(e, context, result, scope)?;
+                }
+                for wc in when_clauses {
+                    self.check_expression_objects(&wc.condition, context, result, scope)?;
+                    self.check_expression_objects(&wc.result, context, result, scope)?;
+                }
+                if let Some(e) = else_clause {
+                    self.check_expression_objects(e, context, result, scope)?;
                 }
             }
             _ => {

@@ -80,6 +80,35 @@ fn test_analyze_select_with_columns() -> Result<()> {
 }
 
 #[test]
+fn test_analyze_select_with_alias_and_qualified_identifiers() -> Result<()> {
+    let mut parser =
+        SqlParser::new("SELECT u.name FROM users AS u WHERE u.active IS NOT NULL")?;
+    let statement = parser.parse()?;
+
+    let mut analyzer = SemanticAnalyzer::default();
+    let context = AnalysisContext::default();
+    let result = analyzer.analyze(&statement, &context)?;
+
+    // Without a real schema, we still validate alias scoping for qualified identifiers.
+    assert!(result.is_valid);
+    Ok(())
+}
+
+#[test]
+fn test_analyze_rejects_unknown_qualified_table_alias() -> Result<()> {
+    let mut parser = SqlParser::new("SELECT x.a FROM t WHERE x.a = 1")?;
+    let statement = parser.parse()?;
+
+    let mut analyzer = SemanticAnalyzer::default();
+    let context = AnalysisContext::default();
+    let result = analyzer.analyze(&statement, &context)?;
+
+    assert!(!result.is_valid);
+    assert!(!result.errors.is_empty());
+    Ok(())
+}
+
+#[test]
 fn test_analyze_insert_statement() -> Result<()> {
     let mut parser =
         SqlParser::new("INSERT INTO users (name, email) VALUES ('John', 'john@example.com')")?;

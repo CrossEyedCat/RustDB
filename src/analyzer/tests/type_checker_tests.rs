@@ -192,6 +192,38 @@ fn test_invalid_operations() {
 }
 
 #[test]
+fn test_expression_types_sql92_predicates() -> Result<()> {
+    let mut checker = TypeChecker::new();
+    let ctx = crate::analyzer::AnalysisContext::default();
+
+    let stmt_sql = "SELECT 1 WHERE a IS NULL";
+    let mut p = crate::parser::SqlParser::new(stmt_sql)?;
+    let stmt = p.parse()?;
+    let out = checker.check_statement(&stmt, &ctx)?;
+    assert!(out.is_valid);
+
+    let stmt_sql = "SELECT 1 WHERE a BETWEEN 1 AND 2";
+    let mut p = crate::parser::SqlParser::new(stmt_sql)?;
+    let stmt = p.parse()?;
+    let out = checker.check_statement(&stmt, &ctx)?;
+    assert!(out.is_valid);
+
+    let stmt_sql = "SELECT 1 WHERE a IN (1,2,3)";
+    let mut p = crate::parser::SqlParser::new(stmt_sql)?;
+    let stmt = p.parse()?;
+    let out = checker.check_statement(&stmt, &ctx)?;
+    assert!(out.is_valid);
+
+    let stmt_sql = "SELECT 1 WHERE EXISTS (SELECT 1)";
+    let mut p = crate::parser::SqlParser::new(stmt_sql)?;
+    let stmt = p.parse()?;
+    let out = checker.check_statement(&stmt, &ctx)?;
+    assert!(out.is_valid);
+
+    Ok(())
+}
+
+#[test]
 fn test_strict_mode() {
     let mut checker = TypeChecker::new();
 
