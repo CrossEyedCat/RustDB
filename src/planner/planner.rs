@@ -4,7 +4,7 @@ use crate::analyzer::{AnalysisContext, SemanticAnalyzer};
 use crate::common::{Error, Result};
 use crate::parser::ast::{
     BinaryOperator, DeleteStatement, Expression, InsertStatement, InsertValues, Literal,
-    SelectItem, SelectStatement, SqlStatement, UpdateStatement,
+    SelectItem, SelectStatement, SetOperationStatement, SetOperator, SqlStatement, UpdateStatement,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -210,6 +210,9 @@ fn rough_rows(node: &PlanNode) -> usize {
             r.saturating_sub(o.offset).max(1)
         }
         PlanNode::Aggregate(a) => (rough_rows(&a.input) / 10).max(1),
+        PlanNode::SetOp(s) => rough_rows(&s.left).saturating_add(rough_rows(&s.right)).max(1),
+        PlanNode::SemiJoin(s) => rough_rows(&s.left).max(1),
+        PlanNode::AntiJoin(a) => rough_rows(&a.left).max(1),
         _ => 100,
     }
 }
@@ -226,6 +229,13 @@ fn rough_subtree_cost(node: &PlanNode) -> f64 {
         PlanNode::Limit(n) => rough_subtree_cost(&n.input) + n.cost,
         PlanNode::Offset(o) => rough_subtree_cost(&o.input) + o.cost,
         PlanNode::Aggregate(a) => rough_subtree_cost(&a.input) + a.cost + 0.1,
+        PlanNode::SetOp(s) => rough_subtree_cost(&s.left) + rough_subtree_cost(&s.right) + s.cost,
+        PlanNode::SemiJoin(s) => {
+            rough_subtree_cost(&s.left) + rough_subtree_cost(&s.right) + s.cost
+        }
+        PlanNode::AntiJoin(a) => {
+            rough_subtree_cost(&a.left) + rough_subtree_cost(&a.right) + a.cost
+        }
         PlanNode::Insert(i) => {
             i.cost
                 + i.insert_subplan
@@ -309,6 +319,47 @@ pub enum PlanNode {
     Update(UpdateNode),
     /// Data deletion
     Delete(DeleteNode),
+    /// Set operations: UNION/INTERSECT/EXCEPT
+    SetOp(SetOpNode),
+    /// Semi-join (used by rewrites like EXISTS/IN).
+    SemiJoin(SemiJoinNode),
+    /// Anti-join (used by rewrites like NOT EXISTS/NOT IN).
+    AntiJoin(AntiJoinNode),
+}
+
+/// Set operation plan node
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetOpNode {
+    pub op: SetOpType,
+    pub all: bool,
+    pub left: Box<PlanNode>,
+    pub right: Box<PlanNode>,
+    pub cost: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SetOpType {
+    Union,
+    Intersect,
+    Except,
+}
+
+/// Semi-join node: returns rows from left where a match exists on right.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SemiJoinNode {
+    pub condition: String,
+    pub left: Box<PlanNode>,
+    pub right: Box<PlanNode>,
+    pub cost: f64,
+}
+
+/// Anti-join node: returns rows from left where no match exists on right.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AntiJoinNode {
+    pub condition: String,
+    pub left: Box<PlanNode>,
+    pub right: Box<PlanNode>,
+    pub cost: f64,
 }
 
 /// Table scan node
@@ -680,11 +731,7 @@ impl QueryPlanner {
             SqlStatement::Insert(insert) => self.create_insert_plan(insert)?,
             SqlStatement::Update(update) => self.create_update_plan(update)?,
             SqlStatement::Delete(delete) => self.create_delete_plan(delete)?,
-            SqlStatement::SetOperation(_) => {
-                return Err(Error::semantic_analysis(
-                    "Set operations (UNION/INTERSECT/EXCEPT) are parsed but not planned yet",
-                ));
-            }
+            SqlStatement::SetOperation(set) => self.create_set_operation_plan(set)?,
             _ => return Err(Error::semantic_analysis("Unsupported query type")),
         };
 
@@ -692,6 +739,24 @@ impl QueryPlanner {
         let metadata = self.create_plan_metadata(&root)?;
 
         Ok(ExecutionPlan { root, metadata })
+    }
+
+    fn create_set_operation_plan(&self, set: &Box<SetOperationStatement>) -> Result<PlanNode> {
+        let left = self.create_select_plan(&set.left)?;
+        let right = self.create_select_plan(&set.right)?;
+        let op = match set.op {
+            SetOperator::Union => SetOpType::Union,
+            SetOperator::Intersect => SetOpType::Intersect,
+            SetOperator::Except => SetOpType::Except,
+        };
+        let cost = estimate_binary_join_cost(&left, &right) * 0.5 + 1.0;
+        Ok(PlanNode::SetOp(SetOpNode {
+            op,
+            all: set.all,
+            left: Box::new(left),
+            right: Box::new(right),
+            cost,
+        }))
     }
 
     /// Creates plan for SELECT query
@@ -1003,6 +1068,9 @@ impl QueryPlanner {
             PlanNode::Limit(node) => vec![&node.input],
             PlanNode::Offset(node) => vec![&node.input],
             PlanNode::Aggregate(node) => vec![&node.input],
+            PlanNode::SetOp(node) => vec![&node.left, &node.right],
+            PlanNode::SemiJoin(node) => vec![&node.left, &node.right],
+            PlanNode::AntiJoin(node) => vec![&node.left, &node.right],
             _ => vec![],
         }
     }
@@ -1024,6 +1092,21 @@ impl QueryPlanner {
             PlanNode::Limit(node) => node.cost + self.estimate_plan_cost(&node.input),
             PlanNode::Offset(node) => node.cost + self.estimate_plan_cost(&node.input),
             PlanNode::Aggregate(node) => node.cost + self.estimate_plan_cost(&node.input),
+            PlanNode::SetOp(node) => {
+                node.cost
+                    + self.estimate_plan_cost(&node.left)
+                    + self.estimate_plan_cost(&node.right)
+            }
+            PlanNode::SemiJoin(node) => {
+                node.cost
+                    + self.estimate_plan_cost(&node.left)
+                    + self.estimate_plan_cost(&node.right)
+            }
+            PlanNode::AntiJoin(node) => {
+                node.cost
+                    + self.estimate_plan_cost(&node.left)
+                    + self.estimate_plan_cost(&node.right)
+            }
             PlanNode::Insert(node) => {
                 node.cost
                     + node
@@ -1063,6 +1146,17 @@ impl QueryPlanner {
                 }
             }
             PlanNode::Aggregate(node) => self.estimate_plan_rows(&node.input) / 10,
+            PlanNode::SetOp(node) => {
+                // Conservative: UNION ALL adds, others at most left size.
+                let l = self.estimate_plan_rows(&node.left);
+                let r = self.estimate_plan_rows(&node.right);
+                match node.op {
+                    SetOpType::Union if node.all => l.saturating_add(r),
+                    _ => l.max(1),
+                }
+            }
+            PlanNode::SemiJoin(node) => self.estimate_plan_rows(&node.left),
+            PlanNode::AntiJoin(node) => self.estimate_plan_rows(&node.left),
             PlanNode::Insert(node) => node
                 .insert_subplan
                 .as_ref()

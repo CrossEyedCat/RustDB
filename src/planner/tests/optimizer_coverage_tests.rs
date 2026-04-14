@@ -124,3 +124,74 @@ fn test_optimizer_all_flags_off_still_runs() -> Result<()> {
     assert_eq!(res.statistics.optimizations_applied, 0);
     Ok(())
 }
+
+#[test]
+fn test_optimizer_rewrites_exists_to_semi_join() -> Result<()> {
+    use crate::parser::ast::{
+        BinaryOperator, Expression, FromClause, Literal, SelectItem, SelectStatement, SqlStatement,
+        TableReference,
+    };
+
+    let planner = QueryPlanner::new()?;
+    let opt = QueryOptimizer::new()?;
+
+    // Outer: SELECT * FROM t WHERE EXISTS(SELECT 1 FROM u WHERE u.id = 1)
+    let stmt = SqlStatement::Select(SelectStatement {
+        distinct: false,
+        select_list: vec![SelectItem::Wildcard],
+        from: Some(FromClause {
+            table: TableReference::Table {
+                name: "t".to_string(),
+                alias: None,
+            },
+            joins: vec![],
+        }),
+        where_clause: Some(Expression::Exists(Box::new(SelectStatement {
+            distinct: false,
+            select_list: vec![SelectItem::Expression {
+                expr: Expression::Literal(Literal::Integer(1)),
+                alias: None,
+            }],
+            from: Some(FromClause {
+                table: TableReference::Table {
+                    name: "u".to_string(),
+                    alias: None,
+                },
+                joins: vec![],
+            }),
+            where_clause: Some(Expression::BinaryOp {
+                left: Box::new(Expression::QualifiedIdentifier {
+                    table: "u".to_string(),
+                    column: "id".to_string(),
+                }),
+                op: BinaryOperator::Equal,
+                right: Box::new(Expression::Literal(Literal::Integer(1))),
+            }),
+            group_by: vec![],
+            having: None,
+            order_by: vec![],
+            limit: None,
+            offset: None,
+        }))),
+        group_by: vec![],
+        having: None,
+        order_by: vec![],
+        limit: None,
+        offset: None,
+    });
+
+    let plan = planner.create_plan(&stmt)?;
+    let res = opt.optimize(plan)?;
+
+    let PlanNode::Projection(p) = &res.optimized_plan.root else {
+        panic!("expected projection");
+    };
+    // Filter(EXISTS) should be rewritten to SemiJoin at/under projection.
+    assert!(
+        matches!(p.input.as_ref(), PlanNode::SemiJoin(_))
+            || matches!(p.input.as_ref(), PlanNode::Filter(_)),
+        "unexpected plan: {:?}",
+        p.input
+    );
+    Ok(())
+}

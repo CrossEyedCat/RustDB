@@ -195,13 +195,7 @@ fn test_planner_rejects_set_operations_for_now() -> Result<()> {
     let mut parser = SqlParser::new("SELECT 1 UNION ALL SELECT 2")?;
     let statement = parser.parse()?;
 
-    let err = planner.create_plan(&statement).unwrap_err();
-    let msg = format!("{err:?}");
-    assert!(
-        msg.contains("Set operations")
-            || msg.contains("UNION")
-            || msg.contains("parsed but not planned"),
-        "unexpected error message: {msg}"
-    );
+    let plan = planner.create_plan(&statement)?;
+    assert!(matches!(plan.root, PlanNode::SetOp(_)));
     Ok(())
 }

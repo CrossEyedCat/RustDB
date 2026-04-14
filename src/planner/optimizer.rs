@@ -4,7 +4,7 @@ use crate::analyzer::{AnalysisContext, SemanticAnalyzer};
 use crate::common::{Error, Result};
 use crate::planner::planner::{
     estimate_selectivity, ExecutionPlan, FilterNode, IndexScanNode, JoinNode, PlanNode,
-    TableScanNode,
+    SemiJoinNode, TableScanNode,
 };
 use crate::storage::index_registry::IndexRegistry;
 use serde::{Deserialize, Serialize};
@@ -155,6 +155,13 @@ impl QueryOptimizer {
             }
         }
 
+        // EXISTS/IN rewrites (SQL-92-ish): try to convert Filter predicates into semi-joins.
+        if let Some((new_plan, msg)) = self.apply_semi_join_rewrites(&optimized_plan)? {
+            optimized_plan = new_plan;
+            messages.push(msg);
+            optimizations_applied += 1;
+        }
+
         // Update statistics
         let optimization_time = start_time.elapsed().as_millis() as u64;
         let cost_improvement = if original_cost > 0.0 {
@@ -192,6 +199,128 @@ impl QueryOptimizer {
             statistics: stats,
             messages,
         })
+    }
+
+    fn apply_semi_join_rewrites(
+        &self,
+        plan: &ExecutionPlan,
+    ) -> Result<Option<(ExecutionPlan, String)>> {
+        let mut new_plan = plan.clone();
+        new_plan.root = self.rewrite_exists_in_recursive(&plan.root)?;
+        if new_plan.root != plan.root {
+            Ok(Some((new_plan, "EXISTS/IN → semi-join rewrite applied".to_string())))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn rewrite_exists_in_recursive(&self, node: &PlanNode) -> Result<PlanNode> {
+        match node {
+            PlanNode::Filter(f) => {
+                // First rewrite inside.
+                let input = self.rewrite_exists_in_recursive(&f.input)?;
+
+                // Try rewrite EXISTS(subquery) when it's uncorrelated or simple correlated equality.
+                if let Some(crate::parser::ast::Expression::Exists(sel)) = f.predicate.as_ref() {
+                    if let Some(from) = &sel.from {
+                        // Right side: plan the subquery FROM table only (naive baseline).
+                        let right = match &from.table {
+                            crate::parser::ast::TableReference::Table { name, alias } => {
+                                PlanNode::TableScan(crate::planner::planner::TableScanNode {
+                                    table_name: name.clone(),
+                                    alias: alias.clone(),
+                                    columns: vec!["*".to_string()],
+                                    filter: None,
+                                    cost: 1.0,
+                                    estimated_rows: 1000,
+                                })
+                            }
+                            _ => input.clone(),
+                        };
+                        // Condition: best-effort stringify WHERE predicate if present.
+                        let cond = sel
+                            .where_clause
+                            .as_ref()
+                            .map(|e| format!("{e:?}"))
+                            .unwrap_or_else(|| "TRUE".to_string());
+                        let cost = 1.0;
+                        return Ok(PlanNode::SemiJoin(SemiJoinNode {
+                            condition: cond,
+                            left: Box::new(input),
+                            right: Box::new(right),
+                            cost,
+                        }));
+                    }
+                }
+
+                Ok(PlanNode::Filter(FilterNode {
+                    condition: f.condition.clone(),
+                    predicate: f.predicate.clone(),
+                    equality: f.equality.clone(),
+                    input: Box::new(input),
+                    selectivity: f.selectivity,
+                    cost: f.cost,
+                }))
+            }
+            PlanNode::Join(j) => Ok(PlanNode::Join(JoinNode {
+                join_type: j.join_type.clone(),
+                condition: j.condition.clone(),
+                left: Box::new(self.rewrite_exists_in_recursive(&j.left)?),
+                right: Box::new(self.rewrite_exists_in_recursive(&j.right)?),
+                cost: j.cost,
+            })),
+            PlanNode::Projection(p) => Ok(PlanNode::Projection(crate::planner::planner::ProjectionNode {
+                columns: p.columns.clone(),
+                input: Box::new(self.rewrite_exists_in_recursive(&p.input)?),
+                cost: p.cost,
+            })),
+            PlanNode::Sort(s) => Ok(PlanNode::Sort(crate::planner::planner::SortNode {
+                sort_columns: s.sort_columns.clone(),
+                input: Box::new(self.rewrite_exists_in_recursive(&s.input)?),
+                cost: s.cost,
+            })),
+            PlanNode::Limit(l) => Ok(PlanNode::Limit(crate::planner::planner::LimitNode {
+                limit: l.limit,
+                input: Box::new(self.rewrite_exists_in_recursive(&l.input)?),
+                cost: l.cost,
+            })),
+            PlanNode::Offset(o) => Ok(PlanNode::Offset(crate::planner::planner::OffsetNode {
+                offset: o.offset,
+                input: Box::new(self.rewrite_exists_in_recursive(&o.input)?),
+                cost: o.cost,
+            })),
+            PlanNode::GroupBy(g) => Ok(PlanNode::GroupBy(crate::planner::planner::GroupByNode {
+                group_columns: g.group_columns.clone(),
+                aggregates: g.aggregates.clone(),
+                input: Box::new(self.rewrite_exists_in_recursive(&g.input)?),
+                cost: g.cost,
+            })),
+            PlanNode::Aggregate(a) => Ok(PlanNode::Aggregate(crate::planner::planner::AggregateNode {
+                aggregates: a.aggregates.clone(),
+                input: Box::new(self.rewrite_exists_in_recursive(&a.input)?),
+                cost: a.cost,
+            })),
+            PlanNode::SetOp(s) => Ok(PlanNode::SetOp(crate::planner::planner::SetOpNode {
+                op: s.op.clone(),
+                all: s.all,
+                left: Box::new(self.rewrite_exists_in_recursive(&s.left)?),
+                right: Box::new(self.rewrite_exists_in_recursive(&s.right)?),
+                cost: s.cost,
+            })),
+            PlanNode::SemiJoin(s) => Ok(PlanNode::SemiJoin(SemiJoinNode {
+                condition: s.condition.clone(),
+                left: Box::new(self.rewrite_exists_in_recursive(&s.left)?),
+                right: Box::new(self.rewrite_exists_in_recursive(&s.right)?),
+                cost: s.cost,
+            })),
+            PlanNode::AntiJoin(a) => Ok(PlanNode::AntiJoin(crate::planner::planner::AntiJoinNode {
+                condition: a.condition.clone(),
+                left: Box::new(self.rewrite_exists_in_recursive(&a.left)?),
+                right: Box::new(self.rewrite_exists_in_recursive(&a.right)?),
+                cost: a.cost,
+            })),
+            _ => Ok(node.clone()),
+        }
     }
 
     /// Apply predicate pushdown
@@ -541,6 +670,9 @@ impl QueryOptimizer {
             PlanNode::Limit(node) => vec![&node.input],
             PlanNode::Offset(node) => vec![&node.input],
             PlanNode::Aggregate(node) => vec![&node.input],
+            PlanNode::SetOp(node) => vec![&node.left, &node.right],
+            PlanNode::SemiJoin(node) => vec![&node.left, &node.right],
+            PlanNode::AntiJoin(node) => vec![&node.left, &node.right],
             _ => vec![],
         }
     }
@@ -568,6 +700,9 @@ impl QueryOptimizer {
             }
             PlanNode::Update(node) => node.cost,
             PlanNode::Delete(node) => node.cost,
+            PlanNode::SetOp(node) => node.cost,
+            PlanNode::SemiJoin(node) => node.cost,
+            PlanNode::AntiJoin(node) => node.cost,
         }
     }
 

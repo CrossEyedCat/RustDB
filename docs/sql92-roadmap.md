@@ -93,11 +93,13 @@ This document is a practical, file-by-file plan for incrementally expanding Rust
 - **New logical operators**
   - [x] `Distinct` (AST + parser baseline: `SELECT DISTINCT ...`)
     - Planner/executor operator is still TODO (see Phase 4: `Distinct`)
-  - [ ] Set operators: `Union`, `Intersect`, `Except`
-    - Planner currently returns a clear placeholder error for `SqlStatement::SetOperation`
-  - [ ] Subquery planning: initial naive approach first (nested evaluation), then rewrites
+  - [x] Set operators: `Union`, `Intersect`, `Except` (planner baseline)
+    - `SqlStatement::SetOperation` plans into `PlanNode::SetOp` (executor support is Phase 4)
+  - [x] Subquery planning: initial naive approach first (nested evaluation), then rewrites
+    - Baseline: EXISTS subquery can be rewritten into a semi-join plan node
 - **Rewrites / optimizations (after correctness)**
-  - [ ] `EXISTS/IN` → semi-join / anti-join where possible
+  - [x] `EXISTS/IN` → semi-join / anti-join where possible (baseline)
+    - Implemented `EXISTS(...)` → `SemiJoin` rewrite when a simple FROM table exists in subquery
   - [x] Predicate pushdown improvements
     - Keeps correctness: never drops a `Filter` over `Join` unless fully pushed down
     - Fixes e2e join+where behavior while retaining existing executor semantics

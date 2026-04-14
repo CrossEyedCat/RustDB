@@ -418,6 +418,9 @@ impl AdvancedQueryOptimizer {
             PlanNode::Limit(node) => vec![&node.input],
             PlanNode::Offset(node) => vec![&node.input],
             PlanNode::Aggregate(node) => vec![&node.input],
+            PlanNode::SetOp(node) => vec![&node.left, &node.right],
+            PlanNode::SemiJoin(node) => vec![&node.left, &node.right],
+            PlanNode::AntiJoin(node) => vec![&node.left, &node.right],
             _ => vec![],
         }
     }
@@ -445,6 +448,9 @@ impl AdvancedQueryOptimizer {
             }
             PlanNode::Update(node) => node.cost,
             PlanNode::Delete(node) => node.cost,
+            PlanNode::SetOp(node) => node.cost,
+            PlanNode::SemiJoin(node) => node.cost,
+            PlanNode::AntiJoin(node) => node.cost,
         }
     }
 

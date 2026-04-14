@@ -94,6 +94,12 @@ impl QueryExecutor {
             PlanNode::Sort(s) => self.build_sort(s),
             PlanNode::Limit(l) => self.build_limit(l),
             PlanNode::Offset(o) => self.build_offset(o),
+            PlanNode::SetOp(_)
+            | PlanNode::SemiJoin(_)
+            | PlanNode::AntiJoin(_) => Err(Error::query_execution(format!(
+                "Unsupported plan node: {:?}",
+                node
+            ))),
             _ => Err(Error::query_execution(format!(
                 "Unsupported plan node: {:?}",
                 node
