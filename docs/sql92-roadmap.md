@@ -91,8 +91,10 @@ This document is a practical, file-by-file plan for incrementally expanding Rust
 ### TODO (Planner)
 
 - **New logical operators**
-  - [ ] `Distinct`
+  - [x] `Distinct` (AST + parser baseline: `SELECT DISTINCT ...`)
+    - Planner/executor operator is still TODO (see Phase 4: `Distinct`)
   - [ ] Set operators: `Union`, `Intersect`, `Except`
+    - Planner currently returns a clear placeholder error for `SqlStatement::SetOperation`
   - [ ] Subquery planning: initial naive approach first (nested evaluation), then rewrites
 - **Rewrites / optimizations (after correctness)**
   - [ ] `EXISTS/IN` → semi-join / anti-join where possible
