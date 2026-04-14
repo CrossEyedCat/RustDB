@@ -120,12 +120,12 @@ This document is a practical, file-by-file plan for incrementally expanding Rust
 ### TODO (Executor)
 
 - **Expression evaluation**
-  - [ ] `IS NULL`, `LIKE`, `BETWEEN`, `IN`, `CASE`
-  - [ ] 3-valued logic semantics wired through filter evaluation
+  - [x] `IS NULL`, `LIKE`, `BETWEEN`, `IN` (values), `CASE`
+  - [x] 3-valued logic semantics wired through filter evaluation
 - **Operators**
-  - [ ] `Distinct` (hash-based or sort+dedup)
-  - [ ] `Union/Intersect/Except` (start with a correct baseline; optimize later)
-  - [ ] `EXISTS/IN` execution strategy (start with nested-loop + short-circuit)
+  - [x] `Distinct` (hash-based)
+  - [x] `Union/Intersect/Except` (baseline)
+  - [x] `EXISTS/IN` execution strategy (baseline: uncorrelated `EXISTS` via semi-join + short-circuit)
 
 ## Phase 5 — DDL + catalog + constraint enforcement (where SQL feels “real”)
 

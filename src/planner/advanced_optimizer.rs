@@ -421,6 +421,7 @@ impl AdvancedQueryOptimizer {
             PlanNode::SetOp(node) => vec![&node.left, &node.right],
             PlanNode::SemiJoin(node) => vec![&node.left, &node.right],
             PlanNode::AntiJoin(node) => vec![&node.left, &node.right],
+            PlanNode::Distinct(node) => vec![&node.input],
             _ => vec![],
         }
     }
@@ -451,6 +452,7 @@ impl AdvancedQueryOptimizer {
             PlanNode::SetOp(node) => node.cost,
             PlanNode::SemiJoin(node) => node.cost,
             PlanNode::AntiJoin(node) => node.cost,
+            PlanNode::Distinct(node) => node.cost,
         }
     }
 

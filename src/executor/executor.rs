@@ -10,8 +10,9 @@ use crate::executor::operators::{
     ProjectionOperator, ScanOperatorFactory, SortOperator,
 };
 use crate::planner::planner::{
-    ExecutionPlan, FilterNode, GroupByNode, IndexScanNode, JoinNode, LimitNode, OffsetNode,
-    PlanNode, ProjectionNode, SortNode, TableScanNode,
+    AntiJoinNode, DistinctNode, ExecutionPlan, FilterNode, GroupByNode, IndexScanNode, JoinNode,
+    LimitNode, OffsetNode, PlanNode, ProjectionNode, SemiJoinNode, SetOpNode, SortNode,
+    TableScanNode,
 };
 use crate::Row;
 use std::sync::{Arc, Mutex};
@@ -94,12 +95,10 @@ impl QueryExecutor {
             PlanNode::Sort(s) => self.build_sort(s),
             PlanNode::Limit(l) => self.build_limit(l),
             PlanNode::Offset(o) => self.build_offset(o),
-            PlanNode::SetOp(_)
-            | PlanNode::SemiJoin(_)
-            | PlanNode::AntiJoin(_) => Err(Error::query_execution(format!(
-                "Unsupported plan node: {:?}",
-                node
-            ))),
+            PlanNode::Distinct(d) => self.build_distinct(d),
+            PlanNode::SetOp(s) => self.build_set_op(s),
+            PlanNode::SemiJoin(s) => self.build_semi_join(s),
+            PlanNode::AntiJoin(a) => self.build_anti_join(a),
             _ => Err(Error::query_execution(format!(
                 "Unsupported plan node: {:?}",
                 node
@@ -186,6 +185,38 @@ impl QueryExecutor {
     fn build_projection(&self, p: &ProjectionNode) -> Result<Box<dyn Operator>> {
         let input = self.build_operator(&p.input)?;
         let operator = ProjectionOperator::new(input, p.columns.clone())?;
+        Ok(Box::new(operator))
+    }
+
+    fn build_distinct(&self, d: &DistinctNode) -> Result<Box<dyn Operator>> {
+        let input = self.build_operator(&d.input)?;
+        let operator = crate::executor::operators::DistinctOperator::new(input)?;
+        Ok(Box::new(operator))
+    }
+
+    fn build_set_op(&self, s: &SetOpNode) -> Result<Box<dyn Operator>> {
+        let left = self.build_operator(&s.left)?;
+        let right = self.build_operator(&s.right)?;
+        let operator = crate::executor::operators::SetOpOperator::new(
+            left,
+            right,
+            s.op.clone(),
+            s.all,
+        )?;
+        Ok(Box::new(operator))
+    }
+
+    fn build_semi_join(&self, s: &SemiJoinNode) -> Result<Box<dyn Operator>> {
+        let left = self.build_operator(&s.left)?;
+        let right = self.build_operator(&s.right)?;
+        let operator = crate::executor::operators::SemiJoinOperator::new(left, right)?;
+        Ok(Box::new(operator))
+    }
+
+    fn build_anti_join(&self, a: &AntiJoinNode) -> Result<Box<dyn Operator>> {
+        let left = self.build_operator(&a.left)?;
+        let right = self.build_operator(&a.right)?;
+        let operator = crate::executor::operators::AntiJoinOperator::new(left, right)?;
         Ok(Box::new(operator))
     }
 

@@ -3,8 +3,8 @@
 use crate::analyzer::{AnalysisContext, SemanticAnalyzer};
 use crate::common::{Error, Result};
 use crate::planner::planner::{
-    estimate_selectivity, ExecutionPlan, FilterNode, IndexScanNode, JoinNode, PlanNode,
-    SemiJoinNode, TableScanNode,
+    estimate_selectivity, extract_simple_equality, ExecutionPlan, FilterNode, IndexScanNode,
+    JoinNode, PlanNode, SemiJoinNode, TableScanNode,
 };
 use crate::storage::index_registry::IndexRegistry;
 use serde::{Deserialize, Serialize};
@@ -224,7 +224,7 @@ impl QueryOptimizer {
                 if let Some(crate::parser::ast::Expression::Exists(sel)) = f.predicate.as_ref() {
                     if let Some(from) = &sel.from {
                         // Right side: plan the subquery FROM table only (naive baseline).
-                        let right = match &from.table {
+                        let mut right = match &from.table {
                             crate::parser::ast::TableReference::Table { name, alias } => {
                                 PlanNode::TableScan(crate::planner::planner::TableScanNode {
                                     table_name: name.clone(),
@@ -237,12 +237,23 @@ impl QueryOptimizer {
                             }
                             _ => input.clone(),
                         };
-                        // Condition: best-effort stringify WHERE predicate if present.
-                        let cond = sel
-                            .where_clause
-                            .as_ref()
-                            .map(|e| format!("{e:?}"))
-                            .unwrap_or_else(|| "TRUE".to_string());
+
+                        // Apply subquery WHERE as a filter plan (so executor can evaluate predicate).
+                        if let Some(w) = &sel.where_clause {
+                            let cond = format!("{w:?}");
+                            let sel_est = estimate_selectivity(&cond);
+                            right = PlanNode::Filter(FilterNode {
+                                condition: cond,
+                                predicate: Some(w.clone()),
+                                equality: extract_simple_equality(w),
+                                input: Box::new(right),
+                                selectivity: sel_est,
+                                cost: 0.05,
+                            });
+                        }
+
+                        // Condition is informational for now (uncorrelated baseline).
+                        let cond = "EXISTS".to_string();
                         let cost = 1.0;
                         return Ok(PlanNode::SemiJoin(SemiJoinNode {
                             condition: cond,
@@ -318,6 +329,10 @@ impl QueryOptimizer {
                 left: Box::new(self.rewrite_exists_in_recursive(&a.left)?),
                 right: Box::new(self.rewrite_exists_in_recursive(&a.right)?),
                 cost: a.cost,
+            })),
+            PlanNode::Distinct(d) => Ok(PlanNode::Distinct(crate::planner::planner::DistinctNode {
+                input: Box::new(self.rewrite_exists_in_recursive(&d.input)?),
+                cost: d.cost,
             })),
             _ => Ok(node.clone()),
         }
@@ -673,6 +688,7 @@ impl QueryOptimizer {
             PlanNode::SetOp(node) => vec![&node.left, &node.right],
             PlanNode::SemiJoin(node) => vec![&node.left, &node.right],
             PlanNode::AntiJoin(node) => vec![&node.left, &node.right],
+            PlanNode::Distinct(node) => vec![&node.input],
             _ => vec![],
         }
     }
@@ -703,6 +719,7 @@ impl QueryOptimizer {
             PlanNode::SetOp(node) => node.cost,
             PlanNode::SemiJoin(node) => node.cost,
             PlanNode::AntiJoin(node) => node.cost,
+            PlanNode::Distinct(node) => node.cost,
         }
     }
 

@@ -213,6 +213,7 @@ fn rough_rows(node: &PlanNode) -> usize {
         PlanNode::SetOp(s) => rough_rows(&s.left).saturating_add(rough_rows(&s.right)).max(1),
         PlanNode::SemiJoin(s) => rough_rows(&s.left).max(1),
         PlanNode::AntiJoin(a) => rough_rows(&a.left).max(1),
+        PlanNode::Distinct(d) => rough_rows(&d.input).max(1),
         _ => 100,
     }
 }
@@ -236,6 +237,7 @@ fn rough_subtree_cost(node: &PlanNode) -> f64 {
         PlanNode::AntiJoin(a) => {
             rough_subtree_cost(&a.left) + rough_subtree_cost(&a.right) + a.cost
         }
+        PlanNode::Distinct(d) => rough_subtree_cost(&d.input) + d.cost,
         PlanNode::Insert(i) => {
             i.cost
                 + i.insert_subplan
@@ -319,12 +321,20 @@ pub enum PlanNode {
     Update(UpdateNode),
     /// Data deletion
     Delete(DeleteNode),
+    /// DISTINCT
+    Distinct(DistinctNode),
     /// Set operations: UNION/INTERSECT/EXCEPT
     SetOp(SetOpNode),
     /// Semi-join (used by rewrites like EXISTS/IN).
     SemiJoin(SemiJoinNode),
     /// Anti-join (used by rewrites like NOT EXISTS/NOT IN).
     AntiJoin(AntiJoinNode),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DistinctNode {
+    pub input: Box<PlanNode>,
+    pub cost: f64,
 }
 
 /// Set operation plan node
@@ -914,6 +924,13 @@ impl QueryPlanner {
             cost: 0.05,
         });
 
+        if select.distinct {
+            current_plan = PlanNode::Distinct(DistinctNode {
+                input: Box::new(current_plan),
+                cost: 0.2,
+            });
+        }
+
         Ok(current_plan)
     }
 
@@ -1071,6 +1088,7 @@ impl QueryPlanner {
             PlanNode::SetOp(node) => vec![&node.left, &node.right],
             PlanNode::SemiJoin(node) => vec![&node.left, &node.right],
             PlanNode::AntiJoin(node) => vec![&node.left, &node.right],
+            PlanNode::Distinct(node) => vec![&node.input],
             _ => vec![],
         }
     }
@@ -1107,6 +1125,7 @@ impl QueryPlanner {
                     + self.estimate_plan_cost(&node.left)
                     + self.estimate_plan_cost(&node.right)
             }
+            PlanNode::Distinct(node) => node.cost + self.estimate_plan_cost(&node.input),
             PlanNode::Insert(node) => {
                 node.cost
                     + node
@@ -1157,6 +1176,7 @@ impl QueryPlanner {
             }
             PlanNode::SemiJoin(node) => self.estimate_plan_rows(&node.left),
             PlanNode::AntiJoin(node) => self.estimate_plan_rows(&node.left),
+            PlanNode::Distinct(node) => self.estimate_plan_rows(&node.input).max(1),
             PlanNode::Insert(node) => node
                 .insert_subplan
                 .as_ref()

@@ -3,9 +3,10 @@
 use super::common;
 use crate::executor::{QueryExecutor, QueryExecutorConfig};
 use crate::planner::planner::{
-    AggregateFunction, ExecutionPlan, FilterNode, GroupByNode, IndexCondition, IndexScanNode,
-    InsertNode, JoinNode, JoinType, LimitNode, OffsetNode, PlanMetadata, PlanNode, PlanStatistics,
-    ProjectionColumn, ProjectionNode, SortColumn, SortDirection, SortNode, TableScanNode,
+    AggregateFunction, DistinctNode, ExecutionPlan, FilterNode, GroupByNode, IndexCondition,
+    IndexScanNode, InsertNode, JoinNode, JoinType, LimitNode, OffsetNode, PlanMetadata, PlanNode,
+    PlanStatistics, ProjectionColumn, ProjectionNode, SortColumn, SortDirection, SortNode,
+    TableScanNode,
 };
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -282,6 +283,32 @@ fn test_executor_join_types() -> crate::common::Result<()> {
     ] {
         let _ = ex.execute(&make_join(jt))?;
     }
+    Ok(())
+}
+
+#[test]
+fn test_executor_distinct_operator() -> crate::common::Result<()> {
+    let (_tmp, pm) = common::create_test_page_manager();
+    common::seed_id_data_rows(&pm, 5);
+    let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(pm));
+    let ex = QueryExecutor::new(factory)?;
+    let plan = ExecutionPlan {
+        root: PlanNode::Distinct(DistinctNode {
+            input: Box::new(PlanNode::Projection(ProjectionNode {
+                columns: vec![ProjectionColumn {
+                    name: "id".to_string(),
+                    expression: Some(crate::parser::ast::Expression::Identifier("id".to_string())),
+                    alias: None,
+                }],
+                input: Box::new(PlanNode::TableScan(table_scan_node())),
+                cost: 1.0,
+            })),
+            cost: 1.0,
+        }),
+        metadata: plan_meta(),
+    };
+    let rows = ex.execute(&plan)?;
+    assert!(!rows.is_empty());
     Ok(())
 }
 

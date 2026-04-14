@@ -2,8 +2,8 @@
 
 use crate::common::types::{ColumnValue, DataType};
 use crate::common::{Error, Result};
-use crate::parser::ast::Literal;
-use crate::parser::ast::{BinaryOperator, Expression, UnaryOperator};
+use crate::parser::ast::{BinaryOperator, Expression, InList, Literal, UnaryOperator, WhenClause};
+use crate::planner::planner::SetOpType;
 use crate::planner::planner::AggregateFunction as PlanAggregateFunction;
 use crate::planner::planner::ProjectionColumn;
 use crate::planner::planner::SimpleEqualityFilter;
@@ -63,7 +63,11 @@ pub struct ProjectionOperator {
 fn eval_value_to_column_value(v: EvalValue) -> ColumnValue {
     match v {
         EvalValue::Null => ColumnValue::null(),
-        EvalValue::Bool(b) => ColumnValue::new(DataType::Boolean(b)),
+        EvalValue::Bool(b) => match b {
+            TriBool::True => ColumnValue::new(DataType::Boolean(true)),
+            TriBool::False => ColumnValue::new(DataType::Boolean(false)),
+            TriBool::Unknown => ColumnValue::null(),
+        },
         EvalValue::Int(n) => {
             if n >= i32::MIN as i64 && n <= i32::MAX as i64 {
                 ColumnValue::new(DataType::Integer(n as i32))
@@ -841,10 +845,43 @@ pub struct ConditionalScanOperator {
 #[derive(Debug, Clone, PartialEq)]
 enum EvalValue {
     Null,
-    Bool(bool),
+    Bool(TriBool),
     Int(i64),
     Float(f64),
     String(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TriBool {
+    True,
+    False,
+    Unknown,
+}
+
+fn tri_not(v: TriBool) -> TriBool {
+    match v {
+        TriBool::True => TriBool::False,
+        TriBool::False => TriBool::True,
+        TriBool::Unknown => TriBool::Unknown,
+    }
+}
+
+fn tri_and(a: TriBool, b: TriBool) -> TriBool {
+    use TriBool::*;
+    match (a, b) {
+        (False, _) | (_, False) => False,
+        (True, True) => True,
+        _ => Unknown,
+    }
+}
+
+fn tri_or(a: TriBool, b: TriBool) -> TriBool {
+    use TriBool::*;
+    match (a, b) {
+        (True, _) | (_, True) => True,
+        (False, False) => False,
+        _ => Unknown,
+    }
 }
 
 fn column_value_to_eval(cv: &ColumnValue) -> EvalValue {
@@ -853,7 +890,7 @@ fn column_value_to_eval(cv: &ColumnValue) -> EvalValue {
     }
     match &cv.data_type {
         DataType::Null => EvalValue::Null,
-        DataType::Boolean(b) => EvalValue::Bool(*b),
+        DataType::Boolean(b) => EvalValue::Bool(if *b { TriBool::True } else { TriBool::False }),
         DataType::TinyInt(n) => EvalValue::Int(*n as i64),
         DataType::SmallInt(n) => EvalValue::Int(*n as i64),
         DataType::Integer(n) => EvalValue::Int(*n as i64),
@@ -873,7 +910,7 @@ fn column_value_to_eval(cv: &ColumnValue) -> EvalValue {
 fn literal_to_eval(l: &Literal) -> EvalValue {
     match l {
         Literal::Null => EvalValue::Null,
-        Literal::Boolean(b) => EvalValue::Bool(*b),
+        Literal::Boolean(b) => EvalValue::Bool(if *b { TriBool::True } else { TriBool::False }),
         Literal::Integer(n) => EvalValue::Int(*n),
         Literal::Float(f) => EvalValue::Float(*f),
         Literal::String(s) => EvalValue::String(s.clone()),
@@ -913,20 +950,33 @@ fn eval_expression(row: &Row, expr: &Expression) -> EvalValue {
             op: UnaryOperator::Not,
             expr,
         } => match eval_expression(row, expr) {
-            EvalValue::Bool(b) => EvalValue::Bool(!b),
-            _ => EvalValue::Null,
+            EvalValue::Bool(b) => EvalValue::Bool(tri_not(b)),
+            EvalValue::Null => EvalValue::Bool(TriBool::Unknown),
+            _ => EvalValue::Bool(TriBool::Unknown),
         },
         Expression::BinaryOp { left, op, right } => {
             let lv = eval_expression(row, left);
             let rv = eval_expression(row, right);
             match op {
                 BinaryOperator::And => match (lv, rv) {
-                    (EvalValue::Bool(a), EvalValue::Bool(b)) => EvalValue::Bool(a && b),
-                    _ => EvalValue::Null,
+                    (EvalValue::Bool(a), EvalValue::Bool(b)) => EvalValue::Bool(tri_and(a, b)),
+                    (EvalValue::Bool(a), EvalValue::Null) => {
+                        EvalValue::Bool(tri_and(a, TriBool::Unknown))
+                    }
+                    (EvalValue::Null, EvalValue::Bool(b)) => {
+                        EvalValue::Bool(tri_and(TriBool::Unknown, b))
+                    }
+                    _ => EvalValue::Bool(TriBool::Unknown),
                 },
                 BinaryOperator::Or => match (lv, rv) {
-                    (EvalValue::Bool(a), EvalValue::Bool(b)) => EvalValue::Bool(a || b),
-                    _ => EvalValue::Null,
+                    (EvalValue::Bool(a), EvalValue::Bool(b)) => EvalValue::Bool(tri_or(a, b)),
+                    (EvalValue::Bool(a), EvalValue::Null) => {
+                        EvalValue::Bool(tri_or(a, TriBool::Unknown))
+                    }
+                    (EvalValue::Null, EvalValue::Bool(b)) => {
+                        EvalValue::Bool(tri_or(TriBool::Unknown, b))
+                    }
+                    _ => EvalValue::Bool(TriBool::Unknown),
                 },
                 BinaryOperator::Add
                 | BinaryOperator::Subtract
@@ -968,7 +1018,7 @@ fn eval_expression(row: &Row, expr: &Expression) -> EvalValue {
                         _ => None,
                     };
                     let Some(ord) = ord else {
-                        return EvalValue::Null;
+                        return EvalValue::Bool(TriBool::Unknown);
                     };
                     let res = match op {
                         BinaryOperator::Equal => ord == Ordering::Equal,
@@ -983,9 +1033,92 @@ fn eval_expression(row: &Row, expr: &Expression) -> EvalValue {
                         }
                         _ => false,
                     };
-                    EvalValue::Bool(res)
+                    EvalValue::Bool(if res { TriBool::True } else { TriBool::False })
                 }
                 _ => EvalValue::Null,
+            }
+        }
+        Expression::IsNull { expr, negated } => {
+            let v = eval_expression(row, expr);
+            let is_null = matches!(v, EvalValue::Null);
+            let out = if *negated { !is_null } else { is_null };
+            EvalValue::Bool(if out { TriBool::True } else { TriBool::False })
+        }
+        Expression::Like {
+            expr,
+            pattern,
+            negated,
+        } => {
+            let v = eval_expression(row, expr);
+            let p = eval_expression(row, pattern);
+            let (EvalValue::String(s), EvalValue::String(pat)) = (v, p) else {
+                return EvalValue::Bool(TriBool::Unknown);
+            };
+            let m = like_match(&s, &pat);
+            let out = if *negated { !m } else { m };
+            EvalValue::Bool(if out { TriBool::True } else { TriBool::False })
+        }
+        Expression::Between { expr, low, high } => {
+            let v = eval_expression(row, expr);
+            let lo = eval_expression(row, low);
+            let hi = eval_expression(row, high);
+            if matches!(v, EvalValue::Null) || matches!(lo, EvalValue::Null) || matches!(hi, EvalValue::Null) {
+                return EvalValue::Bool(TriBool::Unknown);
+            }
+            let ge_lo = compare_eval(&v, &lo).map(|o| o != std::cmp::Ordering::Less);
+            let le_hi = compare_eval(&v, &hi).map(|o| o != std::cmp::Ordering::Greater);
+            let Some(a) = ge_lo else { return EvalValue::Bool(TriBool::Unknown); };
+            let Some(b) = le_hi else { return EvalValue::Bool(TriBool::Unknown); };
+            EvalValue::Bool(if a && b { TriBool::True } else { TriBool::False })
+        }
+        Expression::In { expr, list } => {
+            let v = eval_expression(row, expr);
+            if matches!(v, EvalValue::Null) {
+                return EvalValue::Bool(TriBool::Unknown);
+            }
+            match list {
+                InList::Values(vals) => {
+                    let mut has_null = false;
+                    for e in vals {
+                        let ev = eval_expression(row, e);
+                        if matches!(ev, EvalValue::Null) {
+                            has_null = true;
+                            continue;
+                        }
+                        if compare_eval(&v, &ev) == Some(std::cmp::Ordering::Equal) {
+                            return EvalValue::Bool(TriBool::True);
+                        }
+                    }
+                    EvalValue::Bool(if has_null { TriBool::Unknown } else { TriBool::False })
+                }
+                InList::Subquery(_) => EvalValue::Bool(TriBool::Unknown),
+            }
+        }
+        Expression::Case {
+            expr,
+            when_clauses,
+            else_clause,
+        } => {
+            // Searched CASE when expr is None; Simple CASE when expr is Some.
+            if let Some(e) = expr {
+                let base = eval_expression(row, e);
+                for wc in when_clauses {
+                    let wv = eval_expression(row, &wc.condition);
+                    if compare_eval(&base, &wv) == Some(std::cmp::Ordering::Equal) {
+                        return eval_expression(row, &wc.result);
+                    }
+                }
+            } else {
+                for wc in when_clauses {
+                    if let EvalValue::Bool(TriBool::True) = eval_expression(row, &wc.condition) {
+                        return eval_expression(row, &wc.result);
+                    }
+                }
+            }
+            if let Some(e) = else_clause {
+                eval_expression(row, e)
+            } else {
+                EvalValue::Null
             }
         }
         _ => EvalValue::Null,
@@ -993,7 +1126,49 @@ fn eval_expression(row: &Row, expr: &Expression) -> EvalValue {
 }
 
 fn eval_predicate(row: &Row, expr: &Expression) -> bool {
-    matches!(eval_expression(row, expr), EvalValue::Bool(true))
+    matches!(eval_expression(row, expr), EvalValue::Bool(TriBool::True))
+}
+
+fn compare_eval(a: &EvalValue, b: &EvalValue) -> Option<std::cmp::Ordering> {
+    match (a, b) {
+        (EvalValue::Int(x), EvalValue::Int(y)) => Some(x.cmp(y)),
+        (EvalValue::Float(x), EvalValue::Float(y)) => x.partial_cmp(y),
+        (EvalValue::Int(x), EvalValue::Float(y)) => (*x as f64).partial_cmp(y),
+        (EvalValue::Float(x), EvalValue::Int(y)) => x.partial_cmp(&(*y as f64)),
+        (EvalValue::String(x), EvalValue::String(y)) => Some(x.cmp(y)),
+        (EvalValue::Bool(x), EvalValue::Bool(y)) => {
+            let k = |t: TriBool| match t {
+                TriBool::False => 0_u8,
+                TriBool::Unknown => 1_u8,
+                TriBool::True => 2_u8,
+            };
+            Some(k(*x).cmp(&k(*y)))
+        }
+        _ => None,
+    }
+}
+
+// Minimal SQL LIKE matcher supporting % and _ wildcards.
+fn like_match(s: &str, pat: &str) -> bool {
+    // Fast path: no wildcards.
+    if !pat.contains('%') && !pat.contains('_') {
+        return s == pat;
+    }
+    // Translate to a simple NFA-ish scan.
+    fn rec(s: &[u8], p: &[u8]) -> bool {
+        if p.is_empty() {
+            return s.is_empty();
+        }
+        match p[0] {
+            b'%' => {
+                // Match empty or consume one char.
+                rec(s, &p[1..]) || (!s.is_empty() && rec(&s[1..], p))
+            }
+            b'_' => !s.is_empty() && rec(&s[1..], &p[1..]),
+            c => !s.is_empty() && s[0] == c && rec(&s[1..], &p[1..]),
+        }
+    }
+    rec(s.as_bytes(), pat.as_bytes())
 }
 
 fn filter_literal_to_column_value(l: &Literal) -> ColumnValue {
@@ -1073,6 +1248,304 @@ impl Operator for ConditionalScanOperator {
 
     fn get_schema(&self) -> Result<Vec<String>> {
         self.base_operator.get_schema()
+    }
+
+    fn get_statistics(&self) -> OperatorStatistics {
+        self.statistics.clone()
+    }
+}
+
+/// DISTINCT operator: de-duplicates rows by their projected values.
+pub struct DistinctOperator {
+    input: Box<dyn Operator>,
+    seen: std::collections::HashSet<String>,
+    statistics: OperatorStatistics,
+}
+
+impl DistinctOperator {
+    pub fn new(input: Box<dyn Operator>) -> Result<Self> {
+        Ok(Self {
+            input,
+            seen: std::collections::HashSet::new(),
+            statistics: OperatorStatistics::default(),
+        })
+    }
+}
+
+impl Operator for DistinctOperator {
+    fn next(&mut self) -> Result<Option<Row>> {
+        let start_time = Instant::now();
+        loop {
+            let Some(row) = self.input.next()? else {
+                self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+                return Ok(None);
+            };
+            self.statistics.rows_processed += 1;
+            let key = format!("{:?}", row.values);
+            if self.seen.insert(key) {
+                self.statistics.rows_returned += 1;
+                self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+                return Ok(Some(row));
+            }
+        }
+    }
+
+    fn reset(&mut self) -> Result<()> {
+        self.input.reset()?;
+        self.seen.clear();
+        self.statistics = OperatorStatistics::default();
+        Ok(())
+    }
+
+    fn get_schema(&self) -> Result<Vec<String>> {
+        self.input.get_schema()
+    }
+
+    fn get_statistics(&self) -> OperatorStatistics {
+        self.statistics.clone()
+    }
+}
+
+/// Set operation operator: UNION/INTERSECT/EXCEPT.
+pub struct SetOpOperator {
+    left: Box<dyn Operator>,
+    right: Box<dyn Operator>,
+    op: SetOpType,
+    all: bool,
+    buffered: Option<Vec<Row>>,
+    pos: usize,
+    schema: Vec<String>,
+    statistics: OperatorStatistics,
+}
+
+impl SetOpOperator {
+    pub fn new(left: Box<dyn Operator>, right: Box<dyn Operator>, op: SetOpType, all: bool) -> Result<Self> {
+        let schema = left.get_schema()?;
+        Ok(Self {
+            left,
+            right,
+            op,
+            all,
+            buffered: None,
+            pos: 0,
+            schema,
+            statistics: OperatorStatistics::default(),
+        })
+    }
+
+    fn ensure_buffered(&mut self) -> Result<()> {
+        if self.buffered.is_some() {
+            return Ok(());
+        }
+        let mut lrows = Vec::new();
+        while let Some(r) = self.left.next()? {
+            lrows.push(r);
+        }
+        let mut rrows = Vec::new();
+        while let Some(r) = self.right.next()? {
+            rrows.push(r);
+        }
+
+        let key = |row: &Row| format!("{:?}", row.values);
+
+        let out = match self.op {
+            SetOpType::Union => {
+                if self.all {
+                    let mut v = lrows;
+                    v.extend(rrows);
+                    v
+                } else {
+                    let mut seen = std::collections::HashSet::new();
+                    let mut v = Vec::new();
+                    for r in lrows.into_iter().chain(rrows.into_iter()) {
+                        if seen.insert(key(&r)) {
+                            v.push(r);
+                        }
+                    }
+                    v
+                }
+            }
+            SetOpType::Intersect => {
+                let lset: std::collections::HashSet<String> = lrows.iter().map(|r| key(r)).collect();
+                let rset: std::collections::HashSet<String> = rrows.iter().map(|r| key(r)).collect();
+                let mut v = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                for r in lrows {
+                    let k = key(&r);
+                    if lset.contains(&k) && rset.contains(&k) && seen.insert(k) {
+                        v.push(r);
+                    }
+                }
+                v
+            }
+            SetOpType::Except => {
+                let rset: std::collections::HashSet<String> = rrows.iter().map(|r| key(r)).collect();
+                let mut v = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                for r in lrows {
+                    let k = key(&r);
+                    if !rset.contains(&k) && seen.insert(k) {
+                        v.push(r);
+                    }
+                }
+                v
+            }
+        };
+
+        self.buffered = Some(out);
+        Ok(())
+    }
+}
+
+impl Operator for SetOpOperator {
+    fn next(&mut self) -> Result<Option<Row>> {
+        let start_time = Instant::now();
+        self.ensure_buffered()?;
+        let Some(buf) = self.buffered.as_ref() else {
+            return Ok(None);
+        };
+        if self.pos >= buf.len() {
+            self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+            return Ok(None);
+        }
+        let row = buf[self.pos].clone();
+        self.pos += 1;
+        self.statistics.rows_returned += 1;
+        self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+        Ok(Some(row))
+    }
+
+    fn reset(&mut self) -> Result<()> {
+        self.left.reset()?;
+        self.right.reset()?;
+        self.buffered = None;
+        self.pos = 0;
+        self.statistics = OperatorStatistics::default();
+        Ok(())
+    }
+
+    fn get_schema(&self) -> Result<Vec<String>> {
+        Ok(self.schema.clone())
+    }
+
+    fn get_statistics(&self) -> OperatorStatistics {
+        self.statistics.clone()
+    }
+}
+
+/// Semi-join operator baseline: uncorrelated EXISTS.
+pub struct SemiJoinOperator {
+    left: Box<dyn Operator>,
+    right: Box<dyn Operator>,
+    right_has_any: Option<bool>,
+    statistics: OperatorStatistics,
+}
+
+impl SemiJoinOperator {
+    pub fn new(left: Box<dyn Operator>, right: Box<dyn Operator>) -> Result<Self> {
+        Ok(Self {
+            left,
+            right,
+            right_has_any: None,
+            statistics: OperatorStatistics::default(),
+        })
+    }
+
+    fn ensure_right(&mut self) -> Result<()> {
+        if self.right_has_any.is_some() {
+            return Ok(());
+        }
+        self.right_has_any = Some(self.right.next()?.is_some());
+        Ok(())
+    }
+}
+
+impl Operator for SemiJoinOperator {
+    fn next(&mut self) -> Result<Option<Row>> {
+        let start_time = Instant::now();
+        self.ensure_right()?;
+        if self.right_has_any != Some(true) {
+            self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+            return Ok(None);
+        }
+        let out = self.left.next()?;
+        if out.is_some() {
+            self.statistics.rows_returned += 1;
+        }
+        self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+        Ok(out)
+    }
+
+    fn reset(&mut self) -> Result<()> {
+        self.left.reset()?;
+        self.right.reset()?;
+        self.right_has_any = None;
+        self.statistics = OperatorStatistics::default();
+        Ok(())
+    }
+
+    fn get_schema(&self) -> Result<Vec<String>> {
+        self.left.get_schema()
+    }
+
+    fn get_statistics(&self) -> OperatorStatistics {
+        self.statistics.clone()
+    }
+}
+
+/// Anti-join operator baseline: uncorrelated NOT EXISTS.
+pub struct AntiJoinOperator {
+    left: Box<dyn Operator>,
+    right: Box<dyn Operator>,
+    right_has_any: Option<bool>,
+    statistics: OperatorStatistics,
+}
+
+impl AntiJoinOperator {
+    pub fn new(left: Box<dyn Operator>, right: Box<dyn Operator>) -> Result<Self> {
+        Ok(Self {
+            left,
+            right,
+            right_has_any: None,
+            statistics: OperatorStatistics::default(),
+        })
+    }
+
+    fn ensure_right(&mut self) -> Result<()> {
+        if self.right_has_any.is_some() {
+            return Ok(());
+        }
+        self.right_has_any = Some(self.right.next()?.is_some());
+        Ok(())
+    }
+}
+
+impl Operator for AntiJoinOperator {
+    fn next(&mut self) -> Result<Option<Row>> {
+        let start_time = Instant::now();
+        self.ensure_right()?;
+        if self.right_has_any == Some(true) {
+            self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+            return Ok(None);
+        }
+        let out = self.left.next()?;
+        if out.is_some() {
+            self.statistics.rows_returned += 1;
+        }
+        self.statistics.execution_time_ms = start_time.elapsed().as_millis() as u64;
+        Ok(out)
+    }
+
+    fn reset(&mut self) -> Result<()> {
+        self.left.reset()?;
+        self.right.reset()?;
+        self.right_has_any = None;
+        self.statistics = OperatorStatistics::default();
+        Ok(())
+    }
+
+    fn get_schema(&self) -> Result<Vec<String>> {
+        self.left.get_schema()
     }
 
     fn get_statistics(&self) -> OperatorStatistics {
