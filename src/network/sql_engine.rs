@@ -6,14 +6,17 @@
 
 use crate::common::types::{ColumnValue, DataType, RecordId};
 use crate::common::Error as DbError;
+use crate::executor::operators::eval_predicate_expression;
 use crate::executor::operators::ScanOperatorFactory;
 use crate::executor::QueryExecutor;
+use crate::catalog::schema::{CheckConstraint, SchemaManager, TableSchema};
 use crate::network::engine::{
     engine_error_code, EngineError, EngineHandle, EngineOutput, SessionContext,
 };
 use crate::parser::ast::{
-    BinaryOperator, DeleteStatement, Expression, InsertStatement, InsertValues, Literal,
-    SelectItem, SelectStatement, UpdateStatement,
+    BinaryOperator, ColumnConstraint, CreateTableStatement, DataType as SqlDataType,
+    DeleteStatement, Expression, InsertStatement, InsertValues, Literal, SelectItem, SelectStatement,
+    TableConstraint, UpdateStatement,
 };
 use crate::parser::{SqlParser, SqlStatement};
 use crate::planner::{QueryOptimizer, QueryPlanner};
@@ -44,6 +47,7 @@ struct SqlEngineState {
     ///
     /// These queries are common in benchmarks (`SELECT 1`) and are safe to memoize.
     select_no_from_cache: Mutex<HashMap<String, EngineOutput>>,
+    catalog: Mutex<SchemaManager>,
 }
 
 impl SqlEngine {
@@ -75,6 +79,7 @@ impl SqlEngine {
                 optimizer: QueryOptimizer::new()?,
                 executor,
                 select_no_from_cache: Mutex::new(HashMap::new()),
+                catalog: Mutex::new(SchemaManager::new()?),
             }),
         })
     }
@@ -169,7 +174,7 @@ impl SqlEngine {
             SqlStatement::CreateTable(ct) => {
                 let s = info_span!("sql.create_table", table = %ct.table_name);
                 let _sg = s.enter();
-                execute_create_table(state, &ct.table_name)
+                execute_create_table(state, ct)
             }
             SqlStatement::DropTable(dt) => {
                 let s = info_span!("sql.drop_table", table = %dt.table_name);
@@ -271,8 +276,16 @@ fn table_page_manager(
     Ok(pm)
 }
 
-fn execute_create_table(state: &SqlEngineState, table: &str) -> Result<EngineOutput, EngineError> {
-    let _ = table_page_manager(state, table)?;
+fn execute_create_table(
+    state: &SqlEngineState,
+    ct: &CreateTableStatement,
+) -> Result<EngineOutput, EngineError> {
+    let _ = table_page_manager(state, &ct.table_name)?;
+    let schema = table_schema_from_create_table(ct)?;
+    {
+        let mut cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+        cat.register_schema(schema);
+    }
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
@@ -286,6 +299,9 @@ fn execute_drop_table(state: &SqlEngineState, table: &str) -> Result<EngineOutpu
     }
     let path = state.data_dir.join(format!("{table}.tbl"));
     let _ = std::fs::remove_file(path);
+    if let Ok(mut cat) = state.catalog.lock() {
+        cat.drop_table(table);
+    }
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
@@ -318,7 +334,8 @@ fn execute_insert(
             let pm_for_table = table_page_manager(state, &insert.table)?;
             let mut rows_affected = 0u64;
             for r in rows {
-                let tuple = build_insert_tuple_from_row(state, insert.columns.as_ref(), &r)?;
+                let tuple =
+                    build_insert_tuple_from_row(state, &insert.table, insert.columns.as_ref(), &r)?;
                 let bytes = tuple.to_bytes().map_err(map_db_err)?;
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
                 pm.insert(&bytes).map_err(map_db_err)?;
@@ -334,7 +351,7 @@ fn execute_insert(
             let mut rows_affected = 0u64;
             let pm_for_table = table_page_manager(state, &insert.table)?;
             for row in rows {
-                let tuple = build_insert_tuple(state, insert.columns.as_ref(), row)?;
+                let tuple = build_insert_tuple(state, &insert.table, insert.columns.as_ref(), row)?;
                 let bytes = tuple.to_bytes().map_err(map_db_err)?;
                 let mut pm = state
                     .default_page_manager
@@ -357,6 +374,7 @@ fn execute_insert(
 
 fn build_insert_tuple(
     state: &SqlEngineState,
+    table: &str,
     columns: Option<&Vec<String>>,
     row: &[Expression],
 ) -> Result<Tuple, EngineError> {
@@ -378,11 +396,13 @@ fn build_insert_tuple(
         let cv = expr_to_column_value(expr)?;
         tuple.set_value(name, cv);
     }
+    apply_defaults_and_validate(state, table, &mut tuple)?;
     Ok(tuple)
 }
 
 fn build_insert_tuple_from_row(
     state: &SqlEngineState,
+    table: &str,
     columns: Option<&Vec<String>>,
     row: &Row,
 ) -> Result<Tuple, EngineError> {
@@ -403,6 +423,7 @@ fn build_insert_tuple_from_row(
         };
         tuple.set_value(&name, cv.clone());
     }
+    apply_defaults_and_validate(state, table, &mut tuple)?;
     Ok(tuple)
 }
 
@@ -429,6 +450,7 @@ fn execute_update(
             let cv = expr_to_column_value(&a.value)?;
             tuple.set_value(&a.column, cv);
         }
+        apply_defaults_and_validate(state, &update.table, &mut tuple)?;
         let new_bytes = tuple.to_bytes().map_err(map_db_err)?;
         pm.update(rid, &new_bytes).map_err(map_db_err)?;
         rows_affected += 1;
@@ -503,6 +525,118 @@ fn match_where_tuple(expr: &Expression, tuple: &Tuple) -> Result<bool, EngineErr
             "WHERE for UPDATE/DELETE supports only column = literal (and AND)",
         )),
     }
+}
+
+fn sql_type_to_column_datatype(t: &SqlDataType) -> DataType {
+    match t {
+        SqlDataType::Integer => DataType::Integer(0),
+        SqlDataType::BigInt => DataType::BigInt(0),
+        SqlDataType::Real => DataType::Float(0.0),
+        SqlDataType::Double => DataType::Double(0.0),
+        SqlDataType::Decimal { .. } => DataType::Double(0.0),
+        SqlDataType::Text => DataType::Text(String::new()),
+        SqlDataType::Varchar { .. } => DataType::Varchar(String::new()),
+        SqlDataType::Boolean => DataType::Boolean(false),
+        SqlDataType::Date => DataType::Date(String::new()),
+        SqlDataType::Time => DataType::Time(String::new()),
+        SqlDataType::Timestamp => DataType::Timestamp(String::new()),
+        SqlDataType::Blob => DataType::Blob(Vec::new()),
+    }
+}
+
+fn table_schema_from_create_table(ct: &CreateTableStatement) -> Result<TableSchema, EngineError> {
+    use crate::common::types::{Column, ColumnValue};
+    let mut columns: Vec<Column> = Vec::new();
+    let mut checks: Vec<CheckConstraint> = Vec::new();
+
+    for c in &ct.columns {
+        let mut col = Column::new(c.name.clone(), sql_type_to_column_datatype(&c.data_type));
+        for cc in &c.constraints {
+            match cc {
+                ColumnConstraint::NotNull => col.not_null = true,
+                ColumnConstraint::Default(expr) => {
+                    let cv = expr_to_column_value(expr)?;
+                    col.default_value = Some(cv);
+                }
+                ColumnConstraint::Check(expr) => {
+                    checks.push(CheckConstraint {
+                        name: format!("chk_{}_{}", ct.table_name, c.name),
+                        expr: expr.clone(),
+                    });
+                }
+                _ => {}
+            }
+        }
+        columns.push(col);
+    }
+
+    for tc in &ct.constraints {
+        if let TableConstraint::Check(expr) = tc {
+            checks.push(CheckConstraint {
+                name: format!("chk_{}", ct.table_name),
+                expr: expr.clone(),
+            });
+        }
+    }
+
+    Ok(TableSchema {
+        table_name: ct.table_name.clone(),
+        columns,
+        check_constraints: checks,
+    })
+}
+
+fn apply_defaults_and_validate(
+    state: &SqlEngineState,
+    table: &str,
+    tuple: &mut Tuple,
+) -> Result<(), EngineError> {
+    let schema = {
+        let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+        cat.schema(table).cloned()
+    };
+    let Some(schema) = schema else {
+        return Ok(());
+    };
+
+    // Apply DEFAULT for missing columns.
+    for c in &schema.columns {
+        if !tuple.values.contains_key(&c.name) {
+            if let Some(def) = &c.default_value {
+                tuple.set_value(&c.name, def.clone());
+            }
+        }
+    }
+
+    // Enforce NOT NULL
+    for c in &schema.columns {
+        if c.not_null {
+            match tuple.values.get(&c.name) {
+                Some(v) if !v.is_null() => {}
+                _ => {
+                    return Err(EngineError::new(
+                        engine_error_code::PROTOCOL,
+                        format!("NOT NULL constraint failed: {}.{}", table, c.name),
+                    ))
+                }
+            }
+        }
+    }
+
+    // Enforce CHECK
+    if !schema.check_constraints.is_empty() {
+        let mut row = Row::new();
+        row.values = tuple.values.clone();
+        for chk in &schema.check_constraints {
+            if !eval_predicate_expression(&row, &chk.expr) {
+                return Err(EngineError::new(
+                    engine_error_code::PROTOCOL,
+                    format!("CHECK constraint failed: {}", chk.name),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn column_name_expr(expr: &Expression) -> Option<String> {

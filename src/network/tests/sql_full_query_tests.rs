@@ -251,6 +251,32 @@ fn engine_create_drop_table_roundtrip() {
 }
 
 #[test]
+fn engine_enforces_not_null_default_and_check() {
+    let dir = TempDir::new().expect("tempdir");
+    let eng = SqlEngine::open(dir.path().to_path_buf()).expect("open");
+    let mut ctx = SessionContext::default();
+
+    // NOT NULL + DEFAULT + CHECK.
+    eng.execute_sql(
+        "CREATE TABLE c (a INT NOT NULL DEFAULT 7, b INT CHECK (b > 0))",
+        &mut ctx,
+    )
+    .expect("create");
+
+    // DEFAULT applied for missing a.
+    eng.execute_sql("INSERT INTO c (b) VALUES (1)", &mut ctx)
+        .expect("insert default");
+
+    // NOT NULL violation: missing a and no default.
+    eng.execute_sql("CREATE TABLE nn (a INT NOT NULL)", &mut ctx)
+        .expect("create nn");
+    assert!(eng.execute_sql("INSERT INTO nn VALUES (NULL)", &mut ctx).is_err());
+
+    // CHECK violation.
+    assert!(eng.execute_sql("INSERT INTO c (a,b) VALUES (1,0)", &mut ctx).is_err());
+}
+
+#[test]
 fn engine_insert_select_roundtrip() {
     let dir = TempDir::new().expect("tempdir");
     let eng = SqlEngine::open(dir.path().to_path_buf()).expect("open");

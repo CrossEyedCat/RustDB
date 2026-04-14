@@ -1129,6 +1129,10 @@ fn eval_predicate(row: &Row, expr: &Expression) -> bool {
     matches!(eval_expression(row, expr), EvalValue::Bool(TriBool::True))
 }
 
+pub(crate) fn eval_predicate_expression(row: &Row, expr: &Expression) -> bool {
+    eval_predicate(row, expr)
+}
+
 fn compare_eval(a: &EvalValue, b: &EvalValue) -> Option<std::cmp::Ordering> {
     match (a, b) {
         (EvalValue::Int(x), EvalValue::Int(y)) => Some(x.cmp(y)),

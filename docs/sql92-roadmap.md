@@ -142,10 +142,11 @@ This document is a practical, file-by-file plan for incrementally expanding Rust
 ### TODO (Constraints)
 
 - **Catalog representation**
-  - [ ] Store constraint metadata (names, kind, columns, referenced targets)
+  - [x] Store constraint metadata (names, kind, columns, referenced targets)
+    - Implemented minimal in `SchemaManager`: per-table columns + CHECK constraints (name + AST)
 - **Enforcement on write paths**
-  - [ ] `NOT NULL` and `DEFAULT` on INSERT/UPDATE
-  - [ ] `CHECK` evaluation on rows
+  - [x] `NOT NULL` and `DEFAULT` on INSERT/UPDATE
+  - [x] `CHECK` evaluation on rows
   - [ ] `UNIQUE` / `PRIMARY KEY` (usually via indexes + conflict detection)
   - [ ] `FOREIGN KEY` checks (referential integrity)
 - **ALTER TABLE**
