@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["SemanticErrorType","SemanticWarningType"],"struct":["AnalysisContext","AnalysisResult","AnalysisStatistics","SemanticAnalyzer","SemanticAnalyzerSettings","SemanticError","SemanticWarning","TypeConversion","TypeInformation"]};
+window.SIDEBAR_ITEMS = {"enum":["SemanticErrorType","SemanticWarningType"],"struct":["AnalysisContext","AnalysisResult","AnalysisStatistics","SelectScope","SemanticAnalyzer","SemanticAnalyzerSettings","SemanticError","SemanticWarning","TypeConversion","TypeInformation"]};
