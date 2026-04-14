@@ -70,15 +70,15 @@ This document is a practical, file-by-file plan for incrementally expanding Rust
 ### TODO (Analyzer)
 
 - **Name resolution**
-  - [ ] Table aliases, column qualification (`t.col`)
-  - [ ] Scope rules for subqueries (including correlation)
+  - [x] Table aliases, column qualification (`t.col`)
+  - [x] Scope rules for subqueries (including correlation)
 - **Type checking**
-  - [ ] `CASE` result type unification
-  - [ ] Predicate typing for `IN/EXISTS/LIKE/BETWEEN/IS NULL`
+  - [x] `CASE` result type unification
+  - [x] Predicate typing for `IN/EXISTS/LIKE/BETWEEN/IS NULL`
   - [ ] Implicit/explicit casts strategy (even if minimal)
 - **SQL NULL behavior**
   - [ ] 3-valued logic (TRUE/FALSE/UNKNOWN) model and rules for predicates
-  - [ ] Consistent handling of `NULL` in comparisons
+  - [x] Consistent handling of `NULL` in comparisons
 
 ## Phase 3 — Planner: plan nodes and rewrites
 
