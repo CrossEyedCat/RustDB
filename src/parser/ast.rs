@@ -278,8 +278,14 @@ pub enum AlterTableOperation {
     AddColumn(ColumnDefinition),
     DropColumn(String),
     ModifyColumn(ColumnDefinition),
-    RenameColumn { old_name: String, new_name: String },
-    AddConstraint(TableConstraint),
+    RenameColumn {
+        old_name: String,
+        new_name: String,
+    },
+    AddConstraint {
+        name: Option<String>,
+        definition: TableConstraint,
+    },
     DropConstraint(String),
     RenameTable(String),
 }
@@ -289,6 +295,7 @@ pub enum AlterTableOperation {
 pub struct DropTableStatement {
     pub table_name: String,
     pub if_exists: bool,
+    /// When true, drop dependent tables that reference this table via foreign keys.
     pub cascade: bool,
 }
 

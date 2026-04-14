@@ -7,6 +7,7 @@ pub mod framing;
 pub mod metrics;
 pub mod query_stream;
 pub mod server;
+pub mod sql_constraints;
 pub mod sql_engine;
 pub mod transport;
 

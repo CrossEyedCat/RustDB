@@ -20,13 +20,82 @@ pub mod engine_error_code {
     pub const RESULT_ROWS_TOO_LARGE: u32 = 2003;
     /// Statement kind not implemented on the server engine (e.g. DDL or DML not wired).
     pub const UNSUPPORTED_SQL: u32 = 2004;
+    /// Constraint violation (PRIMARY KEY, UNIQUE, FOREIGN KEY, etc.).
+    pub const CONSTRAINT_VIOLATION: u32 = 2005;
+    /// `COMMIT` / `ROLLBACK` with no open transaction.
+    pub const NO_ACTIVE_TRANSACTION: u32 = 2006;
+    /// `BEGIN` while a transaction is already open for this session.
+    pub const ALREADY_IN_TRANSACTION: u32 = 2007;
+    /// DDL is not allowed inside an explicit transaction (minimal Phase 6 rule).
+    pub const DDL_IN_TRANSACTION: u32 = 2008;
 }
 
-/// Session-scoped state for a single logical client connection (placeholder for Phase 2).
-#[derive(Debug, Default, Clone)]
+use crate::common::types::RecordId;
+
+/// Minimal isolation level for the SQL engine session (Phase 6 baseline).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SqlIsolationLevel {
+    /// Read committed semantics at the statement level (see `SqlEngine` docs).
+    #[default]
+    ReadCommitted,
+}
+
+/// Undo record for a single DML operation within a session transaction.
+#[derive(Debug, Clone)]
+pub enum UndoEntry {
+    /// Reverse an `INSERT` by unregistering and deleting the row at `rid`.
+    /// `payload` is the serialized row bytes right after insert (so rollback does not rely on `get_record`).
+    Insert {
+        table: String,
+        rid: RecordId,
+        payload: Vec<u8>,
+    },
+    /// Reverse a `DELETE` by re-inserting the previous row bytes.
+    Delete {
+        table: String,
+        rid: RecordId,
+        payload: Vec<u8>,
+    },
+    /// Reverse an `UPDATE` by restoring the previous row bytes.
+    Update {
+        table: String,
+        rid: RecordId,
+        old_payload: Vec<u8>,
+    },
+}
+
+/// Open user transaction state (per [`SessionContext`]).
+#[derive(Debug, Clone)]
+pub struct SqlTransaction {
+    pub isolation: SqlIsolationLevel,
+    pub undo: Vec<UndoEntry>,
+}
+
+impl SqlTransaction {
+    pub fn new(isolation: SqlIsolationLevel) -> Self {
+        Self {
+            isolation,
+            undo: Vec::new(),
+        }
+    }
+}
+
+/// Session-scoped state for a single logical client connection.
+#[derive(Debug, Clone)]
 pub struct SessionContext {
     /// Opaque session identifier when the server assigns one.
     pub session_id: Option<u64>,
+    /// User transaction (`BEGIN` … `COMMIT` / `ROLLBACK`), if any.
+    pub transaction: Option<SqlTransaction>,
+}
+
+impl Default for SessionContext {
+    fn default() -> Self {
+        Self {
+            session_id: None,
+            transaction: None,
+        }
+    }
 }
 
 /// Successful engine result: tabular data or a non-query completion without rows.

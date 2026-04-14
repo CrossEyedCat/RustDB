@@ -208,7 +208,10 @@ impl QueryOptimizer {
         let mut new_plan = plan.clone();
         new_plan.root = self.rewrite_exists_in_recursive(&plan.root)?;
         if new_plan.root != plan.root {
-            Ok(Some((new_plan, "EXISTS/IN → semi-join rewrite applied".to_string())))
+            Ok(Some((
+                new_plan,
+                "EXISTS/IN → semi-join rewrite applied".to_string(),
+            )))
         } else {
             Ok(None)
         }
@@ -280,11 +283,13 @@ impl QueryOptimizer {
                 right: Box::new(self.rewrite_exists_in_recursive(&j.right)?),
                 cost: j.cost,
             })),
-            PlanNode::Projection(p) => Ok(PlanNode::Projection(crate::planner::planner::ProjectionNode {
-                columns: p.columns.clone(),
-                input: Box::new(self.rewrite_exists_in_recursive(&p.input)?),
-                cost: p.cost,
-            })),
+            PlanNode::Projection(p) => Ok(PlanNode::Projection(
+                crate::planner::planner::ProjectionNode {
+                    columns: p.columns.clone(),
+                    input: Box::new(self.rewrite_exists_in_recursive(&p.input)?),
+                    cost: p.cost,
+                },
+            )),
             PlanNode::Sort(s) => Ok(PlanNode::Sort(crate::planner::planner::SortNode {
                 sort_columns: s.sort_columns.clone(),
                 input: Box::new(self.rewrite_exists_in_recursive(&s.input)?),
@@ -306,11 +311,13 @@ impl QueryOptimizer {
                 input: Box::new(self.rewrite_exists_in_recursive(&g.input)?),
                 cost: g.cost,
             })),
-            PlanNode::Aggregate(a) => Ok(PlanNode::Aggregate(crate::planner::planner::AggregateNode {
-                aggregates: a.aggregates.clone(),
-                input: Box::new(self.rewrite_exists_in_recursive(&a.input)?),
-                cost: a.cost,
-            })),
+            PlanNode::Aggregate(a) => Ok(PlanNode::Aggregate(
+                crate::planner::planner::AggregateNode {
+                    aggregates: a.aggregates.clone(),
+                    input: Box::new(self.rewrite_exists_in_recursive(&a.input)?),
+                    cost: a.cost,
+                },
+            )),
             PlanNode::SetOp(s) => Ok(PlanNode::SetOp(crate::planner::planner::SetOpNode {
                 op: s.op.clone(),
                 all: s.all,
@@ -324,16 +331,20 @@ impl QueryOptimizer {
                 right: Box::new(self.rewrite_exists_in_recursive(&s.right)?),
                 cost: s.cost,
             })),
-            PlanNode::AntiJoin(a) => Ok(PlanNode::AntiJoin(crate::planner::planner::AntiJoinNode {
-                condition: a.condition.clone(),
-                left: Box::new(self.rewrite_exists_in_recursive(&a.left)?),
-                right: Box::new(self.rewrite_exists_in_recursive(&a.right)?),
-                cost: a.cost,
-            })),
-            PlanNode::Distinct(d) => Ok(PlanNode::Distinct(crate::planner::planner::DistinctNode {
-                input: Box::new(self.rewrite_exists_in_recursive(&d.input)?),
-                cost: d.cost,
-            })),
+            PlanNode::AntiJoin(a) => {
+                Ok(PlanNode::AntiJoin(crate::planner::planner::AntiJoinNode {
+                    condition: a.condition.clone(),
+                    left: Box::new(self.rewrite_exists_in_recursive(&a.left)?),
+                    right: Box::new(self.rewrite_exists_in_recursive(&a.right)?),
+                    cost: a.cost,
+                }))
+            }
+            PlanNode::Distinct(d) => {
+                Ok(PlanNode::Distinct(crate::planner::planner::DistinctNode {
+                    input: Box::new(self.rewrite_exists_in_recursive(&d.input)?),
+                    cost: d.cost,
+                }))
+            }
             _ => Ok(node.clone()),
         }
     }

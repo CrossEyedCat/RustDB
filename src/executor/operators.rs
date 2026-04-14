@@ -3,9 +3,9 @@
 use crate::common::types::{ColumnValue, DataType};
 use crate::common::{Error, Result};
 use crate::parser::ast::{BinaryOperator, Expression, InList, Literal, UnaryOperator, WhenClause};
-use crate::planner::planner::SetOpType;
 use crate::planner::planner::AggregateFunction as PlanAggregateFunction;
 use crate::planner::planner::ProjectionColumn;
+use crate::planner::planner::SetOpType;
 use crate::planner::planner::SimpleEqualityFilter;
 use crate::planner::{ExecutionPlan, PlanNode};
 use crate::storage::index::BPlusTree;
@@ -1062,14 +1062,25 @@ fn eval_expression(row: &Row, expr: &Expression) -> EvalValue {
             let v = eval_expression(row, expr);
             let lo = eval_expression(row, low);
             let hi = eval_expression(row, high);
-            if matches!(v, EvalValue::Null) || matches!(lo, EvalValue::Null) || matches!(hi, EvalValue::Null) {
+            if matches!(v, EvalValue::Null)
+                || matches!(lo, EvalValue::Null)
+                || matches!(hi, EvalValue::Null)
+            {
                 return EvalValue::Bool(TriBool::Unknown);
             }
             let ge_lo = compare_eval(&v, &lo).map(|o| o != std::cmp::Ordering::Less);
             let le_hi = compare_eval(&v, &hi).map(|o| o != std::cmp::Ordering::Greater);
-            let Some(a) = ge_lo else { return EvalValue::Bool(TriBool::Unknown); };
-            let Some(b) = le_hi else { return EvalValue::Bool(TriBool::Unknown); };
-            EvalValue::Bool(if a && b { TriBool::True } else { TriBool::False })
+            let Some(a) = ge_lo else {
+                return EvalValue::Bool(TriBool::Unknown);
+            };
+            let Some(b) = le_hi else {
+                return EvalValue::Bool(TriBool::Unknown);
+            };
+            EvalValue::Bool(if a && b {
+                TriBool::True
+            } else {
+                TriBool::False
+            })
         }
         Expression::In { expr, list } => {
             let v = eval_expression(row, expr);
@@ -1089,7 +1100,11 @@ fn eval_expression(row: &Row, expr: &Expression) -> EvalValue {
                             return EvalValue::Bool(TriBool::True);
                         }
                     }
-                    EvalValue::Bool(if has_null { TriBool::Unknown } else { TriBool::False })
+                    EvalValue::Bool(if has_null {
+                        TriBool::Unknown
+                    } else {
+                        TriBool::False
+                    })
                 }
                 InList::Subquery(_) => EvalValue::Bool(TriBool::Unknown),
             }
@@ -1323,7 +1338,12 @@ pub struct SetOpOperator {
 }
 
 impl SetOpOperator {
-    pub fn new(left: Box<dyn Operator>, right: Box<dyn Operator>, op: SetOpType, all: bool) -> Result<Self> {
+    pub fn new(
+        left: Box<dyn Operator>,
+        right: Box<dyn Operator>,
+        op: SetOpType,
+        all: bool,
+    ) -> Result<Self> {
         let schema = left.get_schema()?;
         Ok(Self {
             left,
@@ -1370,8 +1390,10 @@ impl SetOpOperator {
                 }
             }
             SetOpType::Intersect => {
-                let lset: std::collections::HashSet<String> = lrows.iter().map(|r| key(r)).collect();
-                let rset: std::collections::HashSet<String> = rrows.iter().map(|r| key(r)).collect();
+                let lset: std::collections::HashSet<String> =
+                    lrows.iter().map(|r| key(r)).collect();
+                let rset: std::collections::HashSet<String> =
+                    rrows.iter().map(|r| key(r)).collect();
                 let mut v = Vec::new();
                 let mut seen = std::collections::HashSet::new();
                 for r in lrows {
@@ -1383,7 +1405,8 @@ impl SetOpOperator {
                 v
             }
             SetOpType::Except => {
-                let rset: std::collections::HashSet<String> = rrows.iter().map(|r| key(r)).collect();
+                let rset: std::collections::HashSet<String> =
+                    rrows.iter().map(|r| key(r)).collect();
                 let mut v = Vec::new();
                 let mut seen = std::collections::HashSet::new();
                 for r in lrows {

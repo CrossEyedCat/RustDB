@@ -1345,6 +1345,55 @@ impl SqlParser {
         }
     }
 
+    /// Parses a table-level constraint (without optional `CONSTRAINT name` prefix).
+    fn parse_table_constraint_only(&mut self) -> Result<TableConstraint> {
+        if self.match_token(&TokenType::Primary) {
+            self.advance();
+            self.expect_keyword("KEY")?;
+            self.expect_token(&TokenType::LeftParen)?;
+            let cols = self.parse_identifier_list()?;
+            self.expect_token(&TokenType::RightParen)?;
+            Ok(TableConstraint::PrimaryKey(cols))
+        } else if self.match_token(&TokenType::Unique) {
+            self.advance();
+            self.expect_token(&TokenType::LeftParen)?;
+            let cols = self.parse_identifier_list()?;
+            self.expect_token(&TokenType::RightParen)?;
+            Ok(TableConstraint::Unique(cols))
+        } else if self.match_token(&TokenType::Foreign) {
+            self.advance();
+            self.expect_keyword("KEY")?;
+            self.expect_token(&TokenType::LeftParen)?;
+            let cols = self.parse_identifier_list()?;
+            self.expect_token(&TokenType::RightParen)?;
+            self.expect_keyword("REFERENCES")?;
+            let ref_table = self.parse_identifier()?;
+            let ref_cols = if self.match_token(&TokenType::LeftParen) {
+                self.advance();
+                let cols2 = self.parse_identifier_list()?;
+                self.expect_token(&TokenType::RightParen)?;
+                cols2
+            } else {
+                Vec::new()
+            };
+            Ok(TableConstraint::ForeignKey {
+                columns: cols,
+                referenced_table: ref_table,
+                referenced_columns: ref_cols,
+            })
+        } else if self.match_token(&TokenType::Check) {
+            self.advance();
+            self.expect_token(&TokenType::LeftParen)?;
+            let expr = self.parse_expression()?;
+            self.expect_token(&TokenType::RightParen)?;
+            Ok(TableConstraint::Check(expr))
+        } else {
+            Err(Error::parser(
+                "Expected PRIMARY KEY, UNIQUE, FOREIGN KEY, or CHECK".to_string(),
+            ))
+        }
+    }
+
     fn parse_alter(&mut self) -> Result<SqlStatement> {
         self.expect_keyword("ALTER")?;
         self.expect_keyword("TABLE")?;
@@ -1352,19 +1401,38 @@ impl SqlParser {
 
         let operation = if self.match_keyword("ADD") {
             self.advance();
-            self.expect_keyword("COLUMN")?;
-            let name = self.parse_identifier()?;
-            let data_type = self.parse_data_type()?;
-            AlterTableOperation::AddColumn(ColumnDefinition {
-                name,
-                data_type,
-                constraints: Vec::new(),
-            })
+            if self.match_keyword("COLUMN") {
+                self.advance();
+                let name = self.parse_identifier()?;
+                let data_type = self.parse_data_type()?;
+                AlterTableOperation::AddColumn(ColumnDefinition {
+                    name,
+                    data_type,
+                    constraints: Vec::new(),
+                })
+            } else {
+                let mut constraint_name: Option<String> = None;
+                if self.match_token(&TokenType::Constraint) {
+                    self.advance();
+                    constraint_name = Some(self.parse_identifier()?);
+                }
+                let definition = self.parse_table_constraint_only()?;
+                AlterTableOperation::AddConstraint {
+                    name: constraint_name,
+                    definition,
+                }
+            }
         } else if self.match_keyword("DROP") {
             self.advance();
-            self.expect_keyword("COLUMN")?;
-            let col = self.parse_identifier()?;
-            AlterTableOperation::DropColumn(col)
+            if self.match_keyword("CONSTRAINT") {
+                self.advance();
+                let name = self.parse_identifier()?;
+                AlterTableOperation::DropConstraint(name)
+            } else {
+                self.expect_keyword("COLUMN")?;
+                let col = self.parse_identifier()?;
+                AlterTableOperation::DropColumn(col)
+            }
         } else if self.match_keyword("MODIFY") {
             self.advance();
             self.expect_keyword("COLUMN")?;
@@ -1394,7 +1462,7 @@ impl SqlParser {
             }
         } else {
             return Err(Error::parser(
-                "Unsupported ALTER TABLE: use ADD COLUMN, DROP COLUMN, MODIFY COLUMN, RENAME COLUMN, or RENAME TO"
+                "Unsupported ALTER TABLE: use ADD COLUMN / ADD CONSTRAINT, DROP COLUMN / DROP CONSTRAINT, MODIFY COLUMN, RENAME COLUMN, or RENAME TO"
                     .to_string(),
             ));
         };
@@ -1420,6 +1488,9 @@ impl SqlParser {
             self.advance();
             true
         } else {
+            if self.match_keyword("RESTRICT") {
+                self.advance();
+            }
             false
         };
         Ok(SqlStatement::DropTable(DropTableStatement {

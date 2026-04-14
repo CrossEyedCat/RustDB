@@ -147,13 +147,13 @@ This document is a practical, file-by-file plan for incrementally expanding Rust
 - **Enforcement on write paths**
   - [x] `NOT NULL` and `DEFAULT` on INSERT/UPDATE
   - [x] `CHECK` evaluation on rows
-  - [ ] `UNIQUE` / `PRIMARY KEY` (usually via indexes + conflict detection)
-  - [ ] `FOREIGN KEY` checks (referential integrity)
+  - [x] `UNIQUE` / `PRIMARY KEY` (in-memory key maps + conflict detection; `src/network/sql_constraints.rs`)
+  - [x] `FOREIGN KEY` checks (referential integrity + delete parent blocked when children reference)
 - **ALTER TABLE**
-  - [ ] `ALTER TABLE ... ADD CONSTRAINT ...`
-  - [ ] `ALTER TABLE ... DROP CONSTRAINT ...`
+  - [x] `ALTER TABLE ... ADD CONSTRAINT ...` (PRIMARY KEY / UNIQUE / FOREIGN KEY / CHECK)
+  - [x] `ALTER TABLE ... DROP CONSTRAINT ...`
 - **DROP semantics**
-  - [ ] Align `RESTRICT`/`CASCADE` behavior with dependency tracking (even if minimal)
+  - [x] `RESTRICT` (default): refuse drop when other tables have FKs to this table; `CASCADE`: drop dependents first (`src/network/sql_engine.rs`)
 
 ## Phase 6 — Transactions and concurrency (to keep invariants true)
 
@@ -165,8 +165,8 @@ This document is a practical, file-by-file plan for incrementally expanding Rust
 
 ### TODO (Concurrency)
 
-- [ ] Ensure constraints remain correct under concurrent INSERT/UPDATE
-- [ ] Define and test a minimal isolation baseline (e.g. READ COMMITTED) before expanding
+- [x] Ensure constraints remain correct under concurrent INSERT/UPDATE (`SqlEngineState.storage_access` `RwLock` + per-statement write lock around DML/DDL; see `src/network/sql_engine.rs`)
+- [x] Minimal isolation baseline: **read committed at statement level** (`SessionContext.transaction` + undo log; `SqlIsolationLevel::ReadCommitted` in `src/network/engine.rs`)
 
 ## Recommended PR slicing (low-risk order)
 

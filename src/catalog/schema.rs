@@ -1,7 +1,7 @@
 //! Schema manager for rustdb
 
-use crate::common::Result;
 use crate::common::types::Column;
+use crate::common::Result;
 use crate::parser::ast::Expression;
 use std::collections::HashMap;
 
@@ -11,10 +11,29 @@ pub struct CheckConstraint {
     pub expr: Expression,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UniqueConstraintDef {
+    pub name: String,
+    pub columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignKeyConstraintDef {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub referenced_table: String,
+    /// When empty, resolved at runtime to the referenced table's primary key columns.
+    pub referenced_columns: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct TableSchema {
     pub table_name: String,
     pub columns: Vec<Column>,
+    /// `(constraint_name, column list)` — at most one primary key.
+    pub primary_key: Option<(String, Vec<String>)>,
+    pub unique_constraints: Vec<UniqueConstraintDef>,
+    pub foreign_keys: Vec<ForeignKeyConstraintDef>,
     pub check_constraints: Vec<CheckConstraint>,
 }
 
@@ -57,6 +76,33 @@ impl SchemaManager {
 
     pub fn schema(&self, table: &str) -> Option<&TableSchema> {
         self.schemas.get(table)
+    }
+
+    pub fn schema_mut(&mut self, table: &str) -> Option<&mut TableSchema> {
+        self.schemas.get_mut(table)
+    }
+
+    /// Sorted list of registered table names (for dependency ordering, tests, etc.).
+    pub fn table_names(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.schemas.keys().cloned().collect();
+        v.sort();
+        v
+    }
+
+    /// Tables that declare a foreign key referencing `parent_table`.
+    pub fn tables_with_fk_to(&self, parent_table: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for (tname, sch) in &self.schemas {
+            if sch
+                .foreign_keys
+                .iter()
+                .any(|fk| fk.referenced_table == parent_table)
+            {
+                out.push(tname.clone());
+            }
+        }
+        out.sort();
+        out
     }
 
     pub fn drop_table(&mut self, table: &str) {

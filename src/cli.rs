@@ -7,7 +7,8 @@ use crate::network::engine::{EngineHandle, EngineOutput, SessionContext};
 use crate::network::server::QuicServer;
 use crate::network::SqlEngine;
 use clap::{CommandFactory, Parser, Subcommand};
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -77,8 +78,14 @@ pub enum Commands {
 
     /// Execute SQL query
     Query {
-        /// SQL query
-        query: String,
+        /// Single SQL statement (omit when using `--batch-file`).
+        #[arg(value_name = "SQL", conflicts_with = "batch_file")]
+        query: Option<String>,
+
+        /// One statement per non-empty line (lines starting with `#` are skipped). `-` reads stdin.
+        /// Uses one process, one [`SessionContext`], and one [`SqlEngine`] — transactions span lines.
+        #[arg(long = "batch-file", value_name = "PATH", conflicts_with = "query")]
+        batch_file: Option<PathBuf>,
 
         /// Database
         #[arg(short, long)]
@@ -158,8 +165,13 @@ impl Cli {
             Some(Commands::Create { name, data_dir }) => {
                 self.create_database(name, data_dir.as_ref()).await
             }
-            Some(Commands::Query { query, database }) => {
-                self.execute_query(query, database.as_ref()).await
+            Some(Commands::Query {
+                query,
+                batch_file,
+                database,
+            }) => {
+                self.execute_query(query.as_deref(), database.as_ref(), batch_file.as_deref())
+                    .await
             }
             None => self.show_help().await,
         }
@@ -364,11 +376,10 @@ impl Cli {
     /// Executes an SQL query via [`SqlEngine`] (same pipeline as the QUIC server).
     async fn execute_query(
         &self,
-        query: &str,
+        query: Option<&str>,
         database: Option<&String>,
+        batch_file: Option<&Path>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        println!("{}: {}", t(MessageKey::Info), query);
-
         let config = self.load_config()?;
         let base = PathBuf::from(&config.data_directory);
         let data_dir = if let Some(db_name) = database {
@@ -380,7 +391,42 @@ impl Cli {
 
         let engine = SqlEngine::open(data_dir)?;
         let mut ctx = SessionContext::default();
-        match engine.execute_sql(query, &mut ctx) {
+
+        if let Some(path) = batch_file {
+            let mut contents = String::new();
+            if path.as_os_str() == "-" {
+                std::io::stdin()
+                    .read_to_string(&mut contents)
+                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            } else {
+                contents = std::fs::read_to_string(path)
+                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            }
+            for (i, line) in contents.lines().enumerate() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                println!("{} [batch:{}]: {}", t(MessageKey::Info), i + 1, line);
+                Self::execute_one_sql(&engine, &mut ctx, line)?;
+            }
+        } else {
+            let q = query.ok_or("missing SQL (pass a statement or use --batch-file)")?;
+            println!("{}: {}", t(MessageKey::Info), q);
+            Self::execute_one_sql(&engine, &mut ctx, q)?;
+        }
+
+        println!("{}", t(MessageKey::Success));
+
+        Ok(())
+    }
+
+    fn execute_one_sql(
+        engine: &SqlEngine,
+        ctx: &mut SessionContext,
+        sql: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match engine.execute_sql(sql, ctx) {
             Ok(EngineOutput::ResultSet { columns, rows }) => {
                 println!("columns: {:?}", columns);
                 for row in rows {
@@ -392,9 +438,6 @@ impl Cli {
             }
             Err(e) => return Err(e.message.into()),
         }
-
-        println!("{}", t(MessageKey::Success));
-
         Ok(())
     }
 
@@ -499,8 +542,39 @@ mod tests {
     #[test]
     fn test_cli_query() {
         let cli = Cli::try_parse_from(vec!["rustdb", "query", "SELECT 1", "-d", "db1"]).unwrap();
-        if let Some(Commands::Query { query, database }) = cli.command {
-            assert!(query.contains("SELECT"));
+        if let Some(Commands::Query {
+            query,
+            batch_file,
+            database,
+        }) = cli.command
+        {
+            assert!(query.as_deref().unwrap().contains("SELECT"));
+            assert!(batch_file.is_none());
+            assert_eq!(database, Some("db1".into()));
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn test_cli_query_batch_file_flag() {
+        let cli = Cli::try_parse_from(vec![
+            "rustdb",
+            "query",
+            "--batch-file",
+            "/tmp/x.sql",
+            "-d",
+            "db1",
+        ])
+        .unwrap();
+        if let Some(Commands::Query {
+            query,
+            batch_file,
+            database,
+        }) = cli.command
+        {
+            assert!(query.is_none());
+            assert_eq!(batch_file, Some(PathBuf::from("/tmp/x.sql")));
             assert_eq!(database, Some("db1".into()));
         } else {
             panic!();

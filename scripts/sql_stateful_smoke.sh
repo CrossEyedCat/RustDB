@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Stateful SQL smoke tests against a RustDB Docker image (persistent /app/data).
 #
+# Steps 8+ use `rustdb query --batch-file -` so BEGIN/COMMIT/ROLLBACK share one session
+# (each plain `query` invocation is a new process and a new SessionContext).
+#
 # Usage:
 #   ./scripts/sql_stateful_smoke.sh
 #   RUSTDB_IMAGE=ghcr.io/crosseyedcat/rustdb:local ./scripts/sql_stateful_smoke.sh
@@ -8,8 +11,6 @@
 #
 # Requires: docker, bash. Exits 0 if all hard assertions pass; prints full command output.
 set -euo pipefail
-
-CONFIG="--config /app/config/config.toml"
 
 query() {
   local vol="$1"
@@ -19,6 +20,51 @@ query() {
     -v "${vol}:/app/data" \
     "${RUSTDB_IMAGE}" \
     sh -c 'rustdb --config /app/config/config.toml query "$RUSTDB_TEST_SQL"'
+}
+
+# One SqlEngine + one SessionContext; one SQL statement per non-empty line (same as CLI --batch-file).
+query_batch() {
+  local vol="$1"
+  local sql="$2"
+  docker run --rm -i \
+    -v "${vol}:/app/data" \
+    "${RUSTDB_IMAGE}" \
+    sh -c 'rustdb --config /app/config/config.toml query --batch-file -' <<<"$sql"
+}
+
+query_expect_fail() {
+  local vol="$1"
+  local sql="$2"
+  local pat="$3"
+  set +e
+  local out ec
+  out=$(docker run --rm \
+    -e "RUSTDB_TEST_SQL=${sql}" \
+    -v "${vol}:/app/data" \
+    "${RUSTDB_IMAGE}" \
+    sh -c 'rustdb --config /app/config/config.toml query "$RUSTDB_TEST_SQL"' 2>&1)
+  ec=$?
+  set -e
+  echo "$out"
+  [[ "$ec" -ne 0 ]] || fail "expected non-zero exit: $sql"
+  echo "$out" | grep -qiE "$pat" || fail "expected /$pat/ in output for: $sql"
+}
+
+query_batch_expect_fail() {
+  local vol="$1"
+  local sql="$2"
+  local pat="$3"
+  set +e
+  local out ec
+  out=$(docker run --rm -i \
+    -v "${vol}:/app/data" \
+    "${RUSTDB_IMAGE}" \
+    sh -c 'rustdb --config /app/config/config.toml query --batch-file -' <<<"$sql" 2>&1)
+  ec=$?
+  set -e
+  echo "$out"
+  [[ "$ec" -ne 0 ]] || fail "expected non-zero exit (batch): ${sql//$'\n'/ ; }"
+  echo "$out" | grep -qiE "$pat" || fail "expected /$pat/ in batch output"
 }
 
 FAILS=0
@@ -121,11 +167,107 @@ run_suite() {
   fi
 
   echo ""
-  echo "==> 8) BEGIN / COMMIT (noop)"
-  out15=$(query "$vol" "BEGIN TRANSACTION" 2>&1) || true
+  echo "==> 8) Transaction batch: COMMIT persists INSERT"
+  query "$vol" "CREATE TABLE ss92_tc (k INT PRIMARY KEY)" >/dev/null
+  query_batch "$vol" "BEGIN TRANSACTION
+INSERT INTO ss92_tc (k) VALUES (701)
+COMMIT"
+  out15=$(query "$vol" "SELECT k FROM ss92_tc WHERE k = 701" 2>&1) || true
   echo "$out15"
-  out16=$(query "$vol" "COMMIT" 2>&1) || true
+  echo "$out15" | grep -q "Integer(701)" || fail "8: COMMIT should persist k=701"
+
+  echo ""
+  echo "==> 9) Transaction batch: ROLLBACK discards INSERT"
+  query_batch "$vol" "BEGIN TRANSACTION
+INSERT INTO ss92_tc (k) VALUES (702)
+ROLLBACK"
+  out16=$(query "$vol" "SELECT k FROM ss92_tc WHERE k = 702" 2>&1) || true
   echo "$out16"
+  echo "$out16" | grep -q "Integer(702)" && fail "9: ROLLBACK should remove k=702" || true
+
+  echo ""
+  echo "==> 10) COMMIT / ROLLBACK with no active transaction (errors)"
+  query_expect_fail "$vol" "COMMIT" "no active transaction|code 2006"
+  query_expect_fail "$vol" "ROLLBACK" "no active transaction|code 2006"
+
+  echo ""
+  echo "==> 11) Nested BEGIN in one session (error)"
+  query_batch_expect_fail "$vol" "BEGIN TRANSACTION
+BEGIN TRANSACTION" "already in a transaction|code 2007"
+
+  echo ""
+  echo "==> 12) DDL blocked inside explicit transaction"
+  query_batch_expect_fail "$vol" "BEGIN TRANSACTION
+CREATE TABLE ss92_bad (x INT)" "DDL is not supported|code 2008"
+
+  echo ""
+  echo "==> 13) PRIMARY KEY violation"
+  query "$vol" "CREATE TABLE ss92_pk (id INT PRIMARY KEY)" >/dev/null
+  query "$vol" "INSERT INTO ss92_pk (id) VALUES (1)" >/dev/null
+  query_expect_fail "$vol" "INSERT INTO ss92_pk (id) VALUES (1)" "PRIMARY KEY|violated|code 2005"
+
+  echo ""
+  echo "==> 14) FOREIGN KEY: missing parent row"
+  query "$vol" "CREATE TABLE ss92_par (id INT PRIMARY KEY)" >/dev/null
+  query "$vol" "CREATE TABLE ss92_ch (pid INT REFERENCES ss92_par(id))" >/dev/null
+  query_expect_fail "$vol" "INSERT INTO ss92_ch (pid) VALUES (99)" "missing parent row|foreign key|code 2005"
+
+  echo ""
+  echo "==> 15) FOREIGN KEY: parent DELETE blocked while child exists"
+  query "$vol" "INSERT INTO ss92_par (id) VALUES (5)" >/dev/null
+  query "$vol" "INSERT INTO ss92_ch (pid) VALUES (5)" >/dev/null
+  query_expect_fail "$vol" "DELETE FROM ss92_par WHERE id = 5" "foreign key references exist|code 2005"
+  query "$vol" "DELETE FROM ss92_ch WHERE pid = 5" >/dev/null
+  query "$vol" "DELETE FROM ss92_par WHERE id = 5" >/dev/null
+
+  echo ""
+  echo "==> 16) DROP TABLE RESTRICT vs CASCADE (FK dependency)"
+  query "$vol" "CREATE TABLE ss92_dp (id INT PRIMARY KEY)" >/dev/null
+  query "$vol" "CREATE TABLE ss92_dc (pid INT REFERENCES ss92_dp(id))" >/dev/null
+  query_expect_fail "$vol" "DROP TABLE ss92_dp" "referenced by foreign key|CASCADE|code 2005"
+  query "$vol" "DROP TABLE ss92_dp CASCADE" >/dev/null
+  query_expect_fail "$vol" "SELECT 1 FROM ss92_dp" "does not exist|code 2005"
+  query_expect_fail "$vol" "SELECT 1 FROM ss92_dc" "does not exist|code 2005"
+
+  echo ""
+  echo "==> 17) ALTER TABLE ADD CONSTRAINT UNIQUE + violation"
+  query "$vol" "CREATE TABLE ss92_al (a INT)" >/dev/null
+  query "$vol" "INSERT INTO ss92_al (a) VALUES (1)" >/dev/null
+  query "$vol" "INSERT INTO ss92_al (a) VALUES (2)" >/dev/null
+  query "$vol" "ALTER TABLE ss92_al ADD CONSTRAINT ss92_uq UNIQUE (a)" >/dev/null
+  query_expect_fail "$vol" "INSERT INTO ss92_al (a) VALUES (1)" "UNIQUE constraint|violated|code 2005"
+
+  echo ""
+  echo "==> 18) NOT NULL violation"
+  query "$vol" "CREATE TABLE ss92_nn (a INT NOT NULL)" >/dev/null
+  query_expect_fail "$vol" "INSERT INTO ss92_nn (a) VALUES (NULL)" "NOT NULL|code 2005"
+
+  echo ""
+  echo "==> 19) CHECK violation"
+  query "$vol" "CREATE TABLE ss92_ck (b INT CHECK (b > 0))" >/dev/null
+  query_expect_fail "$vol" "INSERT INTO ss92_ck (b) VALUES (0)" "CHECK constraint|code 2005"
+
+  echo ""
+  echo "==> 20) ORDER BY + LIMIT + OFFSET"
+  query "$vol" "CREATE TABLE ss92_lim (v INTEGER)" >/dev/null
+  query "$vol" "INSERT INTO ss92_lim (v) VALUES (10)" >/dev/null
+  query "$vol" "INSERT INTO ss92_lim (v) VALUES (20)" >/dev/null
+  query "$vol" "INSERT INTO ss92_lim (v) VALUES (30)" >/dev/null
+  out_lim=$(query "$vol" "SELECT v FROM ss92_lim ORDER BY v ASC LIMIT 2 OFFSET 1" 2>&1) || true
+  echo "$out_lim"
+  echo "$out_lim" | grep -q "Integer(20)" || fail "20: LIMIT/OFFSET expected 20"
+  echo "$out_lim" | grep -q "Integer(30)" || fail "20: LIMIT/OFFSET expected 30"
+  echo "$out_lim" | grep -q "Integer(10)" && fail "20: OFFSET should skip 10" || true
+
+  echo ""
+  echo "==> 21) GROUP BY + HAVING (light SQL92 aggregate check)"
+  query "$vol" "CREATE TABLE ss92_gb (a INTEGER, t INTEGER)" >/dev/null
+  query "$vol" "INSERT INTO ss92_gb (a, t) VALUES (1, 1)" >/dev/null
+  query "$vol" "INSERT INTO ss92_gb (a, t) VALUES (1, 2)" >/dev/null
+  query "$vol" "INSERT INTO ss92_gb (a, t) VALUES (2, 3)" >/dev/null
+  out_gb=$(query "$vol" "SELECT a, COUNT(*) FROM ss92_gb GROUP BY a HAVING COUNT(*) > 1 ORDER BY a ASC" 2>&1) || true
+  echo "$out_gb"
+  echo "$out_gb" | grep -q "Integer(1)" || fail "21: GROUP BY/HAVING expected group a=1"
 
   trap - EXIT
   cleanup

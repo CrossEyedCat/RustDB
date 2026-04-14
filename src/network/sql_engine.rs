@@ -3,30 +3,42 @@
 //! Pipeline: parse → plan ([`QueryPlanner`]) → optimize ([`QueryOptimizer`]) → execute ([`QueryExecutor`]).
 //! `SELECT` without `FROM` is evaluated from literal projections only.
 //! `INSERT` / `UPDATE` / `DELETE` run against the heap file (`default.tbl`) using serialized [`crate::storage::tuple::Tuple`] rows.
+//!
+//! **Phase 6 — transactions & concurrency (minimal)**:
+//! - `BEGIN` / `COMMIT` / `ROLLBACK` with an undo log for DML in the current [`SessionContext`].
+//! - A [`RwLock`] serializes writers vs readers at **statement** granularity (read committed baseline:
+//!   each statement sees data committed before that statement began, excluding the current session’s
+//!   own uncommitted writes which are already on the heap).
+//! - DDL (`CREATE` / `DROP` / `ALTER`) is rejected while a transaction is open.
 
+use crate::catalog::schema::{
+    CheckConstraint, ForeignKeyConstraintDef, SchemaManager, TableSchema, UniqueConstraintDef,
+};
 use crate::common::types::{ColumnValue, DataType, RecordId};
 use crate::common::Error as DbError;
 use crate::executor::operators::eval_predicate_expression;
 use crate::executor::operators::ScanOperatorFactory;
 use crate::executor::QueryExecutor;
-use crate::catalog::schema::{CheckConstraint, SchemaManager, TableSchema};
 use crate::network::engine::{
-    engine_error_code, EngineError, EngineHandle, EngineOutput, SessionContext,
+    engine_error_code, EngineError, EngineHandle, EngineOutput, SessionContext, SqlIsolationLevel,
+    SqlTransaction, UndoEntry,
 };
+use crate::network::sql_constraints::{self, ConstraintRuntime};
 use crate::parser::ast::{
-    BinaryOperator, ColumnConstraint, CreateTableStatement, DataType as SqlDataType,
-    DeleteStatement, Expression, InsertStatement, InsertValues, Literal, SelectItem, SelectStatement,
-    TableConstraint, UpdateStatement,
+    AlterTableOperation, AlterTableStatement, BinaryOperator, ColumnConstraint,
+    CreateTableStatement, DataType as SqlDataType, DeleteStatement, DropTableStatement, Expression,
+    InsertStatement, InsertValues, Literal, SelectItem, SelectStatement, TableConstraint,
+    UpdateStatement,
 };
 use crate::parser::{SqlParser, SqlStatement};
 use crate::planner::{QueryOptimizer, QueryPlanner};
 use crate::storage::page_manager::{PageManager, PageManagerConfig};
 use crate::storage::tuple::Tuple;
 use crate::Row;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tracing::info_span;
 
 /// Engine backed by the in-process planner, optimizer, and executor (single default table file per data directory).
@@ -48,6 +60,9 @@ struct SqlEngineState {
     /// These queries are common in benchmarks (`SELECT 1`) and are safe to memoize.
     select_no_from_cache: Mutex<HashMap<String, EngineOutput>>,
     catalog: Mutex<SchemaManager>,
+    constraint_runtime: Mutex<ConstraintRuntime>,
+    /// Serializes storage-mutating statements vs table scans (`SELECT` with `FROM`).
+    storage_access: RwLock<()>,
 }
 
 impl SqlEngine {
@@ -80,11 +95,17 @@ impl SqlEngine {
                 executor,
                 select_no_from_cache: Mutex::new(HashMap::new()),
                 catalog: Mutex::new(SchemaManager::new()?),
+                constraint_runtime: Mutex::new(ConstraintRuntime::new()),
+                storage_access: RwLock::new(()),
             }),
         })
     }
 
-    fn execute_sql_inner(state: &SqlEngineState, sql: &str) -> Result<EngineOutput, EngineError> {
+    fn execute_sql_inner(
+        state: &SqlEngineState,
+        sql: &str,
+        ctx: &mut SessionContext,
+    ) -> Result<EngineOutput, EngineError> {
         let span = info_span!(
             "sql.execute",
             sql_len = sql.len(),
@@ -132,6 +153,10 @@ impl SqlEngine {
                 Ok(out)
             }
             SqlStatement::Select(_) | SqlStatement::SetOperation(_) => {
+                let _storage = state
+                    .storage_access
+                    .read()
+                    .map_err(|_| lock_poisoned_engine())?;
                 let plan = {
                     let s = info_span!("sql.plan");
                     let _sg = s.enter();
@@ -159,32 +184,65 @@ impl SqlEngine {
             SqlStatement::Insert(ins) => {
                 let s = info_span!("sql.insert", table = %ins.table);
                 let _sg = s.enter();
-                execute_insert(state, stmt, ins)
+                let _storage = state
+                    .storage_access
+                    .write()
+                    .map_err(|_| lock_poisoned_engine())?;
+                execute_insert(state, ctx, stmt, ins)
             }
             SqlStatement::Update(upd) => {
                 let s = info_span!("sql.update", table = %upd.table);
                 let _sg = s.enter();
-                execute_update(state, stmt, upd)
+                let _storage = state
+                    .storage_access
+                    .write()
+                    .map_err(|_| lock_poisoned_engine())?;
+                execute_update(state, ctx, stmt, upd)
             }
             SqlStatement::Delete(del) => {
                 let s = info_span!("sql.delete", table = %del.table);
                 let _sg = s.enter();
-                execute_delete(state, stmt, del)
+                let _storage = state
+                    .storage_access
+                    .write()
+                    .map_err(|_| lock_poisoned_engine())?;
+                execute_delete(state, ctx, stmt, del)
             }
             SqlStatement::CreateTable(ct) => {
                 let s = info_span!("sql.create_table", table = %ct.table_name);
                 let _sg = s.enter();
-                execute_create_table(state, ct)
+                let _storage = state
+                    .storage_access
+                    .write()
+                    .map_err(|_| lock_poisoned_engine())?;
+                execute_create_table(state, ctx, ct)
             }
             SqlStatement::DropTable(dt) => {
                 let s = info_span!("sql.drop_table", table = %dt.table_name);
                 let _sg = s.enter();
-                execute_drop_table(state, &dt.table_name)
+                let _storage = state
+                    .storage_access
+                    .write()
+                    .map_err(|_| lock_poisoned_engine())?;
+                execute_drop_table(state, ctx, dt)
             }
-            SqlStatement::BeginTransaction
-            | SqlStatement::CommitTransaction
-            | SqlStatement::RollbackTransaction => {
-                Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+            SqlStatement::AlterTable(alt) => {
+                let s = info_span!("sql.alter_table", table = %alt.table_name);
+                let _sg = s.enter();
+                let _storage = state
+                    .storage_access
+                    .write()
+                    .map_err(|_| lock_poisoned_engine())?;
+                execute_alter_table(state, ctx, alt)
+            }
+            SqlStatement::BeginTransaction => begin_transaction(ctx),
+            SqlStatement::CommitTransaction => commit_transaction(ctx),
+            SqlStatement::RollbackTransaction => {
+                let _storage = state
+                    .storage_access
+                    .write()
+                    .map_err(|_| lock_poisoned_engine())?;
+                rollback_transaction(state, ctx)
             }
             _ => Err(EngineError::new(
                 engine_error_code::UNSUPPORTED_SQL,
@@ -229,9 +287,9 @@ impl EngineHandle for SqlEngine {
     fn execute_sql(
         &self,
         sql: &str,
-        _ctx: &mut SessionContext,
+        ctx: &mut SessionContext,
     ) -> Result<EngineOutput, EngineError> {
-        Self::execute_sql_inner(self.state.as_ref(), sql)
+        Self::execute_sql_inner(self.state.as_ref(), sql, ctx)
     }
 
     fn supports_select_no_from_wire_cache(&self) -> bool {
@@ -245,6 +303,105 @@ fn map_db_err(e: DbError) -> EngineError {
 
 fn lock_poisoned_engine() -> EngineError {
     EngineError::new(engine_error_code::INTERNAL, "storage lock poisoned")
+}
+
+fn begin_transaction(ctx: &mut SessionContext) -> Result<EngineOutput, EngineError> {
+    if ctx.transaction.is_some() {
+        return Err(EngineError::new(
+            engine_error_code::ALREADY_IN_TRANSACTION,
+            "already in a transaction",
+        ));
+    }
+    ctx.transaction = Some(SqlTransaction::new(SqlIsolationLevel::ReadCommitted));
+    Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+}
+
+fn commit_transaction(ctx: &mut SessionContext) -> Result<EngineOutput, EngineError> {
+    ctx.transaction.take().ok_or_else(|| {
+        EngineError::new(
+            engine_error_code::NO_ACTIVE_TRANSACTION,
+            "no active transaction",
+        )
+    })?;
+    Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+}
+
+fn rollback_transaction(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+) -> Result<EngineOutput, EngineError> {
+    let tx = ctx.transaction.take().ok_or_else(|| {
+        EngineError::new(
+            engine_error_code::NO_ACTIVE_TRANSACTION,
+            "no active transaction",
+        )
+    })?;
+    for op in tx.undo.into_iter().rev() {
+        apply_undo(state, op)?;
+    }
+    rebuild_all_constraint_runtime(state)?;
+    Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+}
+
+fn ensure_no_active_transaction(ctx: &SessionContext) -> Result<(), EngineError> {
+    if ctx.transaction.is_some() {
+        return Err(EngineError::new(
+            engine_error_code::DDL_IN_TRANSACTION,
+            "DDL is not supported inside an explicit transaction",
+        ));
+    }
+    Ok(())
+}
+
+fn push_undo(ctx: &mut SessionContext, entry: UndoEntry) {
+    if let Some(tx) = ctx.transaction.as_mut() {
+        tx.undo.push(entry);
+    }
+}
+
+fn apply_undo(state: &SqlEngineState, op: UndoEntry) -> Result<(), EngineError> {
+    match op {
+        UndoEntry::Insert {
+            table,
+            rid,
+            payload,
+        } => {
+            let pm = table_page_manager(state, &table)?;
+            let tuple = Tuple::from_bytes(&payload).map_err(map_db_err)?;
+            let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+            let sch = cat.schema(&table).cloned();
+            let cat_clone = cat.clone();
+            drop(cat);
+            if let Some(ref s) = sch {
+                let mut rt = state
+                    .constraint_runtime
+                    .lock()
+                    .map_err(|_| lock_poisoned_engine())?;
+                sql_constraints::unregister_row(&mut rt, &table, rid, &tuple, s, &cat_clone)?;
+            }
+            let mut g = pm.lock().map_err(|_| lock_poisoned_engine())?;
+            g.delete(rid).map_err(map_db_err)?;
+        }
+        UndoEntry::Delete {
+            table,
+            rid: _,
+            payload,
+        } => {
+            let pm = table_page_manager(state, &table)?;
+            let mut g = pm.lock().map_err(|_| lock_poisoned_engine())?;
+            let _ins = g.insert(&payload).map_err(map_db_err)?;
+        }
+        UndoEntry::Update {
+            table,
+            rid,
+            old_payload,
+        } => {
+            let pm = table_page_manager(state, &table)?;
+            let mut g = pm.lock().map_err(|_| lock_poisoned_engine())?;
+            g.update(rid, &old_payload).map_err(map_db_err)?;
+        }
+    }
+    Ok(())
 }
 
 fn table_page_manager(
@@ -278,10 +435,16 @@ fn table_page_manager(
 
 fn execute_create_table(
     state: &SqlEngineState,
+    ctx: &SessionContext,
     ct: &CreateTableStatement,
 ) -> Result<EngineOutput, EngineError> {
+    ensure_no_active_transaction(ctx)?;
     let _ = table_page_manager(state, &ct.table_name)?;
     let schema = table_schema_from_create_table(ct)?;
+    {
+        let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+        validate_new_table_fks(&cat, &schema)?;
+    }
     {
         let mut cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
         cat.register_schema(schema);
@@ -289,7 +452,98 @@ fn execute_create_table(
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
-fn execute_drop_table(state: &SqlEngineState, table: &str) -> Result<EngineOutput, EngineError> {
+fn execute_drop_table(
+    state: &SqlEngineState,
+    ctx: &SessionContext,
+    dt: &DropTableStatement,
+) -> Result<EngineOutput, EngineError> {
+    ensure_no_active_transaction(ctx)?;
+    let exists = state
+        .catalog
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?
+        .schema(&dt.table_name)
+        .is_some();
+
+    if !exists {
+        if dt.if_exists {
+            return Ok(EngineOutput::ExecutionOk { rows_affected: 0 });
+        }
+        return Err(EngineError::new(
+            engine_error_code::CONSTRAINT_VIOLATION,
+            format!("table {} does not exist", dt.table_name),
+        ));
+    }
+
+    if !dt.cascade {
+        let deps = state
+            .catalog
+            .lock()
+            .map_err(|_| lock_poisoned_engine())?
+            .tables_with_fk_to(&dt.table_name);
+        if !deps.is_empty() {
+            return Err(EngineError::new(
+                engine_error_code::CONSTRAINT_VIOLATION,
+                format!(
+                    "cannot DROP TABLE {}: referenced by foreign key from {:?} (use CASCADE)",
+                    dt.table_name, deps
+                ),
+            ));
+        }
+    }
+
+    let mut visited = HashSet::new();
+    drop_table_cascade(state, &dt.table_name, &mut visited)?;
+    Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+}
+
+fn drop_table_cascade(
+    state: &SqlEngineState,
+    table: &str,
+    visited: &mut HashSet<String>,
+) -> Result<(), EngineError> {
+    if !visited.insert(table.to_string()) {
+        return Ok(());
+    }
+    let deps = state
+        .catalog
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?
+        .tables_with_fk_to(table);
+    for dep in deps {
+        drop_table_cascade(state, &dep, visited)?;
+    }
+    physical_drop_table(state, table)
+}
+
+fn physical_drop_table(state: &SqlEngineState, table: &str) -> Result<(), EngineError> {
+    let schema = {
+        let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+        cat.schema(table).cloned()
+    };
+    let cat_snapshot = {
+        let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+        cat.clone()
+    };
+    if let Some(ref sch) = schema {
+        let pm = table_page_manager(state, table)?;
+        let snapshot = pm
+            .lock()
+            .map_err(|_| lock_poisoned_engine())?
+            .select(None)
+            .map_err(map_db_err)?;
+        let mut rt = state
+            .constraint_runtime
+            .lock()
+            .map_err(|_| lock_poisoned_engine())?;
+        for (rid, data) in snapshot {
+            let tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
+            sql_constraints::unregister_row(&mut rt, table, rid, &tuple, sch, &cat_snapshot)?;
+        }
+        rt.clear_table_maps(table);
+        rt.clear_fk_refs_to_parent(table);
+    }
+
     {
         let mut g = state
             .table_page_managers
@@ -299,10 +553,58 @@ fn execute_drop_table(state: &SqlEngineState, table: &str) -> Result<EngineOutpu
     }
     let path = state.data_dir.join(format!("{table}.tbl"));
     let _ = std::fs::remove_file(path);
-    if let Ok(mut cat) = state.catalog.lock() {
-        cat.drop_table(table);
+    let mut cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+    cat.drop_table(table);
+    Ok(())
+}
+
+fn execute_alter_table(
+    state: &SqlEngineState,
+    ctx: &SessionContext,
+    stmt: &AlterTableStatement,
+) -> Result<EngineOutput, EngineError> {
+    ensure_no_active_transaction(ctx)?;
+    match &stmt.operation {
+        AlterTableOperation::AddConstraint { name, definition } => {
+            {
+                let mut cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+                let schema = cat.schema_mut(&stmt.table_name).ok_or_else(|| {
+                    EngineError::new(
+                        engine_error_code::CONSTRAINT_VIOLATION,
+                        format!("table {} does not exist", stmt.table_name),
+                    )
+                })?;
+                apply_table_constraint_to_schema(schema, name.as_deref(), definition)?;
+            }
+            {
+                let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+                let schema = cat.schema(&stmt.table_name).ok_or_else(|| {
+                    EngineError::new(engine_error_code::INTERNAL, "table disappeared after ALTER")
+                })?;
+                validate_new_table_fks(&cat, schema)?;
+            }
+            rebuild_all_constraint_runtime(state)?;
+            Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+        }
+        AlterTableOperation::DropConstraint(name) => {
+            {
+                let mut cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+                let schema = cat.schema_mut(&stmt.table_name).ok_or_else(|| {
+                    EngineError::new(
+                        engine_error_code::CONSTRAINT_VIOLATION,
+                        format!("table {} does not exist", stmt.table_name),
+                    )
+                })?;
+                drop_constraint_by_name(schema, name)?;
+            }
+            rebuild_all_constraint_runtime(state)?;
+            Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+        }
+        _ => Err(EngineError::new(
+            engine_error_code::UNSUPPORTED_SQL,
+            "this ALTER TABLE operation is not supported by the server engine yet",
+        )),
     }
-    Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
 fn validate_plan(state: &SqlEngineState, stmt: &SqlStatement) -> Result<(), EngineError> {
@@ -313,6 +615,7 @@ fn validate_plan(state: &SqlEngineState, stmt: &SqlStatement) -> Result<(), Engi
 
 fn execute_insert(
     state: &SqlEngineState,
+    ctx: &mut SessionContext,
     stmt: &SqlStatement,
     insert: &InsertStatement,
 ) -> Result<EngineOutput, EngineError> {
@@ -338,7 +641,20 @@ fn execute_insert(
                     build_insert_tuple_from_row(state, &insert.table, insert.columns.as_ref(), &r)?;
                 let bytes = tuple.to_bytes().map_err(map_db_err)?;
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-                pm.insert(&bytes).map_err(map_db_err)?;
+                let ins = pm.insert(&bytes).map_err(map_db_err)?;
+                if let Err(e) = register_row_for_insert(state, &insert.table, ins.record_id, &tuple)
+                {
+                    pm.delete(ins.record_id).map_err(map_db_err)?;
+                    return Err(e);
+                }
+                push_undo(
+                    ctx,
+                    UndoEntry::Insert {
+                        table: insert.table.clone(),
+                        rid: ins.record_id,
+                        payload: bytes.clone(),
+                    },
+                );
                 rows_affected += 1;
             }
             {
@@ -360,7 +676,20 @@ fn execute_insert(
                 // insert into per-table heap
                 drop(pm);
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-                pm.insert(&bytes).map_err(map_db_err)?;
+                let ins = pm.insert(&bytes).map_err(map_db_err)?;
+                if let Err(e) = register_row_for_insert(state, &insert.table, ins.record_id, &tuple)
+                {
+                    pm.delete(ins.record_id).map_err(map_db_err)?;
+                    return Err(e);
+                }
+                push_undo(
+                    ctx,
+                    UndoEntry::Insert {
+                        table: insert.table.clone(),
+                        rid: ins.record_id,
+                        payload: bytes.clone(),
+                    },
+                );
                 rows_affected += 1;
             }
             {
@@ -429,6 +758,7 @@ fn build_insert_tuple_from_row(
 
 fn execute_update(
     state: &SqlEngineState,
+    ctx: &mut SessionContext,
     stmt: &SqlStatement,
     update: &UpdateStatement,
 ) -> Result<EngineOutput, EngineError> {
@@ -446,13 +776,81 @@ fn execute_update(
         if !keep {
             continue;
         }
+        let old_tuple = tuple.clone();
+        let cat_snapshot = {
+            let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+            cat.clone()
+        };
+        let schema = cat_snapshot.schema(&update.table).cloned();
+        if let Some(ref sch) = schema {
+            let mut rt = state
+                .constraint_runtime
+                .lock()
+                .map_err(|_| lock_poisoned_engine())?;
+            sql_constraints::unregister_row(
+                &mut rt,
+                &update.table,
+                rid,
+                &old_tuple,
+                sch,
+                &cat_snapshot,
+            )?;
+        }
         for a in &update.assignments {
             let cv = expr_to_column_value(&a.value)?;
             tuple.set_value(&a.column, cv);
         }
-        apply_defaults_and_validate(state, &update.table, &mut tuple)?;
+        if let Err(e) = apply_defaults_and_validate(state, &update.table, &mut tuple) {
+            if let Some(ref sch) = schema {
+                let mut rt = state
+                    .constraint_runtime
+                    .lock()
+                    .map_err(|_| lock_poisoned_engine())?;
+                let _ = sql_constraints::register_row(
+                    &mut rt,
+                    &update.table,
+                    rid,
+                    &old_tuple,
+                    sch,
+                    &cat_snapshot,
+                );
+            }
+            return Err(e);
+        }
+        if let Some(ref sch) = schema {
+            let mut rt = state
+                .constraint_runtime
+                .lock()
+                .map_err(|_| lock_poisoned_engine())?;
+            if let Err(e) = sql_constraints::register_row(
+                &mut rt,
+                &update.table,
+                rid,
+                &tuple,
+                sch,
+                &cat_snapshot,
+            ) {
+                let _ = sql_constraints::register_row(
+                    &mut rt,
+                    &update.table,
+                    rid,
+                    &old_tuple,
+                    sch,
+                    &cat_snapshot,
+                );
+                return Err(e);
+            }
+        }
         let new_bytes = tuple.to_bytes().map_err(map_db_err)?;
         pm.update(rid, &new_bytes).map_err(map_db_err)?;
+        push_undo(
+            ctx,
+            UndoEntry::Update {
+                table: update.table.clone(),
+                rid,
+                old_payload: data.clone(),
+            },
+        );
         rows_affected += 1;
     }
     pm.flush_dirty_pages().map_err(map_db_err)?;
@@ -461,6 +859,7 @@ fn execute_update(
 
 fn execute_delete(
     state: &SqlEngineState,
+    ctx: &mut SessionContext,
     stmt: &SqlStatement,
     delete: &DeleteStatement,
 ) -> Result<EngineOutput, EngineError> {
@@ -468,7 +867,12 @@ fn execute_delete(
     let pm_for_table = table_page_manager(state, &delete.table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let snapshot = pm.select(None).map_err(map_db_err)?;
-    let mut to_delete: Vec<RecordId> = Vec::new();
+    let cat_snapshot = {
+        let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+        cat.clone()
+    };
+    let schema = cat_snapshot.schema(&delete.table).cloned();
+    let mut to_delete: Vec<(RecordId, Vec<u8>)> = Vec::new();
     for (rid, data) in snapshot {
         let tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
         let keep = match &delete.where_clause {
@@ -476,11 +880,49 @@ fn execute_delete(
             Some(expr) => match_where_tuple(expr, &tuple)?,
         };
         if keep {
-            to_delete.push(rid);
+            if let Some(ref sch) = schema {
+                let rt = state
+                    .constraint_runtime
+                    .lock()
+                    .map_err(|_| lock_poisoned_engine())?;
+                if sql_constraints::fk_blocks_parent_delete(&rt, &delete.table, &tuple, sch)? {
+                    return Err(EngineError::new(
+                        engine_error_code::CONSTRAINT_VIOLATION,
+                        format!(
+                            "cannot delete row: foreign key references exist for {}",
+                            delete.table
+                        ),
+                    ));
+                }
+            }
+            to_delete.push((rid, data));
         }
     }
     let mut rows_affected = 0u64;
-    for rid in to_delete {
+    for (rid, data) in to_delete {
+        let tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
+        if let Some(ref sch) = schema {
+            let mut rt = state
+                .constraint_runtime
+                .lock()
+                .map_err(|_| lock_poisoned_engine())?;
+            sql_constraints::unregister_row(
+                &mut rt,
+                &delete.table,
+                rid,
+                &tuple,
+                sch,
+                &cat_snapshot,
+            )?;
+        }
+        push_undo(
+            ctx,
+            UndoEntry::Delete {
+                table: delete.table.clone(),
+                rid,
+                payload: data.clone(),
+            },
+        );
         pm.delete(rid).map_err(map_db_err)?;
         rows_affected += 1;
     }
@@ -545,9 +987,12 @@ fn sql_type_to_column_datatype(t: &SqlDataType) -> DataType {
 }
 
 fn table_schema_from_create_table(ct: &CreateTableStatement) -> Result<TableSchema, EngineError> {
-    use crate::common::types::{Column, ColumnValue};
+    use crate::common::types::Column;
     let mut columns: Vec<Column> = Vec::new();
     let mut checks: Vec<CheckConstraint> = Vec::new();
+    let mut primary_key: Option<(String, Vec<String>)> = None;
+    let mut unique_constraints: Vec<UniqueConstraintDef> = Vec::new();
+    let mut foreign_keys: Vec<ForeignKeyConstraintDef> = Vec::new();
 
     for c in &ct.columns {
         let mut col = Column::new(c.name.clone(), sql_type_to_column_datatype(&c.data_type));
@@ -564,26 +1009,306 @@ fn table_schema_from_create_table(ct: &CreateTableStatement) -> Result<TableSche
                         expr: expr.clone(),
                     });
                 }
-                _ => {}
+                ColumnConstraint::Unique => {
+                    unique_constraints.push(UniqueConstraintDef {
+                        name: format!("uq_{}_{}", ct.table_name, c.name),
+                        columns: vec![c.name.clone()],
+                    });
+                }
+                ColumnConstraint::PrimaryKey => {
+                    if primary_key.is_some() {
+                        return Err(EngineError::new(
+                            engine_error_code::CONSTRAINT_VIOLATION,
+                            "multiple PRIMARY KEY definitions",
+                        ));
+                    }
+                    primary_key = Some((format!("pk_{}", ct.table_name), vec![c.name.clone()]));
+                }
+                ColumnConstraint::References { table, column } => {
+                    let ref_cols = match column {
+                        Some(rc) => vec![rc.clone()],
+                        None => Vec::new(),
+                    };
+                    foreign_keys.push(ForeignKeyConstraintDef {
+                        name: format!("fk_{}_{}", ct.table_name, c.name),
+                        columns: vec![c.name.clone()],
+                        referenced_table: table.clone(),
+                        referenced_columns: ref_cols,
+                    });
+                }
             }
         }
         columns.push(col);
     }
 
     for tc in &ct.constraints {
-        if let TableConstraint::Check(expr) = tc {
-            checks.push(CheckConstraint {
-                name: format!("chk_{}", ct.table_name),
-                expr: expr.clone(),
-            });
+        match tc {
+            TableConstraint::PrimaryKey(cols) => {
+                if primary_key.is_some() {
+                    return Err(EngineError::new(
+                        engine_error_code::CONSTRAINT_VIOLATION,
+                        "multiple PRIMARY KEY definitions",
+                    ));
+                }
+                primary_key = Some((format!("pk_{}", ct.table_name), cols.clone()));
+            }
+            TableConstraint::Unique(cols) => {
+                unique_constraints.push(UniqueConstraintDef {
+                    name: format!("uq_{}_{}", ct.table_name, unique_constraints.len()),
+                    columns: cols.clone(),
+                });
+            }
+            TableConstraint::ForeignKey {
+                columns,
+                referenced_table,
+                referenced_columns,
+            } => {
+                foreign_keys.push(ForeignKeyConstraintDef {
+                    name: format!("fk_{}_{}", ct.table_name, foreign_keys.len()),
+                    columns: columns.clone(),
+                    referenced_table: referenced_table.clone(),
+                    referenced_columns: referenced_columns.clone(),
+                });
+            }
+            TableConstraint::Check(expr) => {
+                checks.push(CheckConstraint {
+                    name: format!("chk_{}_{}", ct.table_name, checks.len()),
+                    expr: expr.clone(),
+                });
+            }
         }
     }
 
     Ok(TableSchema {
         table_name: ct.table_name.clone(),
         columns,
+        primary_key,
+        unique_constraints,
+        foreign_keys,
         check_constraints: checks,
     })
+}
+
+fn validate_new_table_fks(cat: &SchemaManager, schema: &TableSchema) -> Result<(), EngineError> {
+    for fk in &schema.foreign_keys {
+        let parent = cat.schema(&fk.referenced_table).ok_or_else(|| {
+            EngineError::new(
+                engine_error_code::CONSTRAINT_VIOLATION,
+                format!(
+                    "foreign key {}: referenced table {} does not exist",
+                    fk.name, fk.referenced_table
+                ),
+            )
+        })?;
+        let parent_cols = if fk.referenced_columns.is_empty() {
+            parent
+                .primary_key
+                .as_ref()
+                .map(|(_, c)| c.as_slice())
+                .ok_or_else(|| {
+                    EngineError::new(
+                        engine_error_code::CONSTRAINT_VIOLATION,
+                        format!(
+                            "foreign key {}: referenced table {} has no PRIMARY KEY",
+                            fk.name, fk.referenced_table
+                        ),
+                    )
+                })?
+        } else {
+            fk.referenced_columns.as_slice()
+        };
+        if fk.columns.len() != parent_cols.len() {
+            return Err(EngineError::new(
+                engine_error_code::CONSTRAINT_VIOLATION,
+                format!(
+                    "foreign key {}: column count does not match referenced key",
+                    fk.name
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn apply_table_constraint_to_schema(
+    schema: &mut TableSchema,
+    user_name: Option<&str>,
+    tc: &TableConstraint,
+) -> Result<(), EngineError> {
+    match tc {
+        TableConstraint::PrimaryKey(cols) => {
+            if schema.primary_key.is_some() {
+                return Err(EngineError::new(
+                    engine_error_code::CONSTRAINT_VIOLATION,
+                    "multiple PRIMARY KEY definitions",
+                ));
+            }
+            let pk_name = user_name.unwrap_or("PRIMARY").to_string();
+            schema.primary_key = Some((pk_name, cols.clone()));
+            Ok(())
+        }
+        TableConstraint::Unique(cols) => {
+            let name = user_name.map(|s| s.to_string()).unwrap_or_else(|| {
+                format!(
+                    "uq_{}_{}",
+                    schema.table_name,
+                    schema.unique_constraints.len()
+                )
+            });
+            schema.unique_constraints.push(UniqueConstraintDef {
+                name,
+                columns: cols.clone(),
+            });
+            Ok(())
+        }
+        TableConstraint::ForeignKey {
+            columns,
+            referenced_table,
+            referenced_columns,
+        } => {
+            let name = user_name.map(|s| s.to_string()).unwrap_or_else(|| {
+                format!("fk_{}_{}", schema.table_name, schema.foreign_keys.len())
+            });
+            schema.foreign_keys.push(ForeignKeyConstraintDef {
+                name,
+                columns: columns.clone(),
+                referenced_table: referenced_table.clone(),
+                referenced_columns: referenced_columns.clone(),
+            });
+            Ok(())
+        }
+        TableConstraint::Check(expr) => {
+            let name = user_name.map(|s| s.to_string()).unwrap_or_else(|| {
+                format!(
+                    "chk_{}_{}",
+                    schema.table_name,
+                    schema.check_constraints.len()
+                )
+            });
+            schema.check_constraints.push(CheckConstraint {
+                name,
+                expr: expr.clone(),
+            });
+            Ok(())
+        }
+    }
+}
+
+fn drop_constraint_by_name(schema: &mut TableSchema, name: &str) -> Result<(), EngineError> {
+    if let Some((pk_name, _)) = &schema.primary_key {
+        if pk_name == name {
+            schema.primary_key = None;
+            return Ok(());
+        }
+    }
+    let before = schema.unique_constraints.len();
+    schema.unique_constraints.retain(|u| u.name != name);
+    if schema.unique_constraints.len() != before {
+        return Ok(());
+    }
+    let before_fk = schema.foreign_keys.len();
+    schema.foreign_keys.retain(|f| f.name != name);
+    if schema.foreign_keys.len() != before_fk {
+        return Ok(());
+    }
+    let before_chk = schema.check_constraints.len();
+    schema.check_constraints.retain(|c| c.name != name);
+    if schema.check_constraints.len() != before_chk {
+        return Ok(());
+    }
+    Err(EngineError::new(
+        engine_error_code::CONSTRAINT_VIOLATION,
+        format!("constraint {name} not found"),
+    ))
+}
+
+fn table_registration_order(cat: &SchemaManager) -> Result<Vec<String>, EngineError> {
+    let mut remaining: HashSet<String> = cat.table_names().into_iter().collect();
+    let mut result: Vec<String> = Vec::new();
+    while !remaining.is_empty() {
+        let mut batch: Vec<String> = Vec::new();
+        for t in &remaining {
+            let sch = cat.schema(t).expect("schema");
+            let mut pending = false;
+            for fk in &sch.foreign_keys {
+                if fk.referenced_table == *t {
+                    continue;
+                }
+                if remaining.contains(&fk.referenced_table) {
+                    pending = true;
+                    break;
+                }
+            }
+            if !pending {
+                batch.push(t.clone());
+            }
+        }
+        if batch.is_empty() {
+            return Err(EngineError::new(
+                engine_error_code::CONSTRAINT_VIOLATION,
+                "foreign key dependency cycle",
+            ));
+        }
+        batch.sort();
+        for t in batch {
+            remaining.remove(&t);
+            result.push(t);
+        }
+    }
+    Ok(result)
+}
+
+fn rebuild_all_constraint_runtime(state: &SqlEngineState) -> Result<(), EngineError> {
+    let cat = state
+        .catalog
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?
+        .clone();
+    {
+        let mut rt = state
+            .constraint_runtime
+            .lock()
+            .map_err(|_| lock_poisoned_engine())?;
+        *rt = ConstraintRuntime::new();
+    }
+    let order = table_registration_order(&cat)?;
+    for t in order {
+        let schema = cat.schema(&t).expect("schema").clone();
+        let pm = table_page_manager(state, &t)?;
+        let snapshot = pm
+            .lock()
+            .map_err(|_| lock_poisoned_engine())?
+            .select(None)
+            .map_err(map_db_err)?;
+        let mut rt = state
+            .constraint_runtime
+            .lock()
+            .map_err(|_| lock_poisoned_engine())?;
+        for (rid, data) in snapshot {
+            let tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
+            sql_constraints::register_row(&mut rt, &t, rid, &tuple, &schema, &cat)?;
+        }
+    }
+    Ok(())
+}
+
+fn register_row_for_insert(
+    state: &SqlEngineState,
+    table: &str,
+    rid: RecordId,
+    tuple: &Tuple,
+) -> Result<(), EngineError> {
+    let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+    let Some(schema) = cat.schema(table).cloned() else {
+        return Ok(());
+    };
+    let snapshot = cat.clone();
+    drop(cat);
+    let mut rt = state
+        .constraint_runtime
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?;
+    sql_constraints::register_row(&mut rt, table, rid, tuple, &schema, &snapshot)
 }
 
 fn apply_defaults_and_validate(

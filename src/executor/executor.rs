@@ -197,12 +197,8 @@ impl QueryExecutor {
     fn build_set_op(&self, s: &SetOpNode) -> Result<Box<dyn Operator>> {
         let left = self.build_operator(&s.left)?;
         let right = self.build_operator(&s.right)?;
-        let operator = crate::executor::operators::SetOpOperator::new(
-            left,
-            right,
-            s.op.clone(),
-            s.all,
-        )?;
+        let operator =
+            crate::executor::operators::SetOpOperator::new(left, right, s.op.clone(), s.all)?;
         Ok(Box::new(operator))
     }
 

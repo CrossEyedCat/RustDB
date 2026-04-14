@@ -210,7 +210,9 @@ fn rough_rows(node: &PlanNode) -> usize {
             r.saturating_sub(o.offset).max(1)
         }
         PlanNode::Aggregate(a) => (rough_rows(&a.input) / 10).max(1),
-        PlanNode::SetOp(s) => rough_rows(&s.left).saturating_add(rough_rows(&s.right)).max(1),
+        PlanNode::SetOp(s) => rough_rows(&s.left)
+            .saturating_add(rough_rows(&s.right))
+            .max(1),
         PlanNode::SemiJoin(s) => rough_rows(&s.left).max(1),
         PlanNode::AntiJoin(a) => rough_rows(&a.left).max(1),
         PlanNode::Distinct(d) => rough_rows(&d.input).max(1),

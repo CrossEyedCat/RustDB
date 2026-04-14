@@ -21,6 +21,7 @@ fn stub_returns_empty_rows() {
     let engine = StubEngine::empty_result_set();
     let mut ctx = SessionContext {
         session_id: Some(42),
+        transaction: None,
     };
     let out = engine.execute_sql("SELECT * FROM t", &mut ctx).expect("ok");
     assert_eq!(
