@@ -914,12 +914,12 @@ impl SqlParser {
                 ));
             };
 
-            return Ok(SqlStatement::SetOperation(SetOperationStatement {
+            return Ok(SqlStatement::SetOperation(Box::new(SetOperationStatement {
                 left: base,
                 op,
                 all,
                 right,
-            }));
+            })));
         }
 
         Ok(SqlStatement::Select(base))

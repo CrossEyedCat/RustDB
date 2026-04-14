@@ -38,7 +38,7 @@ pub enum SqlStatement {
     /// Set operations over SELECT statements (SQL-92: UNION/INTERSECT/EXCEPT).
     ///
     /// Note: currently represented as a single binary operation at the AST level.
-    SetOperation(SetOperationStatement),
+    SetOperation(Box<SetOperationStatement>),
 }
 
 /// Set operation statement: `<left> (UNION|INTERSECT|EXCEPT) [ALL] <right>`.
