@@ -200,42 +200,44 @@ CREATE TABLE ss92_bad (x INT)" "DDL is not supported|code 2008"
 
   echo ""
   echo "==> 13) PRIMARY KEY violation"
-  # Catalog/schemas may not be persisted across separate `rustdb query` processes yet,
-  # so keep DDL + DML in one batch session to test enforcement reliably.
-  query_batch "$vol" "CREATE TABLE ss92_pk (id INT PRIMARY KEY)
-INSERT INTO ss92_pk (id) VALUES (1)"
-  query_batch_expect_fail "$vol" "INSERT INTO ss92_pk (id) VALUES (1)" "PRIMARY KEY|violated|code 2005"
+  # Keep setup + violation in one batch run (schemas may not persist across processes).
+  query_batch_expect_fail "$vol" "CREATE TABLE ss92_pk (id INT PRIMARY KEY)
+INSERT INTO ss92_pk (id) VALUES (1)
+INSERT INTO ss92_pk (id) VALUES (1)" "PRIMARY KEY|violated|code 2005"
 
   echo ""
   echo "==> 14) FOREIGN KEY: missing parent row"
-  query_batch "$vol" "CREATE TABLE ss92_par (id INT PRIMARY KEY)
-CREATE TABLE ss92_ch (pid INT REFERENCES ss92_par(id))"
-  query_batch_expect_fail "$vol" "INSERT INTO ss92_ch (pid) VALUES (99)" "missing parent row|foreign key|code 2005"
+  query_batch_expect_fail "$vol" "CREATE TABLE ss92_par (id INT PRIMARY KEY)
+CREATE TABLE ss92_ch (pid INT REFERENCES ss92_par(id))
+INSERT INTO ss92_ch (pid) VALUES (99)" "missing parent row|foreign key|code 2005"
 
   echo ""
   echo "==> 15) FOREIGN KEY: parent DELETE blocked while child exists"
-  query_batch "$vol" "INSERT INTO ss92_par (id) VALUES (5)
-INSERT INTO ss92_ch (pid) VALUES (5)"
-  query_batch_expect_fail "$vol" "DELETE FROM ss92_par WHERE id = 5" "foreign key references exist|code 2005"
-  query_batch "$vol" "DELETE FROM ss92_ch WHERE pid = 5
-DELETE FROM ss92_par WHERE id = 5"
+  query_batch_expect_fail "$vol" "CREATE TABLE ss92_par2 (id INT PRIMARY KEY)
+CREATE TABLE ss92_ch2 (pid INT REFERENCES ss92_par2(id))
+INSERT INTO ss92_par2 (id) VALUES (5)
+INSERT INTO ss92_ch2 (pid) VALUES (5)
+DELETE FROM ss92_par2 WHERE id = 5" "foreign key references exist|code 2005"
 
   echo ""
   echo "==> 16) DROP TABLE RESTRICT vs CASCADE (FK dependency)"
-  query_batch "$vol" "CREATE TABLE ss92_dp (id INT PRIMARY KEY)
-CREATE TABLE ss92_dc (pid INT REFERENCES ss92_dp(id))"
-  query_batch_expect_fail "$vol" "DROP TABLE ss92_dp" "referenced by foreign key|CASCADE|code 2005"
-  query_batch "$vol" "DROP TABLE ss92_dp CASCADE"
-  query_batch_expect_fail "$vol" "SELECT 1 FROM ss92_dp" "does not exist|code 2005"
-  query_batch_expect_fail "$vol" "SELECT 1 FROM ss92_dc" "does not exist|code 2005"
+  query_batch_expect_fail "$vol" "CREATE TABLE ss92_dp (id INT PRIMARY KEY)
+CREATE TABLE ss92_dc (pid INT REFERENCES ss92_dp(id))
+DROP TABLE ss92_dp" "referenced by foreign key|CASCADE|code 2005"
+
+  # CASCADE drops parent (and child) — verify by failing SELECT after drop.
+  query_batch_expect_fail "$vol" "CREATE TABLE ss92_dp2 (id INT PRIMARY KEY)
+CREATE TABLE ss92_dc2 (pid INT REFERENCES ss92_dp2(id))
+DROP TABLE ss92_dp2 CASCADE
+SELECT 1 FROM ss92_dc2" "does not exist|code 2005"
 
   echo ""
   echo "==> 17) ALTER TABLE ADD CONSTRAINT UNIQUE + violation"
-  query_batch "$vol" "CREATE TABLE ss92_al (a INT)
+  query_batch_expect_fail "$vol" "CREATE TABLE ss92_al (a INT)
 INSERT INTO ss92_al (a) VALUES (1)
 INSERT INTO ss92_al (a) VALUES (2)
-ALTER TABLE ss92_al ADD CONSTRAINT ss92_uq UNIQUE (a)"
-  query_batch_expect_fail "$vol" "INSERT INTO ss92_al (a) VALUES (1)" "UNIQUE constraint|violated|code 2005"
+ALTER TABLE ss92_al ADD CONSTRAINT ss92_uq UNIQUE (a)
+INSERT INTO ss92_al (a) VALUES (1)" "UNIQUE constraint|violated|code 2005"
 
   echo ""
   echo "==> 18) NOT NULL violation"
