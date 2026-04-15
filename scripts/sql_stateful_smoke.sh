@@ -76,7 +76,9 @@ fail() {
 run_suite() {
   local name="$1"
   RUSTDB_IMAGE="$2"
-  local vol="rustdb-ss-${name}-$$"
+  # NOTE: do NOT make this `local`: the EXIT trap runs outside this function scope on failure,
+  # and `set -u` would treat a local-only variable as unbound.
+  vol="rustdb-ss-${name}-$$"
 
   echo ""
   echo "#####################################################################"
@@ -85,11 +87,7 @@ run_suite() {
 
   docker volume rm -f "$vol" >/dev/null 2>&1 || true
   docker volume create "$vol" >/dev/null
-
-  cleanup() {
-    docker volume rm -f "$vol" >/dev/null 2>&1 || true
-  }
-  trap cleanup EXIT
+  trap "docker volume rm -f \"$vol\" >/dev/null 2>&1 || true" EXIT
 
   echo ""
   echo "==> 1) INSERT (container A) -> SELECT (container B)"
@@ -202,50 +200,52 @@ CREATE TABLE ss92_bad (x INT)" "DDL is not supported|code 2008"
 
   echo ""
   echo "==> 13) PRIMARY KEY violation"
-  query "$vol" "CREATE TABLE ss92_pk (id INT PRIMARY KEY)" >/dev/null
-  query "$vol" "INSERT INTO ss92_pk (id) VALUES (1)" >/dev/null
-  query_expect_fail "$vol" "INSERT INTO ss92_pk (id) VALUES (1)" "PRIMARY KEY|violated|code 2005"
+  # Catalog/schemas may not be persisted across separate `rustdb query` processes yet,
+  # so keep DDL + DML in one batch session to test enforcement reliably.
+  query_batch "$vol" "CREATE TABLE ss92_pk (id INT PRIMARY KEY)
+INSERT INTO ss92_pk (id) VALUES (1)"
+  query_batch_expect_fail "$vol" "INSERT INTO ss92_pk (id) VALUES (1)" "PRIMARY KEY|violated|code 2005"
 
   echo ""
   echo "==> 14) FOREIGN KEY: missing parent row"
-  query "$vol" "CREATE TABLE ss92_par (id INT PRIMARY KEY)" >/dev/null
-  query "$vol" "CREATE TABLE ss92_ch (pid INT REFERENCES ss92_par(id))" >/dev/null
-  query_expect_fail "$vol" "INSERT INTO ss92_ch (pid) VALUES (99)" "missing parent row|foreign key|code 2005"
+  query_batch "$vol" "CREATE TABLE ss92_par (id INT PRIMARY KEY)
+CREATE TABLE ss92_ch (pid INT REFERENCES ss92_par(id))"
+  query_batch_expect_fail "$vol" "INSERT INTO ss92_ch (pid) VALUES (99)" "missing parent row|foreign key|code 2005"
 
   echo ""
   echo "==> 15) FOREIGN KEY: parent DELETE blocked while child exists"
-  query "$vol" "INSERT INTO ss92_par (id) VALUES (5)" >/dev/null
-  query "$vol" "INSERT INTO ss92_ch (pid) VALUES (5)" >/dev/null
-  query_expect_fail "$vol" "DELETE FROM ss92_par WHERE id = 5" "foreign key references exist|code 2005"
-  query "$vol" "DELETE FROM ss92_ch WHERE pid = 5" >/dev/null
-  query "$vol" "DELETE FROM ss92_par WHERE id = 5" >/dev/null
+  query_batch "$vol" "INSERT INTO ss92_par (id) VALUES (5)
+INSERT INTO ss92_ch (pid) VALUES (5)"
+  query_batch_expect_fail "$vol" "DELETE FROM ss92_par WHERE id = 5" "foreign key references exist|code 2005"
+  query_batch "$vol" "DELETE FROM ss92_ch WHERE pid = 5
+DELETE FROM ss92_par WHERE id = 5"
 
   echo ""
   echo "==> 16) DROP TABLE RESTRICT vs CASCADE (FK dependency)"
-  query "$vol" "CREATE TABLE ss92_dp (id INT PRIMARY KEY)" >/dev/null
-  query "$vol" "CREATE TABLE ss92_dc (pid INT REFERENCES ss92_dp(id))" >/dev/null
-  query_expect_fail "$vol" "DROP TABLE ss92_dp" "referenced by foreign key|CASCADE|code 2005"
-  query "$vol" "DROP TABLE ss92_dp CASCADE" >/dev/null
-  query_expect_fail "$vol" "SELECT 1 FROM ss92_dp" "does not exist|code 2005"
-  query_expect_fail "$vol" "SELECT 1 FROM ss92_dc" "does not exist|code 2005"
+  query_batch "$vol" "CREATE TABLE ss92_dp (id INT PRIMARY KEY)
+CREATE TABLE ss92_dc (pid INT REFERENCES ss92_dp(id))"
+  query_batch_expect_fail "$vol" "DROP TABLE ss92_dp" "referenced by foreign key|CASCADE|code 2005"
+  query_batch "$vol" "DROP TABLE ss92_dp CASCADE"
+  query_batch_expect_fail "$vol" "SELECT 1 FROM ss92_dp" "does not exist|code 2005"
+  query_batch_expect_fail "$vol" "SELECT 1 FROM ss92_dc" "does not exist|code 2005"
 
   echo ""
   echo "==> 17) ALTER TABLE ADD CONSTRAINT UNIQUE + violation"
-  query "$vol" "CREATE TABLE ss92_al (a INT)" >/dev/null
-  query "$vol" "INSERT INTO ss92_al (a) VALUES (1)" >/dev/null
-  query "$vol" "INSERT INTO ss92_al (a) VALUES (2)" >/dev/null
-  query "$vol" "ALTER TABLE ss92_al ADD CONSTRAINT ss92_uq UNIQUE (a)" >/dev/null
-  query_expect_fail "$vol" "INSERT INTO ss92_al (a) VALUES (1)" "UNIQUE constraint|violated|code 2005"
+  query_batch "$vol" "CREATE TABLE ss92_al (a INT)
+INSERT INTO ss92_al (a) VALUES (1)
+INSERT INTO ss92_al (a) VALUES (2)
+ALTER TABLE ss92_al ADD CONSTRAINT ss92_uq UNIQUE (a)"
+  query_batch_expect_fail "$vol" "INSERT INTO ss92_al (a) VALUES (1)" "UNIQUE constraint|violated|code 2005"
 
   echo ""
   echo "==> 18) NOT NULL violation"
-  query "$vol" "CREATE TABLE ss92_nn (a INT NOT NULL)" >/dev/null
-  query_expect_fail "$vol" "INSERT INTO ss92_nn (a) VALUES (NULL)" "NOT NULL|code 2005"
+  query_batch "$vol" "CREATE TABLE ss92_nn (a INT NOT NULL)"
+  query_batch_expect_fail "$vol" "INSERT INTO ss92_nn (a) VALUES (NULL)" "NOT NULL|code 2005"
 
   echo ""
   echo "==> 19) CHECK violation"
-  query "$vol" "CREATE TABLE ss92_ck (b INT CHECK (b > 0))" >/dev/null
-  query_expect_fail "$vol" "INSERT INTO ss92_ck (b) VALUES (0)" "CHECK constraint|code 2005"
+  query_batch "$vol" "CREATE TABLE ss92_ck (b INT CHECK (b > 0))"
+  query_batch_expect_fail "$vol" "INSERT INTO ss92_ck (b) VALUES (0)" "CHECK constraint|code 2005"
 
   echo ""
   echo "==> 20) ORDER BY + LIMIT + OFFSET"
@@ -270,7 +270,7 @@ CREATE TABLE ss92_bad (x INT)" "DDL is not supported|code 2008"
   echo "$out_gb" | grep -q "Integer(1)" || fail "21: GROUP BY/HAVING expected group a=1"
 
   trap - EXIT
-  cleanup
+  docker volume rm -f "$vol" >/dev/null 2>&1 || true
 }
 
 if [[ "${1:-}" == "--compare" ]]; then
