@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["init_server_tracing"],"struct":["ServerTracing"]};
+window.SIDEBAR_ITEMS = {"fn":["build_chrome_layer","chrome_path_from_env","default_filter","init_server_tracing"],"struct":["ServerTracing"]};
