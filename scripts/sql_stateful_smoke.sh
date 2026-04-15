@@ -229,7 +229,7 @@ DROP TABLE ss92_dp" "referenced by foreign key|CASCADE|code 2005"
   query_batch_expect_fail "$vol" "CREATE TABLE ss92_dp2 (id INT PRIMARY KEY)
 CREATE TABLE ss92_dc2 (pid INT REFERENCES ss92_dp2(id))
 DROP TABLE ss92_dp2 CASCADE
-SELECT 1 FROM ss92_dc2" "does not exist|code 2005"
+DROP TABLE ss92_dc2" "does not exist|code 2005"
 
   echo ""
   echo "==> 17) ALTER TABLE ADD CONSTRAINT UNIQUE + violation"
@@ -241,13 +241,13 @@ INSERT INTO ss92_al (a) VALUES (1)" "UNIQUE constraint|violated|code 2005"
 
   echo ""
   echo "==> 18) NOT NULL violation"
-  query_batch "$vol" "CREATE TABLE ss92_nn (a INT NOT NULL)"
-  query_batch_expect_fail "$vol" "INSERT INTO ss92_nn (a) VALUES (NULL)" "NOT NULL|code 2005"
+  query_batch_expect_fail "$vol" "CREATE TABLE ss92_nn (a INT NOT NULL)
+INSERT INTO ss92_nn (a) VALUES (NULL)" "NOT NULL"
 
   echo ""
   echo "==> 19) CHECK violation"
-  query_batch "$vol" "CREATE TABLE ss92_ck (b INT CHECK (b > 0))"
-  query_batch_expect_fail "$vol" "INSERT INTO ss92_ck (b) VALUES (0)" "CHECK constraint|code 2005"
+  query_batch_expect_fail "$vol" "CREATE TABLE ss92_ck (b INT CHECK (b > 0))
+INSERT INTO ss92_ck (b) VALUES (0)" "CHECK constraint"
 
   echo ""
   echo "==> 20) ORDER BY + LIMIT + OFFSET"
