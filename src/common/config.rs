@@ -334,6 +334,7 @@ impl PerformanceConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_default_config() {
@@ -372,5 +373,94 @@ mod tests {
         assert_eq!(merged.name, "testdb");
         assert_eq!(merged.connection_timeout, 60);
         assert_eq!(merged.language, Language::English);
+    }
+
+    #[test]
+    fn test_config_from_env() {
+        std::env::set_var("RUSTDB_NAME", "envdb");
+        std::env::set_var("RUSTDB_DATA_DIR", "C:/data");
+        std::env::set_var("RUSTDB_MAX_CONNECTIONS", "123");
+        std::env::set_var("RUSTDB_LANGUAGE", "en");
+
+        let c = DatabaseConfig::from_env().expect("from_env");
+        assert_eq!(c.name, "envdb");
+        assert_eq!(c.data_directory, "C:/data");
+        assert_eq!(c.max_connections, 123);
+        assert_eq!(c.language, Language::English);
+
+        std::env::remove_var("RUSTDB_NAME");
+        std::env::remove_var("RUSTDB_DATA_DIR");
+        std::env::remove_var("RUSTDB_MAX_CONNECTIONS");
+        std::env::remove_var("RUSTDB_LANGUAGE");
+    }
+
+    #[test]
+    fn test_config_toml_roundtrip_file() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("cfg.toml");
+
+        let mut c = DatabaseConfig::default();
+        c.name = "filedb".to_string();
+        c.max_connections = 321;
+        c.network.port = 7777;
+        c.to_file(&path).expect("to_file");
+
+        let loaded = DatabaseConfig::from_file(&path).expect("from_file");
+        assert_eq!(loaded.name, "filedb");
+        assert_eq!(loaded.max_connections, 321);
+        assert_eq!(loaded.network.port, 7777);
+    }
+
+    #[test]
+    fn test_merge_helpers_storage_logging_network_performance() {
+        let s1 = StorageConfig::default();
+        let mut s2 = StorageConfig::default();
+        s2.page_size = 4096;
+        s2.buffer_pool_size = 1;
+        s2.checkpoint_interval = Duration::from_secs(1);
+        s2.wal_enabled = false;
+        s2.compression_enabled = true;
+        let sm = s1.merge(s2);
+        assert_eq!(sm.page_size, 4096);
+        assert_eq!(sm.buffer_pool_size, 1);
+        assert_eq!(sm.checkpoint_interval, Duration::from_secs(1));
+        assert!(!sm.wal_enabled);
+        assert!(sm.compression_enabled);
+
+        let l1 = LoggingConfig::default();
+        let mut l2 = LoggingConfig::default();
+        l2.level = "debug".to_string();
+        l2.file = PathBuf::from("x.log");
+        l2.max_file_size = "1KB".to_string();
+        l2.max_files = 1;
+        let lm = l1.merge(l2);
+        assert_eq!(lm.level, "debug");
+        assert_eq!(lm.file, PathBuf::from("x.log"));
+        assert_eq!(lm.max_file_size, "1KB");
+        assert_eq!(lm.max_files, 1);
+
+        let n1 = NetworkConfig::default();
+        let mut n2 = NetworkConfig::default();
+        n2.host = "0.0.0.0".to_string();
+        n2.port = 4242;
+        n2.max_connections = 5;
+        let nm = n1.merge(n2);
+        assert_eq!(nm.host, "0.0.0.0");
+        assert_eq!(nm.port, 4242);
+        assert_eq!(nm.max_connections, 5);
+
+        let p1 = PerformanceConfig::default();
+        let mut p2 = PerformanceConfig::default();
+        p2.lock_timeout = Duration::from_secs(1);
+        p2.deadlock_detection_interval = Duration::from_millis(10);
+        p2.max_query_plan_cache_size = 10;
+        p2.enable_query_optimization = false;
+        p2.enable_parallel_execution = false;
+        let pm = p1.merge(p2);
+        assert_eq!(pm.lock_timeout, Duration::from_secs(1));
+        assert_eq!(pm.deadlock_detection_interval, Duration::from_millis(10));
+        assert_eq!(pm.max_query_plan_cache_size, 10);
+        assert!(!pm.enable_query_optimization);
+        assert!(!pm.enable_parallel_execution);
     }
 }
