@@ -548,3 +548,64 @@ fn engine_alter_add_unique_constraint() {
         .execute_sql("INSERT INTO ac (a) VALUES (1)", &mut ctx)
         .is_err());
 }
+
+#[test]
+fn engine_transaction_rollback_rebuilds_fk_runtime() {
+    let dir = TempDir::new().expect("tempdir");
+    let eng = SqlEngine::open(dir.path().to_path_buf()).expect("open");
+    let mut ctx = SessionContext::default();
+
+    eng.execute_sql("CREATE TABLE p (id INT PRIMARY KEY)", &mut ctx)
+        .expect("p");
+    eng.execute_sql("CREATE TABLE c (pid INT REFERENCES p(id))", &mut ctx)
+        .expect("c");
+
+    eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+    eng.execute_sql("INSERT INTO p (id) VALUES (10)", &mut ctx)
+        .unwrap();
+    eng.execute_sql("INSERT INTO c (pid) VALUES (10)", &mut ctx)
+        .unwrap();
+    eng.execute_sql("ROLLBACK", &mut ctx).unwrap();
+
+    // After rollback, FK runtime should be rebuilt: parent row is gone, so child insert must fail.
+    assert!(eng
+        .execute_sql("INSERT INTO c (pid) VALUES (10)", &mut ctx)
+        .is_err());
+
+    // Parent delete should not be blocked (no child refcount).
+    eng.execute_sql("INSERT INTO p (id) VALUES (10)", &mut ctx)
+        .unwrap();
+    eng.execute_sql("DELETE FROM p WHERE id = 10", &mut ctx)
+        .unwrap();
+}
+
+#[test]
+fn engine_alter_drop_constraint_allows_duplicates_again() {
+    let dir = TempDir::new().expect("tempdir");
+    let eng = SqlEngine::open(dir.path().to_path_buf()).expect("open");
+    let mut ctx = SessionContext::default();
+
+    eng.execute_sql("CREATE TABLE ad (a INT)", &mut ctx)
+        .expect("c");
+    eng.execute_sql("ALTER TABLE ad ADD CONSTRAINT uq UNIQUE (a)", &mut ctx)
+        .expect("add uq");
+    eng.execute_sql("INSERT INTO ad (a) VALUES (1)", &mut ctx)
+        .expect("i1");
+    assert!(eng
+        .execute_sql("INSERT INTO ad (a) VALUES (1)", &mut ctx)
+        .is_err());
+
+    eng.execute_sql("ALTER TABLE ad DROP CONSTRAINT uq", &mut ctx)
+        .expect("drop uq");
+    eng.execute_sql("INSERT INTO ad (a) VALUES (1)", &mut ctx)
+        .expect("dup ok after drop");
+}
+
+#[test]
+fn engine_drop_table_if_exists_is_ok() {
+    let dir = TempDir::new().expect("tempdir");
+    let eng = SqlEngine::open(dir.path().to_path_buf()).expect("open");
+    let mut ctx = SessionContext::default();
+    eng.execute_sql("DROP TABLE IF EXISTS missing", &mut ctx)
+        .expect("if exists");
+}

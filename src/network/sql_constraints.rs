@@ -263,3 +263,209 @@ pub fn fk_blocks_parent_delete(
     let fk_key = (parent_table.to_string(), key);
     Ok(runtime.fk_refcount.get(&fk_key).copied().unwrap_or(0) > 0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::schema::{ForeignKeyConstraintDef, TableSchema, UniqueConstraintDef};
+
+    fn schema_pk(table: &str, cols: &[&str]) -> TableSchema {
+        TableSchema {
+            table_name: table.to_string(),
+            columns: vec![],
+            primary_key: Some((
+                "PRIMARY".to_string(),
+                cols.iter().map(|s| s.to_string()).collect(),
+            )),
+            unique_constraints: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+        }
+    }
+
+    fn tuple_with(cols: &[(&str, ColumnValue)]) -> Tuple {
+        let mut t = Tuple::new(1);
+        for (k, v) in cols {
+            t.values.insert((*k).to_string(), v.clone());
+        }
+        t
+    }
+
+    #[test]
+    fn composite_key_missing_or_null_is_error() {
+        let t = Tuple::new(1);
+        let err = composite_key_from_tuple(&t, &["id".to_string()]).unwrap_err();
+        assert_eq!(err.code, engine_error_code::CONSTRAINT_VIOLATION);
+
+        let t = tuple_with(&[("id", ColumnValue::new(DataType::Null))]);
+        let err = composite_key_from_tuple(&t, &["id".to_string()]).unwrap_err();
+        assert_eq!(err.code, engine_error_code::CONSTRAINT_VIOLATION);
+    }
+
+    #[test]
+    fn resolve_fk_parent_columns_prefers_explicit_list() {
+        let mut cat = SchemaManager::new().unwrap();
+        cat.register_schema(schema_pk("p", &["id"]));
+        let fk = ForeignKeyConstraintDef {
+            name: "fk".to_string(),
+            columns: vec!["pid".to_string()],
+            referenced_table: "p".to_string(),
+            referenced_columns: vec!["id".to_string()],
+        };
+        let cols = resolve_fk_parent_columns(&cat, &fk).unwrap();
+        assert_eq!(cols, vec!["id".to_string()]);
+    }
+
+    #[test]
+    fn resolve_fk_parent_columns_errors_when_parent_missing_or_no_pk() {
+        let cat = SchemaManager::new().unwrap();
+        let fk = ForeignKeyConstraintDef {
+            name: "fk".to_string(),
+            columns: vec!["pid".to_string()],
+            referenced_table: "missing".to_string(),
+            referenced_columns: vec![],
+        };
+        assert!(resolve_fk_parent_columns(&cat, &fk).is_err());
+
+        let mut cat = SchemaManager::new().unwrap();
+        cat.register_schema(TableSchema {
+            table_name: "nopk".to_string(),
+            columns: vec![],
+            primary_key: None,
+            unique_constraints: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+        });
+        let fk = ForeignKeyConstraintDef {
+            name: "fk".to_string(),
+            columns: vec!["pid".to_string()],
+            referenced_table: "nopk".to_string(),
+            referenced_columns: vec![],
+        };
+        assert!(resolve_fk_parent_columns(&cat, &fk).is_err());
+    }
+
+    #[test]
+    fn register_row_enforces_pk_unique_and_fk() {
+        let mut cat = SchemaManager::new().unwrap();
+        let parent = schema_pk("p", &["id"]);
+        cat.register_schema(parent.clone());
+
+        let child = TableSchema {
+            table_name: "c".to_string(),
+            columns: vec![],
+            primary_key: None,
+            unique_constraints: vec![],
+            foreign_keys: vec![ForeignKeyConstraintDef {
+                name: "fk".to_string(),
+                columns: vec!["pid".to_string()],
+                referenced_table: "p".to_string(),
+                referenced_columns: vec![],
+            }],
+            check_constraints: vec![],
+        };
+        cat.register_schema(child.clone());
+
+        let mut rt = ConstraintRuntime::new();
+        let p1 = tuple_with(&[("id", ColumnValue::new(DataType::Integer(1)))]);
+        register_row(&mut rt, "p", 10, &p1, &parent, &cat).unwrap();
+
+        // PK violation.
+        let err = register_row(&mut rt, "p", 11, &p1, &parent, &cat).unwrap_err();
+        assert_eq!(err.code, engine_error_code::CONSTRAINT_VIOLATION);
+
+        // UNIQUE violation.
+        let mut uq_schema = schema_pk("u", &["id"]);
+        uq_schema.unique_constraints.push(UniqueConstraintDef {
+            name: "uq".to_string(),
+            columns: vec!["a".to_string()],
+        });
+        let u1 = tuple_with(&[
+            ("id", ColumnValue::new(DataType::Integer(1))),
+            ("a", ColumnValue::new(DataType::Integer(7))),
+        ]);
+        let u2 = tuple_with(&[
+            ("id", ColumnValue::new(DataType::Integer(2))),
+            ("a", ColumnValue::new(DataType::Integer(7))),
+        ]);
+        register_row(&mut rt, "u", 20, &u1, &uq_schema, &cat).unwrap();
+        assert!(register_row(&mut rt, "u", 21, &u2, &uq_schema, &cat).is_err());
+
+        // FK violation (no parent row for pid=2).
+        let c_bad = tuple_with(&[("pid", ColumnValue::new(DataType::Integer(2)))]);
+        assert!(register_row(&mut rt, "c", 30, &c_bad, &child, &cat).is_err());
+
+        // FK OK for pid=1.
+        let c_ok = tuple_with(&[("pid", ColumnValue::new(DataType::Integer(1)))]);
+        register_row(&mut rt, "c", 31, &c_ok, &child, &cat).unwrap();
+    }
+
+    #[test]
+    fn unregister_row_updates_maps_and_fk_refcount() {
+        let mut cat = SchemaManager::new().unwrap();
+        let parent = schema_pk("p", &["id"]);
+        cat.register_schema(parent.clone());
+        let child = TableSchema {
+            table_name: "c".to_string(),
+            columns: vec![],
+            primary_key: None,
+            unique_constraints: vec![],
+            foreign_keys: vec![ForeignKeyConstraintDef {
+                name: "fk".to_string(),
+                columns: vec!["pid".to_string()],
+                referenced_table: "p".to_string(),
+                referenced_columns: vec![],
+            }],
+            check_constraints: vec![],
+        };
+        cat.register_schema(child.clone());
+
+        let mut rt = ConstraintRuntime::new();
+        let p1 = tuple_with(&[("id", ColumnValue::new(DataType::Integer(1)))]);
+        register_row(&mut rt, "p", 1, &p1, &parent, &cat).unwrap();
+        let c1 = tuple_with(&[("pid", ColumnValue::new(DataType::Integer(1)))]);
+        register_row(&mut rt, "c", 2, &c1, &child, &cat).unwrap();
+
+        assert!(fk_blocks_parent_delete(&rt, "p", &p1, &parent).unwrap());
+        unregister_row(&mut rt, "c", 2, &c1, &child, &cat).unwrap();
+        assert!(!fk_blocks_parent_delete(&rt, "p", &p1, &parent).unwrap());
+
+        // Clear helpers are no-ops/safe.
+        rt.clear_fk_refs_to_parent("p");
+        rt.clear_table_maps("p");
+    }
+
+    #[test]
+    fn column_value_key_covers_common_types() {
+        assert_eq!(
+            column_value_key(&ColumnValue::new(DataType::Boolean(true))),
+            "b:true"
+        );
+        assert_eq!(
+            column_value_key(&ColumnValue::new(DataType::Integer(7))),
+            "i:7"
+        );
+        assert_eq!(
+            column_value_key(&ColumnValue::new(DataType::Varchar("x".to_string()))),
+            "str:x"
+        );
+        assert_eq!(
+            column_value_key(&ColumnValue::new(DataType::Blob(vec![1, 2, 3]))),
+            "blob:3"
+        );
+        assert_eq!(
+            column_value_key(&ColumnValue::new(DataType::Null)),
+            "\x01NULL".to_string()
+        );
+    }
+
+    #[test]
+    fn composite_key_multiple_columns_is_delimited() {
+        let t = tuple_with(&[
+            ("a", ColumnValue::new(DataType::Integer(1))),
+            ("b", ColumnValue::new(DataType::Integer(2))),
+        ]);
+        let k = composite_key_from_tuple(&t, &["a".to_string(), "b".to_string()]).unwrap();
+        assert!(k.contains('\0'));
+    }
+}

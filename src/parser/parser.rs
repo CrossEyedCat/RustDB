@@ -205,6 +205,8 @@ impl SqlParser {
                         "INTO" => token.token_type == TokenType::Into,
                         "VALUES" => token.token_type == TokenType::Values,
                         "SET" => token.token_type == TokenType::Set,
+                        "EXISTS" => token.token_type == TokenType::Exists,
+                        "CONSTRAINT" => token.token_type == TokenType::Constraint,
                         _ => false,
                     }
                 }
