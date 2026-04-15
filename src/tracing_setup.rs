@@ -1,7 +1,7 @@
 //! Global `tracing` subscriber for the RustDB server ([tokio-rs/tracing](https://github.com/tokio-rs/tracing)).
 //!
 //! Configures [`tracing-subscriber`](https://docs.rs/tracing-subscriber) with:
-//! - [`EnvFilter`](tracing_subscriber::EnvFilter) from **`RUST_LOG`** (default `info`);
+//! - [`EnvFilter`] from **`RUST_LOG`** (default `info`);
 //! - optional [`tracing-chrome`](https://docs.rs/tracing-chrome) JSON when **`RUSTDB_TRACE_CHROME_PATH`** is set
 //!   (open in Chrome’s **chrome://tracing**);
 //! - [`fmt`](mod@tracing_subscriber::fmt) for human-readable stderr logs.
