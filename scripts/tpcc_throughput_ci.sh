@@ -21,6 +21,7 @@ VOL_NAME="${VOL_NAME:-rustdb_tpcc_ci_data}"
 
 CONCURRENCY="${CONCURRENCY:-64}"
 TXNS="${TXNS:-5000}"
+DURATION_SECS="${DURATION_SECS:-}"
 MIX="${MIX:-new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04}"
 
 mkdir -p "$OUT_DIR"
@@ -87,13 +88,19 @@ echo "==> build rustdb_tpcc (host)"
 cargo build -q --bin rustdb_tpcc
 
 echo "==> run rustdb_tpcc"
+TXN_ARGS=()
+if [[ -n "${DURATION_SECS:-}" ]]; then
+  TXN_ARGS=(--duration-seconds "$DURATION_SECS")
+else
+  TXN_ARGS=(--transactions "$TXNS")
+fi
 set +e
 ./target/debug/rustdb_tpcc \
   --addr "127.0.0.1:${UDP_PORT}" \
   --cert "$CERT" \
   --server-name localhost \
   --concurrency "$CONCURRENCY" \
-  --transactions "$TXNS" \
+  "${TXN_ARGS[@]}" \
   --mix "$MIX" \
   --json > "$OUT_DIR_ABS/tpcc.json"
 rc=$?

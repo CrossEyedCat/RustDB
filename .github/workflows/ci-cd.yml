@@ -796,9 +796,9 @@ jobs:
       - name: Run TPC-C throughput benchmark
         env:
           OUT_DIR: tpcc-out
-          # Keep runtime bounded in CI.
+          # Saturation run (duration-based).
           CONCURRENCY: 64
-          TXNS: 5000
+          DURATION_SECS: 300
           MIX: new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04
         run: |
           set -euo pipefail

@@ -24,6 +24,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
+const MAX_LATENCY_SAMPLES: usize = 200_000;
+
 #[derive(Parser, Debug)]
 #[command(name = "rustdb_tpcc")]
 struct Args {
@@ -46,6 +48,10 @@ struct Args {
     /// Total transactions to execute (across all workers).
     #[arg(long, default_value_t = 5_000)]
     transactions: usize,
+
+    /// Run the workload for this many seconds (overrides --transactions when set).
+    #[arg(long)]
+    duration_seconds: Option<u64>,
 
     /// Transaction mix as comma-separated weights, e.g. `new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04`.
     #[arg(
@@ -142,6 +148,19 @@ fn rand_f64_0_1(state: &mut u64) -> f64 {
     // take top 53 bits
     let v = x >> 11;
     (v as f64) / ((1u64 << 53) as f64)
+}
+
+fn reservoir_sample_push(samples: &mut Vec<u128>, seen: &mut u64, rng: &mut u64, value: u128) {
+    *seen = seen.wrapping_add(1);
+    if samples.len() < MAX_LATENCY_SAMPLES {
+        samples.push(value);
+        return;
+    }
+    // Replace a random existing element with probability MAX/seen.
+    let j = (lcg_next(rng) % (*seen).max(1)) as usize;
+    if j < samples.len() {
+        samples[j] = value;
+    }
 }
 
 async fn run_sql_seq_on_stream(
@@ -280,6 +299,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let sem = Arc::new(Semaphore::new(args.concurrency.max(1)));
     let tx_total = args.transactions.max(1);
+    let duration = args.duration_seconds;
+    let deadline = duration.map(|s| Instant::now() + Duration::from_secs(s.max(1)));
+    let global_txn_counter = Arc::new(AtomicU64::new(0));
     let new_orders = Arc::new(AtomicU64::new(0));
     let errors = Arc::new(AtomicU64::new(0));
 
@@ -290,6 +312,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let permit = sem.clone().acquire_owned().await?;
         let conn = conn.clone();
         let mix = mix.clone();
+        let deadline = deadline;
+        let global_txn_counter = global_txn_counter.clone();
         let new_orders = new_orders.clone();
         let errors = errors.clone();
         let mix_str = args.mix.clone();
@@ -303,45 +327,82 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let _permit = permit;
             let mut lat_us: Vec<u128> = Vec::with_capacity(my_tx);
             let seed = 0xC0FFEE_u64 ^ (worker_id as u64).wrapping_mul(0xA5A5A5A5A5A5A5A5);
+            let mut seen: u64 = 0;
+            let mut rng = seed ^ 0xD6E8FEB86659FD93;
+            let mut completed: u64 = 0;
 
-            for j in 0..my_tx {
-                let global_tx = (start_index + j) as u64;
-                let mut st = seed ^ global_tx.wrapping_mul(0xD1B54A32D192ED03);
-                let u = rand_f64_0_1(&mut st);
-                let kind = mix.pick(u);
-                if kind == TxnKind::NewOrder {
-                    new_orders.fetch_add(1, Ordering::Relaxed);
+            if let Some(dl) = deadline {
+                while Instant::now() < dl {
+                    let global_tx = global_txn_counter.fetch_add(1, Ordering::Relaxed);
+                    let mut st = seed ^ global_tx.wrapping_mul(0xD1B54A32D192ED03);
+                    let u = rand_f64_0_1(&mut st);
+                    let kind = mix.pick(u);
+                    if kind == TxnKind::NewOrder {
+                        new_orders.fetch_add(1, Ordering::Relaxed);
+                    }
+                    let sqls = txn_sql(kind, seed, global_tx);
+                    let t0 = Instant::now();
+                    let res = run_sql_seq_on_stream(&conn, &sqls).await;
+                    let dt = t0.elapsed();
+                    reservoir_sample_push(&mut lat_us, &mut seen, &mut rng, dt.as_micros());
+                    completed = completed.wrapping_add(1);
+                    if res.is_err() {
+                        errors.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
-                let sqls = txn_sql(kind, seed, global_tx);
-                let t0 = Instant::now();
-                let res = run_sql_seq_on_stream(&conn, &sqls).await;
-                let dt = t0.elapsed();
-                lat_us.push(dt.as_micros());
-                if res.is_err() {
-                    errors.fetch_add(1, Ordering::Relaxed);
+                Ok::<(Vec<u128>, String, u64), Box<dyn std::error::Error + Send + Sync>>((
+                    lat_us, mix_str, completed,
+                ))
+            } else {
+                for j in 0..my_tx {
+                    let global_tx = (start_index + j) as u64;
+                    let mut st = seed ^ global_tx.wrapping_mul(0xD1B54A32D192ED03);
+                    let u = rand_f64_0_1(&mut st);
+                    let kind = mix.pick(u);
+                    if kind == TxnKind::NewOrder {
+                        new_orders.fetch_add(1, Ordering::Relaxed);
+                    }
+                    let sqls = txn_sql(kind, seed, global_tx);
+                    let t0 = Instant::now();
+                    let res = run_sql_seq_on_stream(&conn, &sqls).await;
+                    let dt = t0.elapsed();
+                    reservoir_sample_push(&mut lat_us, &mut seen, &mut rng, dt.as_micros());
+                    completed += 1;
+                    if res.is_err() {
+                        errors.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
+                Ok::<(Vec<u128>, String, u64), Box<dyn std::error::Error + Send + Sync>>((
+                    lat_us, mix_str, completed,
+                ))
             }
-            Ok::<(Vec<u128>, String), Box<dyn std::error::Error + Send + Sync>>((lat_us, mix_str))
         }));
     }
 
     let mut all_lat: Vec<u128> = Vec::with_capacity(tx_total);
     let mut mix_str = args.mix.clone();
+    let mut total_done: u64 = 0;
     for h in handles {
-        let (mut lat, mx) = h.await??;
+        let (mut lat, mx, done) = h.await??;
         all_lat.append(&mut lat);
         mix_str = mx;
+        total_done = total_done.wrapping_add(done);
     }
 
     let elapsed = start.elapsed().as_secs_f64().max(1e-9);
     all_lat.sort_unstable();
-    let txns_per_s = (tx_total as f64) / elapsed;
+    let report_txns = if duration.is_some() {
+        total_done.max(1) as usize
+    } else {
+        tx_total
+    };
+    let txns_per_s = (report_txns as f64) / elapsed;
     let no = new_orders.load(Ordering::Relaxed);
     let tpmc = (no as f64) / (elapsed / 60.0);
 
     let report = TpccReport {
         concurrency: args.concurrency.max(1),
-        transactions: tx_total,
+        transactions: report_txns,
         elapsed_s: elapsed,
         txns_per_s,
         new_orders: no,
