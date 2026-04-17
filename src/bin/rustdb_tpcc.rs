@@ -345,7 +345,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         elapsed_s: elapsed,
         txns_per_s,
         new_orders: no,
-        tpmC: tpmc,
+        tpm_c: tpmc,
         p50_ms: quantile_ms(&all_lat, 0.50),
         p95_ms: quantile_ms(&all_lat, 0.95),
         p99_ms: quantile_ms(&all_lat, 0.99),
@@ -362,7 +362,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("elapsed_s: {:.3}", report.elapsed_s);
         println!("txns_per_s: {:.1}", report.txns_per_s);
         println!("new_orders: {}", report.new_orders);
-        println!("tpmC: {:.1}", report.tpmC);
+        println!("tpmC: {:.1}", report.tpm_c);
         println!(
             "latency_ms: p50={:.2} p95={:.2} p99={:.2}",
             report.p50_ms, report.p95_ms, report.p99_ms
