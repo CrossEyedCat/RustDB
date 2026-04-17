@@ -2,6 +2,13 @@
 
 Hands-on examples for the **GitHub Container Registry** image [`ghcr.io/crosseyedcat/rustdb`](https://github.com/CrossEyedCat/RustDB/pkgs/container/rustdb). Commands below match the current CLI and packaged `config.toml`; re-verify after upgrading images (see [Verification](#verification)).
 
+This cookbook focuses on:
+
+- Running RustDB **from Docker** with persistent data
+- Using the **CLI** (`info`, `create`, `query`, `server`)
+- Understanding configuration and the most useful **env vars**
+- Common workflows (batch SQL, QUIC server, smoke scripts, benchmarks)
+
 ## Image and tags
 
 CI publishes several tag styles (see [`.github/workflows/ci-cd.yml`](../.github/workflows/ci-cd.yml) and `docker/metadata-action`):
@@ -66,6 +73,24 @@ docker run --rm "$RUSTDB_IMAGE" rustdb query "SELECT 1" -d mydb
 
 The second form uses `-d` / `--database` to resolve data under `data_directory` from config (default `./data`, i.e. `/app/data` when using the image layout).
 
+### Batch mode (single session, multi-statement)
+
+Use `--batch-file` to run **one statement per line** in a single process, using one `SessionContext`.
+This is required if you want to test transactions (`BEGIN/COMMIT/ROLLBACK`) across multiple statements.
+
+Example via stdin (`--batch-file -`):
+
+```bash
+docker run --rm -i \
+  -v rustdb-data:/app/data \
+  "$RUSTDB_IMAGE" \
+  sh -c 'rustdb --config /app/config/config.toml query --batch-file -' <<'SQL'
+BEGIN TRANSACTION
+INSERT INTO demo_t (a) VALUES (1)
+ROLLBACK
+SQL
+```
+
 Coverage of SQL features is still growing; see [README.md](../README.md) for project status and test limitations.
 
 ---
@@ -118,6 +143,34 @@ Example: named volume for data and a read-only host config (paths follow the [Do
 docker run --rm \
   -v rustdb-data:/app/data \
   -v "$(pwd)/config.toml:/app/config/config.toml:ro" \
+  "$RUSTDB_IMAGE" \
+  rustdb --config /app/config/config.toml info
+```
+
+### Config keys (practical reference)
+
+The container expects a config file like `/app/config/config.toml` (see repository `config.toml`).
+The most used keys in the current image:
+
+- **`data_directory`**: base directory for database storage (in the image: `/app/data`)
+- **`language`**: interface language (e.g. `en`)
+- **`network.host` / `network.port`**: QUIC/UDP listener bind address and port
+
+### Environment variables (common)
+
+RustDB reads a small set of env vars used in different parts of the stack:
+
+- **`RUST_LOG`**: logging filter for `tracing-subscriber` (server)
+- **`RUSTDB_TRACE_CHROME_PATH`**: when set, enables `tracing-chrome` JSON trace output (server)
+- **`RUSTDB_NAME`**, **`RUSTDB_DATA_DIR`**, **`RUSTDB_MAX_CONNECTIONS`**, **`RUSTDB_LANGUAGE`**: config overrides used by `DatabaseConfig::from_env()` (CLI / config helpers)
+
+Example:
+
+```bash
+docker run --rm \
+  -e RUST_LOG=info \
+  -e RUSTDB_TRACE_CHROME_PATH=/app/logs/trace.json \
+  -v rustdb-data:/app/data \
   "$RUSTDB_IMAGE" \
   rustdb --config /app/config/config.toml info
 ```
@@ -197,3 +250,23 @@ For CI-style flame graphs and tracing, see [CONTRIBUTING.md](../CONTRIBUTING.md)
 - [Network (QUIC)](network/README.md) — protocol and client/server boundary  
 - [Dockerfile](../Dockerfile), [`docker-compose.yml`](../docker-compose.yml) — build and optional orchestration  
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — CI jobs and contribution workflow  
+
+---
+
+## CLI quick reference
+
+Run `--help` inside the container to confirm flags for the image you pinned:
+
+```bash
+docker run --rm "$RUSTDB_IMAGE" rustdb --help
+docker run --rm "$RUSTDB_IMAGE" rustdb query --help
+docker run --rm "$RUSTDB_IMAGE" rustdb server --help
+```
+
+Common commands:
+
+- **`rustdb info`**: prints system info
+- **`rustdb create <name>`**: creates a database directory (filesystem helper)
+- **`rustdb query <SQL>`**: runs one statement
+- **`rustdb query --batch-file <path|->`**: runs one statement per line (transactions span lines)
+- **`rustdb server`**: starts the QUIC/UDP server

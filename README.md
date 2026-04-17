@@ -12,7 +12,7 @@
 
 **Contributions are welcome.** See [CONTRIBUTING.md](CONTRIBUTING.md) for workflow rules, CI job descriptions, and how to open issues and pull requests.
 
-**SQL coverage tracking:** the SQL-92-oriented implementation roadmap and checklist live in [`docs/sql92-roadmap.md`](docs/sql92-roadmap.md).
+**SQL-92 compatibility:** RustDB implements a **SQL-92-compatible core subset** (see the **SQL-92 compatibility** section below for what is supported today and what is intentionally out of scope).
 
 ---
 
@@ -138,6 +138,36 @@ cargo test --test integration_tests
 ---
 
 ## Project status
+
+## SQL-92 compatibility
+
+RustDB aims to be **compatible with the SQL-92 standard at the feature level** for a pragmatic core subset. In practice this means: when a statement is listed below as supported, RustDB follows the *SQL-92-shaped* syntax and semantics for that feature family, with a small number of explicit deviations.
+
+### Supported (current engine path)
+
+- **DML**
+  - `SELECT` with `WHERE` (including `IS NULL` / `IS NOT NULL`), `ORDER BY`, `GROUP BY`, `HAVING`
+  - `INSERT`, `UPDATE`, `DELETE`
+  - Basic subquery forms and `EXISTS`/`IN` shapes (see source/tests for current limitations)
+- **Joins**
+  - `INNER JOIN ... ON ...` (baseline)
+- **DDL**
+  - `CREATE TABLE` (typed columns)
+  - Constraints: `PRIMARY KEY`, `UNIQUE`, `FOREIGN KEY ... REFERENCES`, `NOT NULL`, `DEFAULT`, `CHECK`
+  - `ALTER TABLE ... ADD CONSTRAINT ...`
+  - `ALTER TABLE ... DROP CONSTRAINT ...`
+  - `DROP TABLE` with **RESTRICT** (default) vs `CASCADE`
+- **Transactions (session-scoped)**
+  - `BEGIN TRANSACTION`, `COMMIT`, `ROLLBACK`
+  - Minimal rule: **DDL is rejected inside an explicit transaction**
+
+### Known deviations / not SQL-92
+
+- **LIMIT/OFFSET**: supported for convenience, but not part of SQL-92.
+- **Dialect differences**: this is not a PostgreSQL/MySQL-compatible dialect; expect gaps.
+- **Catalog persistence**: some schema/catalog behavior is still being unified between subsystems; the repository’s Docker smoke tests include constraints and transactions to guard regressions.
+
+If you need a strict vendor dialect or complete coverage of the standard, treat RustDB as an educational/research engine rather than a compatibility target.
 
 ### Implemented (high level)
 
