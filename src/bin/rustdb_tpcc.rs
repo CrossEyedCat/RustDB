@@ -140,7 +140,7 @@ fn lcg_next(state: &mut u64) -> u64 {
 fn rand_f64_0_1(state: &mut u64) -> f64 {
     let x = lcg_next(state);
     // take top 53 bits
-    let v = (x >> 11) as u64;
+    let v = x >> 11;
     (v as f64) / ((1u64 << 53) as f64)
 }
 
@@ -169,11 +169,11 @@ fn txn_sql(kind: TxnKind, seed: u64, global_txn_id: u64) -> Vec<String> {
     // Small deterministic parameters.
     let mut st = seed ^ (global_txn_id.wrapping_mul(0x9E3779B97F4A7C15));
     let w_id = 1;
-    let d_id = (lcg_next(&mut st) % 5 + 1) as u64;
-    let c_id = (lcg_next(&mut st) % 5 + 1) as u64;
-    let i_id = (lcg_next(&mut st) % 5 + 1) as u64;
-    let qty = (lcg_next(&mut st) % 5 + 1) as u64;
-    let o_id = global_txn_id as u64;
+    let d_id = lcg_next(&mut st) % 5 + 1;
+    let c_id = lcg_next(&mut st) % 5 + 1;
+    let i_id = lcg_next(&mut st) % 5 + 1;
+    let qty = lcg_next(&mut st) % 5 + 1;
+    let o_id = global_txn_id;
 
     // Keep statements simple; RustDB engine may not support all SQL-92 features yet.
     match kind {
@@ -251,7 +251,8 @@ struct TpccReport {
     elapsed_s: f64,
     txns_per_s: f64,
     new_orders: u64,
-    tpmC: f64,
+    #[serde(rename = "tpmC")]
+    tpm_c: f64,
     p50_ms: f64,
     p95_ms: f64,
     p99_ms: f64,
