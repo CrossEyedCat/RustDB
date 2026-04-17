@@ -33,10 +33,30 @@ echo "==> prepare volume + seed schema/data"
 docker volume rm -f "$VOL_NAME" >/dev/null 2>&1 || true
 docker volume create "$VOL_NAME" >/dev/null
 
+# rustdb query --batch-file expects one statement per line and does not accept SQL comments.
+# Filter out `-- ...` comments and blank lines for CI robustness.
+SEED_IN="$ROOT/scripts/tpcc_seed.sql"
+SEED_FILTERED="$OUT_DIR/tpcc_seed.filtered.sql"
+python3 - <<PY
+import pathlib, re
+src = pathlib.Path(r"${SEED_IN}")
+out = pathlib.Path(r"${SEED_FILTERED}")
+lines = []
+for line in src.read_text(encoding="utf-8").splitlines():
+    s = line.strip()
+    if not s:
+        continue
+    if s.startswith("--"):
+        continue
+    lines.append(line)
+out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+print(f"filtered seed: {out} (lines={len(lines)})")
+PY
+
 # Seed using CLI path (local engine) before server starts.
 docker run --rm -i \
   -v "$VOL_NAME:/app/data" \
-  -v "$ROOT/scripts/tpcc_seed.sql:/tmp/tpcc_seed.sql:ro" \
+  -v "$SEED_FILTERED:/tmp/tpcc_seed.sql:ro" \
   "$RUSTDB_IMAGE" \
   sh -c 'rustdb query --batch-file /tmp/tpcc_seed.sql' >/dev/null
 
