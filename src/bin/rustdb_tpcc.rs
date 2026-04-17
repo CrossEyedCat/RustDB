@@ -312,7 +312,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let permit = sem.clone().acquire_owned().await?;
         let conn = conn.clone();
         let mix = mix.clone();
-        let deadline = deadline;
         let global_txn_counter = global_txn_counter.clone();
         let new_orders = new_orders.clone();
         let errors = errors.clone();
