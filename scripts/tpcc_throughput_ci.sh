@@ -24,7 +24,9 @@ TXNS="${TXNS:-5000}"
 MIX="${MIX:-new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04}"
 
 mkdir -p "$OUT_DIR"
-rm -f "$OUT_DIR"/tpcc.* || true
+# Docker bind mounts require absolute host paths; resolve once.
+OUT_DIR_ABS="$(cd "$OUT_DIR" && pwd)"
+rm -f "$OUT_DIR_ABS"/tpcc.* || true
 
 echo "==> pull image: $RUSTDB_IMAGE"
 docker pull "$RUSTDB_IMAGE" >/dev/null
@@ -36,7 +38,7 @@ docker volume create "$VOL_NAME" >/dev/null
 # rustdb query --batch-file expects one statement per line and does not accept SQL comments.
 # Filter out `-- ...` comments and blank lines for CI robustness.
 SEED_IN="$ROOT/scripts/tpcc_seed.sql"
-SEED_FILTERED="$OUT_DIR/tpcc_seed.filtered.sql"
+SEED_FILTERED="$OUT_DIR_ABS/tpcc_seed.filtered.sql"
 python3 - <<PY
 import pathlib, re
 src = pathlib.Path(r"${SEED_IN}")
@@ -77,7 +79,7 @@ for i in $(seq 1 120); do
 done
 
 echo "==> copy leaf cert"
-CERT="$OUT_DIR/server.der"
+CERT="$OUT_DIR_ABS/server.der"
 docker cp "$CONTAINER_NAME:/tmp/server.der" "$CERT"
 test -s "$CERT"
 
@@ -93,12 +95,12 @@ set +e
   --concurrency "$CONCURRENCY" \
   --transactions "$TXNS" \
   --mix "$MIX" \
-  --json > "$OUT_DIR/tpcc.json"
+  --json > "$OUT_DIR_ABS/tpcc.json"
 rc=$?
 set -e
 
 echo "==> capture server tail logs"
-docker logs "$CONTAINER_NAME" 2>&1 | tail -n 200 > "$OUT_DIR/server_tail.log" || true
+docker logs "$CONTAINER_NAME" 2>&1 | tail -n 200 > "$OUT_DIR_ABS/server_tail.log" || true
 
 echo "==> stop server + volume"
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
@@ -111,7 +113,8 @@ fi
 
 python3 - <<'PY'
 import json, sys, pathlib
-p = pathlib.Path("tpcc-out/tpcc.json")
+out_dir = pathlib.Path("tpcc-out")
+p = out_dir / "tpcc.json"
 data = json.loads(p.read_text())
 txt = []
 txt.append("== rustdb_tpcc throughput ==")
@@ -122,9 +125,9 @@ txt.append(f"txns_per_s: {data['txns_per_s']:.1f}")
 txt.append(f"new_orders: {data['new_orders']}")
 txt.append(f"tpmC: {data['tpmC']:.1f}")
 txt.append(f"p50_ms: {data['p50_ms']:.2f}  p95_ms: {data['p95_ms']:.2f}  p99_ms: {data['p99_ms']:.2f}")
-pathlib.Path("tpcc-out/tpcc.txt").write_text("\n".join(txt) + "\n")
+out_dir.joinpath("tpcc.txt").write_text("\n".join(txt) + "\n")
 print("\n".join(txt))
 PY
 
-echo "==> wrote $OUT_DIR/tpcc.json and tpcc.txt"
+echo "==> wrote $OUT_DIR_ABS/tpcc.json and tpcc.txt"
 
