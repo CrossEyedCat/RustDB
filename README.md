@@ -186,14 +186,7 @@ If you need a strict vendor dialect or complete coverage of the standard, treat 
 - **Isolation:** explicit transactions use a **read-committed–style** baseline at the statement level (see engine docs), not full **serializable** isolation across sessions.
 - **DDL, catalog, and concurrency:** core **SQL-92-shaped** DDL and constraints are implemented in the engine path; remaining work includes **richer `ALTER`/`DROP`**, clearer **catalog persistence and multi-process** semantics, and stricter validation under **concurrent** writers.
 
-### Planned work (outline)
-
-1. **Library surface:** optional wrapper API (e.g. `Database` + owned `SqlEngine` or `Connection`) so embedders do not depend on wiring details; keep `SqlEngine` as the low-level primitive.
-2. **Durability:** define a commit point: append **WAL records** for DML/DDL (or checkpointed equivalents), **`fsync` policy**, and **replay** on open; align `COMMIT` with log sequence and page state.
-3. **Recovery:** integrate existing **checkpoint/recovery** modules with the **SqlEngine** data directory lifecycle; tests for crash-after-append, crash-after-commit.
-4. **Isolation (later):** stronger guarantees if needed (locking upgrades, snapshot isolation), building on current `RwLock` + MVCC direction in core.
-5. **DDL / catalog:** serialize **catalog** consistently with heap files; expand **`ALTER`** (column add/drop/rewrite) and document unsupported forms; add stress tests for FK/PK under concurrency.
-6. **Operational clarity:** extend docs and smoke tests as behavior stabilizes (already done for constraints and transactions in Docker smoke scripts).
+**Roadmap:** a concise prioritized plan lives in [`docs/roadmap.md`](docs/roadmap.md).
 
 ### Test limitations
 
@@ -206,6 +199,7 @@ Integration tests heavily exercise **parse → plan → optimize** and **simulat
 | Doc | Content |
 |-----|---------|
 | [docs/cookbook.md](docs/cookbook.md) | GHCR image, Docker/QUIC, CLI, benchmarks, `verify-cookbook-docker.sh` |
+| [docs/roadmap.md](docs/roadmap.md) | Implementation priorities (library API, durability, recovery, DDL) |
 | [docs/network/README.md](docs/network/README.md) | QUIC, framing, client/server boundary |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute; CI jobs; issues & PRs |
 
