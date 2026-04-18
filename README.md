@@ -176,14 +176,24 @@ If you need a strict vendor dialect or complete coverage of the standard, treat 
 - **Planning and execution:** plan building, optimizer hooks; executor operator set (scan, join, aggregates, sort, limits, etc.—see source tree).
 - **Storage and catalog:** page/file abstractions, tuples, B-tree and hash indexes, schema manager.
 - **Logging:** WAL, checkpoint, compaction-related modules.
-- **Transactions / concurrency:** MVCC and lock-manager modules (see **In progress** for full wiring).
+- **Transactions / concurrency:** MVCC and lock-manager modules in `src/core/`; the **network `SqlEngine`** also implements session transactions (`BEGIN`/`COMMIT`/`ROLLBACK`), undo for DML, and statement-level isolation (see `src/network/sql_engine.rs`).
 - **Tooling:** benchmarks, scripts, Docker smoke tests, comparison benchmarks vs SQLite/Postgres (CI artifact on `main`).
 
-### In progress / gaps
+### What's still evolving
 
-- **Single coherent “open database → run SQL” path** through the main server and public API is still being unified (parts of CLI/QUIC integration remain stubs or partial).
-- **ACID and recovery:** ongoing integration of WAL on commit, undo, isolation, log-based recovery.
-- **DDL / storage edge cases:** e.g. richer ALTER/DROP, deeper concurrent access stories.
+- **Public / library API:** `rustdb` CLI and the QUIC server both run SQL through the same **`SqlEngine`** (`parse → plan → execute`). The crate-level [`Database`](src/lib.rs) handle is intentionally minimal (path + lifecycle only); there is no single high-level `Database::execute_sql` style API yet—callers use **`SqlEngine::open`** directly.
+- **Durability and log-based recovery:** WAL, checkpoint, and recovery code exist under [`src/logging/`](src/logging/), but **end-to-end wiring** so that every committed user transaction is ordered with durable WAL records and replayed on startup is **not complete**. Session **`COMMIT`** today clears the in-memory undo log and relies on the storage layer’s page flushing; full **log-based crash recovery** tied to `SqlEngine` is ongoing.
+- **Isolation:** explicit transactions use a **read-committed–style** baseline at the statement level (see engine docs), not full **serializable** isolation across sessions.
+- **DDL, catalog, and concurrency:** core **SQL-92-shaped** DDL and constraints are implemented in the engine path; remaining work includes **richer `ALTER`/`DROP`**, clearer **catalog persistence and multi-process** semantics, and stricter validation under **concurrent** writers.
+
+### Planned work (outline)
+
+1. **Library surface:** optional wrapper API (e.g. `Database` + owned `SqlEngine` or `Connection`) so embedders do not depend on wiring details; keep `SqlEngine` as the low-level primitive.
+2. **Durability:** define a commit point: append **WAL records** for DML/DDL (or checkpointed equivalents), **`fsync` policy**, and **replay** on open; align `COMMIT` with log sequence and page state.
+3. **Recovery:** integrate existing **checkpoint/recovery** modules with the **SqlEngine** data directory lifecycle; tests for crash-after-append, crash-after-commit.
+4. **Isolation (later):** stronger guarantees if needed (locking upgrades, snapshot isolation), building on current `RwLock` + MVCC direction in core.
+5. **DDL / catalog:** serialize **catalog** consistently with heap files; expand **`ALTER`** (column add/drop/rewrite) and document unsupported forms; add stress tests for FK/PK under concurrency.
+6. **Operational clarity:** extend docs and smoke tests as behavior stabilizes (already done for constraints and transactions in Docker smoke scripts).
 
 ### Test limitations
 
