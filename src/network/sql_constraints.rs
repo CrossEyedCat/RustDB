@@ -86,7 +86,20 @@ fn tuple_column_value<'a>(
     if let Some(v) = tuple.values.get(logical_name) {
         return Some(v);
     }
-    let idx = schema.columns.iter().position(|c| c.name == logical_name)?;
+    // Heap rows may use different identifier casing than the catalog (`ID` vs `id`).
+    for (k, v) in &tuple.values {
+        if k.eq_ignore_ascii_case(logical_name) {
+            return Some(v);
+        }
+    }
+    let idx = schema
+        .columns
+        .iter()
+        .position(|c| c.name == logical_name || c.name.eq_ignore_ascii_case(logical_name))?;
+    let canon = schema.columns[idx].name.as_str();
+    if let Some(v) = tuple.values.get(canon) {
+        return Some(v);
+    }
     tuple.values.get(&format!("col{}", idx + 1))
 }
 
@@ -352,6 +365,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(k_named, k_direct);
+    }
+
+    #[test]
+    fn composite_key_with_schema_matches_case_insensitive_tuple_keys() {
+        use crate::common::types::Column;
+        let sch = TableSchema {
+            table_name: "mix".to_string(),
+            columns: vec![Column::new("id".to_string(), DataType::Integer(0))],
+            primary_key: Some(("pk_mix".to_string(), vec!["id".to_string()])),
+            unique_constraints: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+        };
+        let mut t = Tuple::new(1);
+        t.set_value("ID", ColumnValue::new(DataType::Integer(7)));
+        let k = composite_key_from_tuple_with_schema(&t, &["id".to_string()], &sch).unwrap();
+        let k_direct = composite_key_from_tuple(
+            &tuple_with(&[("id", ColumnValue::new(DataType::Integer(7)))]),
+            &["id".to_string()],
+        )
+        .unwrap();
+        assert_eq!(k, k_direct);
     }
 
     #[test]
