@@ -6,6 +6,7 @@
 # IDE
 .vs/
 .vscode/
+.cursor/
 .idea/
 *.swp
 *.swo
