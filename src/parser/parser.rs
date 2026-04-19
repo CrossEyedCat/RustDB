@@ -1200,55 +1200,7 @@ impl SqlParser {
                 let column_name = self.parse_identifier()?;
                 let data_type = self.parse_data_type()?;
 
-                let mut col_constraints: Vec<ColumnConstraint> = Vec::new();
-                loop {
-                    if self.match_token(&TokenType::NotNull) {
-                        self.advance();
-                        col_constraints.push(ColumnConstraint::NotNull);
-                        continue;
-                    }
-                    if self.match_token(&TokenType::Unique) {
-                        self.advance();
-                        col_constraints.push(ColumnConstraint::Unique);
-                        continue;
-                    }
-                    if self.match_token(&TokenType::Primary) {
-                        self.advance();
-                        self.expect_keyword("KEY")?;
-                        col_constraints.push(ColumnConstraint::PrimaryKey);
-                        continue;
-                    }
-                    if self.match_token(&TokenType::Default) {
-                        self.advance();
-                        let expr = self.parse_expression()?;
-                        col_constraints.push(ColumnConstraint::Default(expr));
-                        continue;
-                    }
-                    if self.match_token(&TokenType::Check) {
-                        self.advance();
-                        self.expect_token(&TokenType::LeftParen)?;
-                        let expr = self.parse_expression()?;
-                        self.expect_token(&TokenType::RightParen)?;
-                        col_constraints.push(ColumnConstraint::Check(expr));
-                        continue;
-                    }
-                    if self.match_token(&TokenType::References) {
-                        self.advance();
-                        let table = self.parse_identifier()?;
-                        let column = if self.match_token(&TokenType::LeftParen) {
-                            self.advance();
-                            let c = self.parse_identifier()?;
-                            self.expect_token(&TokenType::RightParen)?;
-                            Some(c)
-                        } else {
-                            None
-                        };
-                        col_constraints.push(ColumnConstraint::References { table, column });
-                        continue;
-                    }
-
-                    break;
-                }
+                let col_constraints = self.parse_column_constraints_tail()?;
 
                 columns.push(ColumnDefinition {
                     name: column_name,
@@ -1320,6 +1272,7 @@ impl SqlParser {
 
                     match type_name.as_str() {
                         "INTEGER" | "INT" => Ok(DataType::Integer),
+                        "BIGINT" | "INT8" => Ok(DataType::BigInt),
                         "TEXT" => Ok(DataType::Text),
                         "REAL" | "FLOAT" => Ok(DataType::Real),
                         "VARCHAR" => {
@@ -1396,6 +1349,60 @@ impl SqlParser {
         }
     }
 
+    /// After a column name and SQL type, parse optional `NOT NULL`, `DEFAULT`, `REFERENCES`, etc.
+    fn parse_column_constraints_tail(&mut self) -> Result<Vec<ColumnConstraint>> {
+        let mut col_constraints: Vec<ColumnConstraint> = Vec::new();
+        loop {
+            if self.match_token(&TokenType::NotNull) {
+                self.advance();
+                col_constraints.push(ColumnConstraint::NotNull);
+                continue;
+            }
+            if self.match_token(&TokenType::Unique) {
+                self.advance();
+                col_constraints.push(ColumnConstraint::Unique);
+                continue;
+            }
+            if self.match_token(&TokenType::Primary) {
+                self.advance();
+                self.expect_keyword("KEY")?;
+                col_constraints.push(ColumnConstraint::PrimaryKey);
+                continue;
+            }
+            if self.match_token(&TokenType::Default) {
+                self.advance();
+                let expr = self.parse_expression()?;
+                col_constraints.push(ColumnConstraint::Default(expr));
+                continue;
+            }
+            if self.match_token(&TokenType::Check) {
+                self.advance();
+                self.expect_token(&TokenType::LeftParen)?;
+                let expr = self.parse_expression()?;
+                self.expect_token(&TokenType::RightParen)?;
+                col_constraints.push(ColumnConstraint::Check(expr));
+                continue;
+            }
+            if self.match_token(&TokenType::References) {
+                self.advance();
+                let table = self.parse_identifier()?;
+                let column = if self.match_token(&TokenType::LeftParen) {
+                    self.advance();
+                    let c = self.parse_identifier()?;
+                    self.expect_token(&TokenType::RightParen)?;
+                    Some(c)
+                } else {
+                    None
+                };
+                col_constraints.push(ColumnConstraint::References { table, column });
+                continue;
+            }
+
+            break;
+        }
+        Ok(col_constraints)
+    }
+
     fn parse_alter(&mut self) -> Result<SqlStatement> {
         self.expect_keyword("ALTER")?;
         self.expect_keyword("TABLE")?;
@@ -1407,12 +1414,18 @@ impl SqlParser {
                 self.advance();
                 let name = self.parse_identifier()?;
                 let data_type = self.parse_data_type()?;
+                let constraints = self.parse_column_constraints_tail()?;
                 AlterTableOperation::AddColumn(ColumnDefinition {
                     name,
                     data_type,
-                    constraints: Vec::new(),
+                    constraints,
                 })
-            } else {
+            } else if self.match_token(&TokenType::Constraint)
+                || self.match_keyword("PRIMARY")
+                || self.match_keyword("UNIQUE")
+                || self.match_keyword("FOREIGN")
+                || self.match_keyword("CHECK")
+            {
                 let mut constraint_name: Option<String> = None;
                 if self.match_token(&TokenType::Constraint) {
                     self.advance();
@@ -1423,6 +1436,15 @@ impl SqlParser {
                     name: constraint_name,
                     definition,
                 }
+            } else {
+                let name = self.parse_identifier()?;
+                let data_type = self.parse_data_type()?;
+                let constraints = self.parse_column_constraints_tail()?;
+                AlterTableOperation::AddColumn(ColumnDefinition {
+                    name,
+                    data_type,
+                    constraints,
+                })
             }
         } else if self.match_keyword("DROP") {
             self.advance();
@@ -1440,10 +1462,11 @@ impl SqlParser {
             self.expect_keyword("COLUMN")?;
             let name = self.parse_identifier()?;
             let data_type = self.parse_data_type()?;
+            let constraints = self.parse_column_constraints_tail()?;
             AlterTableOperation::ModifyColumn(ColumnDefinition {
                 name,
                 data_type,
-                constraints: Vec::new(),
+                constraints,
             })
         } else if self.match_keyword("RENAME") {
             self.advance();
@@ -1464,7 +1487,7 @@ impl SqlParser {
             }
         } else {
             return Err(Error::parser(
-                "Unsupported ALTER TABLE: use ADD COLUMN / ADD CONSTRAINT, DROP COLUMN / DROP CONSTRAINT, MODIFY COLUMN, RENAME COLUMN, or RENAME TO"
+                "Unsupported ALTER TABLE: use ADD [COLUMN] ... / ADD CONSTRAINT ..., DROP COLUMN / DROP CONSTRAINT, MODIFY COLUMN, RENAME COLUMN, or RENAME TO"
                     .to_string(),
             ));
         };

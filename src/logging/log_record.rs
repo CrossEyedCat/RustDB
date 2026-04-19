@@ -395,6 +395,17 @@ impl LogRecord {
         record
     }
 
+    /// Marker record: `catalog.json` was written under `data_dir/.rustdb/` (DDL path; no `transaction_id`).
+    pub fn new_catalog_snapshot(lsn: LogSequenceNumber) -> Self {
+        let mut record = Self::new(lsn, LogRecordType::MetadataUpdate, LogOperationData::Empty);
+        record
+            .metadata
+            .insert("kind".to_string(), "catalog_json".to_string());
+        record.priority = LogPriority::Critical;
+        record.update_size_and_checksum();
+        record
+    }
+
     /// Returns record size in bytes
     pub fn size(&self) -> u32 {
         self.record_size

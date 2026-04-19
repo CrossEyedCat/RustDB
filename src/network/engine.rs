@@ -32,12 +32,16 @@ pub mod engine_error_code {
 
 use crate::common::types::RecordId;
 
-/// Minimal isolation level for the SQL engine session (Phase 6 baseline).
+/// Isolation level for the SQL engine session transaction (`BEGIN` … `COMMIT`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SqlIsolationLevel {
     /// Read committed semantics at the statement level (see `SqlEngine` docs).
     #[default]
     ReadCommitted,
+    /// One active engine transaction at a time for this level (global lock); snapshot semantics are approximate.
+    RepeatableRead,
+    /// Same global serialization as [`Self::RepeatableRead`] in this implementation; stricter page-level rules may follow.
+    Serializable,
 }
 
 /// Undo record for a single DML operation within a session transaction.
@@ -65,23 +69,47 @@ pub enum UndoEntry {
 }
 
 /// Open user transaction state (per [`SessionContext`]).
-#[derive(Debug, Clone)]
 pub struct SqlTransaction {
     pub isolation: SqlIsolationLevel,
     pub undo: Vec<UndoEntry>,
+    /// Global lock for [`SqlIsolationLevel::RepeatableRead`] / [`SqlIsolationLevel::Serializable`].
+    strong_iso: Option<parking_lot::MutexGuard<'static, ()>>,
+    /// Structured WAL transaction id (see `src/logging`), if WAL is enabled.
+    pub wal_tx_id: Option<u64>,
+    pub wal_begin_lsn: Option<crate::logging::log_record::LogSequenceNumber>,
+    pub wal_last_lsn: Option<crate::logging::log_record::LogSequenceNumber>,
+}
+
+impl std::fmt::Debug for SqlTransaction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SqlTransaction")
+            .field("isolation", &self.isolation)
+            .field("undo_len", &self.undo.len())
+            .field("wal_tx_id", &self.wal_tx_id)
+            .field("wal_last_lsn", &self.wal_last_lsn)
+            .field("strong_iso_held", &self.strong_iso.is_some())
+            .finish()
+    }
 }
 
 impl SqlTransaction {
-    pub fn new(isolation: SqlIsolationLevel) -> Self {
+    pub fn new(
+        isolation: SqlIsolationLevel,
+        strong_iso: Option<parking_lot::MutexGuard<'static, ()>>,
+    ) -> Self {
         Self {
             isolation,
             undo: Vec::new(),
+            strong_iso,
+            wal_tx_id: None,
+            wal_begin_lsn: None,
+            wal_last_lsn: None,
         }
     }
 }
 
 /// Session-scoped state for a single logical client connection.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SessionContext {
     /// Opaque session identifier when the server assigns one.
     pub session_id: Option<u64>,

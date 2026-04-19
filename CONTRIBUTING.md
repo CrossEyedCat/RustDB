@@ -85,7 +85,7 @@ Workflow: [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml). Pushes a
 | **Docker stateful SQL smoke** | Image from GHCR + `scripts/sql_stateful_smoke.sh` (checks with a persistent volume). |
 | **Docker QUIC SQL smoke** | Image + `scripts/sql_quic_smoke.sh` (QUIC client from the host). |
 | **Benchmark SQLite vs RustDB (charts)** | **Push to `main` only**: benchmark RustDB (Docker) vs SQLite vs Postgres; charts and reports in artifact `sqlite-vs-rustdb-bench`. Heavy job. |
-| **Benchmark saturation (RustDB vs Postgres)** | **Push to `main` or `workflow_dispatch`**: throughput vs concurrency until the curve plateaus (`scripts/bench_saturation_rustdb_postgres.py`); artifact `rustdb-postgres-saturation` (`saturation.md`, `saturation.csv`, `saturation.png`). Optional ladder via workflow input `saturation_concurrency_steps`. |
+| **Loom concurrent SQL tests** | **Push to `main` or `workflow_dispatch`**: runs `cargo test --release` with `RUSTFLAGS='--cfg loom'` for `engine_concurrent_inserts_only_one_wins_same_pk` and `engine_alter_fk_many_inserts_under_contention` ([tokio-rs/loom](https://github.com/tokio-rs/loom)); artifact `loom-sql-engine-tests` (`loom-tests.log`). Optional `LOOM_MAX_PREEMPTIONS` via workflow input `loom_max_preemptions` (default `4`). |
 | **Trace profile (QUIC select_table @128)** | **workflow_dispatch** only: Chrome trace and load metadata; artifact `trace-profile-quic-select-table`. Concurrency/queries come from the manual workflow run form. |
 | **Flame Graph (rustdb_load)** | **workflow_dispatch** only: **perf** + **cargo flamegraph**, SVG in artifact `flamegraph-rustdb-load`. |
 | **Documentation** | `cargo doc` with `-D warnings`; on push to `main`, deploy to **GitHub Pages** (if enabled). |

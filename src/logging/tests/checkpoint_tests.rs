@@ -40,6 +40,7 @@ fn test_checkpoint_config_custom() {
         max_checkpoint_time: std::time::Duration::from_secs(60),
         flush_threads: 8,
         flush_batch_size: 200,
+        quiet: false,
     };
 
     assert_eq!(config.checkpoint_interval.as_secs(), 60);
@@ -96,6 +97,7 @@ async fn test_checkpoint_config_validation() {
         max_checkpoint_time: std::time::Duration::from_secs(5),
         flush_threads: 2,
         flush_batch_size: 50,
+        quiet: false,
     };
     let log_writer = create_test_log_writer();
     let _manager = CheckpointManager::new(config, log_writer);
@@ -116,6 +118,7 @@ async fn test_checkpoint_config_disabled_auto() {
         max_checkpoint_time: std::time::Duration::from_secs(30),
         flush_threads: 4,
         flush_batch_size: 100,
+        quiet: false,
     };
     let log_writer = create_test_log_writer();
     let _manager = CheckpointManager::new(config, log_writer);
@@ -155,6 +158,7 @@ async fn test_checkpoint_config_thread_settings() {
             max_checkpoint_time: std::time::Duration::from_secs(30),
             flush_threads: thread_count,
             flush_batch_size: 100,
+            quiet: false,
         };
         let log_writer = create_test_log_writer();
         let _manager = CheckpointManager::new(config, log_writer);
@@ -179,6 +183,7 @@ async fn test_checkpoint_config_batch_sizes() {
             max_checkpoint_time: std::time::Duration::from_secs(30),
             flush_threads: 4,
             flush_batch_size: batch_size,
+            quiet: false,
         };
         let log_writer = create_test_log_writer();
         let _manager = CheckpointManager::new(config, log_writer);

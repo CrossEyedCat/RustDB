@@ -398,6 +398,8 @@ fn engine_ddl_rejected_inside_transaction() {
     eng.execute_sql("ROLLBACK", &mut ctx).unwrap();
 }
 
+/// Eight threads contend on `INSERT … VALUES (1)`; exactly one succeeds.
+#[cfg(not(loom))]
 #[test]
 fn engine_concurrent_inserts_only_one_wins_same_pk() {
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -432,6 +434,50 @@ fn engine_concurrent_inserts_only_one_wins_same_pk() {
         h.join().expect("join");
     }
     assert_eq!(ok_count.load(Ordering::SeqCst), 1);
+}
+
+/// Same property under [loom](https://github.com/tokio-rs/loom) permutation scheduling (`RUSTFLAGS="--cfg loom"`).
+#[cfg(loom)]
+#[test]
+fn engine_concurrent_inserts_only_one_wins_same_pk() {
+    use loom::sync::atomic::AtomicU32;
+    use loom::sync::atomic::Ordering::SeqCst;
+    use loom::sync::Arc;
+
+    loom::model(|| {
+        let dir = TempDir::new().expect("tempdir");
+        let eng = Arc::new(SqlEngine::open(dir.path().to_path_buf()).expect("open"));
+        let mut setup = SessionContext::default();
+        eng.execute_sql("CREATE TABLE conc (id INT PRIMARY KEY)", &mut setup)
+            .unwrap();
+
+        let ok_count = Arc::new(AtomicU32::new(0));
+        let ea = eng.clone();
+        let eb = eng.clone();
+        let oa = ok_count.clone();
+        let ob = ok_count.clone();
+        let h1 = loom::thread::spawn(move || {
+            let mut ctx = SessionContext::default();
+            if ea
+                .execute_sql("INSERT INTO conc (id) VALUES (1)", &mut ctx)
+                .is_ok()
+            {
+                oa.fetch_add(1, SeqCst);
+            }
+        });
+        let h2 = loom::thread::spawn(move || {
+            let mut ctx = SessionContext::default();
+            if eb
+                .execute_sql("INSERT INTO conc (id) VALUES (1)", &mut ctx)
+                .is_ok()
+            {
+                ob.fetch_add(1, SeqCst);
+            }
+        });
+        h1.join().unwrap();
+        h2.join().unwrap();
+        assert_eq!(ok_count.load(SeqCst), 1);
+    });
 }
 
 #[test]
@@ -608,4 +654,110 @@ fn engine_drop_table_if_exists_is_ok() {
     let mut ctx = SessionContext::default();
     eng.execute_sql("DROP TABLE IF EXISTS missing", &mut ctx)
         .expect("if exists");
+}
+
+#[cfg(not(loom))]
+#[test]
+fn engine_alter_fk_many_inserts_under_contention() {
+    use std::sync::{Arc, Mutex};
+
+    let dir = TempDir::new().expect("tempdir");
+    let eng = Arc::new(Mutex::new(
+        SqlEngine::open(dir.path().to_path_buf()).expect("open"),
+    ));
+    {
+        let g = eng.lock().expect("lock");
+        let mut ctx = SessionContext::default();
+        g.execute_sql("CREATE TABLE pp (id INT PRIMARY KEY)", &mut ctx)
+            .expect("p");
+        for i in 1..=64 {
+            g.execute_sql(&format!("INSERT INTO pp (id) VALUES ({i})"), &mut ctx)
+                .expect("ip");
+        }
+        g.execute_sql(
+            "CREATE TABLE cc (k INT PRIMARY KEY, pid INT REFERENCES pp(id))",
+            &mut ctx,
+        )
+        .expect("c");
+    }
+    std::thread::scope(|s| {
+        for t in 0..4 {
+            let e = eng.clone();
+            s.spawn(move || {
+                let mut ctx = SessionContext::default();
+                for n in 0..32 {
+                    let id = t * 10_000 + n;
+                    let pid = (n % 64) + 1;
+                    let sql = format!("INSERT INTO cc (k, pid) VALUES ({id}, {pid})");
+                    e.lock().expect("lock").execute_sql(&sql, &mut ctx).unwrap();
+                }
+            });
+        }
+    });
+    let g = eng.lock().expect("lock");
+    let mut ctx = SessionContext::default();
+    let out = g
+        .execute_sql("SELECT k FROM cc", &mut ctx)
+        .expect("all child rows");
+    match out {
+        EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 4 * 32),
+        _ => panic!("expected result set"),
+    }
+}
+
+#[cfg(loom)]
+#[test]
+fn engine_alter_fk_many_inserts_under_contention() {
+    use loom::sync::{Arc, Mutex};
+
+    loom::model(|| {
+        let dir = TempDir::new().expect("tempdir");
+        let eng = Arc::new(Mutex::new(
+            SqlEngine::open(dir.path().to_path_buf()).expect("open"),
+        ));
+        {
+            let g = eng.lock().unwrap();
+            let mut ctx = SessionContext::default();
+            g.execute_sql("CREATE TABLE pp (id INT PRIMARY KEY)", &mut ctx)
+                .expect("p");
+            for i in 1..=8 {
+                g.execute_sql(&format!("INSERT INTO pp (id) VALUES ({i})"), &mut ctx)
+                    .expect("ip");
+            }
+            g.execute_sql(
+                "CREATE TABLE cc (k INT PRIMARY KEY, pid INT REFERENCES pp(id))",
+                &mut ctx,
+            )
+            .expect("c");
+        }
+        let e0 = eng.clone();
+        let e1 = eng.clone();
+        let h0 = loom::thread::spawn(move || {
+            let mut ctx = SessionContext::default();
+            for n in 0..4 {
+                let id = n;
+                let pid = (n % 8) + 1;
+                let sql = format!("INSERT INTO cc (k, pid) VALUES ({id}, {pid})");
+                e0.lock().unwrap().execute_sql(&sql, &mut ctx).unwrap();
+            }
+        });
+        let h1 = loom::thread::spawn(move || {
+            let mut ctx = SessionContext::default();
+            for n in 0..4 {
+                let id = 100 + n;
+                let pid = (n % 8) + 1;
+                let sql = format!("INSERT INTO cc (k, pid) VALUES ({id}, {pid})");
+                e1.lock().unwrap().execute_sql(&sql, &mut ctx).unwrap();
+            }
+        });
+        h0.join().unwrap();
+        h1.join().unwrap();
+        let g = eng.lock().unwrap();
+        let mut ctx = SessionContext::default();
+        let out = g.execute_sql("SELECT k FROM cc", &mut ctx).expect("rows");
+        match out {
+            EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 8),
+            _ => panic!("expected result set"),
+        }
+    });
 }

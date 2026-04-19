@@ -57,10 +57,12 @@ pub mod logging;
 pub mod network;
 pub mod parser;
 pub mod planner;
+pub mod sql_session;
 pub mod storage;
 pub mod tracing_setup;
 
 pub use network::SqlEngine;
+pub use sql_session::SqlSession;
 
 pub use common::error::{Error, Result};
 pub use common::types::*;
@@ -99,6 +101,27 @@ impl Database {
         self.data_path = None;
         Ok(())
     }
+
+    /// Consumes this handle and opens an [`SqlEngine`] on the same data directory.
+    ///
+    /// Returns an error if the database was never opened with [`Self::open`].
+    pub fn into_sql_engine(mut self) -> Result<SqlEngine> {
+        let path = self
+            .data_path
+            .take()
+            .ok_or_else(|| Error::database("no data directory; call Database::open first"))?;
+        SqlEngine::open(path)
+    }
+}
+
+/// Ensures `path` exists and returns an [`SqlEngine`] rooted there.
+pub fn open_sql_engine(path: impl AsRef<std::path::Path>) -> Result<SqlEngine> {
+    let p = path.as_ref().to_path_buf();
+    let _ = Database::open(
+        p.to_str()
+            .ok_or_else(|| Error::database("invalid UTF-8 in database path"))?,
+    )?;
+    SqlEngine::open(p)
 }
 
 impl Drop for Database {

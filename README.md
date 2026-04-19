@@ -106,7 +106,7 @@ A more detailed component diagram (PlantUML) lives in [`architecture.puml`](arch
 | **Parallelism** | rayon, crossbeam, dashmap, parking_lot |
 | **Storage helpers** | memmap2, lz4_flex, twox-hash, uuid |
 | **Config** | TOML |
-| **CI** | GitHub Actions: tests, clippy, fmt, MSRV, coverage (llvm-cov + Codecov), cargo-deny, cargo-audit, Docker build & smoke, comparison + saturation benchmarks vs SQLite/Postgres, optional trace + flamegraph (see [CONTRIBUTING.md](CONTRIBUTING.md)) |
+| **CI** | GitHub Actions: tests, clippy, fmt, MSRV, coverage (llvm-cov + Codecov), cargo-deny, cargo-audit, Docker build & smoke, comparison benchmarks vs SQLite/Postgres, [loom](https://github.com/tokio-rs/loom) permutation tests for concurrent `SqlEngine`, optional trace + flamegraph (see [CONTRIBUTING.md](CONTRIBUTING.md)) |
 | **Containers** | Multi-stage Dockerfile; images pushed to **GHCR** |
 
 **Supported platform for “production-style” experiments:** **Linux**. Other OSes are not a supported deployment target.
@@ -135,6 +135,14 @@ cargo test
 cargo test --test integration_tests
 ```
 
+**Loom** ([tokio-rs/loom](https://github.com/tokio-rs/loom)): permutation tests for the concurrent SQL engine scenarios `engine_concurrent_inserts_only_one_wins_same_pk` and `engine_alter_fk_many_inserts_under_contention` are selected when the crate is built with `--cfg loom`. Run (release recommended upstream):
+
+```bash
+RUSTFLAGS='--cfg loom' cargo test --release engine_concurrent_inserts_only_one_wins_same_pk engine_alter_fk_many_inserts_under_contention
+```
+
+PowerShell: `$env:RUSTFLAGS='--cfg loom'; cargo test ...`. Default `cargo test` runs the standard-library thread versions (`#[cfg(not(loom))]`).
+
 ---
 
 ## Project status
@@ -154,8 +162,8 @@ RustDB aims to be **compatible with the SQL-92 standard at the feature level** f
 - **DDL**
   - `CREATE TABLE` (typed columns)
   - Constraints: `PRIMARY KEY`, `UNIQUE`, `FOREIGN KEY ... REFERENCES`, `NOT NULL`, `DEFAULT`, `CHECK`
-  - `ALTER TABLE ... ADD CONSTRAINT ...`
-  - `ALTER TABLE ... DROP CONSTRAINT ...`
+  - `ALTER TABLE ... ADD CONSTRAINT ...` / `DROP CONSTRAINT ...`
+  - **Alter column / table:** `ADD [COLUMN]` / `ADD col type …` (column constraints optional), `DROP COLUMN`, `RENAME COLUMN … TO …`, `RENAME TO` (rename table), `MODIFY COLUMN` (type / `NOT NULL` / `DEFAULT` — not full SQL-92 `ALTER` parity); see parser + `src/network/sql_engine/alter_table_ops.rs` for current limits
   - `DROP TABLE` with **RESTRICT** (default) vs `CASCADE`
 - **Transactions (session-scoped)**
   - `BEGIN TRANSACTION`, `COMMIT`, `ROLLBACK`
@@ -176,7 +184,7 @@ If you need a strict vendor dialect or complete coverage of the standard, treat 
 - **Planning and execution:** plan building, optimizer hooks; executor operator set (scan, join, aggregates, sort, limits, etc.—see source tree).
 - **Storage and catalog:** page/file abstractions, tuples, B-tree and hash indexes, schema manager.
 - **Logging:** WAL, checkpoint, compaction-related modules.
-- **Transactions / concurrency:** MVCC and lock-manager modules in `src/core/`; the **network `SqlEngine`** also implements session transactions (`BEGIN`/`COMMIT`/`ROLLBACK`), undo for DML, and statement-level isolation (see `src/network/sql_engine.rs`).
+- **Transactions / concurrency:** MVCC and lock-manager modules in `src/core/`; the **network `SqlEngine`** also implements session transactions (`BEGIN`/`COMMIT`/`ROLLBACK`), undo for DML, and statement-level isolation (see `src/network/sql_engine/`).
 - **Tooling:** benchmarks, scripts, Docker smoke tests, comparison benchmarks vs SQLite/Postgres (CI artifact on `main`).
 
 ### What's still evolving
@@ -184,7 +192,7 @@ If you need a strict vendor dialect or complete coverage of the standard, treat 
 - **Public / library API:** `rustdb` CLI and the QUIC server both run SQL through the same **`SqlEngine`** (`parse → plan → execute`). The crate-level [`Database`](src/lib.rs) handle is intentionally minimal (path + lifecycle only); there is no single high-level `Database::execute_sql` style API yet—callers use **`SqlEngine::open`** directly.
 - **Durability and log-based recovery:** WAL, checkpoint, and recovery code exist under [`src/logging/`](src/logging/), but **end-to-end wiring** so that every committed user transaction is ordered with durable WAL records and replayed on startup is **not complete**. Session **`COMMIT`** today clears the in-memory undo log and relies on the storage layer’s page flushing; full **log-based crash recovery** tied to `SqlEngine` is ongoing.
 - **Isolation:** explicit transactions use a **read-committed–style** baseline at the statement level (see engine docs), not full **serializable** isolation across sessions.
-- **DDL, catalog, and concurrency:** core **SQL-92-shaped** DDL and constraints are implemented in the engine path; remaining work includes **richer `ALTER`/`DROP`**, clearer **catalog persistence and multi-process** semantics, and stricter validation under **concurrent** writers.
+- **DDL, catalog, and concurrency:** the engine supports an expanded **`ALTER TABLE`** subset (add/drop/rename column, rename table, modify column type/nullability) with heap rewrites and catalog/WAL markers; **multi-process** catalog access and full standard **`ALTER`** parity are not goals for this experimental tree.
 
 **Roadmap:** a concise prioritized plan lives in [`docs/roadmap.md`](docs/roadmap.md).
 

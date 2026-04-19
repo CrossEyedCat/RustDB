@@ -9,6 +9,14 @@
 //! - A [`RwLock`] serializes writers vs readers at **statement** granularity (read committed baseline:
 //!   each statement sees data committed before that statement began, excluding the current session’s
 //!   own uncommitted writes which are already on the heap).
+//! - Stronger isolation ([`crate::network::engine::SqlIsolationLevel::RepeatableRead`] /
+//!   [`crate::network::engine::SqlIsolationLevel::Serializable`]) uses a global lock so at most one
+//!   such transaction runs at a time (see `RUSTDB_DEFAULT_ISOLATION`).
+//! - Optional structured WAL under `data_dir/.rustdb/wal` (`RUSTDB_DISABLE_WAL=1` to skip); recovery
+//!   runs via [`crate::logging::recovery::RecoveryManager`] on open. When WAL is on, a
+//!   [`crate::logging::checkpoint::CheckpointManager`] is attached (unless `RUSTDB_DISABLE_CHECKPOINT=1`);
+//!   call [`SqlEngine::checkpoint`] for a manual checkpoint (flushes heaps + writes a checkpoint record).
+//!   After each successful write of `catalog.json` (DDL), the WAL records a `MetadataUpdate` marker when WAL is on.
 //! - DDL (`CREATE` / `DROP` / `ALTER`) is rejected while a transaction is open.
 
 use crate::catalog::schema::{
@@ -23,6 +31,7 @@ use crate::network::engine::{
     engine_error_code, EngineError, EngineHandle, EngineOutput, SessionContext, SqlIsolationLevel,
     SqlTransaction, UndoEntry,
 };
+use crate::network::sql_commit_log;
 use crate::network::sql_constraints::{self, ConstraintRuntime};
 use crate::parser::ast::{
     AlterTableOperation, AlterTableStatement, BinaryOperator, ColumnConstraint,
@@ -41,15 +50,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use tracing::info_span;
 
+mod alter_table_ops;
+
+/// Global lock: at most one [`SqlIsolationLevel::RepeatableRead`] or [`SqlIsolationLevel::Serializable`]
+/// engine transaction across all sessions.
+static STRONG_ISO_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
 /// Engine backed by the in-process planner, optimizer, and executor (single default table file per data directory).
 pub struct SqlEngine {
     state: Arc<SqlEngineState>,
 }
 
-struct SqlEngineState {
+pub(crate) struct SqlEngineState {
     data_dir: PathBuf,
-    default_page_manager: Arc<Mutex<PageManager>>,
-    table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<PageManager>>>>>,
+    pub(crate) default_page_manager: Arc<Mutex<PageManager>>,
+    pub(crate) table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<PageManager>>>>>,
     /// Monotonic id assigned to inserted [`Tuple`] rows (persisted in tuple bytes).
     next_tuple_id: AtomicU64,
     planner: QueryPlanner,
@@ -59,10 +74,12 @@ struct SqlEngineState {
     ///
     /// These queries are common in benchmarks (`SELECT 1`) and are safe to memoize.
     select_no_from_cache: Mutex<HashMap<String, EngineOutput>>,
-    catalog: Mutex<SchemaManager>,
+    pub(crate) catalog: Mutex<SchemaManager>,
     constraint_runtime: Mutex<ConstraintRuntime>,
     /// Serializes storage-mutating statements vs table scans (`SELECT` with `FROM`).
     storage_access: RwLock<()>,
+    /// Structured WAL (`src/logging`); disabled when `RUSTDB_DISABLE_WAL` is set.
+    wal: Option<crate::network::sql_engine_wal::SqlEngineWal>,
 }
 
 impl SqlEngine {
@@ -70,6 +87,20 @@ impl SqlEngine {
     /// Uses one heap file `default.tbl` for table scans (see [`ScanOperatorFactory`]).
     pub fn open(data_dir: PathBuf) -> Result<Self, DbError> {
         std::fs::create_dir_all(&data_dir)?;
+        let wal_dir = data_dir.join(".rustdb").join("wal");
+        let wal = if std::env::var_os("RUSTDB_DISABLE_WAL").is_none() {
+            std::fs::create_dir_all(&wal_dir)?;
+            crate::network::sql_engine_wal::recover_sql_engine_wal(&wal_dir)?;
+            Some(crate::network::sql_engine_wal::SqlEngineWal::open(
+                &wal_dir,
+            )?)
+        } else {
+            None
+        };
+        let catalog = match SchemaManager::try_load_catalog_from_data_dir(&data_dir)? {
+            Some(c) => c,
+            None => SchemaManager::new()?,
+        };
         let pm = match PageManager::open(data_dir.clone(), "default", PageManagerConfig::default())
         {
             Ok(pm) => pm,
@@ -84,21 +115,42 @@ impl SqlEngine {
             data_dir.clone(),
         ));
         let executor = QueryExecutor::new(factory)?;
-        Ok(Self {
-            state: Arc::new(SqlEngineState {
-                data_dir,
-                default_page_manager: pm,
-                table_page_managers: table_pms,
-                next_tuple_id: AtomicU64::new(1),
-                planner: QueryPlanner::new()?,
-                optimizer: QueryOptimizer::new()?,
-                executor,
-                select_no_from_cache: Mutex::new(HashMap::new()),
-                catalog: Mutex::new(SchemaManager::new()?),
-                constraint_runtime: Mutex::new(ConstraintRuntime::new()),
-                storage_access: RwLock::new(()),
-            }),
-        })
+        let state = Arc::new(SqlEngineState {
+            data_dir,
+            default_page_manager: pm,
+            table_page_managers: table_pms,
+            next_tuple_id: AtomicU64::new(1),
+            planner: QueryPlanner::new()?,
+            optimizer: QueryOptimizer::new()?,
+            executor,
+            select_no_from_cache: Mutex::new(HashMap::new()),
+            catalog: Mutex::new(catalog),
+            constraint_runtime: Mutex::new(ConstraintRuntime::new()),
+            storage_access: RwLock::new(()),
+            wal,
+        });
+        if state.wal.is_some() && wal_dir.is_dir() {
+            crate::network::sql_engine_wal::replay_wal_into_engine(state.as_ref(), &wal_dir)
+                .map_err(|e| DbError::database(format!("WAL replay on open: {e}")))?;
+        }
+        if let Some(ref wal) = state.wal {
+            wal.setup_checkpoint(state.clone())
+                .map_err(|e| DbError::database(format!("checkpoint setup on open: {e}")))?;
+        }
+        rebuild_all_constraint_runtime(state.as_ref()).map_err(|e| {
+            DbError::database(format!("catalog/constraint rebuild on open: {}", e.message))
+        })?;
+        Ok(Self { state })
+    }
+
+    /// Runs a manual checkpoint: flush all heap page managers and append a checkpoint record to the WAL.
+    pub fn checkpoint(&self) -> Result<(), DbError> {
+        let wal = self
+            .state
+            .wal
+            .as_ref()
+            .ok_or_else(|| DbError::database("WAL disabled; checkpoint unavailable"))?;
+        wal.checkpoint()
     }
 
     fn execute_sql_inner(
@@ -235,8 +287,8 @@ impl SqlEngine {
                     .map_err(|_| lock_poisoned_engine())?;
                 execute_alter_table(state, ctx, alt)
             }
-            SqlStatement::BeginTransaction => begin_transaction(ctx),
-            SqlStatement::CommitTransaction => commit_transaction(ctx),
+            SqlStatement::BeginTransaction => begin_transaction(state, ctx),
+            SqlStatement::CommitTransaction => commit_transaction(state, ctx),
             SqlStatement::RollbackTransaction => {
                 let _storage = state
                     .storage_access
@@ -305,37 +357,83 @@ fn lock_poisoned_engine() -> EngineError {
     EngineError::new(engine_error_code::INTERNAL, "storage lock poisoned")
 }
 
-fn begin_transaction(ctx: &mut SessionContext) -> Result<EngineOutput, EngineError> {
+fn default_session_isolation() -> SqlIsolationLevel {
+    match std::env::var("RUSTDB_DEFAULT_ISOLATION").as_deref() {
+        Ok("repeatable_read") | Ok("REPEATABLE_READ") => SqlIsolationLevel::RepeatableRead,
+        Ok("serializable") | Ok("SERIALIZABLE") => SqlIsolationLevel::Serializable,
+        _ => SqlIsolationLevel::ReadCommitted,
+    }
+}
+
+fn begin_transaction(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+) -> Result<EngineOutput, EngineError> {
     if ctx.transaction.is_some() {
         return Err(EngineError::new(
             engine_error_code::ALREADY_IN_TRANSACTION,
             "already in a transaction",
         ));
     }
-    ctx.transaction = Some(SqlTransaction::new(SqlIsolationLevel::ReadCommitted));
+    let iso = default_session_isolation();
+    let strong_iso = if matches!(
+        iso,
+        SqlIsolationLevel::RepeatableRead | SqlIsolationLevel::Serializable
+    ) {
+        Some(STRONG_ISO_LOCK.lock())
+    } else {
+        None
+    };
+    let mut tx = SqlTransaction::new(iso, strong_iso);
+    if let Some(ref wal) = state.wal {
+        wal.log_begin(&mut tx, iso)?;
+    }
+    ctx.transaction = Some(tx);
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
-fn commit_transaction(ctx: &mut SessionContext) -> Result<EngineOutput, EngineError> {
-    ctx.transaction.take().ok_or_else(|| {
+fn commit_transaction(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+) -> Result<EngineOutput, EngineError> {
+    let mut tx = ctx.transaction.take().ok_or_else(|| {
         EngineError::new(
             engine_error_code::NO_ACTIVE_TRANSACTION,
             "no active transaction",
         )
     })?;
+    if let Some(ref wal) = state.wal {
+        wal.log_commit(&mut tx)?;
+    }
+    sql_commit_log::append_commit_log_line(&state.data_dir).map_err(map_db_err)?;
+    drop(tx);
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+}
+
+fn persist_catalog(state: &SqlEngineState) -> Result<(), EngineError> {
+    let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+    cat.save_catalog_to_data_dir(&state.data_dir)
+        .map_err(map_db_err)?;
+    drop(cat);
+    if let Some(ref wal) = state.wal {
+        wal.log_catalog_snapshot()?;
+    }
+    Ok(())
 }
 
 fn rollback_transaction(
     state: &SqlEngineState,
     ctx: &mut SessionContext,
 ) -> Result<EngineOutput, EngineError> {
-    let tx = ctx.transaction.take().ok_or_else(|| {
+    let mut tx = ctx.transaction.take().ok_or_else(|| {
         EngineError::new(
             engine_error_code::NO_ACTIVE_TRANSACTION,
             "no active transaction",
         )
     })?;
+    if let Some(ref wal) = state.wal {
+        wal.log_abort(&mut tx)?;
+    }
     for op in tx.undo.into_iter().rev() {
         apply_undo(state, op)?;
     }
@@ -404,7 +502,7 @@ fn apply_undo(state: &SqlEngineState, op: UndoEntry) -> Result<(), EngineError> 
     Ok(())
 }
 
-fn table_page_manager(
+pub(crate) fn table_page_manager(
     state: &SqlEngineState,
     table: &str,
 ) -> Result<Arc<Mutex<PageManager>>, EngineError> {
@@ -449,6 +547,8 @@ fn execute_create_table(
         let mut cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
         cat.register_schema(schema);
     }
+    rebuild_all_constraint_runtime(state)?;
+    persist_catalog(state)?;
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
@@ -494,6 +594,7 @@ fn execute_drop_table(
 
     let mut visited = HashSet::new();
     drop_table_cascade(state, &dt.table_name, &mut visited)?;
+    persist_catalog(state)?;
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
@@ -584,6 +685,7 @@ fn execute_alter_table(
                 validate_new_table_fks(&cat, schema)?;
             }
             rebuild_all_constraint_runtime(state)?;
+            persist_catalog(state)?;
             Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
         }
         AlterTableOperation::DropConstraint(name) => {
@@ -598,12 +700,29 @@ fn execute_alter_table(
                 drop_constraint_by_name(schema, name)?;
             }
             rebuild_all_constraint_runtime(state)?;
+            persist_catalog(state)?;
             Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
         }
-        _ => Err(EngineError::new(
-            engine_error_code::UNSUPPORTED_SQL,
-            "this ALTER TABLE operation is not supported by the server engine yet",
-        )),
+        AlterTableOperation::AddColumn(cd) => {
+            alter_table_ops::add_column(state, &stmt.table_name, cd)?;
+            Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+        }
+        AlterTableOperation::DropColumn(col) => {
+            alter_table_ops::drop_column(state, &stmt.table_name, col)?;
+            Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+        }
+        AlterTableOperation::RenameColumn { old_name, new_name } => {
+            alter_table_ops::rename_column(state, &stmt.table_name, old_name, new_name)?;
+            Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+        }
+        AlterTableOperation::RenameTable(new_name) => {
+            alter_table_ops::rename_table(state, &stmt.table_name, new_name)?;
+            Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+        }
+        AlterTableOperation::ModifyColumn(cd) => {
+            alter_table_ops::modify_column(state, &stmt.table_name, cd)?;
+            Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+        }
     }
 }
 
@@ -642,6 +761,25 @@ fn execute_insert(
                 let bytes = tuple.to_bytes().map_err(map_db_err)?;
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
                 let ins = pm.insert(&bytes).map_err(map_db_err)?;
+                if let Some(tx) = ctx.transaction.as_mut() {
+                    if let Some(ref wal) = state.wal {
+                        let page_id = (ins.record_id >> 32) as u64;
+                        let off = (ins.record_id & 0xffff_ffff) as u32;
+                        let record_offset: u16 = off.try_into().map_err(|_| {
+                            EngineError::new(
+                                engine_error_code::INTERNAL,
+                                "record offset too large for WAL",
+                            )
+                        })?;
+                        wal.log_data_insert(
+                            tx,
+                            pm.file_id(),
+                            page_id,
+                            record_offset,
+                            bytes.clone(),
+                        )?;
+                    }
+                }
                 if let Err(e) = register_row_for_insert(state, &insert.table, ins.record_id, &tuple)
                 {
                     pm.delete(ins.record_id).map_err(map_db_err)?;
@@ -677,6 +815,25 @@ fn execute_insert(
                 drop(pm);
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
                 let ins = pm.insert(&bytes).map_err(map_db_err)?;
+                if let Some(tx) = ctx.transaction.as_mut() {
+                    if let Some(ref wal) = state.wal {
+                        let page_id = (ins.record_id >> 32) as u64;
+                        let off = (ins.record_id & 0xffff_ffff) as u32;
+                        let record_offset: u16 = off.try_into().map_err(|_| {
+                            EngineError::new(
+                                engine_error_code::INTERNAL,
+                                "record offset too large for WAL",
+                            )
+                        })?;
+                        wal.log_data_insert(
+                            tx,
+                            pm.file_id(),
+                            page_id,
+                            record_offset,
+                            bytes.clone(),
+                        )?;
+                    }
+                }
                 if let Err(e) = register_row_for_insert(state, &insert.table, ins.record_id, &tuple)
                 {
                     pm.delete(ins.record_id).map_err(map_db_err)?;
@@ -842,6 +999,26 @@ fn execute_update(
             }
         }
         let new_bytes = tuple.to_bytes().map_err(map_db_err)?;
+        if let Some(tx) = ctx.transaction.as_mut() {
+            if let Some(ref wal) = state.wal {
+                let page_id = (rid >> 32) as u64;
+                let off = (rid & 0xffff_ffff) as u32;
+                let record_offset: u16 = off.try_into().map_err(|_| {
+                    EngineError::new(
+                        engine_error_code::INTERNAL,
+                        "record offset too large for WAL",
+                    )
+                })?;
+                wal.log_data_update(
+                    tx,
+                    pm.file_id(),
+                    page_id,
+                    record_offset,
+                    data.clone(),
+                    new_bytes.clone(),
+                )?;
+            }
+        }
         pm.update(rid, &new_bytes).map_err(map_db_err)?;
         push_undo(
             ctx,
@@ -924,6 +1101,19 @@ fn execute_delete(
             },
         );
         pm.delete(rid).map_err(map_db_err)?;
+        if let Some(tx) = ctx.transaction.as_mut() {
+            if let Some(ref wal) = state.wal {
+                let page_id = (rid >> 32) as u64;
+                let off = (rid & 0xffff_ffff) as u32;
+                let record_offset: u16 = off.try_into().map_err(|_| {
+                    EngineError::new(
+                        engine_error_code::INTERNAL,
+                        "record offset too large for WAL",
+                    )
+                })?;
+                wal.log_data_delete(tx, pm.file_id(), page_id, record_offset, data.clone())?;
+            }
+        }
         rows_affected += 1;
     }
     pm.flush_dirty_pages().map_err(map_db_err)?;

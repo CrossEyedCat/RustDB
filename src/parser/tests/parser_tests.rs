@@ -1,6 +1,7 @@
 //! SQL parser tests
 
 use crate::common::Result;
+use crate::parser::ast::AlterTableOperation;
 use crate::parser::{
     ColumnDefinition, CreateIndexStatement, CreateTableStatement, DataType, Expression, SelectItem,
     SelectStatement, SqlParser, SqlStatement,
@@ -474,5 +475,42 @@ fn test_parse_execute_with_params() -> Result<()> {
         _ => panic!("Expected EXECUTE statement"),
     }
 
+    Ok(())
+}
+
+#[test]
+fn test_parse_alter_add_column_without_column_keyword() -> Result<()> {
+    let mut parser = SqlParser::new("ALTER TABLE t ADD n INT NOT NULL DEFAULT 0")?;
+    let statement = parser.parse()?;
+    match statement {
+        SqlStatement::AlterTable(alt) => {
+            assert_eq!(alt.table_name, "t");
+            match alt.operation {
+                AlterTableOperation::AddColumn(def) => {
+                    assert_eq!(def.name, "n");
+                    assert_eq!(def.data_type, DataType::Integer);
+                    assert_eq!(def.constraints.len(), 2);
+                }
+                _ => panic!("expected AddColumn"),
+            }
+        }
+        _ => panic!("expected ALTER TABLE"),
+    }
+    Ok(())
+}
+
+#[test]
+fn test_parse_alter_add_constraint_still_parsed() -> Result<()> {
+    let mut parser = SqlParser::new("ALTER TABLE t ADD PRIMARY KEY (a)")?;
+    let statement = parser.parse()?;
+    match statement {
+        SqlStatement::AlterTable(alt) => match alt.operation {
+            AlterTableOperation::AddConstraint { name, .. } => {
+                assert!(name.is_none());
+            }
+            _ => panic!("expected AddConstraint"),
+        },
+        _ => panic!("expected ALTER TABLE"),
+    }
     Ok(())
 }

@@ -23,6 +23,10 @@ exclude = [
     "architecture.puml",
 ]
 
+# `RUSTFLAGS="--cfg loom"`: [loom](https://github.com/tokio-rs/loom) permutation tests in `sql_full_query_tests`.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
 [dependencies]
 # Core dependencies
 serde = { version = "1.0", features = ["derive"] }
@@ -94,6 +98,7 @@ io-uring = { version = "0.7", optional = true }
 
 [dev-dependencies]
 criterion = "0.8"
+loom = "0.7.2"
 tempfile = "3.8"
 # >=0.10.1: RUSTSEC-2026-0097 (rand 0.10.0 unsound under custom loggers + thread_rng)
 rand = "0.10.1"

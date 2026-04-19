@@ -106,6 +106,8 @@ pub struct RecoveryConfig {
     pub enable_validation: bool,
     /// Create backup before recovery
     pub create_backup: bool,
+    /// When true, suppress `println!` progress output (used by [`crate::network::SqlEngine`] WAL recovery).
+    pub quiet: bool,
 }
 
 impl Default for RecoveryConfig {
@@ -117,6 +119,7 @@ impl Default for RecoveryConfig {
             recovery_threads: 4,
             enable_validation: true,
             create_backup: false,
+            quiet: false,
         }
     }
 }
@@ -151,48 +154,67 @@ impl RecoveryManager {
         let start_time = Instant::now();
         self.statistics.start_time = start_time.elapsed().as_secs();
 
-        println!("🔄 Starting database recovery...");
+        let q = self.config.quiet;
+        if !q {
+            println!("🔄 Starting database recovery...");
+        }
 
         // Phase 1: Log analysis
-        println!("📊 Phase 1: Analyzing log files");
+        if !q {
+            println!("📊 Phase 1: Analyzing log files");
+        }
         let analysis_result = self.analyze_logs(log_directory).await?;
 
-        println!(
-            "   ✅ Processed {} log records",
-            analysis_result.total_records
-        );
-        println!(
-            "   ✅ Found {} active transactions",
-            analysis_result.active_transactions.len()
-        );
-        println!(
-            "   ✅ Found {} committed transactions",
-            analysis_result.committed_transactions.len()
-        );
+        if !q {
+            println!(
+                "   ✅ Processed {} log records",
+                analysis_result.total_records
+            );
+            println!(
+                "   ✅ Found {} active transactions",
+                analysis_result.active_transactions.len()
+            );
+            println!(
+                "   ✅ Found {} committed transactions",
+                analysis_result.committed_transactions.len()
+            );
+        }
 
         // Phase 2: REDO operations
-        println!("🔄 Phase 2: Redo operations (REDO)");
+        if !q {
+            println!("🔄 Phase 2: Redo operations (REDO)");
+        }
         self.perform_redo_operations(&analysis_result).await?;
 
-        println!(
-            "   ✅ {} REDO operations performed",
-            self.statistics.redo_operations
-        );
+        if !q {
+            println!(
+                "   ✅ {} REDO operations performed",
+                self.statistics.redo_operations
+            );
+        }
 
         // Phase 3: UNDO operations
-        println!("↩️  Phase 3: Rollback unfinished transactions (UNDO)");
+        if !q {
+            println!("↩️  Phase 3: Rollback unfinished transactions (UNDO)");
+        }
         self.perform_undo_operations(&analysis_result).await?;
 
-        println!(
-            "   ✅ {} UNDO operations performed",
-            self.statistics.undo_operations
-        );
+        if !q {
+            println!(
+                "   ✅ {} UNDO operations performed",
+                self.statistics.undo_operations
+            );
+        }
 
         // Phase 4: Validation (if enabled)
         if self.config.enable_validation {
-            println!("🔍 Phase 4: Data integrity validation");
+            if !q {
+                println!("🔍 Phase 4: Data integrity validation");
+            }
             self.validate_recovery(&analysis_result).await?;
-            println!("   ✅ Validation completed successfully");
+            if !q {
+                println!("   ✅ Validation completed successfully");
+            }
         }
 
         // Finalize statistics
@@ -200,19 +222,21 @@ impl RecoveryManager {
         self.statistics.end_time = end_time.duration_since(start_time).as_secs();
         self.statistics.total_duration_ms = start_time.elapsed().as_millis() as u64;
 
-        println!("🎉 Recovery completed successfully!");
-        println!(
-            "   ⏱️  Total time: {} ms",
-            self.statistics.total_duration_ms
-        );
-        println!(
-            "   📊 Recovered transactions: {}",
-            self.statistics.recovered_transactions
-        );
-        println!(
-            "   📊 Rolled back transactions: {}",
-            self.statistics.rolled_back_transactions
-        );
+        if !q {
+            println!("🎉 Recovery completed successfully!");
+            println!(
+                "   ⏱️  Total time: {} ms",
+                self.statistics.total_duration_ms
+            );
+            println!(
+                "   📊 Recovered transactions: {}",
+                self.statistics.recovered_transactions
+            );
+            println!(
+                "   📊 Rolled back transactions: {}",
+                self.statistics.rolled_back_transactions
+            );
+        }
 
         Ok(self.statistics.clone())
     }
@@ -235,7 +259,9 @@ impl RecoveryManager {
 
         // Process files in chronological order
         for log_file in log_files {
-            println!("   📖 Processing file: {}", log_file.filename);
+            if !self.config.quiet {
+                println!("   📖 Processing file: {}", log_file.filename);
+            }
 
             let records = self.read_log_file(&log_file).await?;
             self.statistics.processed_log_size += log_file.size;
@@ -250,7 +276,9 @@ impl RecoveryManager {
 
         // Determine the last checkpoint
         if let Some(checkpoint_lsn) = result.checkpoint_lsn {
-            println!("   📍 Found checkpoint at LSN: {}", checkpoint_lsn);
+            if !self.config.quiet {
+                println!("   📍 Found checkpoint at LSN: {}", checkpoint_lsn);
+            }
         }
 
         Ok(result)
@@ -312,11 +340,9 @@ impl RecoveryManager {
         Ok(files)
     }
 
-    /// Reads log records from a file
-    async fn read_log_file(&self, _log_file: &LogFileInfo) -> Result<Vec<LogRecord>> {
-        // In a real implementation, this would read and deserialize records from the file
-        // For now, return an empty vector
-        Ok(Vec::new())
+    /// Reads log records from a file (length-prefixed bincode, same format as [`crate::logging::log_writer::LogWriter`]).
+    async fn read_log_file(&self, log_file: &LogFileInfo) -> Result<Vec<LogRecord>> {
+        LogRecord::read_log_records_from_file(&log_file.path)
     }
 
     /// Processes a single log record
@@ -433,7 +459,7 @@ impl RecoveryManager {
             self.apply_redo_operation(lsn, operation).await?;
             redo_count += 1;
 
-            if redo_count % 1000 == 0 {
+            if redo_count % 1000 == 0 && !self.config.quiet {
                 println!("   📝 {} REDO operations performed", redo_count);
             }
         }
@@ -476,7 +502,9 @@ impl RecoveryManager {
 
         // Process active transactions (rollback them)
         for tx_info in analysis_result.active_transactions.values() {
-            println!("   ↩️  Rolling back transaction {}", tx_info.id);
+            if !self.config.quiet {
+                println!("   ↩️  Rolling back transaction {}", tx_info.id);
+            }
 
             // Rollback operations in reverse order
             for operation in tx_info.operations.iter().rev() {
@@ -521,10 +549,12 @@ impl RecoveryManager {
 
     /// Validates the recovery result
     async fn validate_recovery(&mut self, analysis_result: &LogAnalysisResult) -> Result<()> {
-        println!(
-            "   🔍 Validating integrity of {} pages",
-            analysis_result.dirty_pages.len()
-        );
+        if !self.config.quiet {
+            println!(
+                "   🔍 Validating integrity of {} pages",
+                analysis_result.dirty_pages.len()
+            );
+        }
 
         let mut validated_pages = 0;
         for (file_id, page_id) in &analysis_result.dirty_pages {
@@ -532,7 +562,7 @@ impl RecoveryManager {
             self.validate_page(*file_id, *page_id).await?;
             validated_pages += 1;
 
-            if validated_pages % 100 == 0 {
+            if validated_pages % 100 == 0 && !self.config.quiet {
                 println!("   ✅ Validated {} pages", validated_pages);
             }
         }
@@ -578,12 +608,16 @@ impl RecoveryManager {
             return Ok(());
         }
 
-        println!("💾 Creating data backup...");
+        if !self.config.quiet {
+            println!("💾 Creating data backup...");
+        }
 
         // In a real implementation, this would copy data files
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        println!("   ✅ Backup created");
+        if !self.config.quiet {
+            println!("   ✅ Backup created");
+        }
 
         Ok(())
     }

@@ -57,6 +57,8 @@ pub struct CheckpointConfig {
     pub flush_threads: usize,
     /// Batch size for flushing pages
     pub flush_batch_size: usize,
+    /// When true, suppress `println!` progress output (e.g. embedders / SqlEngine).
+    pub quiet: bool,
 }
 
 impl Default for CheckpointConfig {
@@ -70,6 +72,7 @@ impl Default for CheckpointConfig {
             max_checkpoint_time: Duration::from_secs(30),
             flush_threads: 4,
             flush_batch_size: 100,
+            quiet: false,
         }
     }
 }
@@ -337,10 +340,12 @@ impl CheckpointManager {
             id
         };
 
-        println!(
-            "📍 Creating checkpoint {} (trigger: {:?})",
-            checkpoint_id, trigger
-        );
+        if !config.quiet {
+            println!(
+                "📍 Creating checkpoint {} (trigger: {:?})",
+                checkpoint_id, trigger
+            );
+        }
 
         // Capture state snapshot
         let active_txs: Vec<TransactionId> = {
@@ -353,8 +358,10 @@ impl CheckpointManager {
             pages.iter().copied().collect()
         };
 
-        println!("   📊 Active transactions: {}", active_txs.len());
-        println!("   📊 Dirty pages: {}", dirty_page_list.len());
+        if !config.quiet {
+            println!("   📊 Active transactions: {}", active_txs.len());
+            println!("   📊 Dirty pages: {}", dirty_page_list.len());
+        }
 
         // Flush dirty pages: use PageManager callback if set (WAL-first), else legacy simulation
         let flusher_opt = dirty_page_flusher.read().unwrap().clone();
@@ -366,7 +373,9 @@ impl CheckpointManager {
         } else {
             Self::flush_dirty_pages(config, &dirty_page_list).await?
         };
-        println!("   💾 Pages flushed to disk: {}", flushed_pages);
+        if !config.quiet {
+            println!("   💾 Pages flushed to disk: {}", flushed_pages);
+        }
 
         // Create checkpoint log record
         let current_lsn = log_writer.current_lsn();
@@ -427,10 +436,12 @@ impl CheckpointManager {
             }
         }
 
-        println!(
-            "   ✅ Checkpoint {} created in {} ms",
-            checkpoint_id, creation_time_ms
-        );
+        if !config.quiet {
+            println!(
+                "   ✅ Checkpoint {} created in {} ms",
+                checkpoint_id, creation_time_ms
+            );
+        }
 
         Ok(checkpoint_info)
     }

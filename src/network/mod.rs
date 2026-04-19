@@ -7,8 +7,10 @@ pub mod framing;
 pub mod metrics;
 pub mod query_stream;
 pub mod server;
+pub mod sql_commit_log;
 pub mod sql_constraints;
 pub mod sql_engine;
+pub(crate) mod sql_engine_wal;
 pub mod transport;
 
 pub use metrics::{QueryHandledOutcome, QuicNetworkMetrics, QuicNetworkSnapshot};
