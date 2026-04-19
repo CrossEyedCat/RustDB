@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["column_value_key","composite_key_from_tuple","fk_blocks_parent_delete","parent_key_for_fk","register_row","resolve_fk_parent_columns","unregister_row"],"struct":["ConstraintRuntime"]};
+window.SIDEBAR_ITEMS = {"fn":["column_value_key","composite_key_from_tuple","composite_key_from_tuple_with_schema","fk_blocks_parent_delete","parent_key_for_fk","register_row","resolve_fk_parent_columns","tuple_column_value","unregister_row"],"struct":["ConstraintRuntime"]};
