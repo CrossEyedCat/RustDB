@@ -169,10 +169,21 @@ impl Cli {
                 query,
                 batch_file,
                 database,
-            }) => {
-                self.execute_query(query.as_deref(), database.as_ref(), batch_file.as_deref())
-                    .await
-            }
+            }) => std::thread::scope(|s| {
+                let h = s.spawn(|| {
+                    self.execute_query_sync(
+                        query.as_deref(),
+                        database.as_ref(),
+                        batch_file.as_deref(),
+                    )
+                    .map_err(|e| e.to_string())
+                });
+                match h.join() {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(msg)) => Err(msg.into()),
+                    Err(e) => Err(format!("query subcommand panicked: {e:?}").into()),
+                }
+            }),
             None => self.show_help().await,
         }
     }
@@ -378,8 +389,11 @@ impl Cli {
         Ok(())
     }
 
-    /// Executes an SQL query via [`SqlEngine`] (same pipeline as the QUIC server).
-    async fn execute_query(
+    /// Executes SQL via [`SqlEngine`] on the **main thread**, with **no Tokio runtime**.
+    ///
+    /// SqlEngine/WAL may call `Runtime::block_on`; running `query` outside `#[tokio::main]` avoids
+    /// nesting block_on inside an async worker (Docker stateful smoke and similar).
+    pub fn execute_query_sync(
         &self,
         query: Option<&str>,
         database: Option<&String>,
@@ -414,33 +428,26 @@ impl Cli {
             QueryPayload::Single(q.to_string())
         };
 
-        // Same as QUIC dispatch: SqlEngine + WAL must not run `Runtime::block_on` on a Tokio worker.
-        // Prefer `block_in_place` over `spawn_blocking` for the CLI: some Docker smoke paths showed
-        // fragile behavior on isolated blocking threads; `block_in_place` keeps work on the runtime.
-        tokio::task::block_in_place(|| -> Result<(), String> {
-            let engine = SqlEngine::open(data_dir).map_err(|e| e.to_string())?;
-            let mut ctx = SessionContext::default();
-            match payload {
-                QueryPayload::Batch(contents) => {
-                    for (i, line) in contents.lines().enumerate() {
-                        let line = line.trim();
-                        if line.is_empty() || line.starts_with('#') {
-                            continue;
-                        }
-                        println!("{} [batch:{}]: {}", t(MessageKey::Info), i + 1, line);
-                        Self::execute_one_sql(&engine, &mut ctx, line)
-                            .map_err(|e| e.to_string())?;
+        let engine = SqlEngine::open(data_dir)?;
+        let mut ctx = SessionContext::default();
+        match payload {
+            QueryPayload::Batch(contents) => {
+                for (i, line) in contents.lines().enumerate() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('#') {
+                        continue;
                     }
-                }
-                QueryPayload::Single(q) => {
-                    println!("{}: {}", t(MessageKey::Info), q);
-                    Self::execute_one_sql(&engine, &mut ctx, &q).map_err(|e| e.to_string())?;
+                    println!("{} [batch:{}]: {}", t(MessageKey::Info), i + 1, line);
+                    Self::execute_one_sql(&engine, &mut ctx, line)?;
                 }
             }
-            println!("{}", t(MessageKey::Success));
-            Ok(())
-        })
-        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })
+            QueryPayload::Single(q) => {
+                println!("{}: {}", t(MessageKey::Info), q);
+                Self::execute_one_sql(&engine, &mut ctx, &q)?;
+            }
+        }
+        println!("{}", t(MessageKey::Success));
+        Ok(())
     }
 
     fn execute_one_sql(
