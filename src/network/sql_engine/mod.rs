@@ -438,6 +438,9 @@ fn rollback_transaction(
         apply_undo(state, op)?;
     }
     rebuild_all_constraint_runtime(state)?;
+    // Persist rollback: otherwise the next process sees heap pages from disk that still contain
+    // undone inserts (WAL replay does not redo aborted txs, so durability must match).
+    crate::network::sql_engine_wal::flush_all_page_managers(state).map_err(map_db_err)?;
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 

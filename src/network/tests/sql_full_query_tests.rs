@@ -362,6 +362,30 @@ fn engine_transaction_insert_rollback_removes_row() {
 }
 
 #[test]
+fn engine_transaction_insert_rollback_survives_engine_reopen() {
+    let dir = TempDir::new().expect("tempdir");
+    {
+        let eng = SqlEngine::open(dir.path().to_path_buf()).expect("open");
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE txre (k INT PRIMARY KEY)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+        eng.execute_sql("INSERT INTO txre (k) VALUES (42)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("ROLLBACK", &mut ctx).unwrap();
+    }
+    let eng = SqlEngine::open(dir.path().to_path_buf()).expect("reopen");
+    let mut ctx = SessionContext::default();
+    let out = eng
+        .execute_sql("SELECT k FROM txre WHERE k = 42", &mut ctx)
+        .expect("select");
+    match out {
+        EngineOutput::ResultSet { rows, .. } => assert!(rows.is_empty()),
+        _ => panic!("expected ResultSet"),
+    }
+}
+
+#[test]
 fn engine_transaction_insert_commit_keeps_row() {
     let dir = TempDir::new().expect("tempdir");
     let eng = SqlEngine::open(dir.path().to_path_buf()).expect("open");
