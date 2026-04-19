@@ -386,6 +386,20 @@ fn engine_transaction_insert_rollback_survives_engine_reopen() {
 }
 
 #[test]
+fn engine_reopen_constraint_rebuild_insert_values_without_column_list() {
+    let dir = TempDir::new().expect("tempdir");
+    {
+        let eng = SqlEngine::open(dir.path().to_path_buf()).expect("open");
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE t_vals (id INT PRIMARY KEY)", &mut ctx)
+            .expect("create");
+        eng.execute_sql("INSERT INTO t_vals VALUES (42)", &mut ctx)
+            .expect("implicit column names → col1 in tuple");
+    }
+    SqlEngine::open(dir.path().to_path_buf()).expect("reopen rebuilds PK maps from heap");
+}
+
+#[test]
 fn engine_transaction_insert_commit_keeps_row() {
     let dir = TempDir::new().expect("tempdir");
     let eng = SqlEngine::open(dir.path().to_path_buf()).expect("open");

@@ -76,6 +76,46 @@ pub fn composite_key_from_tuple(tuple: &Tuple, cols: &[String]) -> Result<String
     Ok(parts.join("\0"))
 }
 
+/// Looks up a column value by logical name, with fallback for legacy rows where
+/// `INSERT INTO t VALUES (...)` stored `col1`, `col2`, … in [`Tuple::values`] order.
+fn tuple_column_value<'a>(
+    tuple: &'a Tuple,
+    logical_name: &str,
+    schema: &TableSchema,
+) -> Option<&'a ColumnValue> {
+    if let Some(v) = tuple.values.get(logical_name) {
+        return Some(v);
+    }
+    let idx = schema.columns.iter().position(|c| c.name == logical_name)?;
+    tuple.values.get(&format!("col{}", idx + 1))
+}
+
+/// Like [`composite_key_from_tuple`], but resolves keys using [`TableSchema`] so legacy
+/// `colN` tuple fields match catalog column names (fixes constraint rebuild on open).
+pub fn composite_key_from_tuple_with_schema(
+    tuple: &Tuple,
+    cols: &[String],
+    schema: &TableSchema,
+) -> Result<String, EngineError> {
+    let mut parts = Vec::with_capacity(cols.len());
+    for c in cols {
+        let Some(cv) = tuple_column_value(tuple, c, schema) else {
+            return Err(EngineError::new(
+                engine_error_code::CONSTRAINT_VIOLATION,
+                format!("missing value for key column {c}"),
+            ));
+        };
+        if cv.is_null() {
+            return Err(EngineError::new(
+                engine_error_code::CONSTRAINT_VIOLATION,
+                "NULL key column value in PRIMARY KEY or UNIQUE",
+            ));
+        }
+        parts.push(column_value_key(cv));
+    }
+    Ok(parts.join("\0"))
+}
+
 pub fn resolve_fk_parent_columns(
     cat: &SchemaManager,
     fk: &ForeignKeyConstraintDef,
@@ -112,6 +152,7 @@ fn parent_key_for_fk(
     fk: &ForeignKeyConstraintDef,
     child_tuple: &Tuple,
     cat: &SchemaManager,
+    child_schema: &TableSchema,
 ) -> Result<(String, String), EngineError> {
     let parent_cols = resolve_fk_parent_columns(cat, fk)?;
     if fk.columns.len() != parent_cols.len() {
@@ -123,7 +164,7 @@ fn parent_key_for_fk(
             ),
         ));
     }
-    let parent_key = composite_key_from_tuple(child_tuple, &fk.columns)?;
+    let parent_key = composite_key_from_tuple_with_schema(child_tuple, &fk.columns, child_schema)?;
     Ok((fk.referenced_table.clone(), parent_key))
 }
 
@@ -137,7 +178,7 @@ pub fn register_row(
 ) -> Result<(), EngineError> {
     // Validate all constraints before mutating any map (avoid partial state on error).
     if let Some((pk_name, cols)) = &schema.primary_key {
-        let key = composite_key_from_tuple(tuple, cols)?;
+        let key = composite_key_from_tuple_with_schema(tuple, cols, schema)?;
         if let Some(&existing) = runtime.pk.get(table).and_then(|m| m.get(&key)) {
             if existing != rid {
                 return Err(EngineError::new(
@@ -149,7 +190,7 @@ pub fn register_row(
     }
 
     for uq in &schema.unique_constraints {
-        let key = composite_key_from_tuple(tuple, &uq.columns)?;
+        let key = composite_key_from_tuple_with_schema(tuple, &uq.columns, schema)?;
         if let Some(&existing) = runtime
             .unique
             .get(&(table.to_string(), uq.name.clone()))
@@ -165,7 +206,7 @@ pub fn register_row(
     }
 
     for fk in &schema.foreign_keys {
-        let (parent_table, parent_key) = parent_key_for_fk(fk, tuple, cat)?;
+        let (parent_table, parent_key) = parent_key_for_fk(fk, tuple, cat, schema)?;
         let parent_has_row = runtime
             .pk
             .get(&parent_table)
@@ -181,7 +222,7 @@ pub fn register_row(
 
     // Commit
     if let Some((_, cols)) = &schema.primary_key {
-        let key = composite_key_from_tuple(tuple, cols)?;
+        let key = composite_key_from_tuple_with_schema(tuple, cols, schema)?;
         runtime
             .pk
             .entry(table.to_string())
@@ -190,7 +231,7 @@ pub fn register_row(
     }
 
     for uq in &schema.unique_constraints {
-        let key = composite_key_from_tuple(tuple, &uq.columns)?;
+        let key = composite_key_from_tuple_with_schema(tuple, &uq.columns, schema)?;
         runtime
             .unique
             .entry((table.to_string(), uq.name.clone()))
@@ -199,7 +240,7 @@ pub fn register_row(
     }
 
     for fk in &schema.foreign_keys {
-        let (parent_table, parent_key) = parent_key_for_fk(fk, tuple, cat)?;
+        let (parent_table, parent_key) = parent_key_for_fk(fk, tuple, cat, schema)?;
         let fk_key = (parent_table, parent_key);
         *runtime.fk_refcount.entry(fk_key).or_insert(0) += 1;
     }
@@ -216,7 +257,7 @@ pub fn unregister_row(
     cat: &SchemaManager,
 ) -> Result<(), EngineError> {
     if let Some((_, cols)) = &schema.primary_key {
-        let key = composite_key_from_tuple(tuple, cols)?;
+        let key = composite_key_from_tuple_with_schema(tuple, cols, schema)?;
         if let Some(map) = runtime.pk.get_mut(table) {
             if map.get(&key).copied() == Some(rid) {
                 map.remove(&key);
@@ -225,7 +266,7 @@ pub fn unregister_row(
     }
 
     for uq in &schema.unique_constraints {
-        let key = composite_key_from_tuple(tuple, &uq.columns)?;
+        let key = composite_key_from_tuple_with_schema(tuple, &uq.columns, schema)?;
         if let Some(map) = runtime
             .unique
             .get_mut(&(table.to_string(), uq.name.clone()))
@@ -237,7 +278,7 @@ pub fn unregister_row(
     }
 
     for fk in &schema.foreign_keys {
-        let (parent_table, parent_key) = parent_key_for_fk(fk, tuple, cat)?;
+        let (parent_table, parent_key) = parent_key_for_fk(fk, tuple, cat, schema)?;
         let fk_key = (parent_table, parent_key);
         if let Some(n) = runtime.fk_refcount.get_mut(&fk_key) {
             *n = n.saturating_sub(1);
@@ -259,7 +300,7 @@ pub fn fk_blocks_parent_delete(
     let Some((_, cols)) = &schema.primary_key else {
         return Ok(false);
     };
-    let key = composite_key_from_tuple(tuple, cols)?;
+    let key = composite_key_from_tuple_with_schema(tuple, cols, schema)?;
     let fk_key = (parent_table.to_string(), key);
     Ok(runtime.fk_refcount.get(&fk_key).copied().unwrap_or(0) > 0)
 }
@@ -289,6 +330,28 @@ mod tests {
             t.values.insert((*k).to_string(), v.clone());
         }
         t
+    }
+
+    #[test]
+    fn composite_key_with_schema_maps_legacy_coln_to_logical_name() {
+        use crate::common::types::Column;
+        let sch = TableSchema {
+            table_name: "legacy".to_string(),
+            columns: vec![Column::new("id".to_string(), DataType::Integer(0))],
+            primary_key: Some(("pk_legacy".to_string(), vec!["id".to_string()])),
+            unique_constraints: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+        };
+        let mut t = Tuple::new(1);
+        t.set_value("col1", ColumnValue::new(DataType::Integer(99)));
+        let k_named = composite_key_from_tuple_with_schema(&t, &["id".to_string()], &sch).unwrap();
+        let k_direct = composite_key_from_tuple(
+            &tuple_with(&[("id", ColumnValue::new(DataType::Integer(99)))]),
+            &["id".to_string()],
+        )
+        .unwrap();
+        assert_eq!(k_named, k_direct);
     }
 
     #[test]
