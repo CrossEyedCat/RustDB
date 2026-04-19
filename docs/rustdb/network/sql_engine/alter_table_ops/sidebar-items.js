@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["add_column","coerce_value_to_sql_type","column_referenced_by_fk","column_used_in_schema_lists","drop_column","err","merge_column_definition_into_schema","modify_column","parent_pk_cols","rename_column","rename_column_in_expression","rename_table","rewrite_tuples","row_count","table_must_exist","unsupported"],"mod":["expr_walk"]};
