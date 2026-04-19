@@ -415,7 +415,9 @@ impl Cli {
         };
 
         // Same as QUIC dispatch: SqlEngine + WAL must not run `Runtime::block_on` on a Tokio worker.
-        match tokio::task::spawn_blocking(move || -> Result<(), String> {
+        // Prefer `block_in_place` over `spawn_blocking` for the CLI: some Docker smoke paths showed
+        // fragile behavior on isolated blocking threads; `block_in_place` keeps work on the runtime.
+        tokio::task::block_in_place(|| -> Result<(), String> {
             let engine = SqlEngine::open(data_dir).map_err(|e| e.to_string())?;
             let mut ctx = SessionContext::default();
             match payload {
@@ -438,12 +440,7 @@ impl Cli {
             println!("{}", t(MessageKey::Success));
             Ok(())
         })
-        .await
-        {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(e)) => Err(e.into()),
-            Err(e) => Err(format!("query task join: {e}").into()),
-        }
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })
     }
 
     fn execute_one_sql(
