@@ -362,32 +362,27 @@ pub async fn handle_query_bidi_stream(
         let timeout_dur = policy.query_timeout;
         let eng = engine.clone();
         let pol = policy.clone();
-        let dispatch_result = tokio::time::timeout(
-            timeout_dur,
-            async move {
-                let jh = tokio::task::spawn_blocking(move || match decoded {
-                    Ok(msg) => dispatch_client_message(msg, eng.as_ref(), pol.as_ref()),
-                    Err(e) => Err(e.into()),
-                });
-                match jh.await {
-                    Ok(r) => r,
-                    Err(e) => Err(DispatchError::Engine(EngineError::new(
-                        engine_error_code::INTERNAL,
-                        format!("spawn_blocking join: {e}"),
-                    ))),
-                }
-            },
-        )
+        let dispatch_result = tokio::time::timeout(timeout_dur, async move {
+            let jh = tokio::task::spawn_blocking(move || match decoded {
+                Ok(msg) => dispatch_client_message(msg, eng.as_ref(), pol.as_ref()),
+                Err(e) => Err(e.into()),
+            });
+            match jh.await {
+                Ok(r) => r,
+                Err(e) => Err(DispatchError::Engine(EngineError::new(
+                    engine_error_code::INTERNAL,
+                    format!("spawn_blocking join: {e}"),
+                ))),
+            }
+        })
         .await;
         let result = match dispatch_result {
             Ok(r) => r,
-            Err(_elapsed) => Err(
-                EngineError::new(
-                    engine_error_code::QUERY_TIMEOUT,
-                    "query exceeded per-query timeout",
-                )
-                .into(),
-            ),
+            Err(_elapsed) => Err(EngineError::new(
+                engine_error_code::QUERY_TIMEOUT,
+                "query exceeded per-query timeout",
+            )
+            .into()),
         };
 
         let latency_ns = t0.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
