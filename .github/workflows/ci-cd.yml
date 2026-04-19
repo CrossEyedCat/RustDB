@@ -2,6 +2,8 @@ name: CI/CD Pipeline
 
 # Skip the whole pipeline when only non-code paths change (saves minutes on docs/README edits).
 # If a commit touches any path NOT listed here, the workflow runs as usual.
+# Note: do not list `.gitignore` here — a commit that only edits `.gitignore` must still trigger CI,
+# otherwise pushes look like “CI stopped working” with no failed run (workflow skipped entirely).
 on:
   push:
     branches: [main, develop]
@@ -9,7 +11,6 @@ on:
       - "**/*.md"
       - "docs/**"
       - "assets/**"
-      - ".gitignore"
       - "LICENSE"
       - "LICENSE-*"
       - "architecture.puml"
@@ -20,7 +21,6 @@ on:
       - "**/*.md"
       - "docs/**"
       - "assets/**"
-      - ".gitignore"
       - "LICENSE"
       - "LICENSE-*"
       - "architecture.puml"
