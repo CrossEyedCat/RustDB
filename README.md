@@ -135,13 +135,13 @@ cargo test
 cargo test --test integration_tests
 ```
 
-**Loom** ([tokio-rs/loom](https://github.com/tokio-rs/loom)): permutation tests for the concurrent SQL engine scenarios `engine_concurrent_inserts_only_one_wins_same_pk` and `engine_alter_fk_many_inserts_under_contention` are selected when the crate is built with `--cfg loom`. Run (release recommended upstream):
+**Loom** ([tokio-rs/loom](https://github.com/tokio-rs/loom)): permutation tests for the concurrent SQL engine scenarios `engine_concurrent_inserts_only_one_wins_same_pk` and `engine_alter_fk_many_inserts_under_contention` are selected when the crate is built with `--cfg rustdb_loom` (not `loom`, to avoid clashing with the `loom` crate’s own cfg). Run (release recommended upstream):
 
 ```bash
-RUSTFLAGS='--cfg loom' cargo test --release engine_concurrent_inserts_only_one_wins_same_pk engine_alter_fk_many_inserts_under_contention
+RUSTFLAGS='--cfg rustdb_loom' cargo test --release engine_concurrent_inserts_only_one_wins_same_pk engine_alter_fk_many_inserts_under_contention
 ```
 
-PowerShell: `$env:RUSTFLAGS='--cfg loom'; cargo test ...`. Default `cargo test` runs the standard-library thread versions (`#[cfg(not(loom))]`).
+PowerShell: `$env:RUSTFLAGS='--cfg rustdb_loom'; cargo test ...`. Default `cargo test` runs the standard-library thread versions (`#[cfg(not(rustdb_loom))]`).
 
 ---
 

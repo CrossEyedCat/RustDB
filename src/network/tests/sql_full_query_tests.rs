@@ -399,7 +399,7 @@ fn engine_ddl_rejected_inside_transaction() {
 }
 
 /// Eight threads contend on `INSERT … VALUES (1)`; exactly one succeeds.
-#[cfg(not(loom))]
+#[cfg(not(rustdb_loom))]
 #[test]
 fn engine_concurrent_inserts_only_one_wins_same_pk() {
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -436,8 +436,8 @@ fn engine_concurrent_inserts_only_one_wins_same_pk() {
     assert_eq!(ok_count.load(Ordering::SeqCst), 1);
 }
 
-/// Same property under [loom](https://github.com/tokio-rs/loom) permutation scheduling (`RUSTFLAGS="--cfg loom"`).
-#[cfg(loom)]
+/// Same property under [loom](https://github.com/tokio-rs/loom) permutation scheduling (`RUSTFLAGS="--cfg rustdb_loom"`).
+#[cfg(rustdb_loom)]
 #[test]
 fn engine_concurrent_inserts_only_one_wins_same_pk() {
     use loom::sync::atomic::AtomicU32;
@@ -656,7 +656,7 @@ fn engine_drop_table_if_exists_is_ok() {
         .expect("if exists");
 }
 
-#[cfg(not(loom))]
+#[cfg(not(rustdb_loom))]
 #[test]
 fn engine_alter_fk_many_inserts_under_contention() {
     use std::sync::{Arc, Mutex};
@@ -705,7 +705,7 @@ fn engine_alter_fk_many_inserts_under_contention() {
     }
 }
 
-#[cfg(loom)]
+#[cfg(rustdb_loom)]
 #[test]
 fn engine_alter_fk_many_inserts_under_contention() {
     use loom::sync::{Arc, Mutex};

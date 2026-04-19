@@ -23,9 +23,10 @@ exclude = [
     "architecture.puml",
 ]
 
-# `RUSTFLAGS="--cfg loom"`: [loom](https://github.com/tokio-rs/loom) permutation tests in `sql_full_query_tests`.
+# `RUSTFLAGS="--cfg rustdb_loom"`: [loom](https://github.com/tokio-rs/loom) permutation tests in `sql_full_query_tests`.
+# Use `rustdb_loom`, not `loom`, so `RUSTFLAGS` does not enable the dependency crate `loom`'s own `cfg(loom)` paths.
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(rustdb_loom)'] }
 
 [dependencies]
 # Core dependencies
