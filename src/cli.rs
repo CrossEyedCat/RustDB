@@ -237,9 +237,14 @@ impl Cli {
         }
 
         let data_root = PathBuf::from(&db.data_directory);
-        let engine: Arc<dyn EngineHandle> = Arc::new(
-            SqlEngine::open(data_root).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?,
-        );
+        // WAL recovery uses `Runtime::block_on`; avoid running that on the Tokio async worker.
+        let engine = tokio::task::spawn_blocking(move || SqlEngine::open(data_root))
+            .await
+            .map_err(|e| -> Box<dyn std::error::Error> {
+                format!("SqlEngine::open join: {e}").into()
+            })?
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+        let engine: Arc<dyn EngineHandle> = Arc::new(engine);
 
         let endpoint = srv.endpoint().clone();
         let run_task = tokio::spawn({
@@ -389,10 +394,11 @@ impl Cli {
             base
         };
 
-        let engine = SqlEngine::open(data_dir)?;
-        let mut ctx = SessionContext::default();
-
-        if let Some(path) = batch_file {
+        enum QueryPayload {
+            Batch(String),
+            Single(String),
+        }
+        let payload = if let Some(path) = batch_file {
             let mut contents = String::new();
             if path.as_os_str() == "-" {
                 std::io::stdin()
@@ -402,23 +408,42 @@ impl Cli {
                 contents = std::fs::read_to_string(path)
                     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
             }
-            for (i, line) in contents.lines().enumerate() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                println!("{} [batch:{}]: {}", t(MessageKey::Info), i + 1, line);
-                Self::execute_one_sql(&engine, &mut ctx, line)?;
-            }
+            QueryPayload::Batch(contents)
         } else {
             let q = query.ok_or("missing SQL (pass a statement or use --batch-file)")?;
-            println!("{}: {}", t(MessageKey::Info), q);
-            Self::execute_one_sql(&engine, &mut ctx, q)?;
+            QueryPayload::Single(q.to_string())
+        };
+
+        // Same as QUIC dispatch: SqlEngine + WAL must not run `Runtime::block_on` on a Tokio worker.
+        match tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let engine = SqlEngine::open(data_dir).map_err(|e| e.to_string())?;
+            let mut ctx = SessionContext::default();
+            match payload {
+                QueryPayload::Batch(contents) => {
+                    for (i, line) in contents.lines().enumerate() {
+                        let line = line.trim();
+                        if line.is_empty() || line.starts_with('#') {
+                            continue;
+                        }
+                        println!("{} [batch:{}]: {}", t(MessageKey::Info), i + 1, line);
+                        Self::execute_one_sql(&engine, &mut ctx, line)
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+                QueryPayload::Single(q) => {
+                    println!("{}: {}", t(MessageKey::Info), q);
+                    Self::execute_one_sql(&engine, &mut ctx, &q).map_err(|e| e.to_string())?;
+                }
+            }
+            println!("{}", t(MessageKey::Success));
+            Ok(())
+        })
+        .await
+        {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e.into()),
+            Err(e) => Err(format!("query task join: {e}").into()),
         }
-
-        println!("{}", t(MessageKey::Success));
-
-        Ok(())
     }
 
     fn execute_one_sql(
