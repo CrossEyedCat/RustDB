@@ -150,7 +150,7 @@ jobs:
 
       # Only lcov.info; disable_search avoids the CLI picking up *_coverage_tests.rs via *coverage*.
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
