@@ -35,7 +35,7 @@ serde_json = "1.0"
 # bincode fork with ongoing development; serde + `config::legacy()` for on-disk compatibility with bincode 1.x.
 bincode-next = { version = "2.1.0", features = ["serde", "std"] }
 # >=1.23.1 addresses RUSTSEC-2023-0001 (tokio / Windows named pipes).
-tokio = { version = "1.23.1", features = ["full"] }
+tokio = { version = "1.52.1", features = ["full"] }
 anyhow = "1.0"
 thiserror = "2.0"
 
