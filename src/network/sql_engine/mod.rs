@@ -1479,8 +1479,7 @@ fn rebuild_all_constraint_runtime(state: &SqlEngineState) -> Result<(), EngineEr
             .map_err(|_| lock_poisoned_engine())?;
         for (rid, data) in snapshot {
             let tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
-            if let Err(e) = sql_constraints::register_row(&mut rt, &t, rid, &tuple, &schema, &cat)
-            {
+            if let Err(e) = sql_constraints::register_row(&mut rt, &t, rid, &tuple, &schema, &cat) {
                 // On open, we rebuild runtime PK/UNIQUE/FK maps from persisted heap rows.
                 // If a row is missing a key column (or has NULL in a key), the heap is already
                 // inconsistent with the catalog. Prefer keeping the database open and skipping
@@ -1491,7 +1490,8 @@ fn rebuild_all_constraint_runtime(state: &SqlEngineState) -> Result<(), EngineEr
                 let msg = e.message.to_ascii_lowercase();
                 let is_missing_key = msg.contains("missing value for key column");
                 let is_null_key = msg.contains("null key column value");
-                if e.code == engine_error_code::CONSTRAINT_VIOLATION && (is_missing_key || is_null_key)
+                if e.code == engine_error_code::CONSTRAINT_VIOLATION
+                    && (is_missing_key || is_null_key)
                 {
                     tracing::warn!(
                         table = %t,
