@@ -759,13 +759,13 @@ impl PageManager {
             new_page.add_record(record_data, i as u64)?;
         }
 
-        // Try to insert the new record
-        let insert_page_id = if old_page.get_free_space() >= data.len() as u32 {
-            old_page.add_record(data, 0u64)?;
-            page_id
+        // Try to insert the new record and return its real byte offset.
+        let (insert_page_id, insert_offset) = if old_page.get_free_space() >= data.len() as u32 {
+            let off = old_page.add_record(data, 0u64)?;
+            (page_id, off)
         } else {
-            new_page.add_record(data, 0u64)?;
-            new_page_id
+            let off = new_page.add_record(data, 0u64)?;
+            (new_page_id, off)
         };
 
         // Put both pages in dirty_pages (flush on commit)
@@ -776,7 +776,7 @@ impl PageManager {
         self.page_cache.insert(page_id, page1_info);
         self.page_cache.insert(new_page_id, page2_info);
 
-        let record_id = self.generate_record_id(insert_page_id, 0);
+        let record_id = self.generate_record_id(insert_page_id, insert_offset);
 
         Ok(InsertResult {
             record_id,
