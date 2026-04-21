@@ -1,5 +1,5 @@
 # Multi-stage build for RustDB
-FROM rust:1.90-slim AS builder
+FROM rust:1.95-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -22,7 +22,7 @@ RUN cargo build --release --bin rustdb
 #   docker build -t rustdb-prof --target profiler .
 #   docker run --rm --privileged -v "$PWD:/app" -w /app rustdb-prof \
 #     cargo flamegraph --output profile-out/flame.svg --bin rustdb_load -- <args...>
-FROM rust:1.90-slim AS profiler
+FROM rust:1.95-slim AS profiler
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
