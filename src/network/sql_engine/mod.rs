@@ -1479,7 +1479,30 @@ fn rebuild_all_constraint_runtime(state: &SqlEngineState) -> Result<(), EngineEr
             .map_err(|_| lock_poisoned_engine())?;
         for (rid, data) in snapshot {
             let tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
-            sql_constraints::register_row(&mut rt, &t, rid, &tuple, &schema, &cat)?;
+            if let Err(e) = sql_constraints::register_row(&mut rt, &t, rid, &tuple, &schema, &cat)
+            {
+                // On open, we rebuild runtime PK/UNIQUE/FK maps from persisted heap rows.
+                // If a row is missing a key column (or has NULL in a key), the heap is already
+                // inconsistent with the catalog. Prefer keeping the database open and skipping
+                // the bad row, so later statements can surface proper constraint errors.
+                //
+                // This path is intentionally narrow: we only swallow the specific "missing key"
+                // / "NULL key" failures that otherwise brick the database on startup.
+                let msg = e.message.to_ascii_lowercase();
+                let is_missing_key = msg.contains("missing value for key column");
+                let is_null_key = msg.contains("null key column value");
+                if e.code == engine_error_code::CONSTRAINT_VIOLATION && (is_missing_key || is_null_key)
+                {
+                    tracing::warn!(
+                        table = %t,
+                        rid = rid,
+                        err = %e,
+                        "skipping heap row during constraint rebuild (invalid key)"
+                    );
+                    continue;
+                }
+                return Err(e);
+            }
         }
     }
     Ok(())
