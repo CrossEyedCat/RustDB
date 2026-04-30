@@ -722,16 +722,7 @@ jobs:
           } | tee "$OUT_DIR/pgbench.txt"
           # Extract TPS (without initial connection time), e.g.:
           # tps = 1758.513941 (without initial connection time)
-          pg_tps="$(python3 - <<'PY'
-import re, pathlib, sys
-s = pathlib.Path("tpcc-out/pgbench.txt").read_text(encoding="utf-8", errors="replace")
-m = re.search(r"^tps\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*\\(without initial connection time\\)\\s*$", s, re.M)
-if not m:
-  print("0.0")
-  sys.exit(0)
-print(m.group(1))
-PY
-)"
+          pg_tps="$(python3 -c 'import re,pathlib; s=pathlib.Path(\"tpcc-out/pgbench.txt\").read_text(encoding=\"utf-8\", errors=\"replace\"); m=re.search(r\"^tps\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*\\(without initial connection time\\)\\s*$\", s, re.M); print(m.group(1) if m else \"0.0\")')"
           echo "POSTGRES_PGBENCH_TPS=$pg_tps" >> "$GITHUB_ENV"
           echo "POSTGRES_PGBENCH_CONTAINER=$name" >> "$GITHUB_ENV"
 
@@ -752,28 +743,9 @@ PY
         run: |
           set -euo pipefail
           # RustDB: read txns_per_s from tpcc.json (machine-readable).
-          rustdb_tps="$(python3 - <<'PY'
-import json, pathlib
-p = pathlib.Path("tpcc-out/tpcc.json")
-if not p.is_file():
-  print("0.0"); raise SystemExit(0)
-d = json.loads(p.read_text(encoding="utf-8"))
-print(d.get("txns_per_s", 0.0))
-PY
-)"
+          rustdb_tps="$(python3 -c 'import json,pathlib; p=pathlib.Path(\"tpcc-out/tpcc.json\"); print(json.loads(p.read_text(encoding=\"utf-8\")).get(\"txns_per_s\", 0.0) if p.is_file() else 0.0)')"
           pg_tps="${POSTGRES_PGBENCH_TPS:-0.0}"
-          ratio="0.0"
-          if python3 - <<PY >/dev/null 2>&1; then
-import sys
-rd=float("$rustdb_tps"); pg=float("$pg_tps")
-sys.exit(0 if pg>0 else 1)
-PY
-            ratio="$(python3 - <<PY
-rd=float("$rustdb_tps"); pg=float("$pg_tps")
-print(f"{(100.0*rd/pg):.1f}")
-PY
-)"
-          fi
+          ratio="$(python3 -c 'rd=float(\"'"$rustdb_tps"'\"); pg=float(\"'"$pg_tps"'\"); print(f\"{(100.0*rd/pg):.1f}\" if pg>0 else \"0.0\")')"
           {
             echo "## RustDB vs PostgreSQL (baseline)"
             echo ""
