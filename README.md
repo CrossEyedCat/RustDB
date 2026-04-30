@@ -145,6 +145,23 @@ PowerShell: `$env:RUSTFLAGS='--cfg rustdb_loom'; cargo test ...`. Default `cargo
 
 ---
 
+## RustDB vs PostgreSQL (CI benchmark)
+
+This repository’s CI runs a lightweight **baseline comparison** to track performance trends over time:
+
+- **RustDB**: `rustdb_tpcc` (TPC‑C-ish mix) over **QUIC**
+- **PostgreSQL**: `pgbench` (builtin TPC‑B-like) over **TCP**
+
+Because the workloads and protocols differ, treat the numbers as **trend indicators**, not a strict “winner/loser” claim.
+
+CI reports in the GitHub Actions step summary (workflow `CI/CD Pipeline`):
+
+- RustDB `txns_per_s`
+- PostgreSQL `pgbench` `tps`
+- **Ratio (%)**: \(100 * \frac{rustdb\_tps}{postgres\_tps}\)
+
+---
+
 ## Project status
 
 ## SQL-92 compatibility

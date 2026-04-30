@@ -638,7 +638,7 @@ jobs:
   # Final throughput benchmark: TPC-C-ish (transactional write-heavy mix) for RustDB over QUIC.
   # Runs on main pushes and on workflow_dispatch.
   bench_tpcc_throughput:
-    name: Benchmark TPC-C throughput (RustDB)
+    name: Benchmark TPC-C throughput (RustDB) + pgbench baseline (PostgreSQL)
     runs-on: ubuntu-latest
     needs: [docker]
     if: |
@@ -677,6 +677,64 @@ jobs:
           echo "RUSTDB_IMAGE=$IMAGE" >> "$GITHUB_ENV"
           docker pull "$IMAGE"
 
+      - name: PostgreSQL baseline (pgbench, docker)
+        env:
+          OUT_DIR: tpcc-out
+          PGBENCH_SCALE: 10
+          PGBENCH_CLIENTS: 64
+          PGBENCH_JOBS: 16
+          PGBENCH_DURATION: 300
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT_DIR"
+          name="postgres-pgbench"
+          docker rm -f "$name" >/dev/null 2>&1 || true
+          docker run -d --name "$name" -p 15440:5432 \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=pgbench_rustdb_compare \
+            postgres:16-alpine \
+            -c max_connections=500 >/dev/null
+          ready=0
+          for i in $(seq 1 240); do
+            if docker exec "$name" pg_isready -h 127.0.0.1 -p 5432 -U postgres >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 0.5
+          done
+          if [[ "$ready" -ne 1 ]]; then
+            echo "ERROR: Postgres did not become ready in time"
+            docker logs "$name" 2>&1 | tail -n 200 || true
+            exit 1
+          fi
+          docker exec "$name" pgbench -h 127.0.0.1 -p 5432 -i -s "$PGBENCH_SCALE" -U postgres pgbench_rustdb_compare >/dev/null
+          {
+            echo "== pgbench =="
+            echo "transaction: builtin TPC-B-like (simple protocol)"
+            echo "scale: $PGBENCH_SCALE"
+            echo "clients: $PGBENCH_CLIENTS"
+            echo "jobs: $PGBENCH_JOBS"
+            echo "duration_s: $PGBENCH_DURATION"
+            echo ""
+            docker exec "$name" pgbench -h 127.0.0.1 -p 5432 \
+              -c "$PGBENCH_CLIENTS" -j "$PGBENCH_JOBS" -T "$PGBENCH_DURATION" \
+              -U postgres pgbench_rustdb_compare
+          } | tee "$OUT_DIR/pgbench.txt"
+          # Extract TPS (without initial connection time), e.g.:
+          # tps = 1758.513941 (without initial connection time)
+          pg_tps="$(python3 - <<'PY'
+import re, pathlib, sys
+s = pathlib.Path("tpcc-out/pgbench.txt").read_text(encoding="utf-8", errors="replace")
+m = re.search(r"^tps\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*\\(without initial connection time\\)\\s*$", s, re.M)
+if not m:
+  print("0.0")
+  sys.exit(0)
+print(m.group(1))
+PY
+)"
+          echo "POSTGRES_PGBENCH_TPS=$pg_tps" >> "$GITHUB_ENV"
+          echo "POSTGRES_PGBENCH_CONTAINER=$name" >> "$GITHUB_ENV"
+
       - name: Run TPC-C throughput benchmark
         env:
           OUT_DIR: tpcc-out
@@ -689,19 +747,63 @@ jobs:
           chmod +x scripts/tpcc_throughput_ci.sh
           ./scripts/tpcc_throughput_ci.sh
 
-      - name: Add benchmark summary
+      - name: Add benchmark summary (RustDB vs PostgreSQL)
         if: always()
         run: |
           set -euo pipefail
-          if [[ -s "tpcc-out/tpcc.txt" ]]; then
-            {
-              echo "## TPC-C throughput (RustDB)"
-              echo ""
-              echo '```'
-              cat tpcc-out/tpcc.txt
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
+          # RustDB: read txns_per_s from tpcc.json (machine-readable).
+          rustdb_tps="$(python3 - <<'PY'
+import json, pathlib
+p = pathlib.Path("tpcc-out/tpcc.json")
+if not p.is_file():
+  print("0.0"); raise SystemExit(0)
+d = json.loads(p.read_text(encoding="utf-8"))
+print(d.get("txns_per_s", 0.0))
+PY
+)"
+          pg_tps="${POSTGRES_PGBENCH_TPS:-0.0}"
+          ratio="0.0"
+          if python3 - <<PY >/dev/null 2>&1; then
+import sys
+rd=float("$rustdb_tps"); pg=float("$pg_tps")
+sys.exit(0 if pg>0 else 1)
+PY
+            ratio="$(python3 - <<PY
+rd=float("$rustdb_tps"); pg=float("$pg_tps")
+print(f"{(100.0*rd/pg):.1f}")
+PY
+)"
           fi
+          {
+            echo "## RustDB vs PostgreSQL (baseline)"
+            echo ""
+            echo "- RustDB: **rustdb_tpcc** (TPC-C-ish over QUIC)"
+            echo "- PostgreSQL: **pgbench** (builtin TPC-B-like over TCP)"
+            echo ""
+            echo "### RustDB (rustdb_tpcc)"
+            echo '```'
+            if [[ -s "tpcc-out/tpcc.txt" ]]; then
+              cat tpcc-out/tpcc.txt
+            else
+              echo "(missing tpcc-out/tpcc.txt)"
+            fi
+            echo '```'
+            echo ""
+            echo "### PostgreSQL (pgbench)"
+            echo '```'
+            if [[ -s "tpcc-out/pgbench.txt" ]]; then
+              cat tpcc-out/pgbench.txt
+            else
+              echo "(missing tpcc-out/pgbench.txt)"
+            fi
+            echo '```'
+            echo ""
+            echo "### Ratio"
+            echo ""
+            echo "- rustdb_tpcc txns_per_s: **${rustdb_tps}**"
+            echo "- pgbench tps: **${pg_tps}**"
+            echo "- rustdb / postgres: **${ratio}%**"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload TPC-C artifacts
         if: always()
@@ -711,8 +813,13 @@ jobs:
           path: |
             tpcc-out/tpcc.json
             tpcc-out/tpcc.txt
+            tpcc-out/pgbench.txt
             tpcc-out/server.der
             tpcc-out/server_tail.log
+      - name: Stop PostgreSQL (docker)
+        if: always()
+        run: |
+          docker rm -f "${POSTGRES_PGBENCH_CONTAINER:-postgres-pgbench}" >/dev/null 2>&1 || true
 
   profile_quic_select_table:
     name: Trace profile (QUIC select_table @128)
