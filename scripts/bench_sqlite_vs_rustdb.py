@@ -435,6 +435,15 @@ def main():
             "SELECT a FROM bench_t WHERE a = 1",
             ["CREATE TABLE bench_t (a INTEGER)", "INSERT INTO bench_t (a) VALUES (1)"],
         ),
+        (
+            "update_pk",
+            "UPDATE bench_kv SET v = v + 1 WHERE k = 1",
+            [
+                "CREATE TABLE bench_kv (k INTEGER PRIMARY KEY, v INTEGER)",
+                # Keep setup lightweight and deterministic in CI.
+                "INSERT INTO bench_kv (k, v) VALUES (1, 0)",
+            ],
+        ),
     ]
     catalog_by_name = {s[0]: s for s in scenario_catalog}
     requested_raw = [x.strip() for x in args.scenarios.split(",") if x.strip()]

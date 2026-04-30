@@ -160,6 +160,16 @@ CI reports in the GitHub Actions step summary (workflow `CI/CD Pipeline`):
 - PostgreSQL `pgbench` `tps`
 - **Ratio (%)**: \(100 * \frac{rustdb\_tps}{postgres\_tps}\)
 
+### More honest comparison: same SQL workload
+
+For a closer apples-to-apples baseline, CI also runs **the same SQL statements** against:
+
+- **RustDB** via `rustdb_load` (QUIC + RustDB framing)
+- **PostgreSQL** via `psycopg` (TCP + libpq)
+
+This “same SQL” summary (QPS + p99 + ratio) is emitted in the CI step summary under **Same SQL comparison** and
+the full report is uploaded as the `sqlite-vs-rustdb-bench` artifact (`bench-out/bench.md`, `bench-out/bench.csv`).
+
 ---
 
 ## Project status

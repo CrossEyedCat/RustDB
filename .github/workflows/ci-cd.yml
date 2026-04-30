@@ -555,12 +555,72 @@ jobs:
             --cert "$RUSTDB_CERT" \
             --addr 127.0.0.1:15432 \
             --server-name localhost \
-            --concurrency 1,8,32,128 \
+            --concurrency 1,8,32,64,128 \
             --queries 5000 \
+            --scenarios select_literal,select_table,update_pk \
             --rustdb-connection-modes shared,per-worker \
             --rustdb-baseline-stream-batch 1 \
             --rustdb-stream-sweep 1,8,16 \
             --postgres-dsn "$POSTGRES_DSN"
+
+      - name: Add "same SQL" summary (RustDB vs PostgreSQL)
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ ! -s "bench-out/bench.csv" ]]; then
+            exit 0
+          fi
+          python3 - <<'PY'
+          import csv
+          from pathlib import Path
+          
+          path = Path("bench-out/bench.csv")
+          rows = list(csv.DictReader(path.open("r", encoding="utf-8")))
+          
+          def pick(system: str, scenario: str, concurrency: str):
+            for r in rows:
+              if (
+                r["suite"] == "baseline"
+                and r["system"] == system
+                and r["scenario"] == scenario
+                and r["concurrency"] == concurrency
+              ):
+                return r
+            return None
+          
+          conc = "64"
+          scenarios = ["select_literal", "select_table", "update_pk"]
+          rustdb_systems = ["rustdb(shared)", "rustdb(per-worker)"]
+          
+          out = []
+          out.append("## Same SQL comparison (RustDB vs PostgreSQL)")
+          out.append("")
+          out.append(f"Baseline suite from `bench_sqlite_vs_rustdb` at **concurrency={conc}** (same SQL for both engines).")
+          out.append("")
+          out.append("| scenario | rustdb system | rustdb qps | pg qps | rustdb/pg | rustdb p99 (ms) | pg p99 (ms) |")
+          out.append("|---|---|---:|---:|---:|---:|---:|")
+          
+          for sc in scenarios:
+            pg = pick("postgres", sc, conc)
+            if not pg:
+              continue
+            pg_qps = float(pg["qps"])
+            pg_p99 = float(pg["p99_ms"])
+            for rsys in rustdb_systems:
+              rd = pick(rsys, sc, conc)
+              if not rd:
+                continue
+              rd_qps = float(rd["qps"])
+              rd_p99 = float(rd["p99_ms"])
+              ratio = (100.0 * rd_qps / pg_qps) if pg_qps > 0 else 0.0
+              out.append(
+                f"| {sc} | {rsys} | {rd_qps:.1f} | {pg_qps:.1f} | {ratio:.1f}% | {rd_p99:.3f} | {pg_p99:.3f} |"
+              )
+          
+          Path(".").joinpath("bench-out", "same_sql_summary.md").write_text("\n".join(out) + "\n", encoding="utf-8")
+          print("\n".join(out))
+          PY
+          cat bench-out/same_sql_summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Stop RustDB server (docker)
         if: always()
