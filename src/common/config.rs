@@ -335,6 +335,9 @@ impl PerformanceConfig {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_default_config() {
@@ -377,6 +380,7 @@ mod tests {
 
     #[test]
     fn test_config_from_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("RUSTDB_NAME", "envdb");
         std::env::set_var("RUSTDB_DATA_DIR", "C:/data");
         std::env::set_var("RUSTDB_MAX_CONNECTIONS", "123");
