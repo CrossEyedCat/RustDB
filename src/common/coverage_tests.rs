@@ -15,6 +15,9 @@ use crate::common::utils::{
     is_valid_page_size, is_valid_table_name, next_power_of_two, prev_power_of_two,
 };
 use std::path::PathBuf;
+use std::sync::Mutex;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn test_error_constructors_and_display() {
@@ -97,6 +100,7 @@ fn test_database_config_file_roundtrip() -> Result<(), Box<dyn std::error::Error
 
 #[test]
 fn test_database_config_from_env() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = ENV_LOCK.lock().unwrap();
     let keys = [
         "RUSTDB_NAME",
         "RUSTDB_DATA_DIR",

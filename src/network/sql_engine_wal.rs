@@ -161,7 +161,9 @@ impl SqlEngineWal {
             LogRecord::new_data_insert(0, tid, file_id, page_id, record_offset, new_data, prev);
         let lsn = self
             .runtime
-            .block_on(self.writer.write_log(record))
+            // Use sync write so crash recovery can reliably UNDO uncommitted writes
+            // even if the process stops between statements.
+            .block_on(self.writer.write_log_sync(record))
             .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))?;
         tx.wal_last_lsn = Some(lsn);
         Ok(())
@@ -195,7 +197,7 @@ impl SqlEngineWal {
         );
         let lsn = self
             .runtime
-            .block_on(self.writer.write_log(record))
+            .block_on(self.writer.write_log_sync(record))
             .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))?;
         tx.wal_last_lsn = Some(lsn);
         Ok(())
@@ -220,7 +222,7 @@ impl SqlEngineWal {
             LogRecord::new_data_delete(0, tid, file_id, page_id, record_offset, old_data, prev);
         let lsn = self
             .runtime
-            .block_on(self.writer.write_log(record))
+            .block_on(self.writer.write_log_sync(record))
             .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))?;
         tx.wal_last_lsn = Some(lsn);
         Ok(())
