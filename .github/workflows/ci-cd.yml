@@ -722,7 +722,7 @@ jobs:
           } | tee "$OUT_DIR/pgbench.txt"
           # Extract TPS (without initial connection time), e.g.:
           # tps = 1758.513941 (without initial connection time)
-          pg_tps="$(python3 -c 'import re,pathlib; s=pathlib.Path(\"tpcc-out/pgbench.txt\").read_text(encoding=\"utf-8\", errors=\"replace\"); m=re.search(r\"^tps\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*\\(without initial connection time\\)\\s*$\", s, re.M); print(m.group(1) if m else \"0.0\")')"
+          pg_tps="$(python3 -c 'import re,pathlib; s=pathlib.Path("tpcc-out/pgbench.txt").read_text(encoding="utf-8", errors="replace"); m=re.search(r"^tps\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*\\(without initial connection time\\)\\s*$", s, re.M); print(m.group(1) if m else "0.0")')"
           echo "POSTGRES_PGBENCH_TPS=$pg_tps" >> "$GITHUB_ENV"
           echo "POSTGRES_PGBENCH_CONTAINER=$name" >> "$GITHUB_ENV"
 
@@ -743,7 +743,7 @@ jobs:
         run: |
           set -euo pipefail
           # RustDB: read txns_per_s from tpcc.json (machine-readable).
-          rustdb_tps="$(python3 -c 'import json,pathlib; p=pathlib.Path(\"tpcc-out/tpcc.json\"); print(json.loads(p.read_text(encoding=\"utf-8\")).get(\"txns_per_s\", 0.0) if p.is_file() else 0.0)')"
+          rustdb_tps="$(python3 -c 'import json,pathlib; p=pathlib.Path("tpcc-out/tpcc.json"); print(json.loads(p.read_text(encoding="utf-8")).get("txns_per_s", 0.0) if p.is_file() else 0.0)')"
           pg_tps="${POSTGRES_PGBENCH_TPS:-0.0}"
           ratio="$(python3 -c 'rd=float(\"'"$rustdb_tps"'\"); pg=float(\"'"$pg_tps"'\"); print(f\"{(100.0*rd/pg):.1f}\" if pg>0 else \"0.0\")')"
           {
