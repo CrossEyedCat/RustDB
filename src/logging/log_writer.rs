@@ -496,7 +496,10 @@ impl LogWriter {
         let flush_immediately = request.force_flush_immediately
             || (request.force_sync && config.force_flush_immediately);
 
-        if request.force_sync || request.force_flush_immediately || request.record.requires_immediate_flush() {
+        if request.force_sync
+            || request.force_flush_immediately
+            || request.record.requires_immediate_flush()
+        {
             if flush_immediately {
                 if let Some(tx) = request.response_tx {
                     let mut waiters = sync_waiters.lock().unwrap();

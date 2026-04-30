@@ -14,8 +14,8 @@ use crate::common::utils::{
     format_duration, is_power_of_two, is_valid_column_name, is_valid_index_name,
     is_valid_page_size, is_valid_table_name, next_power_of_two, prev_power_of_two,
 };
-use std::path::PathBuf;
 use crate::test_env::ENV_LOCK;
+use std::path::PathBuf;
 
 #[test]
 fn test_error_constructors_and_display() {

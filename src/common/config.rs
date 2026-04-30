@@ -334,8 +334,8 @@ impl PerformanceConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use crate::test_env::ENV_LOCK;
+    use tempfile::TempDir;
 
     #[test]
     fn test_default_config() {
