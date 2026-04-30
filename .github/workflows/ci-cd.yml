@@ -722,7 +722,7 @@ jobs:
           } | tee "$OUT_DIR/pgbench.txt"
           # Extract TPS (without initial connection time), e.g.:
           # tps = 1758.513941 (without initial connection time)
-          pg_tps="$(python3 -c 'import re,pathlib; s=pathlib.Path("tpcc-out/pgbench.txt").read_text(encoding="utf-8", errors="replace"); m=re.search(r"^\\s*tps\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*\\(without initial connection time\\)\\s*$", s, re.M); print(m.group(1) if m else "0.0")')"
+          pg_tps="$(python3 -c 'import re,pathlib; s=pathlib.Path("tpcc-out/pgbench.txt").read_text(encoding="utf-8", errors="replace"); m=re.search(r"^\s*tps\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*\(without initial connection time\)\s*$", s, re.M); print(m.group(1) if m else "0.0")')"
           echo "POSTGRES_PGBENCH_TPS=$pg_tps" >> "$GITHUB_ENV"
           echo "POSTGRES_PGBENCH_CONTAINER=$name" >> "$GITHUB_ENV"
 
