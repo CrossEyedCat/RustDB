@@ -1,10 +1,8 @@
 use rustdb::network::engine::EngineHandle;
 use rustdb::network::engine::SessionContext;
 use rustdb::network::sql_engine::SqlEngine;
-use std::sync::Mutex;
+use rustdb::test_env::ENV_LOCK;
 use tempfile::TempDir;
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn exec(engine: &SqlEngine, ctx: &mut SessionContext, sql: &str) {
     engine.execute_sql(sql, ctx).unwrap();

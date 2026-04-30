@@ -59,6 +59,7 @@ pub mod parser;
 pub mod planner;
 pub mod sql_session;
 pub mod storage;
+pub mod test_env;
 pub mod tracing_setup;
 
 pub use network::SqlEngine;

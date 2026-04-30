@@ -387,7 +387,9 @@ impl CheckpointManager {
             current_lsn,
         );
 
-        let checkpoint_lsn = log_writer.write_log_sync(checkpoint_record).await?;
+        // A checkpoint boundary must be visible in the WAL even when synchronous_commit=off.
+        // `write_log_durable` always waits for flush (and fsync only if enabled).
+        let checkpoint_lsn = log_writer.write_log_durable(checkpoint_record).await?;
 
         // Force log flush
         log_writer.flush().await?;

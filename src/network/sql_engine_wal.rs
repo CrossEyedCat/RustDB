@@ -27,12 +27,12 @@ impl SqlEngineWal {
     pub fn open(wal_dir: &Path) -> DbResult<Self> {
         let mut cfg = LogWriterConfig::default();
         cfg.log_directory = wal_dir.to_path_buf();
-        // Deterministic visibility of records on disk for SqlEngine (avoid group-commit batching).
-        cfg.group_commit_enabled = false;
-        cfg.force_flush_immediately = true;
-        if matches!(std::env::var("RUSTDB_FSYNC_COMMIT").as_deref(), Ok("1")) {
-            cfg.synchronous_commit = true;
-        }
+        // SqlEngine WAL policy:
+        // - Default: maximize throughput (no fsync wait) but still flush each record we care about.
+        // - If RUSTDB_FSYNC_COMMIT=1: wait for fsync on records that require durability.
+        cfg.synchronous_commit = matches!(std::env::var("RUSTDB_FSYNC_COMMIT").as_deref(), Ok("1"));
+        cfg.group_commit_enabled = true;
+        cfg.force_flush_immediately = false;
         let runtime = Runtime::new().map_err(|e| DbError::database(e.to_string()))?;
         let writer = {
             let _guard = runtime.enter();
@@ -101,7 +101,7 @@ impl SqlEngineWal {
         let record = LogRecord::new_transaction_begin(0, tid, log_iso);
         let lsn = self
             .runtime
-            .block_on(self.writer.write_log_sync(record))
+            .block_on(self.writer.write_log_durable(record))
             .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))?;
         tx.wal_begin_lsn = Some(lsn);
         tx.wal_last_lsn = Some(lsn);
@@ -119,7 +119,7 @@ impl SqlEngineWal {
         let record = LogRecord::new_transaction_commit(0, tid, vec![], prev);
         let lsn = self
             .runtime
-            .block_on(self.writer.write_log_sync(record))
+            .block_on(self.writer.write_log_durable(record))
             .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))?;
         tx.wal_last_lsn = Some(lsn);
         Ok(())
@@ -136,7 +136,7 @@ impl SqlEngineWal {
         let record = LogRecord::new_transaction_abort(0, tid, prev);
         let lsn = self
             .runtime
-            .block_on(self.writer.write_log_sync(record))
+            .block_on(self.writer.write_log_durable(record))
             .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))?;
         tx.wal_last_lsn = Some(lsn);
         Ok(())
@@ -161,9 +161,9 @@ impl SqlEngineWal {
             LogRecord::new_data_insert(0, tid, file_id, page_id, record_offset, new_data, prev);
         let lsn = self
             .runtime
-            // Use sync write so crash recovery can reliably UNDO uncommitted writes
-            // even if the process stops between statements.
-            .block_on(self.writer.write_log_sync(record))
+            // Flush to the log file so crash recovery can reliably UNDO uncommitted writes,
+            // without necessarily waiting for fsync on every statement.
+            .block_on(self.writer.write_log_durable(record))
             .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))?;
         tx.wal_last_lsn = Some(lsn);
         Ok(())
@@ -197,7 +197,7 @@ impl SqlEngineWal {
         );
         let lsn = self
             .runtime
-            .block_on(self.writer.write_log_sync(record))
+            .block_on(self.writer.write_log_durable(record))
             .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))?;
         tx.wal_last_lsn = Some(lsn);
         Ok(())
@@ -222,7 +222,7 @@ impl SqlEngineWal {
             LogRecord::new_data_delete(0, tid, file_id, page_id, record_offset, old_data, prev);
         let lsn = self
             .runtime
-            .block_on(self.writer.write_log_sync(record))
+            .block_on(self.writer.write_log_durable(record))
             .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))?;
         tx.wal_last_lsn = Some(lsn);
         Ok(())
@@ -233,7 +233,7 @@ impl SqlEngineWal {
     pub fn log_catalog_snapshot(&self) -> std::result::Result<(), EngineError> {
         let record = LogRecord::new_catalog_snapshot(0);
         self.runtime
-            .block_on(self.writer.write_log_sync(record))
+            .block_on(self.writer.write_log_durable(record))
             .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))?;
         Ok(())
     }

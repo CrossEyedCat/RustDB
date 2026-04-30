@@ -180,7 +180,8 @@ pub struct LogWriteRequest {
     pub response_tx: Option<oneshot::Sender<Result<()>>>,
     /// Indicates whether sync is required (uses group commit when enabled)
     pub force_sync: bool,
-    /// When true with force_sync, flush immediately without waiting for group commit
+    /// When true, flush immediately and respond after flush.
+    /// If `force_sync=true` and `config.synchronous_commit=true`, the flush also includes fsync.
     pub force_flush_immediately: bool,
 }
 
@@ -492,10 +493,10 @@ impl LogWriter {
 
         let mut should_flush = false;
         let mut legacy_response_tx = None;
-        let flush_immediately = request.force_sync
-            && (request.force_flush_immediately || config.force_flush_immediately);
+        let flush_immediately = request.force_flush_immediately
+            || (request.force_sync && config.force_flush_immediately);
 
-        if request.force_sync || request.record.requires_immediate_flush() {
+        if request.force_sync || request.force_flush_immediately || request.record.requires_immediate_flush() {
             if flush_immediately {
                 if let Some(tx) = request.response_tx {
                     let mut waiters = sync_waiters.lock().unwrap();
@@ -659,11 +660,13 @@ impl LogWriter {
                 .writer
                 .flush()
                 .map_err(|e| Error::internal(&format!("Failed to flush log file: {}", e)))?;
-            state
-                .writer
-                .get_mut()
-                .sync_all()
-                .map_err(|e| Error::internal(&format!("Failed to sync log file: {}", e)))?;
+            if config.synchronous_commit {
+                state
+                    .writer
+                    .get_mut()
+                    .sync_all()
+                    .map_err(|e| Error::internal(&format!("Failed to sync log file: {}", e)))?;
+            }
 
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -694,14 +697,42 @@ impl LogWriter {
                 .writer
                 .flush()
                 .map_err(|e| Error::internal(&format!("Failed to flush log file: {}", e)))?;
-            state
-                .writer
-                .get_mut()
-                .sync_all()
-                .map_err(|e| Error::internal(&format!("Failed to sync log file: {}", e)))?;
+            if config.synchronous_commit {
+                state
+                    .writer
+                    .get_mut()
+                    .sync_all()
+                    .map_err(|e| Error::internal(&format!("Failed to sync log file: {}", e)))?;
+            }
         }
 
         Ok(())
+    }
+
+    /// Writes a log record and waits until it is flushed to the log file.
+    /// If `config.synchronous_commit=true`, this also waits for fsync.
+    pub async fn write_log_durable(&self, mut record: LogRecord) -> Result<LogSequenceNumber> {
+        if record.lsn == 0 {
+            record.lsn = self.generate_lsn();
+        }
+
+        let (response_tx, response_rx) = oneshot::channel();
+        let request = LogWriteRequest {
+            record: record.clone(),
+            response_tx: Some(response_tx),
+            force_sync: self.config.synchronous_commit,
+            force_flush_immediately: true,
+        };
+
+        self.write_tx
+            .send(request)
+            .map_err(|_| Error::internal("Failed to send durable log write request"))?;
+
+        response_rx
+            .await
+            .map_err(|_| Error::internal("Failed to receive durable log write result"))??;
+
+        Ok(record.lsn)
     }
 
     /// Writes a log record

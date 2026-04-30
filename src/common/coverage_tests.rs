@@ -15,9 +15,7 @@ use crate::common::utils::{
     is_valid_page_size, is_valid_table_name, next_power_of_two, prev_power_of_two,
 };
 use std::path::PathBuf;
-use std::sync::Mutex;
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+use crate::test_env::ENV_LOCK;
 
 #[test]
 fn test_error_constructors_and_display() {
