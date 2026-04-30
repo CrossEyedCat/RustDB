@@ -208,6 +208,7 @@ Integration tests heavily exercise **parse → plan → optimize** and **simulat
 |-----|---------|
 | [docs/cookbook.md](docs/cookbook.md) | GHCR image, Docker/QUIC, CLI, benchmarks, `verify-cookbook-docker.sh` |
 | [docs/roadmap.md](docs/roadmap.md) | Implementation priorities (library API, durability, recovery, DDL) |
+| [docs/durability-and-recovery.md](docs/durability-and-recovery.md) | Commit point, WAL record types, crash-recovery semantics, and durability env vars |
 | [docs/network/README.md](docs/network/README.md) | QUIC, framing, client/server boundary |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute; CI jobs; issues & PRs |
 
