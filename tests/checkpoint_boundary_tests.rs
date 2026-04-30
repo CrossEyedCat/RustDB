@@ -14,7 +14,9 @@ fn manual_checkpoint_writes_checkpoint_record() {
     {
         let engine = SqlEngine::open(data_dir.clone()).unwrap();
         let mut ctx = SessionContext::default();
-        engine.execute_sql("CREATE TABLE t (a INTEGER)", &mut ctx).unwrap();
+        engine
+            .execute_sql("CREATE TABLE t (a INTEGER)", &mut ctx)
+            .unwrap();
         engine
             .execute_sql("INSERT INTO t (a) VALUES (1)", &mut ctx)
             .unwrap();
@@ -24,8 +26,8 @@ fn manual_checkpoint_writes_checkpoint_record() {
     let wal_dir = data_dir.join(".rustdb").join("wal");
     let recs = LogRecord::read_log_records_from_directory(&wal_dir).unwrap();
     assert!(
-        recs.iter().any(|r| r.record_type == LogRecordType::Checkpoint),
+        recs.iter()
+            .any(|r| r.record_type == LogRecordType::Checkpoint),
         "expected at least one Checkpoint record in WAL"
     );
 }
-

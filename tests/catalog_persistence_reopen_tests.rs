@@ -9,7 +9,9 @@ fn catalog_json_persists_across_reopen() {
     {
         let engine = SqlEngine::open(dir.path().to_path_buf()).unwrap();
         let mut ctx = SessionContext::default();
-        engine.execute_sql("CREATE TABLE t (a INTEGER)", &mut ctx).unwrap();
+        engine
+            .execute_sql("CREATE TABLE t (a INTEGER)", &mut ctx)
+            .unwrap();
     }
 
     {
@@ -28,4 +30,3 @@ fn catalog_json_persists_across_reopen() {
         }
     }
 }
-

@@ -334,8 +334,8 @@ impl PerformanceConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::sync::Mutex;
+    use tempfile::TempDir;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 

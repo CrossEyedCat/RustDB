@@ -176,4 +176,3 @@ fn wal_replay_undo_uncommitted_mixed_dml_on_reopen() {
         assert_eq!(n2, 1);
     }
 }
-
