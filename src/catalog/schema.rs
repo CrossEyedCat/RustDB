@@ -148,9 +148,32 @@ impl SchemaManager {
         let dir = data_dir.join(".rustdb");
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("catalog.json");
+        let tmp_path = dir.join("catalog.json.tmp");
         let file = self.build_catalog_file()?;
         let json = serde_json::to_string_pretty(&file).map_err(Error::from)?;
-        std::fs::write(path, json)?;
+        // Atomic-ish update: write to a temp file, fsync it (best-effort), then rename.
+        // This reduces the chance of leaving a truncated `catalog.json` on crash/power loss.
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&tmp_path)?;
+            f.write_all(json.as_bytes())?;
+            // If requested, make the file contents durable before renaming.
+            if matches!(std::env::var("RUSTDB_FSYNC_COMMIT").as_deref(), Ok("1")) {
+                let _ = f.sync_all();
+            }
+        }
+        std::fs::rename(&tmp_path, &path)?;
+        // Best-effort directory fsync on Unix so the rename is durable too.
+        #[cfg(unix)]
+        if matches!(std::env::var("RUSTDB_FSYNC_COMMIT").as_deref(), Ok("1")) {
+            if let Ok(d) = std::fs::File::open(&dir) {
+                let _ = d.sync_all();
+            }
+        }
         Ok(())
     }
 
