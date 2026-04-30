@@ -27,12 +27,12 @@
 <a href=#27 id=27 data-nosnippet>27</a>    </span><span class="kw">pub fn </span>open(wal_dir: <span class="kw-2">&amp;</span>Path) -&gt; DbResult&lt;<span class="self">Self</span>&gt; {
 <a href=#28 id=28 data-nosnippet>28</a>        <span class="kw">let </span><span class="kw-2">mut </span>cfg = LogWriterConfig::default();
 <a href=#29 id=29 data-nosnippet>29</a>        cfg.log_directory = wal_dir.to_path_buf();
-<a href=#30 id=30 data-nosnippet>30</a>        <span class="comment">// Deterministic visibility of records on disk for SqlEngine (avoid group-commit batching).
-<a href=#31 id=31 data-nosnippet>31</a>        </span>cfg.group_commit_enabled = <span class="bool-val">false</span>;
-<a href=#32 id=32 data-nosnippet>32</a>        cfg.force_flush_immediately = <span class="bool-val">true</span>;
-<a href=#33 id=33 data-nosnippet>33</a>        <span class="kw">if </span><span class="macro">matches!</span>(std::env::var(<span class="string">"RUSTDB_FSYNC_COMMIT"</span>).as_deref(), <span class="prelude-val">Ok</span>(<span class="string">"1"</span>)) {
-<a href=#34 id=34 data-nosnippet>34</a>            cfg.synchronous_commit = <span class="bool-val">true</span>;
-<a href=#35 id=35 data-nosnippet>35</a>        }
+<a href=#30 id=30 data-nosnippet>30</a>        <span class="comment">// SqlEngine WAL policy:
+<a href=#31 id=31 data-nosnippet>31</a>        // - Default: maximize throughput (no fsync wait) but still flush each record we care about.
+<a href=#32 id=32 data-nosnippet>32</a>        // - If RUSTDB_FSYNC_COMMIT=1: wait for fsync on records that require durability.
+<a href=#33 id=33 data-nosnippet>33</a>        </span>cfg.synchronous_commit = <span class="macro">matches!</span>(std::env::var(<span class="string">"RUSTDB_FSYNC_COMMIT"</span>).as_deref(), <span class="prelude-val">Ok</span>(<span class="string">"1"</span>));
+<a href=#34 id=34 data-nosnippet>34</a>        cfg.group_commit_enabled = <span class="bool-val">true</span>;
+<a href=#35 id=35 data-nosnippet>35</a>        cfg.force_flush_immediately = <span class="bool-val">false</span>;
 <a href=#36 id=36 data-nosnippet>36</a>        <span class="kw">let </span>runtime = Runtime::new().map_err(|e| DbError::database(e.to_string()))<span class="question-mark">?</span>;
 <a href=#37 id=37 data-nosnippet>37</a>        <span class="kw">let </span>writer = {
 <a href=#38 id=38 data-nosnippet>38</a>            <span class="kw">let </span>_guard = runtime.enter();
@@ -101,7 +101,7 @@
 <a href=#101 id=101 data-nosnippet>101</a>        <span class="kw">let </span>record = LogRecord::new_transaction_begin(<span class="number">0</span>, tid, log_iso);
 <a href=#102 id=102 data-nosnippet>102</a>        <span class="kw">let </span>lsn = <span class="self">self
 <a href=#103 id=103 data-nosnippet>103</a>            </span>.runtime
-<a href=#104 id=104 data-nosnippet>104</a>            .block_on(<span class="self">self</span>.writer.write_log_sync(record))
+<a href=#104 id=104 data-nosnippet>104</a>            .block_on(<span class="self">self</span>.writer.write_log_durable(record))
 <a href=#105 id=105 data-nosnippet>105</a>            .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))<span class="question-mark">?</span>;
 <a href=#106 id=106 data-nosnippet>106</a>        tx.wal_begin_lsn = <span class="prelude-val">Some</span>(lsn);
 <a href=#107 id=107 data-nosnippet>107</a>        tx.wal_last_lsn = <span class="prelude-val">Some</span>(lsn);
@@ -119,7 +119,7 @@
 <a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">let </span>record = LogRecord::new_transaction_commit(<span class="number">0</span>, tid, <span class="macro">vec!</span>[], prev);
 <a href=#120 id=120 data-nosnippet>120</a>        <span class="kw">let </span>lsn = <span class="self">self
 <a href=#121 id=121 data-nosnippet>121</a>            </span>.runtime
-<a href=#122 id=122 data-nosnippet>122</a>            .block_on(<span class="self">self</span>.writer.write_log_sync(record))
+<a href=#122 id=122 data-nosnippet>122</a>            .block_on(<span class="self">self</span>.writer.write_log_durable(record))
 <a href=#123 id=123 data-nosnippet>123</a>            .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))<span class="question-mark">?</span>;
 <a href=#124 id=124 data-nosnippet>124</a>        tx.wal_last_lsn = <span class="prelude-val">Some</span>(lsn);
 <a href=#125 id=125 data-nosnippet>125</a>        <span class="prelude-val">Ok</span>(())
@@ -136,7 +136,7 @@
 <a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">let </span>record = LogRecord::new_transaction_abort(<span class="number">0</span>, tid, prev);
 <a href=#137 id=137 data-nosnippet>137</a>        <span class="kw">let </span>lsn = <span class="self">self
 <a href=#138 id=138 data-nosnippet>138</a>            </span>.runtime
-<a href=#139 id=139 data-nosnippet>139</a>            .block_on(<span class="self">self</span>.writer.write_log_sync(record))
+<a href=#139 id=139 data-nosnippet>139</a>            .block_on(<span class="self">self</span>.writer.write_log_durable(record))
 <a href=#140 id=140 data-nosnippet>140</a>            .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))<span class="question-mark">?</span>;
 <a href=#141 id=141 data-nosnippet>141</a>        tx.wal_last_lsn = <span class="prelude-val">Some</span>(lsn);
 <a href=#142 id=142 data-nosnippet>142</a>        <span class="prelude-val">Ok</span>(())
@@ -161,9 +161,9 @@
 <a href=#161 id=161 data-nosnippet>161</a>            LogRecord::new_data_insert(<span class="number">0</span>, tid, file_id, page_id, record_offset, new_data, prev);
 <a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">let </span>lsn = <span class="self">self
 <a href=#163 id=163 data-nosnippet>163</a>            </span>.runtime
-<a href=#164 id=164 data-nosnippet>164</a>            <span class="comment">// Use sync write so crash recovery can reliably UNDO uncommitted writes
-<a href=#165 id=165 data-nosnippet>165</a>            // even if the process stops between statements.
-<a href=#166 id=166 data-nosnippet>166</a>            </span>.block_on(<span class="self">self</span>.writer.write_log_sync(record))
+<a href=#164 id=164 data-nosnippet>164</a>            <span class="comment">// Flush to the log file so crash recovery can reliably UNDO uncommitted writes,
+<a href=#165 id=165 data-nosnippet>165</a>            // without necessarily waiting for fsync on every statement.
+<a href=#166 id=166 data-nosnippet>166</a>            </span>.block_on(<span class="self">self</span>.writer.write_log_durable(record))
 <a href=#167 id=167 data-nosnippet>167</a>            .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))<span class="question-mark">?</span>;
 <a href=#168 id=168 data-nosnippet>168</a>        tx.wal_last_lsn = <span class="prelude-val">Some</span>(lsn);
 <a href=#169 id=169 data-nosnippet>169</a>        <span class="prelude-val">Ok</span>(())
@@ -197,7 +197,7 @@
 <a href=#197 id=197 data-nosnippet>197</a>        );
 <a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span>lsn = <span class="self">self
 <a href=#199 id=199 data-nosnippet>199</a>            </span>.runtime
-<a href=#200 id=200 data-nosnippet>200</a>            .block_on(<span class="self">self</span>.writer.write_log_sync(record))
+<a href=#200 id=200 data-nosnippet>200</a>            .block_on(<span class="self">self</span>.writer.write_log_durable(record))
 <a href=#201 id=201 data-nosnippet>201</a>            .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))<span class="question-mark">?</span>;
 <a href=#202 id=202 data-nosnippet>202</a>        tx.wal_last_lsn = <span class="prelude-val">Some</span>(lsn);
 <a href=#203 id=203 data-nosnippet>203</a>        <span class="prelude-val">Ok</span>(())
@@ -222,7 +222,7 @@
 <a href=#222 id=222 data-nosnippet>222</a>            LogRecord::new_data_delete(<span class="number">0</span>, tid, file_id, page_id, record_offset, old_data, prev);
 <a href=#223 id=223 data-nosnippet>223</a>        <span class="kw">let </span>lsn = <span class="self">self
 <a href=#224 id=224 data-nosnippet>224</a>            </span>.runtime
-<a href=#225 id=225 data-nosnippet>225</a>            .block_on(<span class="self">self</span>.writer.write_log_sync(record))
+<a href=#225 id=225 data-nosnippet>225</a>            .block_on(<span class="self">self</span>.writer.write_log_durable(record))
 <a href=#226 id=226 data-nosnippet>226</a>            .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))<span class="question-mark">?</span>;
 <a href=#227 id=227 data-nosnippet>227</a>        tx.wal_last_lsn = <span class="prelude-val">Some</span>(lsn);
 <a href=#228 id=228 data-nosnippet>228</a>        <span class="prelude-val">Ok</span>(())
@@ -233,7 +233,7 @@
 <a href=#233 id=233 data-nosnippet>233</a>    </span><span class="kw">pub fn </span>log_catalog_snapshot(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::result::Result&lt;(), EngineError&gt; {
 <a href=#234 id=234 data-nosnippet>234</a>        <span class="kw">let </span>record = LogRecord::new_catalog_snapshot(<span class="number">0</span>);
 <a href=#235 id=235 data-nosnippet>235</a>        <span class="self">self</span>.runtime
-<a href=#236 id=236 data-nosnippet>236</a>            .block_on(<span class="self">self</span>.writer.write_log_sync(record))
+<a href=#236 id=236 data-nosnippet>236</a>            .block_on(<span class="self">self</span>.writer.write_log_durable(record))
 <a href=#237 id=237 data-nosnippet>237</a>            .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))<span class="question-mark">?</span>;
 <a href=#238 id=238 data-nosnippet>238</a>        <span class="prelude-val">Ok</span>(())
 <a href=#239 id=239 data-nosnippet>239</a>    }
