@@ -494,6 +494,12 @@ def main():
                     "CREATE TABLE bench_t (a INTEGER)",
                     "INSERT INTO bench_t (a) VALUES (1)",
                 ]
+            elif name == "update_pk":
+                pg_setup = [
+                    "DROP TABLE IF EXISTS bench_kv",
+                    "CREATE TABLE bench_kv (k INTEGER PRIMARY KEY, v INTEGER)",
+                    "INSERT INTO bench_kv (k, v) VALUES (1, 0)",
+                ]
             for c in conc:
                 p3 = postgres_bench(args.postgres_dsn, sqlite_sql, c, args.queries, pg_setup, suite="baseline")
                 p3.scenario = name

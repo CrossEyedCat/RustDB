@@ -533,6 +533,8 @@ jobs:
           set -euo pipefail
           cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "CREATE TABLE bench_t (a INTEGER)"
           cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "INSERT INTO bench_t (a) VALUES (1)"
+          cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "CREATE TABLE bench_kv (k INTEGER PRIMARY KEY, v INTEGER)"
+          cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "INSERT INTO bench_kv (k, v) VALUES (1, 0)"
 
       - name: Capture RustDB data directory snapshot
         run: |
