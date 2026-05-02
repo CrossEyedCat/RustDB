@@ -292,6 +292,263 @@ def rustdb_bench(
     )
 
 
+def load_tx_sql_lines(repo_root: Path, rel: str) -> list[str]:
+    """First blank-line-separated block from the file (same rules as rustdb_load --tx-sql-file)."""
+    raw = (repo_root / rel).read_text(encoding="utf-8")
+    for block in raw.split("\n\n"):
+        lines: list[str] = []
+        for ln in block.splitlines():
+            s = ln.strip()
+            if s and not s.startswith("--"):
+                lines.append(s)
+        if lines:
+            return lines
+    raise RuntimeError(f"no SQL statements in tx file {rel!r}")
+
+
+def sqlite_bench_tx(
+    db_path: Path,
+    tx_lines: list[str],
+    concurrency: int,
+    total: int,
+    setup_sql: list[str],
+    *,
+    suite: str,
+) -> Point:
+    import sqlite3
+
+    if db_path.exists():
+        db_path.unlink()
+
+    con = sqlite3.connect(str(db_path), check_same_thread=False)
+    try:
+        con.execute("PRAGMA journal_mode=WAL;")
+        con.execute("PRAGMA synchronous=NORMAL;")
+        for s in setup_sql:
+            con.execute(s)
+        con.commit()
+    finally:
+        con.close()
+
+    tls = threading.local()
+
+    def get_conn():
+        cx = getattr(tls, "cx", None)
+        if cx is None:
+            cx = sqlite3.connect(str(db_path), check_same_thread=True)
+            cx.execute("PRAGMA journal_mode=WAL;")
+            cx.execute("PRAGMA synchronous=NORMAL;")
+            tls.cx = cx
+        return cx
+
+    def one_call(i: int) -> float:
+        t0 = time.perf_counter()
+        cx = get_conn()
+        for line in tx_lines:
+            cx.execute(line.replace("{ix}", str(i)))
+        cx.commit()
+        return (time.perf_counter() - t0) * 1000.0
+
+    lat_ms = []
+    t_start = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=concurrency) as ex:
+        futs = [ex.submit(one_call, i) for i in range(total)]
+        for f in as_completed(futs):
+            lat_ms.append(f.result())
+    wall = time.perf_counter() - t_start
+    lat_ms.sort()
+    qps = total / wall if wall > 0 else 0.0
+    mean_ms = sum(lat_ms) / len(lat_ms) if lat_ms else 0.0
+    max_ms = lat_ms[-1] if lat_ms else 0.0
+
+    return Point(
+        system="sqlite",
+        scenario="",
+        concurrency=concurrency,
+        qps=qps,
+        p50_ms=quantile(lat_ms, 0.50),
+        p95_ms=quantile(lat_ms, 0.95),
+        p99_ms=quantile(lat_ms, 0.99),
+        max_ms=max_ms,
+        mean_ms=mean_ms,
+        wall_ms=wall * 1000.0,
+        ok_count=total,
+        err_count=0,
+        suite=suite,
+        stream_batch=None,
+    )
+
+
+def postgres_bench_tx(
+    dsn: str,
+    tx_lines: list[str],
+    concurrency: int,
+    total: int,
+    setup_sql: list[str],
+    *,
+    suite: str,
+) -> Point:
+    try:
+        import psycopg  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "psycopg is required for --postgres-dsn benchmarks. "
+            "Install with: python3 -m pip install 'psycopg[binary]'\n"
+            f"import error: {e}"
+        )
+
+    with psycopg.connect(dsn, autocommit=True) as con:
+        with con.cursor() as cur:
+            for s in setup_sql:
+                cur.execute(s)
+
+    tls = threading.local()
+    created = []
+    created_lock = threading.Lock()
+
+    def get_conn():
+        cx = getattr(tls, "cx", None)
+        if cx is None:
+            cx = psycopg.connect(dsn, autocommit=True)
+            tls.cx = cx
+            with created_lock:
+                created.append(cx)
+        return cx
+
+    def one_call(i: int) -> float:
+        t0 = time.perf_counter()
+        cx = get_conn()
+        with cx.transaction():
+            with cx.cursor() as cur:
+                for line in tx_lines:
+                    cur.execute(line.replace("{ix}", str(i)))
+        return (time.perf_counter() - t0) * 1000.0
+
+    lat_ms = []
+    t_start = time.perf_counter()
+    try:
+        with ThreadPoolExecutor(max_workers=concurrency) as ex:
+            futs = [ex.submit(one_call, i) for i in range(total)]
+            for f in as_completed(futs):
+                lat_ms.append(f.result())
+    finally:
+        with created_lock:
+            conns = list(created)
+            created.clear()
+        for cx in conns:
+            try:
+                cx.close()
+            except Exception:
+                pass
+    wall = time.perf_counter() - t_start
+    lat_ms.sort()
+    qps = total / wall if wall > 0 else 0.0
+    mean_ms = sum(lat_ms) / len(lat_ms) if lat_ms else 0.0
+    max_ms = lat_ms[-1] if lat_ms else 0.0
+
+    return Point(
+        system="postgres",
+        scenario="",
+        concurrency=concurrency,
+        qps=qps,
+        p50_ms=quantile(lat_ms, 0.50),
+        p95_ms=quantile(lat_ms, 0.95),
+        p99_ms=quantile(lat_ms, 0.99),
+        max_ms=max_ms,
+        mean_ms=mean_ms,
+        wall_ms=wall * 1000.0,
+        ok_count=total,
+        err_count=0,
+        suite=suite,
+        stream_batch=None,
+    )
+
+
+def rustdb_bench_tx(
+    repo_root: Path,
+    cert_path: Path,
+    addr: str,
+    server_name: str,
+    tx_sql_path: Path,
+    concurrency: int,
+    total: int,
+    mode: str,
+    *,
+    quic_max_streams: int = 256,
+    quic_idle_secs: int = 30,
+    suite: str = "baseline",
+) -> Point:
+    exe = repo_root / "target" / "debug" / ("rustdb_load.exe" if os.name == "nt" else "rustdb_load")
+    if not exe.exists():
+        raise RuntimeError(f"rustdb_load not built at {exe}")
+
+    rustdb_mode = mode
+    cmd = [
+        str(exe),
+        "--addr",
+        addr,
+        "--cert",
+        str(cert_path),
+        "--server-name",
+        server_name,
+        "--concurrency",
+        str(concurrency),
+        "--queries",
+        str(total),
+        "--tx-sql-file",
+        str(tx_sql_path),
+        "--connection-mode",
+        rustdb_mode,
+        "--quic-max-streams",
+        str(quic_max_streams),
+        "--quic-idle-secs",
+        str(quic_idle_secs),
+        "--json",
+    ]
+
+    try:
+        cp = run(cmd, check=True, capture=True, cwd=repo_root)
+    except subprocess.CalledProcessError as e:
+        out = (e.stdout or "").strip()
+        err = (e.stderr or "").strip()
+        raise RuntimeError(
+            "rustdb_load failed\n"
+            f"cmd: {' '.join(cmd)}\n"
+            f"exit: {e.returncode}\n"
+            f"stdout:\n{out}\n\nstderr:\n{err}\n"
+        ) from None
+
+    line = cp.stdout.strip().splitlines()[-1].strip()
+    try:
+        data = json.loads(line)
+    except Exception as e:
+        raise RuntimeError(f"failed to parse rustdb_load JSON: {e}\nstdout:\n{cp.stdout}\nstderr:\n{cp.stderr}")
+
+    max_us = int(data.get("max_us", 0))
+    mean_us = int(data.get("mean_us", 0))
+    ok = int(data.get("ok", 0))
+    err = int(data.get("err", 0))
+    sb = int(data.get("stream_batch", 1))
+
+    # Always label `rustdb(mode)` — JSON `stream_batch` is statements/tx, not rustdb_load batching.
+    return Point(
+        system=rustdb_system_label(rustdb_mode, 1, False),
+        scenario="",
+        concurrency=concurrency,
+        qps=float(data["qps"]),
+        p50_ms=float(data["p50_us"]) / 1000.0,
+        p95_ms=float(data["p95_us"]) / 1000.0,
+        p99_ms=float(data["p99_us"]) / 1000.0,
+        max_ms=float(max_us) / 1000.0,
+        mean_ms=float(mean_us) / 1000.0,
+        wall_ms=float(data.get("wall_ms", 0.0)),
+        ok_count=ok,
+        err_count=err,
+        suite=suite,
+        stream_batch=sb,
+    )
+
+
 def rustdb_system_label(mode: str, stream_batch: int, distinguish_batches: bool) -> str:
     """Keep `rustdb(shared)` when only the default batch=1 is used; add `sbN` when comparing batches."""
     if distinguish_batches:
@@ -378,7 +635,7 @@ def main():
     ap.add_argument(
         "--scenarios",
         default="select_literal,select_table",
-        help="Comma-separated: `select_literal`, `select_table`.",
+        help="Comma-separated scenario names: select_literal, select_table, update_pk, mini_tx.",
     )
     ap.add_argument(
         "--rustdb-connection-modes",
@@ -427,22 +684,36 @@ def main():
         if m not in ("shared", "per-worker"):
             raise SystemExit(f"invalid rustdb mode: {m}")
 
-    # (scenario_name, query_sql, sqlite_setup_statements). RustDB and Postgres use the same `query_sql`.
+    # (scenario_name, query_sql, setup_statements, tx_sql_file or None).
+    # When tx_sql_file is set, SQL is read from that path (rustdb_load --tx-sql-file); query_sql is unused.
     scenario_catalog = [
-        ("select_literal", "SELECT 1", []),
+        ("select_literal", "SELECT 1", [], None),
         (
             "select_table",
             "SELECT a FROM bench_t WHERE a = 1",
             ["CREATE TABLE bench_t (a INTEGER)", "INSERT INTO bench_t (a) VALUES (1)"],
+            None,
         ),
         (
             "update_pk",
             "UPDATE bench_kv SET v = v + 1 WHERE k = 1",
             [
                 "CREATE TABLE bench_kv (k INTEGER PRIMARY KEY, v INTEGER)",
-                # Keep setup lightweight and deterministic in CI.
                 "INSERT INTO bench_kv (k, v) VALUES (1, 0)",
             ],
+            None,
+        ),
+        (
+            "mini_tx",
+            "",
+            [
+                "DROP TABLE IF EXISTS mini_log",
+                "DROP TABLE IF EXISTS mini_main",
+                "CREATE TABLE mini_main (k INTEGER PRIMARY KEY, v INTEGER)",
+                "INSERT INTO mini_main (k, v) VALUES (1, 0)",
+                "CREATE TABLE mini_log (i INTEGER PRIMARY KEY, ref INTEGER)",
+            ],
+            "scripts/bench_mini_tx.sql",
         ),
     ]
     catalog_by_name = {s[0]: s for s in scenario_catalog}
@@ -458,31 +729,51 @@ def main():
     points: list[Point] = []
 
     # Phase 1: baseline — RustDB @ baseline_sb (fair vs SQLite/Postgres), then SQLite, then Postgres.
-    for name, sqlite_sql, setup_sql in scenarios:
-        rustdb_workload = sqlite_sql
+    for name, sqlite_sql, setup_sql, tx_rel in scenarios:
+        tx_path = (repo_root / tx_rel) if tx_rel else None
+        tx_lines = load_tx_sql_lines(repo_root, tx_rel) if tx_rel else None
         for mode in rustdb_modes:
             for c in conc:
-                p = rustdb_bench(
-                    repo_root,
-                    cert_path,
-                    args.addr,
-                    args.server_name,
-                    rustdb_workload,
-                    c,
-                    args.queries,
-                    mode,
-                    stream_batch=baseline_sb,
-                    quic_max_streams=args.rustdb_quic_max_streams,
-                    quic_idle_secs=args.rustdb_quic_idle_secs,
-                    distinguish_batches=distinguish_baseline_batch,
-                    suite="baseline",
-                )
+                if tx_lines is not None:
+                    assert tx_path is not None
+                    p = rustdb_bench_tx(
+                        repo_root,
+                        cert_path,
+                        args.addr,
+                        args.server_name,
+                        tx_path,
+                        c,
+                        args.queries,
+                        mode,
+                        quic_max_streams=args.rustdb_quic_max_streams,
+                        quic_idle_secs=args.rustdb_quic_idle_secs,
+                        suite="baseline",
+                    )
+                else:
+                    p = rustdb_bench(
+                        repo_root,
+                        cert_path,
+                        args.addr,
+                        args.server_name,
+                        sqlite_sql,
+                        c,
+                        args.queries,
+                        mode,
+                        stream_batch=baseline_sb,
+                        quic_max_streams=args.rustdb_quic_max_streams,
+                        quic_idle_secs=args.rustdb_quic_idle_secs,
+                        distinguish_batches=distinguish_baseline_batch,
+                        suite="baseline",
+                    )
                 p.scenario = name
                 points.append(p)
 
         for c in conc:
             db_path = out_dir / f"sqlite_{name}_{c}.db"
-            p2 = sqlite_bench(db_path, sqlite_sql, c, args.queries, setup_sql, suite="baseline")
+            if tx_lines is not None:
+                p2 = sqlite_bench_tx(db_path, tx_lines, c, args.queries, setup_sql, suite="baseline")
+            else:
+                p2 = sqlite_bench(db_path, sqlite_sql, c, args.queries, setup_sql, suite="baseline")
             p2.scenario = name
             points.append(p2)
 
@@ -500,15 +791,32 @@ def main():
                     "CREATE TABLE bench_kv (k INTEGER PRIMARY KEY, v INTEGER)",
                     "INSERT INTO bench_kv (k, v) VALUES (1, 0)",
                 ]
+            elif name == "mini_tx":
+                pg_setup = [
+                    "DROP TABLE IF EXISTS mini_log",
+                    "DROP TABLE IF EXISTS mini_main",
+                    "CREATE TABLE mini_main (k INTEGER PRIMARY KEY, v INTEGER)",
+                    "INSERT INTO mini_main (k, v) VALUES (1, 0)",
+                    "CREATE TABLE mini_log (i INTEGER PRIMARY KEY, ref INTEGER)",
+                ]
             for c in conc:
-                p3 = postgres_bench(args.postgres_dsn, sqlite_sql, c, args.queries, pg_setup, suite="baseline")
+                if tx_lines is not None:
+                    p3 = postgres_bench_tx(
+                        args.postgres_dsn, tx_lines, c, args.queries, pg_setup, suite="baseline"
+                    )
+                else:
+                    p3 = postgres_bench(
+                        args.postgres_dsn, sqlite_sql, c, args.queries, pg_setup, suite="baseline"
+                    )
                 p3.scenario = name
                 points.append(p3)
 
-    # Phase 2: RustDB-only stream_batch sweep (e.g. 1, 8, 16).
+    # Phase 2: RustDB-only stream_batch sweep (e.g. 1, 8, 16). Skipped for multi-statement tx scenarios.
     if sweep_batches:
         distinguish_sweep = len(sweep_batches) > 1 or (len(sweep_batches) == 1 and sweep_batches[0] != 1)
-        for name, sqlite_sql, setup_sql in scenarios:
+        for name, sqlite_sql, setup_sql, tx_rel in scenarios:
+            if tx_rel:
+                continue
             _ = setup_sql
             rustdb_workload = sqlite_sql
             for mode in rustdb_modes:

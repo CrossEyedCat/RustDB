@@ -17,7 +17,7 @@ use rustls::pki_types::CertificateDer;
 use serde::Serialize;
 use std::fs;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
@@ -58,6 +58,12 @@ struct Args {
     /// If set, reads SQL statements (one per line) from this file and cycles through them.
     #[arg(long)]
     sql_file: Option<PathBuf>,
+
+    /// If set, each blank-line-separated block is one transaction: statements run in order on one stream.
+    /// One latency sample is recorded per transaction. Use `{ix}` in SQL (e.g. INSERT) — replaced with a
+    /// unique integer per transaction. Incompatible with `--sql-file` / `--insert-table`.
+    #[arg(long)]
+    tx_sql_file: Option<PathBuf>,
 
     /// Single SQL statement to run (ignored when --sql-file is provided).
     #[arg(long, default_value = "SELECT 1")]
@@ -155,6 +161,41 @@ async fn query_many_on_one_stream(
     Ok(out)
 }
 
+fn parse_tx_sql_file(
+    path: &Path,
+) -> Result<Vec<Vec<String>>, Box<dyn std::error::Error + Send + Sync>> {
+    let raw = fs::read_to_string(path)?;
+    let mut groups: Vec<Vec<String>> = Vec::new();
+    for block in raw.split("\n\n") {
+        let lines: Vec<String> = block
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with("--"))
+            .map(|s| s.to_string())
+            .collect();
+        if !lines.is_empty() {
+            groups.push(lines);
+        }
+    }
+    if groups.is_empty() {
+        return Err(
+            "tx-sql-file: no SQL statements (after skipping empty lines and comments)".into(),
+        );
+    }
+    Ok(groups)
+}
+
+#[derive(Clone)]
+enum Workload {
+    Cycle {
+        statements: Arc<Vec<String>>,
+        stream_batch: usize,
+    },
+    Tx {
+        groups: Arc<Vec<Vec<String>>>,
+    },
+}
+
 #[derive(Debug, Serialize)]
 struct LoadReport {
     addr: String,
@@ -181,6 +222,10 @@ struct LoadReport {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = Args::parse();
+    if args.tx_sql_file.is_some() && (args.sql_file.is_some() || args.insert_table.is_some()) {
+        eprintln!("rustdb_load: --tx-sql-file cannot be used with --sql-file or --insert-table");
+        std::process::exit(2);
+    }
 
     let concurrency = args.concurrency.max(1);
     let quic_max_effective = match args.connection_mode {
@@ -204,51 +249,66 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     )?;
     let endpoint = make_client_endpoint(client_cfg)?;
 
-    let statements: Arc<Vec<String>> = if let Some(table) = &args.insert_table {
-        let total = args.insert_rows.max(1);
-        let batch = args.insert_batch.max(1);
-        let col = args.insert_column.trim();
-        let val = args.insert_value.trim();
-
-        let mut out: Vec<String> = Vec::with_capacity(total.div_ceil(batch));
-        let mut remaining = total;
-        while remaining > 0 {
-            let n = remaining.min(batch);
-            remaining -= n;
-
-            // Rough capacity: "INSERT INTO t (a) VALUES " + n * "(2)," chars
-            let mut sql = String::with_capacity(64 + n * 4);
-            sql.push_str("INSERT INTO ");
-            sql.push_str(table);
-            sql.push_str(" (");
-            sql.push_str(col);
-            sql.push_str(") VALUES ");
-            for i in 0..n {
-                if i > 0 {
-                    sql.push(',');
-                }
-                sql.push('(');
-                sql.push_str(val);
-                sql.push(')');
-            }
-            out.push(sql);
-        }
-
-        Arc::new(out)
-    } else if let Some(p) = &args.sql_file {
-        let raw = fs::read_to_string(p)?;
-        let mut v: Vec<String> = raw
-            .lines()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty() && !l.starts_with("--"))
-            .map(|l| l.to_string())
-            .collect();
-        if v.is_empty() {
-            v.push("SELECT 1".to_string());
-        }
-        Arc::new(v)
+    let workload: Arc<Workload> = if let Some(ref p) = args.tx_sql_file {
+        Arc::new(Workload::Tx {
+            groups: Arc::new(parse_tx_sql_file(p)?),
+        })
     } else {
-        Arc::new(vec![args.sql.clone()])
+        let statements: Arc<Vec<String>> = if let Some(table) = &args.insert_table {
+            let total = args.insert_rows.max(1);
+            let batch = args.insert_batch.max(1);
+            let col = args.insert_column.trim();
+            let val = args.insert_value.trim();
+
+            let mut out: Vec<String> = Vec::with_capacity(total.div_ceil(batch));
+            let mut remaining = total;
+            while remaining > 0 {
+                let n = remaining.min(batch);
+                remaining -= n;
+
+                // Rough capacity: "INSERT INTO t (a) VALUES " + n * "(2)," chars
+                let mut sql = String::with_capacity(64 + n * 4);
+                sql.push_str("INSERT INTO ");
+                sql.push_str(table);
+                sql.push_str(" (");
+                sql.push_str(col);
+                sql.push_str(") VALUES ");
+                for i in 0..n {
+                    if i > 0 {
+                        sql.push(',');
+                    }
+                    sql.push('(');
+                    sql.push_str(val);
+                    sql.push(')');
+                }
+                out.push(sql);
+            }
+
+            Arc::new(out)
+        } else if let Some(p) = &args.sql_file {
+            let raw = fs::read_to_string(p)?;
+            let mut v: Vec<String> = raw
+                .lines()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty() && !l.starts_with("--"))
+                .map(|l| l.to_string())
+                .collect();
+            if v.is_empty() {
+                v.push("SELECT 1".to_string());
+            }
+            Arc::new(v)
+        } else {
+            Arc::new(vec![args.sql.clone()])
+        };
+        Arc::new(Workload::Cycle {
+            statements,
+            stream_batch: args.stream_batch.max(1),
+        })
+    };
+
+    let report_stream_batch = match workload.as_ref() {
+        Workload::Cycle { stream_batch, .. } => *stream_batch,
+        Workload::Tx { groups } => groups.first().map(|g| g.len()).unwrap_or(1),
     };
 
     let start = Instant::now();
@@ -267,7 +327,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     for worker_id in 0..concurrency {
         let permit = sem.clone().acquire_owned().await?;
-        let statements = statements.clone();
+        let workload = workload.clone();
         let mode = args.connection_mode.clone();
         let endpoint = endpoint.clone();
         let server_name = args.server_name.clone();
@@ -289,51 +349,108 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             // (global_i, sql, wall_time, result, print)
             let mut out: Vec<WorkerRow> = Vec::with_capacity(my_queries);
-            let batch = args.stream_batch.max(1);
-            let mut j = 0usize;
-            while j < my_queries {
-                let n = (my_queries - j).min(batch);
-                let mut sqls = Vec::with_capacity(n);
-                let mut idxs = Vec::with_capacity(n);
-                for k in 0..n {
-                    let global_i = start_index + j + k;
-                    idxs.push(global_i);
-                    sqls.push(statements[global_i % statements.len()].clone());
-                }
 
-                let t0 = Instant::now();
-                let results: Result<Vec<(ServerMessage, Duration)>, String> = if batch == 1 {
-                    let m = query_once(&worker_conn, &sqls[0])
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    Ok(vec![(m, t0.elapsed())])
-                } else {
-                    query_many_on_one_stream(&worker_conn, &sqls)
-                        .await
-                        .map_err(|e| e.to_string())
-                };
-
-                match results {
-                    Ok(msgs) => {
-                        for (k, (msg, dt)) in msgs.into_iter().enumerate() {
-                            let global_i = idxs[k];
-                            let sql = sqls[k].clone();
-                            let print = global_i < print_first;
-                            out.push((global_i, sql, dt, Ok(msg), print));
-                        }
-                    }
-                    Err(e) => {
-                        let dt = t0.elapsed();
+            match workload.as_ref() {
+                Workload::Cycle {
+                    statements,
+                    stream_batch,
+                } => {
+                    let batch = *stream_batch;
+                    let mut j = 0usize;
+                    while j < my_queries {
+                        let n = (my_queries - j).min(batch);
+                        let mut sqls = Vec::with_capacity(n);
+                        let mut idxs = Vec::with_capacity(n);
                         for k in 0..n {
-                            let global_i = idxs[k];
-                            let sql = sqls[k].clone();
-                            let print = global_i < print_first;
-                            out.push((global_i, sql, dt, Err(e.clone()), print));
+                            let global_i = start_index + j + k;
+                            idxs.push(global_i);
+                            sqls.push(statements[global_i % statements.len()].clone());
                         }
+
+                        let t0 = Instant::now();
+                        let results: Result<Vec<(ServerMessage, Duration)>, String> = if batch == 1
+                        {
+                            let m = query_once(&worker_conn, &sqls[0])
+                                .await
+                                .map_err(|e| e.to_string())?;
+                            Ok(vec![(m, t0.elapsed())])
+                        } else {
+                            query_many_on_one_stream(&worker_conn, &sqls)
+                                .await
+                                .map_err(|e| e.to_string())
+                        };
+
+                        match results {
+                            Ok(msgs) => {
+                                for (k, (msg, dt)) in msgs.into_iter().enumerate() {
+                                    let global_i = idxs[k];
+                                    let sql = sqls[k].clone();
+                                    let print = global_i < print_first;
+                                    out.push((global_i, sql, dt, Ok(msg), print));
+                                }
+                            }
+                            Err(e) => {
+                                let dt = t0.elapsed();
+                                for k in 0..n {
+                                    let global_i = idxs[k];
+                                    let sql = sqls[k].clone();
+                                    let print = global_i < print_first;
+                                    out.push((global_i, sql, dt, Err(e.clone()), print));
+                                }
+                            }
+                        }
+
+                        j += n;
                     }
                 }
-
-                j += n;
+                Workload::Tx { groups } => {
+                    let mut j = 0usize;
+                    while j < my_queries {
+                        let global_i = start_index + j;
+                        let tmpl = &groups[global_i % groups.len()];
+                        let sqls: Vec<String> = tmpl
+                            .iter()
+                            .map(|s| s.replace("{ix}", &global_i.to_string()))
+                            .collect();
+                        let label = sqls.join("; ");
+                        let t0 = Instant::now();
+                        let res = query_many_on_one_stream(&worker_conn, &sqls)
+                            .await
+                            .map_err(|e| e.to_string());
+                        let wall = t0.elapsed();
+                        let print = global_i < print_first;
+                        match res {
+                            Ok(msgs) => {
+                                let mut err_msg: Option<String> = None;
+                                let mut last: Option<ServerMessage> = None;
+                                for (m, _dt) in &msgs {
+                                    if let ServerMessage::Error(p) = m {
+                                        err_msg = Some(p.message.clone());
+                                        break;
+                                    }
+                                    last = Some(m.clone());
+                                }
+                                if let Some(e) = err_msg {
+                                    out.push((global_i, label, wall, Err(e), print));
+                                } else if let Some(m) = last {
+                                    out.push((global_i, label, wall, Ok(m), print));
+                                } else {
+                                    out.push((
+                                        global_i,
+                                        label,
+                                        wall,
+                                        Err("empty response for transaction".into()),
+                                        print,
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                out.push((global_i, label, wall, Err(e), print));
+                            }
+                        }
+                        j += 1;
+                    }
+                }
             }
 
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(out)
@@ -421,7 +538,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         mean_us,
         max_us: max,
         connection_mode: format!("{:?}", args.connection_mode),
-        stream_batch: args.stream_batch,
+        stream_batch: report_stream_batch,
         quic_max_streams: quic_max_effective,
         quic_idle_secs: args.quic_idle_secs,
     };

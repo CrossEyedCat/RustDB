@@ -535,6 +535,11 @@ jobs:
           cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "INSERT INTO bench_t (a) VALUES (1)"
           cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "CREATE TABLE bench_kv (k INTEGER PRIMARY KEY, v INTEGER)"
           cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "INSERT INTO bench_kv (k, v) VALUES (1, 0)"
+          cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "DROP TABLE IF EXISTS mini_log"
+          cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "DROP TABLE IF EXISTS mini_main"
+          cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "CREATE TABLE mini_main (k INTEGER PRIMARY KEY, v INTEGER)"
+          cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "INSERT INTO mini_main (k, v) VALUES (1, 0)"
+          cargo run -q --bin rustdb_quic_client -- --addr 127.0.0.1:15432 --cert "$RUSTDB_CERT" --server-name localhost "CREATE TABLE mini_log (i INTEGER PRIMARY KEY, ref INTEGER)"
 
       - name: Capture RustDB data directory snapshot
         run: |
@@ -559,7 +564,7 @@ jobs:
             --server-name localhost \
             --concurrency 1,8,32,64,128 \
             --queries 5000 \
-            --scenarios select_literal,select_table,update_pk \
+            --scenarios select_literal,select_table,update_pk,mini_tx \
             --rustdb-connection-modes shared,per-worker \
             --rustdb-baseline-stream-batch 1 \
             --rustdb-stream-sweep 1,8,16 \
@@ -591,7 +596,7 @@ jobs:
             return None
           
           conc = "64"
-          scenarios = ["select_literal", "select_table", "update_pk"]
+          scenarios = ["select_literal", "select_table", "update_pk", "mini_tx"]
           rustdb_systems = ["rustdb(shared)", "rustdb(per-worker)"]
           
           out = []
