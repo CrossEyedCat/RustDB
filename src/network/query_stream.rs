@@ -1,8 +1,11 @@
-//! Variant A: one QUIC connection, many bidirectional streams — one query per stream.
+//! Variant A: one QUIC connection, many bidirectional streams.
+//! Each stream may carry one or more request frames; all frames on a stream share one
+//! [`SessionContext`] (so `BEGIN` / `COMMIT` can span multiple round-trips).
 //!
 //! See `docs/network/stream-models.md`.
 
 use std::cell::RefCell;
+use std::sync::mpsc::{self as sync_mpsc, RecvTimeoutError};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
@@ -158,6 +161,18 @@ pub fn dispatch_client_message(
     engine: &dyn EngineHandle,
     policy: &StreamPolicy,
 ) -> Result<Arc<[u8]>, DispatchError> {
+    let mut ctx = SessionContext::default();
+    dispatch_client_message_with_ctx(msg, engine, policy, &mut ctx)
+}
+
+/// Same as [`dispatch_client_message`], but uses `session_ctx` so `BEGIN` / `COMMIT` persist across
+/// multiple queries on the same QUIC bidirectional stream (see [`handle_query_bidi_stream`]).
+pub fn dispatch_client_message_with_ctx(
+    msg: ClientMessage,
+    engine: &dyn EngineHandle,
+    policy: &StreamPolicy,
+    session_ctx: &mut SessionContext,
+) -> Result<Arc<[u8]>, DispatchError> {
     match msg {
         ClientMessage::Query(q) => {
             let span = info_span!(
@@ -183,8 +198,7 @@ pub fn dispatch_client_message(
                 }
             }
 
-            let mut ctx = SessionContext::default();
-            let out = engine.execute_sql(&q.sql, &mut ctx)?;
+            let out = engine.execute_sql(&q.sql, session_ctx)?;
             let out = enforce_max_result_rows(out, policy.max_result_rows)?;
             let server = out.into_server_message();
 
@@ -322,6 +336,32 @@ pub async fn handle_query_bidi_stream(
     let _keep_permit = _permit;
     let max_frame = policy.max_frame_payload_bytes.min(MAX_FRAME_PAYLOAD_BYTES);
 
+    // One OS thread per bidirectional stream owns [`SessionContext`] so `BEGIN` … `COMMIT` spans
+    // multiple wire frames (see `rustdb_load --tx-sql-file`). The async task only does I/O; SQL runs
+    // on the session thread without moving `SessionContext` across `spawn_blocking` workers (which
+    // would break `MutexGuard` inside stronger isolation modes).
+    let engine_worker = engine.clone();
+    let policy_worker = (*policy).clone();
+    let (job_tx, job_rx) = sync_mpsc::channel::<(
+        ClientMessage,
+        sync_mpsc::Sender<Result<Arc<[u8]>, DispatchError>>,
+    )>();
+    let _session_worker = std::thread::Builder::new()
+        .name("rustdb-quic-sql-session".into())
+        .spawn(move || {
+            let mut session_ctx = SessionContext::default();
+            while let Ok((msg, reply_tx)) = job_rx.recv() {
+                let r = dispatch_client_message_with_ctx(
+                    msg,
+                    engine_worker.as_ref(),
+                    &policy_worker,
+                    &mut session_ctx,
+                );
+                let _ = reply_tx.send(r);
+            }
+        })
+        .expect("spawn rustdb-quic-sql-session thread");
+
     // Variant A compatibility: old clients use one query per stream; newer clients may send
     // multiple frames on the same stream for better throughput.
     const MAX_FRAMES_PER_STREAM: usize = 1024;
@@ -356,33 +396,44 @@ pub async fn handle_query_bidi_stream(
         let decoded = decode_span.in_scope(|| decode_client_frame_v1(&frame_buf));
 
         let t0 = Instant::now();
-        // `SqlEngine` WAL uses `tokio::runtime::Runtime::block_on` internally; it must not run on the
-        // Tokio worker that is driving this async stream (nested block_on / runtime panic). Run the
-        // synchronous decode → execute → encode path on the blocking pool instead.
         let timeout_dur = policy.query_timeout;
-        let eng = engine.clone();
-        let pol = policy.clone();
-        let dispatch_result = tokio::time::timeout(timeout_dur, async move {
-            let jh = tokio::task::spawn_blocking(move || match decoded {
-                Ok(msg) => dispatch_client_message(msg, eng.as_ref(), pol.as_ref()),
-                Err(e) => Err(e.into()),
-            });
-            match jh.await {
-                Ok(r) => r,
-                Err(e) => Err(DispatchError::Engine(EngineError::new(
-                    engine_error_code::INTERNAL,
-                    format!("spawn_blocking join: {e}"),
-                ))),
+
+        let result: Result<Arc<[u8]>, DispatchError> = match decoded {
+            Err(e) => Err(e.into()),
+            Ok(msg) => {
+                let (reply_tx, reply_rx) = sync_mpsc::channel::<Result<Arc<[u8]>, DispatchError>>();
+                if job_tx.send((msg, reply_tx)).is_err() {
+                    Err(EngineError::new(
+                        engine_error_code::INTERNAL,
+                        "sql session worker disconnected",
+                    )
+                    .into())
+                } else {
+                    let join_result = tokio::task::spawn_blocking(move || {
+                        match reply_rx.recv_timeout(timeout_dur) {
+                            Ok(dispatch_res) => dispatch_res,
+                            Err(RecvTimeoutError::Timeout) => Err(EngineError::new(
+                                engine_error_code::QUERY_TIMEOUT,
+                                "query exceeded per-query timeout",
+                            )
+                            .into()),
+                            Err(RecvTimeoutError::Disconnected) => Err(EngineError::new(
+                                engine_error_code::INTERNAL,
+                                "sql session worker disconnected before reply",
+                            )
+                            .into()),
+                        }
+                    })
+                    .await;
+                    match join_result {
+                        Ok(r) => r,
+                        Err(e) => Err(DispatchError::Engine(EngineError::new(
+                            engine_error_code::INTERNAL,
+                            format!("spawn_blocking join: {e}"),
+                        ))),
+                    }
+                }
             }
-        })
-        .await;
-        let result = match dispatch_result {
-            Ok(r) => r,
-            Err(_elapsed) => Err(EngineError::new(
-                engine_error_code::QUERY_TIMEOUT,
-                "query exceeded per-query timeout",
-            )
-            .into()),
         };
 
         let latency_ns = t0.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
