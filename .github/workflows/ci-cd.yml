@@ -406,9 +406,7 @@ jobs:
           ./scripts/sql_quic_smoke.sh
         timeout-minutes: 15
 
-  bench_sqlite_vs_rustdb:
-    # Disabled: cross-engine charts were removed (not actionable / too flaky for CI).
-    if: false
+  # NOTE: bench_sqlite_vs_rustdb job removed (cross-engine charts were not actionable / too flaky for CI).
 
   # Loom permutation tests for concurrent SqlEngine scenarios (see README + tokio-rs/loom).
   # Replaces the former RustDB vs Postgres throughput saturation benchmark job.
