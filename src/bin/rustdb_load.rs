@@ -18,6 +18,7 @@ use serde::Serialize;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
@@ -325,9 +326,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let sem = Arc::new(Semaphore::new(concurrency));
     let mut handles = Vec::with_capacity(concurrency);
 
+    let tx_log_pk = Arc::new(AtomicU64::new(0));
+
     for worker_id in 0..concurrency {
         let permit = sem.clone().acquire_owned().await?;
         let workload = workload.clone();
+        let tx_log_pk = tx_log_pk.clone();
         let mode = args.connection_mode.clone();
         let endpoint = endpoint.clone();
         let server_name = args.server_name.clone();
@@ -407,12 +411,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     let mut j = 0usize;
                     while j < my_queries {
                         let global_i = start_index + j;
-                        // Log table PK must be unique under concurrent workers (shared QUIC connection).
-                        // Multiplex worker_id so two txs never insert the same i even if global_i collided.
-                        const LOG_PK_STRIDE: usize = 4096;
-                        let log_pk = global_i
-                            .saturating_mul(LOG_PK_STRIDE)
-                            .saturating_add(worker_id);
+                        // Log table PK must be unique under concurrency (and robust to any internal retries).
+                        // Use a global monotonic counter shared across workers.
+                        let log_pk = tx_log_pk.fetch_add(1, Ordering::Relaxed);
                         let tmpl = &groups[global_i % groups.len()];
                         let sqls: Vec<String> = tmpl
                             .iter()
