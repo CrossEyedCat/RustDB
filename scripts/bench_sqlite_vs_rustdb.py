@@ -757,7 +757,14 @@ def main():
                         cert_path,
                         args.addr,
                         args.server_name,
-                        "DELETE FROM mini_log",
+                        "DROP TABLE IF EXISTS mini_log",
+                    )
+                    rustdb_exec_sql(
+                        repo_root,
+                        cert_path,
+                        args.addr,
+                        args.server_name,
+                        "CREATE TABLE mini_log (i INTEGER PRIMARY KEY, ref INTEGER)",
                     )
                     p = rustdb_bench_tx(
                         repo_root,
