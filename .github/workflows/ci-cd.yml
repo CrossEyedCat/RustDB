@@ -1046,7 +1046,7 @@ jobs:
           test -f rustdb-main-${{ github.sha }}-source.tar.gz
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: main-${{ github.sha }}
           name: Build from main (${{ github.sha }})
