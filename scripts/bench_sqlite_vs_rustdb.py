@@ -358,7 +358,8 @@ def sqlite_bench_tx(
         t0 = time.perf_counter()
         cx = get_conn()
         for line in tx_lines:
-            cx.execute(line.replace("{ix}", str(i)))
+            sql = line.replace("{logpk}", str(i)).replace("{ix}", str(i))
+            cx.execute(sql)
         cx.commit()
         return (time.perf_counter() - t0) * 1000.0
 
@@ -434,7 +435,8 @@ def postgres_bench_tx(
         with cx.transaction():
             with cx.cursor() as cur:
                 for line in tx_lines:
-                    cur.execute(line.replace("{ix}", str(i)))
+                    sql = line.replace("{logpk}", str(i)).replace("{ix}", str(i))
+                    cur.execute(sql)
         return (time.perf_counter() - t0) * 1000.0
 
     lat_ms = []

@@ -407,10 +407,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     let mut j = 0usize;
                     while j < my_queries {
                         let global_i = start_index + j;
+                        // Log table PK must be unique under concurrent workers (shared QUIC connection).
+                        // Multiplex worker_id so two txs never insert the same i even if global_i collided.
+                        const LOG_PK_STRIDE: usize = 4096;
+                        let log_pk = global_i
+                            .saturating_mul(LOG_PK_STRIDE)
+                            .saturating_add(worker_id);
                         let tmpl = &groups[global_i % groups.len()];
                         let sqls: Vec<String> = tmpl
                             .iter()
-                            .map(|s| s.replace("{ix}", &global_i.to_string()))
+                            .map(|s| {
+                                s.replace("{logpk}", &log_pk.to_string())
+                                    .replace("{ix}", &global_i.to_string())
+                            })
                             .collect();
                         let label = sqls.join("; ");
                         let t0 = Instant::now();
