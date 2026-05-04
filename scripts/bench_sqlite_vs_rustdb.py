@@ -38,6 +38,19 @@ def run(cmd: list[str], *, check=True, capture=True, cwd: Path | None = None) ->
     )
 
 
+def rustdb_exec_sql(repo_root: Path, cert_path: Path, addr: str, server_name: str, sql: str) -> None:
+    """Single statement against RustDB over QUIC (clears tables between bench concurrency levels)."""
+    exe = repo_root / "target" / "debug" / ("rustdb_quic_client.exe" if os.name == "nt" else "rustdb_quic_client")
+    if not exe.exists():
+        raise RuntimeError(f"rustdb_quic_client not built at {exe}")
+    run(
+        [str(exe), "--addr", addr, "--cert", str(cert_path), "--server-name", server_name, sql],
+        check=True,
+        capture=True,
+        cwd=repo_root,
+    )
+
+
 def quantile(sorted_vals, q: float):
     if not sorted_vals:
         return 0.0
@@ -736,6 +749,14 @@ def main():
             for c in conc:
                 if tx_lines is not None:
                     assert tx_path is not None
+                    # Same RustDB server for all concurrency levels; truncate log so INSERT keys stay unique.
+                    rustdb_exec_sql(
+                        repo_root,
+                        cert_path,
+                        args.addr,
+                        args.server_name,
+                        "DELETE FROM mini_log",
+                    )
                     p = rustdb_bench_tx(
                         repo_root,
                         cert_path,
