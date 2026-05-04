@@ -333,13 +333,13 @@ def sqlite_bench_tx(
     if db_path.exists():
         db_path.unlink()
 
-    con = sqlite3.connect(str(db_path), check_same_thread=False)
+    # Autocommit mode: we manage BEGIN/COMMIT explicitly via tx_lines.
+    con = sqlite3.connect(str(db_path), check_same_thread=False, isolation_level=None)
     try:
         con.execute("PRAGMA journal_mode=WAL;")
         con.execute("PRAGMA synchronous=NORMAL;")
         for s in setup_sql:
             con.execute(s)
-        con.commit()
     finally:
         con.close()
 
@@ -348,7 +348,8 @@ def sqlite_bench_tx(
     def get_conn():
         cx = getattr(tls, "cx", None)
         if cx is None:
-            cx = sqlite3.connect(str(db_path), check_same_thread=True)
+            # Autocommit mode: we manage BEGIN/COMMIT explicitly via tx_lines.
+            cx = sqlite3.connect(str(db_path), check_same_thread=True, isolation_level=None)
             cx.execute("PRAGMA journal_mode=WAL;")
             cx.execute("PRAGMA synchronous=NORMAL;")
             tls.cx = cx
@@ -360,7 +361,6 @@ def sqlite_bench_tx(
         for line in tx_lines:
             sql = line.replace("{logpk}", str(i)).replace("{ix}", str(i))
             cx.execute(sql)
-        cx.commit()
         return (time.perf_counter() - t0) * 1000.0
 
     lat_ms = []
