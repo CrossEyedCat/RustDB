@@ -90,7 +90,6 @@ impl SqlEngine {
         let wal_dir = data_dir.join(".rustdb").join("wal");
         let wal = if std::env::var_os("RUSTDB_DISABLE_WAL").is_none() {
             std::fs::create_dir_all(&wal_dir)?;
-            crate::network::sql_engine_wal::recover_sql_engine_wal(&wal_dir)?;
             Some(crate::network::sql_engine_wal::SqlEngineWal::open(
                 &wal_dir,
             )?)

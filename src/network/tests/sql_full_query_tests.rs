@@ -420,6 +420,46 @@ fn engine_transaction_insert_commit_keeps_row() {
 }
 
 #[test]
+fn engine_transaction_commit_then_rollback_does_not_corrupt_pk_on_reopen() {
+    let dir = TempDir::new().expect("tempdir");
+    {
+        let eng = SqlEngine::open(dir.path().to_path_buf()).expect("open");
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE ss92_tc (k INT PRIMARY KEY)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+        eng.execute_sql("INSERT INTO ss92_tc (k) VALUES (701)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("COMMIT", &mut ctx).unwrap();
+
+        eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+        eng.execute_sql("INSERT INTO ss92_tc (k) VALUES (702)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("ROLLBACK", &mut ctx).unwrap();
+    }
+
+    // Reopen should not fail constraint rebuild due to duplicate PKs.
+    let eng = SqlEngine::open(dir.path().to_path_buf()).expect("reopen");
+    let mut ctx = SessionContext::default();
+
+    let out_701 = eng
+        .execute_sql("SELECT k FROM ss92_tc WHERE k = 701", &mut ctx)
+        .expect("select 701");
+    match out_701 {
+        EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 1),
+        _ => panic!("expected ResultSet"),
+    }
+
+    let out_702 = eng
+        .execute_sql("SELECT k FROM ss92_tc WHERE k = 702", &mut ctx)
+        .expect("select 702");
+    match out_702 {
+        EngineOutput::ResultSet { rows, .. } => assert!(rows.is_empty()),
+        _ => panic!("expected ResultSet"),
+    }
+}
+
+#[test]
 fn engine_ddl_rejected_inside_transaction() {
     use crate::network::engine::engine_error_code;
 
