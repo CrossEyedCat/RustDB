@@ -57,6 +57,40 @@ mod alter_table_ops;
 /// engine transaction across all sessions.
 static STRONG_ISO_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
+// Test-only crash injection (enabled via env vars) to deterministically simulate
+// "process crash mid-statement" while keeping the test runner alive.
+//
+// - `RUSTDB_SIMULATE_CRASH_AFTER_DML_OPS=<n>`: panic on the n-th DML row-level op
+//   (insert/update/delete tuple operation) in the current process.
+// - `RUSTDB_SIMULATE_CRASH_POINT=<point>` (optional): only crash at a matching point
+//   (e.g. `insert_row`, `update_row`, `delete_row`).
+//
+// Note: env vars are read dynamically so integration tests can toggle them per-test.
+static SIM_CRASH_DML_OP_COUNTER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+fn maybe_simulate_dml_crash(point: &'static str) {
+    let target = match std::env::var("RUSTDB_SIMULATE_CRASH_AFTER_DML_OPS") {
+        Ok(v) => v.parse::<u64>().ok().filter(|n| *n > 0),
+        Err(_) => {
+            SIM_CRASH_DML_OP_COUNTER.store(0, Ordering::SeqCst);
+            None
+        }
+    };
+    let Some(target) = target else {
+        return;
+    };
+    if let Ok(p) = std::env::var("RUSTDB_SIMULATE_CRASH_POINT") {
+        if p != point {
+            return;
+        }
+    }
+    let now = SIM_CRASH_DML_OP_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+    if now == target {
+        panic!("simulated crash at {point} (op #{now})");
+    }
+}
+
 /// Engine backed by the in-process planner, optimizer, and executor (single default table file per data directory).
 #[derive(Clone)]
 pub struct SqlEngine {
@@ -315,7 +349,9 @@ impl SqlEngine {
                     .storage_access
                     .write()
                     .map_err(|_| lock_poisoned_engine())?;
-                execute_insert(state, ctx, stmt, ins)
+                execute_dml_autocommit(state, ctx, |state, ctx| {
+                    execute_insert(state, ctx, stmt, ins)
+                })
             }
             SqlStatement::Update(upd) => {
                 let s = info_span!("sql.update", table = %upd.table);
@@ -324,7 +360,9 @@ impl SqlEngine {
                     .storage_access
                     .write()
                     .map_err(|_| lock_poisoned_engine())?;
-                execute_update(state, ctx, stmt, upd)
+                execute_dml_autocommit(state, ctx, |state, ctx| {
+                    execute_update(state, ctx, stmt, upd)
+                })
             }
             SqlStatement::Delete(del) => {
                 let s = info_span!("sql.delete", table = %del.table);
@@ -333,7 +371,9 @@ impl SqlEngine {
                     .storage_access
                     .write()
                     .map_err(|_| lock_poisoned_engine())?;
-                execute_delete(state, ctx, stmt, del)
+                execute_dml_autocommit(state, ctx, |state, ctx| {
+                    execute_delete(state, ctx, stmt, del)
+                })
             }
             SqlStatement::CreateTable(ct) => {
                 let s = info_span!("sql.create_table", table = %ct.table_name);
@@ -430,6 +470,37 @@ fn map_db_err(e: DbError) -> EngineError {
 
 fn lock_poisoned_engine() -> EngineError {
     EngineError::new(engine_error_code::INTERNAL, "storage lock poisoned")
+}
+
+fn execute_dml_autocommit<T>(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    f: impl FnOnce(&SqlEngineState, &mut SessionContext) -> Result<T, EngineError>,
+) -> Result<T, EngineError> {
+    if ctx.transaction.is_some() {
+        return f(state, ctx);
+    }
+
+    // Statement-level implicit transaction (auto-commit) for DML.
+    // Use a predictable baseline isolation: ReadCommitted without the strong isolation lock.
+    let iso = SqlIsolationLevel::ReadCommitted;
+    let strong_iso = None;
+    let mut tx = SqlTransaction::new(iso, strong_iso);
+    if let Some(ref wal) = state.wal {
+        wal.log_begin(&mut tx, iso)?;
+    }
+    ctx.transaction = Some(tx);
+
+    match f(state, ctx) {
+        Ok(out) => {
+            commit_transaction(state, ctx)?;
+            Ok(out)
+        }
+        Err(e) => match rollback_transaction(state, ctx) {
+            Ok(_) => Err(e),
+            Err(rb) => Err(rb),
+        },
+    }
 }
 
 fn default_session_isolation() -> SqlIsolationLevel {
@@ -840,6 +911,7 @@ fn execute_insert(
                 let bytes = tuple.to_bytes().map_err(map_db_err)?;
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
                 let ins = pm.insert(&bytes).map_err(map_db_err)?;
+                maybe_simulate_dml_crash("insert_row");
                 if let Some(tx) = ctx.transaction.as_mut() {
                     if let Some(ref wal) = state.wal {
                         let page_id = (ins.record_id >> 32) as u64;
@@ -894,6 +966,7 @@ fn execute_insert(
                 drop(pm);
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
                 let ins = pm.insert(&bytes).map_err(map_db_err)?;
+                maybe_simulate_dml_crash("insert_row");
                 if let Some(tx) = ctx.transaction.as_mut() {
                     if let Some(ref wal) = state.wal {
                         let page_id = (ins.record_id >> 32) as u64;
@@ -1099,6 +1172,7 @@ fn execute_update(
             }
         }
         pm.update(rid, &new_bytes).map_err(map_db_err)?;
+        maybe_simulate_dml_crash("update_row");
         push_undo(
             ctx,
             UndoEntry::Update {
@@ -1180,6 +1254,7 @@ fn execute_delete(
             },
         );
         pm.delete(rid).map_err(map_db_err)?;
+        maybe_simulate_dml_crash("delete_row");
         if let Some(tx) = ctx.transaction.as_mut() {
             if let Some(ref wal) = state.wal {
                 let page_id = (rid >> 32) as u64;
@@ -1844,6 +1919,32 @@ mod tests {
                     rows[0][1]
                 );
             }
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
+    fn sql_engine_autocommit_dml_rolls_back_on_error() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+
+        eng.execute_sql("CREATE TABLE tuniq (a INTEGER UNIQUE)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("INSERT INTO tuniq (a) VALUES (1)", &mut ctx)
+            .unwrap();
+
+        // In auto-commit mode, the whole statement must behave atomically: if it errors mid-way,
+        // it must not leave partial changes behind.
+        assert!(eng
+            .execute_sql("INSERT INTO tuniq (a) VALUES (2), (1)", &mut ctx)
+            .is_err());
+
+        let out = eng
+            .execute_sql("SELECT a FROM tuniq WHERE a = 2", &mut ctx)
+            .unwrap();
+        match out {
+            EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 0),
             _ => panic!("expected result set"),
         }
     }

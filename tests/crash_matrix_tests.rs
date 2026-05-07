@@ -150,6 +150,164 @@ fn crash_matrix_dml_undo_redo_invariants() {
 }
 
 #[test]
+fn crash_matrix_autocommit_dml_is_statement_durable() {
+    let _guard = env_guard();
+    std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::remove_var("RUSTDB_DISABLE_CHECKPOINT");
+    let dir = TempDir::new().unwrap();
+    let data_dir = dir.path().to_path_buf();
+
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        exec(&engine, &mut ctx, "CREATE TABLE t (a INTEGER)");
+    }
+
+    // Auto-commit INSERT/UPDATE/DELETE should persist across crash/reopen.
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        exec(&engine, &mut ctx, "INSERT INTO t (a) VALUES (1)");
+        exec(&engine, &mut ctx, "UPDATE t SET a = 2 WHERE a = 1");
+        exec(&engine, &mut ctx, "DELETE FROM t WHERE a = 2");
+    }
+
+    for _ in 0..2 {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        assert_eq!(row_count(&engine, &mut ctx, "SELECT a FROM t"), 0);
+    }
+}
+
+#[test]
+fn crash_matrix_autocommit_dml_error_has_no_partial_state() {
+    let _guard = env_guard();
+    std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::remove_var("RUSTDB_DISABLE_CHECKPOINT");
+    let dir = TempDir::new().unwrap();
+    let data_dir = dir.path().to_path_buf();
+
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        exec(&engine, &mut ctx, "CREATE TABLE t (a INTEGER UNIQUE)");
+        exec(&engine, &mut ctx, "INSERT INTO t (a) VALUES (1)");
+    }
+
+    // A failing auto-commit statement must not leave partial state behind.
+    let failed = std::panic::catch_unwind(|| {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        // The second row violates UNIQUE(a), so the statement must roll back fully.
+        exec(&engine, &mut ctx, "INSERT INTO t (a) VALUES (2), (1)");
+    })
+    .is_err();
+    assert!(failed, "expected statement failure to trigger");
+
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        assert_eq!(
+            row_count(&engine, &mut ctx, "SELECT a FROM t WHERE a = 2"),
+            0
+        );
+    }
+}
+
+#[test]
+fn crash_matrix_autocommit_dml_error_does_not_append_abort_markers() {
+    let _guard = env_guard();
+    std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::remove_var("RUSTDB_DISABLE_CHECKPOINT");
+    let dir = TempDir::new().unwrap();
+    let data_dir = dir.path().to_path_buf();
+
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        exec(&engine, &mut ctx, "CREATE TABLE t (a INTEGER UNIQUE)");
+        exec(&engine, &mut ctx, "INSERT INTO t (a) VALUES (1)");
+    }
+
+    // A failed statement rolls back immediately, so recovery should not need to append ABORT
+    // markers (there is no "active" tx to undo on open).
+    let _ = std::panic::catch_unwind(|| {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        exec(&engine, &mut ctx, "INSERT INTO t (a) VALUES (2), (1)");
+    });
+
+    let before = wal_records(&data_dir);
+    let before_abort = count_abort_records(&before);
+
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        assert_eq!(
+            row_count(&engine, &mut ctx, "SELECT a FROM t WHERE a = 2"),
+            0
+        );
+    }
+    let after_first = wal_records(&data_dir);
+    let after_first_abort = count_abort_records(&after_first);
+    assert_eq!(after_first_abort, before_abort);
+
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        assert_eq!(
+            row_count(&engine, &mut ctx, "SELECT a FROM t WHERE a = 2"),
+            0
+        );
+    }
+    let after_second = wal_records(&data_dir);
+    let after_second_abort = count_abort_records(&after_second);
+    assert_eq!(after_second_abort, after_first_abort);
+}
+
+#[test]
+fn crash_matrix_mixed_autocommit_and_explicit_tx_dml() {
+    let _guard = env_guard();
+    std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::remove_var("RUSTDB_DISABLE_CHECKPOINT");
+    let dir = TempDir::new().unwrap();
+    let data_dir = dir.path().to_path_buf();
+
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        exec(&engine, &mut ctx, "CREATE TABLE t (a INTEGER)");
+    }
+
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx1 = SessionContext::default();
+        exec(&engine, &mut ctx1, "BEGIN TRANSACTION");
+        exec(&engine, &mut ctx1, "INSERT INTO t (a) VALUES (10)");
+
+        // Separate session does auto-commit insert.
+        let mut ctx2 = SessionContext::default();
+        exec(&engine, &mut ctx2, "INSERT INTO t (a) VALUES (20)");
+
+        drop(ctx1);
+        drop(ctx2);
+    }
+
+    for _ in 0..2 {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        assert_eq!(
+            row_count(&engine, &mut ctx, "SELECT a FROM t WHERE a = 10"),
+            0
+        );
+        assert_eq!(
+            row_count(&engine, &mut ctx, "SELECT a FROM t WHERE a = 20"),
+            1
+        );
+    }
+}
+
+#[test]
 fn crash_matrix_recovery_appends_abort_marker_once() {
     let _guard = env_guard();
     std::env::remove_var("RUSTDB_DISABLE_WAL");
