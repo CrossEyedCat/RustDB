@@ -2063,7 +2063,8 @@ mod tests {
         {
             let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
             let mut ctx = SessionContext::default();
-            eng.execute_sql("CREATE TABLE t (a INTEGER)", &mut ctx).unwrap();
+            eng.execute_sql("CREATE TABLE t (a INTEGER)", &mut ctx)
+                .unwrap();
             eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
             // Insert enough rows to force at least one page split (MAX_RECORDS_PER_PAGE=100).
             for i in 0..180 {
