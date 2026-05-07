@@ -640,8 +640,20 @@ fn apply_undo(state: &SqlEngineState, op: UndoEntry) -> Result<(), EngineError> 
                     // During error paths (e.g. failed INSERT that already performed a compensating
                     // delete), the row might already be gone by the time we roll back.
                     // Treat "not found" as idempotent for rollback/recovery.
-                    if !e.to_string().contains("Record not found") {
+                    let msg = e.to_string();
+                    if !msg.contains("Record not found") {
                         return Err(map_db_err(e));
+                    }
+
+                    // RecordIds encode a byte offset within the page; page split/merge/defrag can
+                    // move records and invalidate stored `rid`s within the same transaction.
+                    // As a fallback, locate and delete the row by its payload bytes.
+                    if let Ok(snapshot) = g.select(None) {
+                        if let Some((found_rid, _)) =
+                            snapshot.into_iter().find(|(_rid, bytes)| *bytes == payload)
+                        {
+                            let _ = g.delete(found_rid);
+                        }
                     }
                 }
             }
@@ -2039,6 +2051,33 @@ mod tests {
             .unwrap();
         match out {
             EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 1),
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
+    fn sql_engine_rollback_survives_page_splits() {
+        // Regression: record ids encode byte offsets, so page split/merge can invalidate them.
+        // Rollback must still remove all uncommitted rows, even if their offsets moved.
+        let dir = TempDir::new().unwrap();
+        {
+            let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+            let mut ctx = SessionContext::default();
+            eng.execute_sql("CREATE TABLE t (a INTEGER)", &mut ctx).unwrap();
+            eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+            // Insert enough rows to force at least one page split (MAX_RECORDS_PER_PAGE=100).
+            for i in 0..180 {
+                let sql = format!("INSERT INTO t (a) VALUES ({})", i);
+                eng.execute_sql(&sql, &mut ctx).unwrap();
+            }
+            eng.execute_sql("ROLLBACK", &mut ctx).unwrap();
+        }
+        // After reopen, no rows should remain.
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        let out = eng.execute_sql("SELECT a FROM t", &mut ctx).unwrap();
+        match out {
+            EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 0),
             _ => panic!("expected result set"),
         }
     }
