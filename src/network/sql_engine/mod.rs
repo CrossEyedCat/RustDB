@@ -579,16 +579,21 @@ fn rollback_transaction(
             "no active transaction",
         )
     })?;
-    if let Some(ref wal) = state.wal {
-        wal.log_abort(&mut tx)?;
-    }
-    for op in tx.undo.into_iter().rev() {
+    let undo = std::mem::take(&mut tx.undo);
+    for op in undo.into_iter().rev() {
         apply_undo(state, op)?;
     }
     rebuild_all_constraint_runtime(state)?;
     // Persist rollback: otherwise the next process sees heap pages from disk that still contain
     // undone inserts (WAL replay does not redo aborted txs, so durability must match).
     crate::network::sql_engine_wal::flush_all_page_managers(state).map_err(map_db_err)?;
+    // Only append an ABORT marker after the UNDO is applied *and* persisted.
+    //
+    // If we mark the transaction as aborted in WAL first and then crash before the UNDO is flushed,
+    // recovery would skip UNDO (seeing ABORT) while the heap still contains uncommitted changes.
+    if let Some(ref wal) = state.wal {
+        wal.log_abort(&mut tx)?;
+    }
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
