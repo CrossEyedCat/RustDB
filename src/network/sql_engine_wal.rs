@@ -139,6 +139,20 @@ impl SqlEngineWal {
         Ok(())
     }
 
+    /// Recovery helper: mark a transaction as aborted after UNDO so future reopens don't
+    /// repeatedly undo the same active transaction (idempotent recovery).
+    pub fn log_abort_by_id(
+        &self,
+        tid: TransactionId,
+        prev_lsn: Option<u64>,
+    ) -> std::result::Result<(), EngineError> {
+        let record = LogRecord::new_transaction_abort(0, tid, prev_lsn);
+        self.runtime
+            .block_on(self.writer.write_log_durable(record))
+            .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))?;
+        Ok(())
+    }
+
     pub fn log_data_insert(
         &self,
         tx: &mut SqlTransaction,
@@ -277,6 +291,7 @@ pub(crate) fn flush_all_page_managers(
 pub fn replay_wal_into_engine(
     state: &crate::network::sql_engine::SqlEngineState,
     wal_dir: &Path,
+    wal: Option<&SqlEngineWal>,
 ) -> DbResult<()> {
     use crate::logging::log_record::LogRecordType;
 
@@ -322,6 +337,8 @@ pub fn replay_wal_into_engine(
 
     // Apply UNDO for active txs (reverse order per tx).
     for tx_ops in undo_per_tx {
+        let tx_id = tx_ops.first().and_then(|r| r.transaction_id);
+        let last_lsn = tx_ops.first().map(|r| r.lsn);
         {
             let mut pm = state
                 .default_page_manager
@@ -356,6 +373,14 @@ pub fn replay_wal_into_engine(
                     let _ = g.apply_log_record_recovery(r, false);
                 }
             }
+        }
+
+        // Make recovery idempotent: once we've undone an "active" transaction, append an ABORT
+        // marker so subsequent opens don't keep applying UNDO (which could delete reused slots).
+        if let (Some(tid), Some(wal)) = (tx_id, wal) {
+            wal.log_abort_by_id(tid, last_lsn).map_err(|e| {
+                DbError::database(format!("append recovery abort marker: {}", e.message))
+            })?;
         }
     }
 

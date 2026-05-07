@@ -122,7 +122,9 @@ impl SqlEngine {
     pub fn open_with_config(data_dir: PathBuf, config: SqlEngineConfig) -> Result<Self, DbError> {
         std::fs::create_dir_all(&data_dir)?;
         let wal_dir = data_dir.join(".rustdb").join("wal");
-        let wal = if config.wal_enabled && std::env::var_os("RUSTDB_DISABLE_WAL").is_none() {
+        // `open_with_config` is intended to be deterministic (embedded/tests). If callers
+        // enable WAL explicitly, do not let global env vars silently disable it.
+        let wal = if config.wal_enabled {
             std::fs::create_dir_all(&wal_dir)?;
             Some(crate::network::sql_engine_wal::SqlEngineWal::open(
                 &wal_dir,
@@ -165,8 +167,12 @@ impl SqlEngine {
             wal,
         });
         if state.wal.is_some() && wal_dir.is_dir() {
-            crate::network::sql_engine_wal::replay_wal_into_engine(state.as_ref(), &wal_dir)
-                .map_err(|e| DbError::database(format!("WAL replay on open: {e}")))?;
+            crate::network::sql_engine_wal::replay_wal_into_engine(
+                state.as_ref(),
+                &wal_dir,
+                state.wal.as_ref(),
+            )
+            .map_err(|e| DbError::database(format!("WAL replay on open: {e}")))?;
         }
         if let Some(ref wal) = state.wal {
             wal.setup_checkpoint(state.clone())

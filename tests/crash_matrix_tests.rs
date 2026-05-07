@@ -17,6 +17,17 @@ fn exec(engine: &SqlEngine, ctx: &mut SessionContext, sql: &str) {
     engine.execute_sql(sql, ctx).unwrap();
 }
 
+fn open_engine(data_dir: PathBuf) -> SqlEngine {
+    use rustdb::common::durability::DurabilityMode;
+    use rustdb::network::sql_engine::SqlEngineConfig;
+
+    // Avoid cross-test env var races by using explicit config.
+    let mut cfg = SqlEngineConfig::default();
+    cfg.durability = DurabilityMode::Safe;
+    cfg.wal_enabled = true;
+    SqlEngine::open_with_config(data_dir, cfg).unwrap()
+}
+
 fn row_count(engine: &SqlEngine, ctx: &mut SessionContext, sql: &str) -> usize {
     match engine.execute_sql(sql, ctx).unwrap() {
         EngineOutput::ResultSet { rows, .. } => rows.len(),
@@ -45,35 +56,33 @@ fn crash_matrix_dml_undo_redo_invariants() {
     let _guard = env_guard();
     std::env::remove_var("RUSTDB_DISABLE_WAL");
     std::env::remove_var("RUSTDB_DISABLE_CHECKPOINT");
-    // Make durability deterministic for crash/reopen invariants.
-    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
     let dir = TempDir::new().unwrap();
     let data_dir = dir.path().to_path_buf();
 
     // Schema outside any transaction.
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         exec(&engine, &mut ctx, "CREATE TABLE t (a INTEGER)");
     }
 
     // Crash before commit: BEGIN; INSERT; <crash>
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         exec(&engine, &mut ctx, "BEGIN TRANSACTION");
         exec(&engine, &mut ctx, "INSERT INTO t (a) VALUES (1)");
         drop(ctx);
     }
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         assert_eq!(row_count(&engine, &mut ctx, "SELECT a FROM t"), 0);
     }
 
     // Crash after commit: BEGIN; INSERT; COMMIT; <crash>
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         exec(&engine, &mut ctx, "BEGIN TRANSACTION");
         exec(&engine, &mut ctx, "INSERT INTO t (a) VALUES (2)");
@@ -81,7 +90,7 @@ fn crash_matrix_dml_undo_redo_invariants() {
         drop(ctx);
     }
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         assert_eq!(
             row_count(&engine, &mut ctx, "SELECT a FROM t WHERE a = 2"),
@@ -91,7 +100,7 @@ fn crash_matrix_dml_undo_redo_invariants() {
 
     // Rollback durability: BEGIN; INSERT; ROLLBACK; <crash>
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         exec(&engine, &mut ctx, "BEGIN TRANSACTION");
         exec(&engine, &mut ctx, "INSERT INTO t (a) VALUES (3)");
@@ -99,7 +108,7 @@ fn crash_matrix_dml_undo_redo_invariants() {
         drop(ctx);
     }
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         assert_eq!(
             row_count(&engine, &mut ctx, "SELECT a FROM t WHERE a = 3"),
@@ -109,7 +118,7 @@ fn crash_matrix_dml_undo_redo_invariants() {
 
     // Idempotent replay: multiple reopens do not duplicate rows.
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         assert_eq!(
             row_count(&engine, &mut ctx, "SELECT a FROM t WHERE a = 2"),
@@ -117,7 +126,7 @@ fn crash_matrix_dml_undo_redo_invariants() {
         );
     }
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         assert_eq!(
             row_count(&engine, &mut ctx, "SELECT a FROM t WHERE a = 2"),
@@ -130,20 +139,19 @@ fn crash_matrix_dml_undo_redo_invariants() {
 fn crash_matrix_ddl_is_statement_durable_and_tx_rejected() {
     let _guard = env_guard();
     std::env::remove_var("RUSTDB_DISABLE_WAL");
-    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
     let dir = TempDir::new().unwrap();
     let data_dir = dir.path().to_path_buf();
 
     // DDL should be durable as a statement (DDL-in-tx is rejected).
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         exec(&engine, &mut ctx, "CREATE TABLE ddl_t (a INTEGER)");
         exec(&engine, &mut ctx, "INSERT INTO ddl_t (a) VALUES (10)");
     }
     {
         // "Crash"
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         assert_eq!(
             row_count(&engine, &mut ctx, "SELECT a FROM ddl_t WHERE a = 10"),
@@ -153,12 +161,12 @@ fn crash_matrix_ddl_is_statement_durable_and_tx_rejected() {
 
     // DROP TABLE should be durable as a statement.
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         exec(&engine, &mut ctx, "DROP TABLE ddl_t");
     }
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         // Catalog persistence check: if DROP did not persist, this would fail as "already exists".
         exec(&engine, &mut ctx, "CREATE TABLE ddl_t (a INTEGER)");
@@ -166,7 +174,7 @@ fn crash_matrix_ddl_is_statement_durable_and_tx_rejected() {
 
     // DDL inside an explicit transaction is rejected.
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         exec(&engine, &mut ctx, "BEGIN TRANSACTION");
         let err = engine
@@ -185,12 +193,11 @@ fn tooling_baseline_checkpoint_and_wal_status_reads_records() {
     let _guard = env_guard();
     std::env::remove_var("RUSTDB_DISABLE_WAL");
     std::env::remove_var("RUSTDB_DISABLE_CHECKPOINT");
-    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
     let dir = TempDir::new().unwrap();
     let data_dir = dir.path().to_path_buf();
 
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         exec(&engine, &mut ctx, "CREATE TABLE t (a INTEGER)");
         exec(&engine, &mut ctx, "INSERT INTO t (a) VALUES (1)");
@@ -207,12 +214,11 @@ fn tooling_baseline_backup_restore_directory_copy() {
     let _guard = env_guard();
     std::env::remove_var("RUSTDB_DISABLE_WAL");
     std::env::remove_var("RUSTDB_DISABLE_CHECKPOINT");
-    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
     let dir = TempDir::new().unwrap();
     let data_dir = dir.path().to_path_buf();
 
     {
-        let engine = SqlEngine::open(data_dir.clone()).unwrap();
+        let engine = open_engine(data_dir.clone());
         let mut ctx = SessionContext::default();
         exec(&engine, &mut ctx, "CREATE TABLE t (a INTEGER)");
         exec(&engine, &mut ctx, "BEGIN TRANSACTION");
@@ -228,7 +234,7 @@ fn tooling_baseline_backup_restore_directory_copy() {
 
     // "Restore": open from copied directory and verify the data is present.
     {
-        let engine = SqlEngine::open(PathBuf::from(&backup_dir)).unwrap();
+        let engine = open_engine(PathBuf::from(&backup_dir));
         let mut ctx = SessionContext::default();
         assert_eq!(
             row_count(&engine, &mut ctx, "SELECT a FROM t WHERE a = 7"),
