@@ -954,24 +954,22 @@ fn execute_insert(
                     // compensating DELETE in the *same* transaction so a later COMMIT cannot
                     // resurrect the rejected row on recovery (redo would replay insert+delete).
                     if let Some(tx) = ctx.transaction.as_mut() {
-                        if !tx.implicit_autocommit {
-                            if let Some(ref wal) = state.wal {
-                                let page_id = (ins.record_id >> 32) as u64;
-                                let off = (ins.record_id & 0xffff_ffff) as u32;
-                                let record_offset: u16 = off.try_into().map_err(|_| {
-                                    EngineError::new(
-                                        engine_error_code::INTERNAL,
-                                        "record offset too large for WAL",
-                                    )
-                                })?;
-                                wal.log_data_delete(
-                                    tx,
-                                    pm.file_id(),
-                                    page_id,
-                                    record_offset,
-                                    bytes.clone(),
-                                )?;
-                            }
+                        if let Some(ref wal) = state.wal {
+                            let page_id = (ins.record_id >> 32) as u64;
+                            let off = (ins.record_id & 0xffff_ffff) as u32;
+                            let record_offset: u16 = off.try_into().map_err(|_| {
+                                EngineError::new(
+                                    engine_error_code::INTERNAL,
+                                    "record offset too large for WAL",
+                                )
+                            })?;
+                            wal.log_data_delete(
+                                tx,
+                                pm.file_id(),
+                                page_id,
+                                record_offset,
+                                bytes.clone(),
+                            )?;
                         }
                     }
                     pm.delete(ins.record_id).map_err(map_db_err)?;
@@ -1036,24 +1034,22 @@ fn execute_insert(
                     // Mirror the WAL-visible INSERT with a WAL-visible compensating DELETE so
                     // a later COMMIT cannot replay an otherwise rejected row on recovery.
                     if let Some(tx) = ctx.transaction.as_mut() {
-                        if !tx.implicit_autocommit {
-                            if let Some(ref wal) = state.wal {
-                                let page_id = (ins.record_id >> 32) as u64;
-                                let off = (ins.record_id & 0xffff_ffff) as u32;
-                                let record_offset: u16 = off.try_into().map_err(|_| {
-                                    EngineError::new(
-                                        engine_error_code::INTERNAL,
-                                        "record offset too large for WAL",
-                                    )
-                                })?;
-                                wal.log_data_delete(
-                                    tx,
-                                    pm.file_id(),
-                                    page_id,
-                                    record_offset,
-                                    bytes.clone(),
-                                )?;
-                            }
+                        if let Some(ref wal) = state.wal {
+                            let page_id = (ins.record_id >> 32) as u64;
+                            let off = (ins.record_id & 0xffff_ffff) as u32;
+                            let record_offset: u16 = off.try_into().map_err(|_| {
+                                EngineError::new(
+                                    engine_error_code::INTERNAL,
+                                    "record offset too large for WAL",
+                                )
+                            })?;
+                            wal.log_data_delete(
+                                tx,
+                                pm.file_id(),
+                                page_id,
+                                record_offset,
+                                bytes.clone(),
+                            )?;
                         }
                     }
                     pm.delete(ins.record_id).map_err(map_db_err)?;
