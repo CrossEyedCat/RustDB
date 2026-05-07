@@ -628,7 +628,17 @@ fn apply_undo(state: &SqlEngineState, op: UndoEntry) -> Result<(), EngineError> 
                 sql_constraints::unregister_row(&mut rt, &table, rid, &tuple, s, &cat_clone)?;
             }
             let mut g = pm.lock().map_err(|_| lock_poisoned_engine())?;
-            g.delete(rid).map_err(map_db_err)?;
+            match g.delete(rid) {
+                Ok(_) => {}
+                Err(e) => {
+                    // During error paths (e.g. failed INSERT that already performed a compensating
+                    // delete), the row might already be gone by the time we roll back.
+                    // Treat "not found" as idempotent for rollback/recovery.
+                    if !e.to_string().contains("Record not found") {
+                        return Err(map_db_err(e));
+                    }
+                }
+            }
         }
         UndoEntry::Delete {
             table,
@@ -934,6 +944,10 @@ fn execute_insert(
                 if let Err(e) = register_row_for_insert(state, &insert.table, ins.record_id, &tuple)
                 {
                     pm.delete(ins.record_id).map_err(map_db_err)?;
+                    // Persist the compensating delete: otherwise an erroring insert could leave the
+                    // row on disk (insert flushed earlier by the page manager), corrupting
+                    // constraints on the next open.
+                    pm.flush_dirty_pages().map_err(map_db_err)?;
                     return Err(e);
                 }
                 push_undo(
@@ -989,6 +1003,9 @@ fn execute_insert(
                 if let Err(e) = register_row_for_insert(state, &insert.table, ins.record_id, &tuple)
                 {
                     pm.delete(ins.record_id).map_err(map_db_err)?;
+                    // Persist the compensating delete: otherwise a failed insert (e.g. PK/UNIQUE)
+                    // can leave the row visible after restart.
+                    pm.flush_dirty_pages().map_err(map_db_err)?;
                     return Err(e);
                 }
                 push_undo(
@@ -1945,6 +1962,33 @@ mod tests {
             .unwrap();
         match out {
             EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 0),
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
+    fn sql_engine_autocommit_pk_violation_does_not_corrupt_on_reopen() {
+        let dir = TempDir::new().unwrap();
+        {
+            let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+            let mut ctx = SessionContext::default();
+            eng.execute_sql("CREATE TABLE tpk (id INT PRIMARY KEY)", &mut ctx)
+                .unwrap();
+            eng.execute_sql("INSERT INTO tpk (id) VALUES (1)", &mut ctx)
+                .unwrap();
+            assert!(eng
+                .execute_sql("INSERT INTO tpk (id) VALUES (1)", &mut ctx)
+                .is_err());
+        }
+
+        // After reopen, constraints must rebuild cleanly and the duplicate row must not persist.
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        let out = eng
+            .execute_sql("SELECT id FROM tpk WHERE id = 1", &mut ctx)
+            .unwrap();
+        match out {
+            EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 1),
             _ => panic!("expected result set"),
         }
     }
