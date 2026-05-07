@@ -64,12 +64,20 @@ pub struct SqlEngine {
 }
 
 /// Configuration for `SqlEngine` opening and durability behavior.
+///
+/// Prefer struct-update construction (`SqlEngineConfig { wal_enabled: false, ..Default::default() }`)
+/// so future fields don't break callers.
 #[derive(Debug, Clone)]
 pub struct SqlEngineConfig {
     /// Enable structured WAL + recovery.
     pub wal_enabled: bool,
     /// Durability policy (fsync on commit points, etc.).
     pub durability: DurabilityMode,
+    /// Wire a [`crate::logging::checkpoint::CheckpointManager`] to the engine when WAL is enabled.
+    ///
+    /// Disabling skips checkpoint setup entirely (manual `SqlEngine::checkpoint` will then error).
+    /// The legacy env var `RUSTDB_DISABLE_CHECKPOINT` still wins over an enabled value.
+    pub checkpoints_enabled: bool,
 }
 
 impl Default for SqlEngineConfig {
@@ -85,6 +93,7 @@ impl Default for SqlEngineConfig {
         Self {
             wal_enabled: true,
             durability,
+            checkpoints_enabled: true,
         }
     }
 }
@@ -175,8 +184,10 @@ impl SqlEngine {
             .map_err(|e| DbError::database(format!("WAL replay on open: {e}")))?;
         }
         if let Some(ref wal) = state.wal {
-            wal.setup_checkpoint(state.clone())
-                .map_err(|e| DbError::database(format!("checkpoint setup on open: {e}")))?;
+            if config.checkpoints_enabled {
+                wal.setup_checkpoint(state.clone())
+                    .map_err(|e| DbError::database(format!("checkpoint setup on open: {e}")))?;
+            }
         }
         rebuild_all_constraint_runtime(state.as_ref()).map_err(|e| {
             DbError::database(format!("catalog/constraint rebuild on open: {}", e.message))
@@ -192,6 +203,29 @@ impl SqlEngine {
             .as_ref()
             .ok_or_else(|| DbError::database("WAL disabled; checkpoint unavailable"))?;
         wal.checkpoint()
+    }
+
+    /// Active durability policy for this engine instance.
+    pub fn durability(&self) -> DurabilityMode {
+        self.state.durability
+    }
+
+    /// Whether structured WAL + recovery is wired for this engine.
+    pub fn wal_enabled(&self) -> bool {
+        self.state.wal.is_some()
+    }
+
+    /// Root data directory backing this engine.
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.state.data_dir
+    }
+
+    /// Checkpoint statistics (returns `None` when WAL or checkpoints are disabled).
+    pub fn checkpoint_statistics(
+        &self,
+    ) -> Option<crate::logging::checkpoint::CheckpointStatistics> {
+        let wal = self.state.wal.as_ref()?;
+        wal.checkpoint_statistics()
     }
 
     fn execute_sql_inner(

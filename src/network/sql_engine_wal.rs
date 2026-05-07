@@ -28,8 +28,28 @@ impl SqlEngineWal {
         let mut cfg = LogWriterConfig::default();
         cfg.log_directory = wal_dir.to_path_buf();
         cfg.synchronous_commit = synchronous_commit;
-        cfg.group_commit_enabled = true;
-        cfg.force_flush_immediately = false;
+        // Performance knobs (mainly for Safe mode). Defaults are tuned for throughput while
+        // preserving durability when `synchronous_commit=true`.
+        cfg.group_commit_enabled = std::env::var("RUSTDB_GROUP_COMMIT_ENABLED")
+            .ok()
+            .as_deref()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(true);
+        if let Ok(v) = std::env::var("RUSTDB_GROUP_COMMIT_INTERVAL_MS") {
+            if let Ok(ms) = v.parse::<u64>() {
+                cfg.group_commit_interval_ms = ms.max(1);
+            }
+        }
+        if let Ok(v) = std::env::var("RUSTDB_GROUP_COMMIT_MAX_BATCH") {
+            if let Ok(n) = v.parse::<usize>() {
+                cfg.group_commit_max_batch = n.max(1);
+            }
+        }
+        cfg.force_flush_immediately = std::env::var("RUSTDB_FORCE_FLUSH_IMMEDIATELY")
+            .ok()
+            .as_deref()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         let runtime = Runtime::new().map_err(|e| DbError::database(e.to_string()))?;
         let writer = {
             let _guard = runtime.enter();
@@ -85,6 +105,15 @@ impl SqlEngineWal {
             .block_on(async { mgr.create_checkpoint().await })
             .map_err(|e| DbError::database(e.to_string()))?;
         Ok(())
+    }
+
+    /// Snapshot of [`crate::logging::checkpoint::CheckpointStatistics`] when the manager is wired.
+    pub fn checkpoint_statistics(
+        &self,
+    ) -> Option<crate::logging::checkpoint::CheckpointStatistics> {
+        let guard = self.checkpoint.lock().ok()?;
+        let mgr = guard.as_ref()?;
+        Some(self.runtime.block_on(async { mgr.get_statistics().await }))
     }
 
     pub fn log_begin(

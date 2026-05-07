@@ -26,6 +26,7 @@ fn open_engine(data_dir: PathBuf) -> SqlEngine {
     let cfg = SqlEngineConfig {
         durability: DurabilityMode::Safe,
         wal_enabled: true,
+        ..SqlEngineConfig::default()
     };
     SqlEngine::open_with_config(data_dir, cfg).unwrap()
 }
