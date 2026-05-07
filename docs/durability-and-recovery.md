@@ -20,7 +20,7 @@
 - **Txn id**: `transaction_id` (`u64`) внутри WAL.
 - **Commit point**: момент, после которого транзакция должна считаться «зафиксированной» и должна пережить рестарт (при выбранной политике fsync).
 
-### Политика включения WAL / checkpoints
+### Политика включения WAL / checkpoints и durability
 
 По умолчанию WAL **включён**. Переменные окружения:
 
@@ -28,7 +28,7 @@
 - `RUSTDB_DISABLE_CHECKPOINT=1`: отключить checkpoints, даже если WAL включён.
 - `RUSTDB_AUTO_CHECKPOINT=1`: включить авто-checkpoint (иначе только ручной `SqlEngine::checkpoint()`).
 - `RUSTDB_CHECKPOINT_INTERVAL_SECS=<n>`: интервал авто-checkpoint (секунды).
-- `RUSTDB_FSYNC_COMMIT=1`: включить «синхронный commit» на уровне WAL writer и `commits.log` (см. ниже).
+- `RUSTDB_FSYNC_COMMIT=1`: включить «синхронный commit» (commit points ждут `fsync`) на уровне WAL writer и `commits.log` (см. ниже). Это также переключает `SqlEngineConfig::default()` в режим `DurabilityMode::Safe`; без этой переменной дефолт для server/CLI — `Fast`.
 
 ### Что пишется в WAL
 

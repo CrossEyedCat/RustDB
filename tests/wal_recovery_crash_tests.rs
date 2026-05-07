@@ -20,6 +20,8 @@ fn wal_replay_undo_uncommitted_insert_on_reopen() {
     let _guard = ENV_LOCK.lock().unwrap();
     // Ensure WAL isn't disabled by some other test running in parallel.
     std::env::remove_var("RUSTDB_DISABLE_WAL");
+    // Ensure durable commit markers when tests explicitly COMMIT.
+    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
     let dir = TempDir::new().unwrap();
 
     // Setup schema outside transaction.
@@ -54,6 +56,7 @@ fn wal_replay_undo_uncommitted_insert_on_reopen() {
 fn wal_replay_redo_committed_insert_on_reopen() {
     let _guard = ENV_LOCK.lock().unwrap();
     std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
     let dir = TempDir::new().unwrap();
 
     {
@@ -82,6 +85,7 @@ fn wal_replay_redo_committed_insert_on_reopen() {
 fn wal_replay_keeps_rollback_invisible_on_reopen() {
     let _guard = ENV_LOCK.lock().unwrap();
     std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
     let dir = TempDir::new().unwrap();
 
     {
@@ -110,6 +114,7 @@ fn wal_replay_keeps_rollback_invisible_on_reopen() {
 fn wal_replay_is_idempotent_on_multiple_reopens() {
     let _guard = ENV_LOCK.lock().unwrap();
     std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
     let dir = TempDir::new().unwrap();
 
     {
@@ -142,6 +147,7 @@ fn wal_replay_is_idempotent_on_multiple_reopens() {
 fn wal_replay_undo_uncommitted_mixed_dml_on_reopen() {
     let _guard = ENV_LOCK.lock().unwrap();
     std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
     let dir = TempDir::new().unwrap();
 
     {

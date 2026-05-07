@@ -74,9 +74,17 @@ pub struct SqlEngineConfig {
 
 impl Default for SqlEngineConfig {
     fn default() -> Self {
+        // Server / CLI default: favor throughput unless explicitly overridden.
+        //
+        // Set `RUSTDB_FSYNC_COMMIT=1` to opt into safe durability (commit points wait for fsync).
+        let durability = if std::env::var_os("RUSTDB_FSYNC_COMMIT").is_some() {
+            DurabilityMode::Safe
+        } else {
+            DurabilityMode::Fast
+        };
         Self {
             wal_enabled: true,
-            durability: DurabilityMode::Safe,
+            durability,
         }
     }
 }

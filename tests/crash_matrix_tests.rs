@@ -45,6 +45,8 @@ fn crash_matrix_dml_undo_redo_invariants() {
     let _guard = env_guard();
     std::env::remove_var("RUSTDB_DISABLE_WAL");
     std::env::remove_var("RUSTDB_DISABLE_CHECKPOINT");
+    // Make durability deterministic for crash/reopen invariants.
+    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
     let dir = TempDir::new().unwrap();
     let data_dir = dir.path().to_path_buf();
 
@@ -128,6 +130,7 @@ fn crash_matrix_dml_undo_redo_invariants() {
 fn crash_matrix_ddl_is_statement_durable_and_tx_rejected() {
     let _guard = env_guard();
     std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
     let dir = TempDir::new().unwrap();
     let data_dir = dir.path().to_path_buf();
 
@@ -182,6 +185,7 @@ fn tooling_baseline_checkpoint_and_wal_status_reads_records() {
     let _guard = env_guard();
     std::env::remove_var("RUSTDB_DISABLE_WAL");
     std::env::remove_var("RUSTDB_DISABLE_CHECKPOINT");
+    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
     let dir = TempDir::new().unwrap();
     let data_dir = dir.path().to_path_buf();
 
@@ -203,6 +207,7 @@ fn tooling_baseline_backup_restore_directory_copy() {
     let _guard = env_guard();
     std::env::remove_var("RUSTDB_DISABLE_WAL");
     std::env::remove_var("RUSTDB_DISABLE_CHECKPOINT");
+    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
     let dir = TempDir::new().unwrap();
     let data_dir = dir.path().to_path_buf();
 

@@ -1,7 +1,7 @@
 //! Durability policy shared across embedded and network APIs.
 //!
-//! The default is **safe-by-default**: commits wait for the OS to durably persist
-//! the relevant log markers (roughly equivalent to the historic `RUSTDB_FSYNC_COMMIT=1`).
+//! Durability policy is **safe-by-default** for the embedded API, while the network/server
+//! engine defaults to higher throughput unless explicitly overridden (see `SqlEngineConfig::default`).
 
 use serde::{Deserialize, Serialize};
 
