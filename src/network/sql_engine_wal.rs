@@ -327,13 +327,16 @@ pub fn replay_wal_into_engine(
     let (redo, undo_per_tx) = analyze_wal_for_replay(wal_dir)?;
 
     // Ensure table page managers exist for all catalog tables so WAL file_ids can match.
-    let table_names = {
+    let mut table_names = {
         let cat = state
             .catalog
             .lock()
             .map_err(|_| DbError::database("catalog lock poisoned"))?;
         cat.table_names()
     };
+    // Ensure deterministic file_id allocation across opens (important for WAL replay), regardless of
+    // underlying map iteration order.
+    table_names.sort();
     for t in table_names {
         let _ = crate::network::sql_engine::table_page_manager(state, &t)
             .map_err(|e| DbError::database(e.message))?;
