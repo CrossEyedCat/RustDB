@@ -74,6 +74,10 @@ pub struct SqlTransaction {
     pub undo: Vec<UndoEntry>,
     /// Global lock for [`SqlIsolationLevel::RepeatableRead`] / [`SqlIsolationLevel::Serializable`].
     strong_iso: Option<parking_lot::MutexGuard<'static, ()>>,
+    /// True when the engine created this transaction implicitly for a single DML statement
+    /// (auto-commit mode). These transactions always abort on statement error, so they do not
+    /// need WAL-visible compensating records to remain correct after recovery.
+    pub(crate) implicit_autocommit: bool,
     /// Structured WAL transaction id (see `src/logging`), if WAL is enabled.
     pub wal_tx_id: Option<u64>,
     pub wal_begin_lsn: Option<crate::logging::log_record::LogSequenceNumber>,
@@ -85,6 +89,7 @@ impl std::fmt::Debug for SqlTransaction {
         f.debug_struct("SqlTransaction")
             .field("isolation", &self.isolation)
             .field("undo_len", &self.undo.len())
+            .field("implicit_autocommit", &self.implicit_autocommit)
             .field("wal_tx_id", &self.wal_tx_id)
             .field("wal_last_lsn", &self.wal_last_lsn)
             .field("strong_iso_held", &self.strong_iso.is_some())
@@ -101,6 +106,7 @@ impl SqlTransaction {
             isolation,
             undo: Vec::new(),
             strong_iso,
+            implicit_autocommit: false,
             wal_tx_id: None,
             wal_begin_lsn: None,
             wal_last_lsn: None,

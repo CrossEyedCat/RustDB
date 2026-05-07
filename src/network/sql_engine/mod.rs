@@ -486,6 +486,7 @@ fn execute_dml_autocommit<T>(
     let iso = SqlIsolationLevel::ReadCommitted;
     let strong_iso = None;
     let mut tx = SqlTransaction::new(iso, strong_iso);
+    tx.implicit_autocommit = true;
     if let Some(ref wal) = state.wal {
         wal.log_begin(&mut tx, iso)?;
     }
@@ -948,7 +949,8 @@ fn execute_insert(
                     // compensating DELETE in the *same* transaction so a later COMMIT cannot
                     // resurrect the rejected row on recovery (redo would replay insert+delete).
                     if let Some(tx) = ctx.transaction.as_mut() {
-                        if let Some(ref wal) = state.wal {
+                        if !tx.implicit_autocommit {
+                            if let Some(ref wal) = state.wal {
                             let page_id = (ins.record_id >> 32) as u64;
                             let off = (ins.record_id & 0xffff_ffff) as u32;
                             let record_offset: u16 = off.try_into().map_err(|_| {
@@ -964,6 +966,7 @@ fn execute_insert(
                                 record_offset,
                                 bytes.clone(),
                             )?;
+                            }
                         }
                     }
                     pm.delete(ins.record_id).map_err(map_db_err)?;
@@ -1028,7 +1031,8 @@ fn execute_insert(
                     // Mirror the WAL-visible INSERT with a WAL-visible compensating DELETE so
                     // a later COMMIT cannot replay an otherwise rejected row on recovery.
                     if let Some(tx) = ctx.transaction.as_mut() {
-                        if let Some(ref wal) = state.wal {
+                        if !tx.implicit_autocommit {
+                            if let Some(ref wal) = state.wal {
                             let page_id = (ins.record_id >> 32) as u64;
                             let off = (ins.record_id & 0xffff_ffff) as u32;
                             let record_offset: u16 = off.try_into().map_err(|_| {
@@ -1044,6 +1048,7 @@ fn execute_insert(
                                 record_offset,
                                 bytes.clone(),
                             )?;
+                            }
                         }
                     }
                     pm.delete(ins.record_id).map_err(map_db_err)?;

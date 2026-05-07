@@ -359,8 +359,12 @@ pub struct AdvancedFileManager {
     base_manager: FileManager,
     /// Open advanced files
     advanced_files: HashMap<AdvancedFileId, AdvancedDatabaseFile>,
-    /// File ID counter
-    next_file_id: AdvancedFileId,
+    /// Stable file id mapping (per process).
+    ///
+    /// WAL records refer to a `file_id`, so `open_database_file` must return the same id
+    /// for a given filename across reopens and across independent `AdvancedFileManager` instances.
+    filename_to_id: HashMap<String, AdvancedFileId>,
+    id_to_filename: HashMap<AdvancedFileId, String>,
     /// Global statistics
     global_statistics: GlobalStatistics,
 }
@@ -392,9 +396,47 @@ impl AdvancedFileManager {
         Ok(Self {
             base_manager,
             advanced_files: HashMap::new(),
-            next_file_id: 1,
+            filename_to_id: HashMap::new(),
+            id_to_filename: HashMap::new(),
             global_statistics: GlobalStatistics::default(),
         })
+    }
+
+    fn stable_file_id_for_name(&self, filename: &str) -> AdvancedFileId {
+        // FNV-1a 32-bit hash (deterministic across platforms/processes).
+        let mut h: u32 = 2166136261;
+        for b in filename.as_bytes() {
+            h ^= *b as u32;
+            h = h.wrapping_mul(16777619);
+        }
+        // Avoid 0, keep in u32 range used by AdvancedFileId.
+        (h | 1) as AdvancedFileId
+    }
+
+    fn allocate_stable_id(&mut self, filename: &str) -> AdvancedFileId {
+        if let Some(&id) = self.filename_to_id.get(filename) {
+            return id;
+        }
+        let mut id = self.stable_file_id_for_name(filename);
+        loop {
+            match self.id_to_filename.get(&id) {
+                None => {
+                    self.filename_to_id.insert(filename.to_string(), id);
+                    self.id_to_filename.insert(id, filename.to_string());
+                    return id;
+                }
+                Some(existing) if existing == filename => {
+                    self.filename_to_id.insert(filename.to_string(), id);
+                    return id;
+                }
+                Some(_) => {
+                    id = id.wrapping_add(1);
+                    if id == 0 {
+                        id = 1;
+                    }
+                }
+            }
+        }
     }
 
     /// Creates a new database file
@@ -421,8 +463,7 @@ impl AdvancedFileManager {
         let advanced_file =
             AdvancedDatabaseFile::create(base_file, file_type, database_id, extension_strategy)?;
 
-        let advanced_file_id = self.next_file_id;
-        self.next_file_id += 1;
+        let advanced_file_id = self.allocate_stable_id(filename);
 
         self.advanced_files.insert(advanced_file_id, advanced_file);
         self.global_statistics.total_files += 1;
@@ -447,8 +488,7 @@ impl AdvancedFileManager {
         // Open advanced file (reads advanced header format)
         let advanced_file = AdvancedDatabaseFile::open(base_file)?;
 
-        let advanced_file_id = self.next_file_id;
-        self.next_file_id += 1;
+        let advanced_file_id = self.allocate_stable_id(filename);
 
         self.advanced_files.insert(advanced_file_id, advanced_file);
 
