@@ -22,9 +22,10 @@ fn open_engine(data_dir: PathBuf) -> SqlEngine {
     use rustdb::network::sql_engine::SqlEngineConfig;
 
     // Avoid cross-test env var races by using explicit config.
-    let mut cfg = SqlEngineConfig::default();
-    cfg.durability = DurabilityMode::Safe;
-    cfg.wal_enabled = true;
+    let cfg = SqlEngineConfig {
+        durability: DurabilityMode::Safe,
+        wal_enabled: true,
+    };
     SqlEngine::open_with_config(data_dir, cfg).unwrap()
 }
 
