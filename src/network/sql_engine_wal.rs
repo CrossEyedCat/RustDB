@@ -355,25 +355,32 @@ pub fn replay_wal_into_engine(
                 }
             }
         }
-        let map = state
-            .table_page_managers
-            .lock()
-            .map_err(|_| DbError::database("table pm map lock poisoned"))?;
-        for (_name, pm) in map.iter() {
-            let mut g = pm
+        {
+            let map = state
+                .table_page_managers
                 .lock()
-                .map_err(|_| DbError::database("table page manager lock poisoned"))?;
-            for r in &tx_ops {
-                if matches!(
-                    r.record_type,
-                    LogRecordType::DataInsert
-                        | LogRecordType::DataUpdate
-                        | LogRecordType::DataDelete
-                ) {
-                    let _ = g.apply_log_record_recovery(r, false);
+                .map_err(|_| DbError::database("table pm map lock poisoned"))?;
+            for (_name, pm) in map.iter() {
+                let mut g = pm
+                    .lock()
+                    .map_err(|_| DbError::database("table page manager lock poisoned"))?;
+                for r in &tx_ops {
+                    if matches!(
+                        r.record_type,
+                        LogRecordType::DataInsert
+                            | LogRecordType::DataUpdate
+                            | LogRecordType::DataDelete
+                    ) {
+                        let _ = g.apply_log_record_recovery(r, false);
+                    }
                 }
             }
         }
+
+        // Critical for idempotence: persist the UNDO'ed heap state before marking the transaction
+        // as aborted in the WAL. Otherwise, an ABORT marker could cause future reopens to skip UNDO
+        // while uncommitted heap changes still linger on disk.
+        flush_all_page_managers(state)?;
 
         // Make recovery idempotent: once we've undone an "active" transaction, append an ABORT
         // marker so subsequent opens don't keep applying UNDO (which could delete reused slots).

@@ -1,4 +1,5 @@
 use rustdb::logging::log_record::LogRecord;
+use rustdb::logging::log_record::LogRecordType;
 use rustdb::network::engine::{EngineHandle, EngineOutput, SessionContext};
 use rustdb::network::sql_engine::SqlEngine;
 use rustdb::test_env::ENV_LOCK;
@@ -50,6 +51,17 @@ fn copy_dir_recursive(src: &Path, dst: &Path) {
             fs::copy(&from, &to).unwrap();
         }
     }
+}
+
+fn wal_records(data_dir: &Path) -> Vec<LogRecord> {
+    let wal_dir = data_dir.join(".rustdb").join("wal");
+    LogRecord::read_log_records_from_directory(&wal_dir).unwrap()
+}
+
+fn count_abort_records(recs: &[LogRecord]) -> usize {
+    recs.iter()
+        .filter(|r| r.record_type == LogRecordType::TransactionAbort)
+        .count()
 }
 
 #[test]
@@ -131,6 +143,158 @@ fn crash_matrix_dml_undo_redo_invariants() {
         let mut ctx = SessionContext::default();
         assert_eq!(
             row_count(&engine, &mut ctx, "SELECT a FROM t WHERE a = 2"),
+            1
+        );
+    }
+}
+
+#[test]
+fn crash_matrix_recovery_appends_abort_marker_once() {
+    let _guard = env_guard();
+    std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::remove_var("RUSTDB_DISABLE_CHECKPOINT");
+    let dir = TempDir::new().unwrap();
+    let data_dir = dir.path().to_path_buf();
+
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        exec(&engine, &mut ctx, "CREATE TABLE t (a INTEGER)");
+    }
+
+    // Create an uncommitted transaction that must be undone on reopen.
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        exec(&engine, &mut ctx, "BEGIN TRANSACTION");
+        exec(&engine, &mut ctx, "INSERT INTO t (a) VALUES (1)");
+    }
+
+    let before = wal_records(&data_dir);
+    let before_abort = count_abort_records(&before);
+
+    // First reopen performs UNDO and should append exactly one abort marker for the active tx.
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        assert_eq!(row_count(&engine, &mut ctx, "SELECT a FROM t"), 0);
+    }
+    let after_first = wal_records(&data_dir);
+    let after_first_abort = count_abort_records(&after_first);
+    assert_eq!(
+        after_first_abort,
+        before_abort + 1,
+        "expected recovery to append one TransactionAbort marker after UNDO"
+    );
+
+    // Second reopen should be a no-op recovery-wise (idempotent): no more abort markers added.
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        assert_eq!(row_count(&engine, &mut ctx, "SELECT a FROM t"), 0);
+    }
+    let after_second = wal_records(&data_dir);
+    let after_second_abort = count_abort_records(&after_second);
+    assert_eq!(
+        after_second_abort, after_first_abort,
+        "expected idempotent replay to avoid repeated UNDO/abort markers"
+    );
+}
+
+#[test]
+fn crash_matrix_multi_tx_interleaving_and_reopen_cycles() {
+    let _guard = env_guard();
+    std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::remove_var("RUSTDB_DISABLE_CHECKPOINT");
+    let dir = TempDir::new().unwrap();
+    let data_dir = dir.path().to_path_buf();
+
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        exec(&engine, &mut ctx, "CREATE TABLE t (a INTEGER)");
+    }
+
+    // Tx1 starts and writes, then "crash" before commit.
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx1 = SessionContext::default();
+        exec(&engine, &mut ctx1, "BEGIN TRANSACTION");
+        exec(&engine, &mut ctx1, "INSERT INTO t (a) VALUES (100)");
+
+        // Interleave: Tx2 commits.
+        let mut ctx2 = SessionContext::default();
+        exec(&engine, &mut ctx2, "BEGIN TRANSACTION");
+        exec(&engine, &mut ctx2, "INSERT INTO t (a) VALUES (200)");
+        exec(&engine, &mut ctx2, "COMMIT");
+
+        drop(ctx1);
+        drop(ctx2);
+    }
+
+    // Reopen must keep committed row, undo uncommitted row, and stay stable across repeated open cycles.
+    for _ in 0..3 {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        assert_eq!(
+            row_count(&engine, &mut ctx, "SELECT a FROM t WHERE a = 100"),
+            0
+        );
+        assert_eq!(
+            row_count(&engine, &mut ctx, "SELECT a FROM t WHERE a = 200"),
+            1
+        );
+    }
+}
+
+#[test]
+fn crash_matrix_multi_table_tx_and_partial_crash() {
+    let _guard = env_guard();
+    std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::remove_var("RUSTDB_DISABLE_CHECKPOINT");
+    let dir = TempDir::new().unwrap();
+    let data_dir = dir.path().to_path_buf();
+
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        exec(&engine, &mut ctx, "CREATE TABLE t1 (a INTEGER)");
+        exec(&engine, &mut ctx, "CREATE TABLE t2 (b INTEGER)");
+    }
+
+    // Uncommitted multi-table tx must be undone on reopen.
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        exec(&engine, &mut ctx, "BEGIN TRANSACTION");
+        exec(&engine, &mut ctx, "INSERT INTO t1 (a) VALUES (1)");
+        exec(&engine, &mut ctx, "INSERT INTO t2 (b) VALUES (2)");
+    }
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        assert_eq!(row_count(&engine, &mut ctx, "SELECT a FROM t1"), 0);
+        assert_eq!(row_count(&engine, &mut ctx, "SELECT b FROM t2"), 0);
+    }
+
+    // Committed multi-table tx must be redone on reopen.
+    {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        exec(&engine, &mut ctx, "BEGIN TRANSACTION");
+        exec(&engine, &mut ctx, "INSERT INTO t1 (a) VALUES (10)");
+        exec(&engine, &mut ctx, "INSERT INTO t2 (b) VALUES (20)");
+        exec(&engine, &mut ctx, "COMMIT");
+    }
+    for _ in 0..2 {
+        let engine = open_engine(data_dir.clone());
+        let mut ctx = SessionContext::default();
+        assert_eq!(
+            row_count(&engine, &mut ctx, "SELECT a FROM t1 WHERE a = 10"),
+            1
+        );
+        assert_eq!(
+            row_count(&engine, &mut ctx, "SELECT b FROM t2 WHERE b = 20"),
             1
         );
     }
