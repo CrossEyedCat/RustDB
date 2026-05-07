@@ -71,6 +71,10 @@ struct Args {
     /// QUIC max idle timeout (seconds).
     #[arg(long, default_value_t = 30)]
     quic_idle_secs: u64,
+
+    /// Timeout for establishing the initial QUIC connection (seconds).
+    #[arg(long, default_value_t = 15)]
+    connect_timeout_secs: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -295,7 +299,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let endpoint = make_client_endpoint(client_cfg)?;
 
     // Shared connection (single client) but multiple streams.
-    let conn = connect(&endpoint, addr, &args.server_name).await?;
+    let conn = tokio::time::timeout(
+        Duration::from_secs(args.connect_timeout_secs.max(1)),
+        connect(&endpoint, addr, &args.server_name),
+    )
+    .await
+    .map_err(|_| format!("timeout connecting to {}", args.addr))??;
 
     let sem = Arc::new(Semaphore::new(args.concurrency.max(1)));
     let tx_total = args.transactions.max(1);
@@ -412,6 +421,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         err: errors.load(Ordering::Relaxed),
         mix: mix_str,
     };
+
+    if report.err > 0 {
+        return Err(format!("workload completed with {} error(s)", report.err).into());
+    }
 
     if args.json {
         println!("{}", serde_json::to_string(&report)?);

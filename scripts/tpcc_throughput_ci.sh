@@ -122,7 +122,19 @@ python3 - <<'PY'
 import json, sys, pathlib
 out_dir = pathlib.Path("tpcc-out")
 p = out_dir / "tpcc.json"
-data = json.loads(p.read_text())
+try:
+    raw = p.read_text(encoding="utf-8").strip()
+except FileNotFoundError:
+    print(f"ERROR: missing {p}. rustdb_tpcc did not produce JSON.", file=sys.stderr)
+    sys.exit(2)
+if not raw:
+    print(f"ERROR: empty {p}. rustdb_tpcc produced no JSON.", file=sys.stderr)
+    sys.exit(2)
+try:
+    data = json.loads(raw)
+except json.JSONDecodeError as e:
+    print(f"ERROR: invalid JSON in {p}: {e}", file=sys.stderr)
+    sys.exit(2)
 txt = []
 txt.append("== rustdb_tpcc throughput ==")
 txt.append(f"concurrency: {data['concurrency']}")

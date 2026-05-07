@@ -943,6 +943,29 @@ fn execute_insert(
                 }
                 if let Err(e) = register_row_for_insert(state, &insert.table, ins.record_id, &tuple)
                 {
+                    // We already logged the INSERT to WAL (for crash recovery). If the statement
+                    // fails after that point (e.g. PK/UNIQUE violation), we must also log the
+                    // compensating DELETE in the *same* transaction so a later COMMIT cannot
+                    // resurrect the rejected row on recovery (redo would replay insert+delete).
+                    if let Some(tx) = ctx.transaction.as_mut() {
+                        if let Some(ref wal) = state.wal {
+                            let page_id = (ins.record_id >> 32) as u64;
+                            let off = (ins.record_id & 0xffff_ffff) as u32;
+                            let record_offset: u16 = off.try_into().map_err(|_| {
+                                EngineError::new(
+                                    engine_error_code::INTERNAL,
+                                    "record offset too large for WAL",
+                                )
+                            })?;
+                            wal.log_data_delete(
+                                tx,
+                                pm.file_id(),
+                                page_id,
+                                record_offset,
+                                bytes.clone(),
+                            )?;
+                        }
+                    }
                     pm.delete(ins.record_id).map_err(map_db_err)?;
                     // Persist the compensating delete: otherwise an erroring insert could leave the
                     // row on disk (insert flushed earlier by the page manager), corrupting
@@ -1002,6 +1025,27 @@ fn execute_insert(
                 }
                 if let Err(e) = register_row_for_insert(state, &insert.table, ins.record_id, &tuple)
                 {
+                    // Mirror the WAL-visible INSERT with a WAL-visible compensating DELETE so
+                    // a later COMMIT cannot replay an otherwise rejected row on recovery.
+                    if let Some(tx) = ctx.transaction.as_mut() {
+                        if let Some(ref wal) = state.wal {
+                            let page_id = (ins.record_id >> 32) as u64;
+                            let off = (ins.record_id & 0xffff_ffff) as u32;
+                            let record_offset: u16 = off.try_into().map_err(|_| {
+                                EngineError::new(
+                                    engine_error_code::INTERNAL,
+                                    "record offset too large for WAL",
+                                )
+                            })?;
+                            wal.log_data_delete(
+                                tx,
+                                pm.file_id(),
+                                page_id,
+                                record_offset,
+                                bytes.clone(),
+                            )?;
+                        }
+                    }
                     pm.delete(ins.record_id).map_err(map_db_err)?;
                     // Persist the compensating delete: otherwise a failed insert (e.g. PK/UNIQUE)
                     // can leave the row visible after restart.
