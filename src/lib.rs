@@ -52,6 +52,7 @@ pub mod cli;
 pub mod common;
 pub mod core;
 pub mod debug;
+pub mod embedded;
 pub mod executor;
 pub mod logging;
 pub mod network;
@@ -62,6 +63,8 @@ pub mod storage;
 pub mod test_env;
 pub mod tracing_setup;
 
+pub use common::DurabilityMode;
+pub use embedded::{Config, Connection, Db, Transaction};
 pub use network::SqlEngine;
 pub use sql_session::SqlSession;
 

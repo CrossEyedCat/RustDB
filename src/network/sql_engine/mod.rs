@@ -23,6 +23,7 @@ use crate::catalog::schema::{
     CheckConstraint, ForeignKeyConstraintDef, SchemaManager, TableSchema, UniqueConstraintDef,
 };
 use crate::common::types::{ColumnValue, DataType, RecordId};
+use crate::common::DurabilityMode;
 use crate::common::Error as DbError;
 use crate::executor::operators::eval_predicate_expression;
 use crate::executor::operators::ScanOperatorFactory;
@@ -57,12 +58,32 @@ mod alter_table_ops;
 static STRONG_ISO_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 /// Engine backed by the in-process planner, optimizer, and executor (single default table file per data directory).
+#[derive(Clone)]
 pub struct SqlEngine {
     state: Arc<SqlEngineState>,
 }
 
+/// Configuration for `SqlEngine` opening and durability behavior.
+#[derive(Debug, Clone)]
+pub struct SqlEngineConfig {
+    /// Enable structured WAL + recovery.
+    pub wal_enabled: bool,
+    /// Durability policy (fsync on commit points, etc.).
+    pub durability: DurabilityMode,
+}
+
+impl Default for SqlEngineConfig {
+    fn default() -> Self {
+        Self {
+            wal_enabled: true,
+            durability: DurabilityMode::Safe,
+        }
+    }
+}
+
 pub(crate) struct SqlEngineState {
     data_dir: PathBuf,
+    durability: DurabilityMode,
     pub(crate) default_page_manager: Arc<Mutex<PageManager>>,
     pub(crate) table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<PageManager>>>>>,
     /// Monotonic id assigned to inserted [`Tuple`] rows (persisted in tuple bytes).
@@ -86,12 +107,18 @@ impl SqlEngine {
     /// Opens or creates storage under `data_dir` (directory is created if missing).
     /// Uses one heap file `default.tbl` for table scans (see [`ScanOperatorFactory`]).
     pub fn open(data_dir: PathBuf) -> Result<Self, DbError> {
+        Self::open_with_config(data_dir, SqlEngineConfig::default())
+    }
+
+    /// Open with an explicit config (embedded-friendly).
+    pub fn open_with_config(data_dir: PathBuf, config: SqlEngineConfig) -> Result<Self, DbError> {
         std::fs::create_dir_all(&data_dir)?;
         let wal_dir = data_dir.join(".rustdb").join("wal");
-        let wal = if std::env::var_os("RUSTDB_DISABLE_WAL").is_none() {
+        let wal = if config.wal_enabled && std::env::var_os("RUSTDB_DISABLE_WAL").is_none() {
             std::fs::create_dir_all(&wal_dir)?;
             Some(crate::network::sql_engine_wal::SqlEngineWal::open(
                 &wal_dir,
+                config.durability.fsync_on_commit(),
             )?)
         } else {
             None
@@ -116,6 +143,7 @@ impl SqlEngine {
         let executor = QueryExecutor::new(factory)?;
         let state = Arc::new(SqlEngineState {
             data_dir,
+            durability: config.durability,
             default_page_manager: pm,
             table_page_managers: table_pms,
             next_tuple_id: AtomicU64::new(1),
@@ -404,14 +432,15 @@ fn commit_transaction(
     if let Some(ref wal) = state.wal {
         wal.log_commit(&mut tx)?;
     }
-    sql_commit_log::append_commit_log_line(&state.data_dir).map_err(map_db_err)?;
+    sql_commit_log::append_commit_log_line(&state.data_dir, state.durability.fsync_on_commit())
+        .map_err(map_db_err)?;
     drop(tx);
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
 fn persist_catalog(state: &SqlEngineState) -> Result<(), EngineError> {
     let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
-    cat.save_catalog_to_data_dir(&state.data_dir)
+    cat.save_catalog_to_data_dir_with_options(&state.data_dir, state.durability.fsync_on_commit())
         .map_err(map_db_err)?;
     drop(cat);
     if let Some(ref wal) = state.wal {

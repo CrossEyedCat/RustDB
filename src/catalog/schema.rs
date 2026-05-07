@@ -145,6 +145,15 @@ impl SchemaManager {
 
     /// Persist registered schemas under `data_dir/.rustdb/catalog.json` (v1 JSON snapshot).
     pub fn save_catalog_to_data_dir(&self, data_dir: &Path) -> Result<()> {
+        self.save_catalog_to_data_dir_with_options(data_dir, false)
+    }
+
+    /// Persist registered schemas and optionally `fsync` before/after rename.
+    pub fn save_catalog_to_data_dir_with_options(
+        &self,
+        data_dir: &Path,
+        fsync_on_commit: bool,
+    ) -> Result<()> {
         let dir = data_dir.join(".rustdb");
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("catalog.json");
@@ -162,14 +171,14 @@ impl SchemaManager {
                 .open(&tmp_path)?;
             f.write_all(json.as_bytes())?;
             // If requested, make the file contents durable before renaming.
-            if matches!(std::env::var("RUSTDB_FSYNC_COMMIT").as_deref(), Ok("1")) {
+            if fsync_on_commit {
                 let _ = f.sync_all();
             }
         }
         std::fs::rename(&tmp_path, &path)?;
         // Best-effort directory fsync on Unix so the rename is durable too.
         #[cfg(unix)]
-        if matches!(std::env::var("RUSTDB_FSYNC_COMMIT").as_deref(), Ok("1")) {
+        if fsync_on_commit {
             if let Ok(d) = std::fs::File::open(&dir) {
                 let _ = d.sync_all();
             }

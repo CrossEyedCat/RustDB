@@ -24,13 +24,10 @@ pub struct SqlEngineWal {
 
 impl SqlEngineWal {
     /// Opens WAL under `wal_dir` (e.g. `data_dir/.rustdb/wal`), after recovery has run.
-    pub fn open(wal_dir: &Path) -> DbResult<Self> {
+    pub fn open(wal_dir: &Path, synchronous_commit: bool) -> DbResult<Self> {
         let mut cfg = LogWriterConfig::default();
         cfg.log_directory = wal_dir.to_path_buf();
-        // SqlEngine WAL policy:
-        // - Default: maximize throughput (no fsync wait) but still flush each record we care about.
-        // - If RUSTDB_FSYNC_COMMIT=1: wait for fsync on records that require durability.
-        cfg.synchronous_commit = matches!(std::env::var("RUSTDB_FSYNC_COMMIT").as_deref(), Ok("1"));
+        cfg.synchronous_commit = synchronous_commit;
         cfg.group_commit_enabled = true;
         cfg.force_flush_immediately = false;
         let runtime = Runtime::new().map_err(|e| DbError::database(e.to_string()))?;

@@ -3,6 +3,7 @@
 pub mod bincode_io;
 pub mod config;
 pub mod constants;
+pub mod durability;
 pub mod error;
 pub mod i18n;
 pub mod types;
@@ -16,6 +17,7 @@ mod coverage_tests;
 
 pub use config::*;
 pub use constants::*;
+pub use durability::*;
 pub use error::{BincodeError, Error, Result};
 pub use i18n::*;
 pub use types::*;

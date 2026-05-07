@@ -8,6 +8,7 @@ This cookbook focuses on:
 - Using the **CLI** (`info`, `create`, `query`, `server`)
 - Understanding configuration and the most useful **env vars**
 - Common workflows (batch SQL, QUIC server, smoke scripts, benchmarks)
+- Using RustDB **embedded / in-process** (library API) for tests and tools
 
 ## Image and tags
 
@@ -92,6 +93,78 @@ SQL
 ```
 
 Coverage of SQL features is still growing; see [README.md](../README.md) for project status and test limitations.
+
+---
+
+## Embedded / in-process (library API)
+
+For tests, local tooling, or embedding RustDB inside another Rust process, you can use `SqlEngine`
+directly (no QUIC server). This is the same execution pipeline used by `rustdb query`.
+
+### Minimal example
+
+```rust
+use rustdb::network::engine::{EngineHandle, SessionContext};
+use rustdb::network::sql_engine::SqlEngine;
+
+let data_dir = std::path::PathBuf::from("./data/embedded-demo");
+let engine = SqlEngine::open(data_dir).unwrap();
+
+let mut ctx = SessionContext::default();
+engine.execute_sql("CREATE TABLE t (a INTEGER)", &mut ctx).unwrap();
+engine.execute_sql("INSERT INTO t (a) VALUES (1)", &mut ctx).unwrap();
+let out = engine.execute_sql("SELECT a FROM t", &mut ctx).unwrap();
+println!("{out:?}");
+```
+
+### Crash/reopen testing pattern (durability)
+
+To simulate a process crash in tests, close the engine (drop it) and reopen it on the same data
+directory. With WAL enabled (default), the invariants in [`docs/durability-and-recovery.md`](durability-and-recovery.md)
+should hold after `open()`.
+
+```rust
+use rustdb::network::engine::{EngineHandle, SessionContext};
+use rustdb::network::sql_engine::SqlEngine;
+
+let dir = tempfile::TempDir::new().unwrap();
+let data_dir = dir.path().to_path_buf();
+
+// Setup schema.
+{
+    let engine = SqlEngine::open(data_dir.clone()).unwrap();
+    let mut ctx = SessionContext::default();
+    engine.execute_sql("CREATE TABLE t (a INTEGER)", &mut ctx).unwrap();
+}
+
+// Simulate: BEGIN; INSERT; <crash>
+{
+    let engine = SqlEngine::open(data_dir.clone()).unwrap();
+    let mut ctx = SessionContext::default();
+    engine.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+    engine.execute_sql("INSERT INTO t (a) VALUES (1)", &mut ctx).unwrap();
+    drop(ctx); // no COMMIT/ROLLBACK
+}
+
+// Reopen: WAL replay should undo the uncommitted insert.
+{
+    let engine = SqlEngine::open(data_dir.clone()).unwrap();
+    let mut ctx = SessionContext::default();
+    let out = engine.execute_sql("SELECT a FROM t", &mut ctx).unwrap();
+    println!("{out:?}");
+}
+```
+
+### Local embedded tooling helpers
+
+This repository also contains a small standalone binary, `rustdb_tool`, intended for quick health
+checks and WAL diagnostics for a data directory:
+
+```bash
+cargo run --bin rustdb_tool -- health --data-dir ./data/mydb
+cargo run --bin rustdb_tool -- wal-status --data-dir ./data/mydb
+cargo run --bin rustdb_tool -- checkpoint --data-dir ./data/mydb
+```
 
 ---
 
