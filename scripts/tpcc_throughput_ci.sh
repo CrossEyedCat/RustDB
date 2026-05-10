@@ -69,8 +69,6 @@ docker run -d --name "$CONTAINER_NAME" \
   -p "${UDP_PORT}:5432/udp" \
   -v "$VOL_NAME:/app/data" \
   -v "$ROOT/config.toml:/app/config/config.toml:ro" \
-  -e RUSTDB_GROUP_COMMIT_MAX_BATCH="${RUSTDB_GROUP_COMMIT_MAX_BATCH:-64}" \
-  -e RUSTDB_GROUP_COMMIT_INTERVAL_MS="${RUSTDB_GROUP_COMMIT_INTERVAL_MS:-2}" \
   "$RUSTDB_IMAGE" \
   sh -c 'rustdb --config /app/config/config.toml server --host 0.0.0.0 --port 5432 --cert-out /tmp/server.der' >/dev/null
 
