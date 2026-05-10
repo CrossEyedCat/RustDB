@@ -182,6 +182,20 @@ async fn run_sql_seq_on_stream(
         let msg = decode_server_frame_v1(&recv_buf)?;
         // Treat server-side Error messages as failures.
         if let rustdb::network::framing::ServerMessage::Error(p) = msg {
+            // Best-effort cleanup: if we were inside an explicit transaction, try to roll it back
+            // on the same stream before returning. This prevents leaking open transactions when the
+            // client drops the stream early.
+            let _ = async {
+                let rb = encode_client_message_v1(&ClientMessage::Query(QueryPayload {
+                    sql: "ROLLBACK".to_string(),
+                }))?;
+                send.write_all(&rb).await?;
+                read_application_frame_into(&mut recv, 64 * 1024 * 1024, &mut recv_buf).await?;
+                Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+            }
+            .await;
+            let _ = send.finish();
+
             return Err(format!("server error: {}: {}", p.code, p.message).into());
         }
     }
