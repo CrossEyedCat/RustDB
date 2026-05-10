@@ -163,6 +163,8 @@ enum RunFail {
     Io(String),
     Decode(String),
     Server(ErrorPayload),
+    /// Lost compare-and-swap on `district.d_next_o_id`; caller may retry the whole transaction.
+    Contention,
 }
 
 impl std::fmt::Display for RunFail {
@@ -172,6 +174,7 @@ impl std::fmt::Display for RunFail {
             RunFail::Io(s) => write!(f, "io: {s}"),
             RunFail::Decode(s) => write!(f, "decode: {s}"),
             RunFail::Server(p) => write!(f, "server {}: {}", p.code, p.message),
+            RunFail::Contention => write!(f, "district order-id contention"),
         }
     }
 }
@@ -605,12 +608,18 @@ async fn txn_new_order(
     rng: &mut u64,
     stmt_timeout: Duration,
 ) -> Result<(), RunFail> {
-    let home_w = rand_range(rng, 1, warehouses);
-    let d_id = rand_range(rng, 1, NUM_DISTRICTS);
-    let c_id = rand_range(rng, 1, customers_per_district);
-    let ol_cnt = rand_range(rng, 5, 15);
+    const MAX_CAS: usize = 128;
+    for _ in 0..MAX_CAS {
+        let home_w = rand_range(rng, 1, warehouses);
+        let d_id = rand_range(rng, 1, NUM_DISTRICTS);
+        let c_id = rand_range(rng, 1, customers_per_district);
+        let ol_cnt = rand_range(rng, 5, 15);
+        let mut lines = Vec::with_capacity(ol_cnt as usize);
+        for _ in 0..ol_cnt {
+            lines.push((rand_range(rng, 1, items), rand_range(rng, 1, 10)));
+        }
 
-    run_tpcc_transaction(conn, stmt_timeout, |mut send, mut recv| async move {
+        let attempt = run_tpcc_transaction(conn, stmt_timeout, move |mut send, mut recv| async move {
         let mut buf = Vec::new();
         run_sql_on_stream(
             &mut send,
@@ -639,13 +648,29 @@ async fn txn_new_order(
 
         let next_o = o_id.saturating_add(1);
         let upd_d = format!(
-            "UPDATE district SET d_next_o_id = {next_o} WHERE d_w_id = {home_w} AND d_id = {d_id}"
+            "UPDATE district SET d_next_o_id = {next_o} WHERE d_w_id = {home_w} AND d_id = {d_id} AND d_next_o_id = {o_id}"
         );
         let msg = run_sql_on_stream(&mut send, &mut recv, &mut buf, &upd_d, stmt_timeout).await?;
-        match msg {
-            ServerMessage::ExecutionOk(_) => {}
+        let rows = match msg {
+            ServerMessage::ExecutionOk(p) => p.rows_affected,
             ServerMessage::Error(p) => return Err(RunFail::Server(p)),
-            _ => {}
+            _ => {
+                return Err(RunFail::Decode(
+                    "expected ExecutionOk for district CAS update".into(),
+                ))
+            }
+        };
+        if rows == 0 {
+            let _ = run_sql_on_stream(
+                &mut send,
+                &mut recv,
+                &mut buf,
+                "ROLLBACK",
+                stmt_timeout,
+            )
+            .await;
+            let _ = send.finish();
+            return Err(RunFail::Contention);
         }
 
         let ins_o = format!(
@@ -659,9 +684,7 @@ async fn txn_new_order(
         );
         run_sql_seq(&mut send, &mut recv, &mut buf, &[ins_no], stmt_timeout).await?;
 
-        for ol in 1..=ol_cnt {
-            let i_id = rand_range(rng, 1, items);
-            let qty = rand_range(rng, 1, 10);
+        for (ol, (i_id, qty)) in (1..=ol_cnt).zip(lines.into_iter()) {
             let supply_w = home_w;
 
             let sel_s =
@@ -699,8 +722,18 @@ async fn txn_new_order(
         .await?;
         let _ = send.finish();
         Ok(())
-    })
-    .await
+        })
+        .await;
+
+        match attempt {
+            Ok(()) => return Ok(()),
+            Err(RunFail::Contention) => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(RunFail::Io(
+        "new_order: exhausted district order-id retries".into(),
+    ))
 }
 
 /// Payment (§2.5): warehouse + district + customer balance updates and `history` insert.
@@ -995,6 +1028,7 @@ fn map_fail_sql(last_sql: &str, e: RunFail) -> ErrorCategory {
         RunFail::Io(_) => ErrorCategory::NetworkIo,
         RunFail::Decode(_) => ErrorCategory::ProtocolDecode,
         RunFail::Server(p) => classify_server_error(last_sql, &p),
+        RunFail::Contention => ErrorCategory::BusinessLogicMiss,
     }
 }
 
