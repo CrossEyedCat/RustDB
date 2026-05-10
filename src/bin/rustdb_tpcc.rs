@@ -27,11 +27,6 @@ use tokio::sync::Semaphore;
 
 const MAX_LATENCY_SAMPLES: usize = 200_000;
 
-/// Must stay below the QUIC server's per-stream frame cap (`MAX_FRAMES_PER_STREAM` in
-/// `src/network/query_stream.rs`, currently 1024).
-const SERVER_MAX_FRAMES_PER_STREAM: usize = 1024;
-const STREAM_FRAME_BUDGET: usize = SERVER_MAX_FRAMES_PER_STREAM - 64;
-
 #[derive(Parser, Debug)]
 #[command(name = "rustdb_tpcc")]
 struct Args {
@@ -224,35 +219,19 @@ async fn run_sql_seq_on_bi(
     Ok(frames)
 }
 
-/// Reuses one QUIC bidirectional stream for many transactions (one OS-backed SQL session on the
-/// server), rotating before the per-stream frame limit is hit.
-async fn run_tpcc_transaction_with_stream_pool(
+/// One QUIC bidirectional stream per transaction (fresh server SQL session each time).
+///
+/// This avoids head-of-line blocking on a long-lived stream and matches the historical CI baseline
+/// driver behavior before stream reuse (while keeping DELETE error masking + explicit-tx rollback).
+async fn run_tpcc_transaction(
     conn: &Connection,
-    send: &mut SendStream,
-    recv: &mut RecvStream,
-    recv_buf: &mut Vec<u8>,
-    frames_used: &mut usize,
     sqls: &[String],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let need = sqls.len().max(1);
-    if *frames_used + need > STREAM_FRAME_BUDGET {
-        send.finish()?;
-        let (s, r) = conn.open_bi().await?;
-        *send = s;
-        *recv = r;
-        *frames_used = 0;
-    }
-    match run_sql_seq_on_bi(send, recv, recv_buf, sqls).await {
-        Ok(used) => {
-            *frames_used += used;
-            Ok(())
-        }
-        Err(e) => {
-            // Unknown partial progress; retire this stream on the next transaction.
-            *frames_used = STREAM_FRAME_BUDGET;
-            Err(e)
-        }
-    }
+    let (mut send, mut recv) = conn.open_bi().await?;
+    let mut recv_buf = Vec::new();
+    run_sql_seq_on_bi(&mut send, &mut recv, &mut recv_buf, sqls).await?;
+    let _ = send.finish();
+    Ok(())
 }
 
 fn txn_sql(kind: TxnKind, seed: u64, global_txn_id: u64) -> Vec<String> {
@@ -412,10 +391,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let mut rng = seed ^ 0xD6E8FEB86659FD93;
             let mut completed: u64 = 0;
 
-            let (mut send, mut recv) = conn.open_bi().await?;
-            let mut recv_buf = Vec::new();
-            let mut frames_used = 0usize;
-
             if let Some(dl) = deadline {
                 while Instant::now() < dl {
                     let global_tx = global_txn_counter.fetch_add(1, Ordering::Relaxed);
@@ -427,15 +402,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                     let sqls = txn_sql(kind, seed, global_tx);
                     let t0 = Instant::now();
-                    let res = run_tpcc_transaction_with_stream_pool(
-                        &conn,
-                        &mut send,
-                        &mut recv,
-                        &mut recv_buf,
-                        &mut frames_used,
-                        &sqls,
-                    )
-                    .await;
+                    let res = run_tpcc_transaction(&conn, &sqls).await;
                     let dt = t0.elapsed();
                     reservoir_sample_push(&mut lat_us, &mut seen, &mut rng, dt.as_micros());
                     completed = completed.wrapping_add(1);
@@ -450,7 +417,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         }
                     }
                 }
-                let _ = send.finish();
                 Ok::<(Vec<u128>, String, u64), Box<dyn std::error::Error + Send + Sync>>((
                     lat_us, mix_str, completed,
                 ))
@@ -465,15 +431,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                     let sqls = txn_sql(kind, seed, global_tx);
                     let t0 = Instant::now();
-                    let res = run_tpcc_transaction_with_stream_pool(
-                        &conn,
-                        &mut send,
-                        &mut recv,
-                        &mut recv_buf,
-                        &mut frames_used,
-                        &sqls,
-                    )
-                    .await;
+                    let res = run_tpcc_transaction(&conn, &sqls).await;
                     let dt = t0.elapsed();
                     reservoir_sample_push(&mut lat_us, &mut seen, &mut rng, dt.as_micros());
                     completed += 1;
@@ -488,7 +446,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         }
                     }
                 }
-                let _ = send.finish();
                 Ok::<(Vec<u128>, String, u64), Box<dyn std::error::Error + Send + Sync>>((
                     lat_us, mix_str, completed,
                 ))

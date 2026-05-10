@@ -84,8 +84,8 @@ CERT="$OUT_DIR_ABS/server.der"
 docker cp "$CONTAINER_NAME:/tmp/server.der" "$CERT"
 test -s "$CERT"
 
-echo "==> build rustdb_tpcc (host)"
-cargo build -q --bin rustdb_tpcc
+echo "==> build rustdb_tpcc (host, release)"
+cargo build -q --release --bin rustdb_tpcc
 
 echo "==> run rustdb_tpcc"
 TXN_ARGS=()
@@ -95,7 +95,7 @@ else
   TXN_ARGS=(--transactions "$TXNS")
 fi
 set +e
-./target/debug/rustdb_tpcc \
+./target/release/rustdb_tpcc \
   --addr "127.0.0.1:${UDP_PORT}" \
   --cert "$CERT" \
   --server-name localhost \
