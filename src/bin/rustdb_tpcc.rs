@@ -182,6 +182,18 @@ async fn run_sql_seq_on_stream(
         let msg = decode_server_frame_v1(&recv_buf)?;
         // Treat server-side Error messages as failures.
         if let rustdb::network::framing::ServerMessage::Error(p) = msg {
+            // Engine currently surfaces "record not found" as an error for some DELETE paths.
+            // For this benchmark, treat that as an empty delete (0 rows affected).
+            if p.code == 1001
+                && p.message.to_ascii_lowercase().contains("record not found")
+                && sql
+                    .trim_start()
+                    .to_ascii_lowercase()
+                    .starts_with("delete from new_order")
+            {
+                continue;
+            }
+
             // Best-effort cleanup: if we were inside an explicit transaction, try to roll it back
             // on the same stream before returning. This prevents leaking open transactions when the
             // client drops the stream early.

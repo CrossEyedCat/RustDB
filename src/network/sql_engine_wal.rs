@@ -9,6 +9,7 @@ use crate::logging::log_record::{
 use crate::logging::log_writer::{LogWriter, LogWriterConfig};
 use crate::logging::recovery::{RecoveryConfig, RecoveryManager};
 use crate::network::engine::{engine_error_code, EngineError, SqlIsolationLevel, SqlTransaction};
+use crate::storage::page_manager::PageManager;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -323,6 +324,7 @@ pub fn replay_wal_into_engine(
     wal: Option<&SqlEngineWal>,
 ) -> DbResult<()> {
     use crate::logging::log_record::LogRecordType;
+    use std::collections::HashMap;
 
     let (redo, undo_per_tx) = analyze_wal_for_replay(wal_dir)?;
 
@@ -342,15 +344,18 @@ pub fn replay_wal_into_engine(
             .map_err(|e| DbError::database(e.message))?;
     }
 
-    // Apply REDO.
+    // Build a file_id -> page manager map so each record is applied exactly once.
+    // Applying every record to every page manager relies on filtering inside PageManager and
+    // becomes incorrect if multiple managers reference the same file_id (which can happen during
+    // open + catalog/table PM wiring).
+    let mut pm_by_file_id: HashMap<u32, Arc<Mutex<PageManager>>> = HashMap::new();
     {
-        let mut pm = state
-            .default_page_manager
+        let default = state.default_page_manager.clone();
+        let fid = default
             .lock()
-            .map_err(|_| DbError::database("page manager lock poisoned"))?;
-        for r in &redo {
-            let _ = pm.apply_log_record_recovery(r, true);
-        }
+            .map_err(|_| DbError::database("page manager lock poisoned"))?
+            .file_id();
+        pm_by_file_id.insert(fid, default);
     }
     {
         let map = state
@@ -358,11 +363,32 @@ pub fn replay_wal_into_engine(
             .lock()
             .map_err(|_| DbError::database("table pm map lock poisoned"))?;
         for (_name, pm) in map.iter() {
-            let mut g = pm
+            let fid = pm
                 .lock()
-                .map_err(|_| DbError::database("table page manager lock poisoned"))?;
-            for r in &redo {
-                let _ = g.apply_log_record_recovery(r, true);
+                .map_err(|_| DbError::database("table page manager lock poisoned"))?
+                .file_id();
+            pm_by_file_id.entry(fid).or_insert_with(|| pm.clone());
+        }
+    }
+
+    let record_file_id = |r: &LogRecord| -> Option<u32> {
+        match &r.operation_data {
+            LogOperationData::Record(op) => Some(op.file_id),
+            LogOperationData::File(op) => Some(op.file_id),
+            _ => None,
+        }
+    };
+
+    // Apply REDO.
+    {
+        for r in &redo {
+            if let Some(fid) = record_file_id(r) {
+                if let Some(pm) = pm_by_file_id.get(&fid) {
+                    let mut g = pm
+                        .lock()
+                        .map_err(|_| DbError::database("page manager lock poisoned"))?;
+                    let _ = g.apply_log_record_recovery(r, true);
+                }
             }
         }
     }
@@ -371,40 +397,19 @@ pub fn replay_wal_into_engine(
     for tx_ops in undo_per_tx {
         let tx_id = tx_ops.first().and_then(|r| r.transaction_id);
         let last_lsn = tx_ops.first().map(|r| r.lsn);
-        {
-            let mut pm = state
-                .default_page_manager
-                .lock()
-                .map_err(|_| DbError::database("page manager lock poisoned"))?;
-            for r in &tx_ops {
-                if matches!(
-                    r.record_type,
-                    LogRecordType::DataInsert
-                        | LogRecordType::DataUpdate
-                        | LogRecordType::DataDelete
-                ) {
-                    let _ = pm.apply_log_record_recovery(r, false);
-                }
+        for r in &tx_ops {
+            if !matches!(
+                r.record_type,
+                LogRecordType::DataInsert | LogRecordType::DataUpdate | LogRecordType::DataDelete
+            ) {
+                continue;
             }
-        }
-        {
-            let map = state
-                .table_page_managers
-                .lock()
-                .map_err(|_| DbError::database("table pm map lock poisoned"))?;
-            for (_name, pm) in map.iter() {
-                let mut g = pm
-                    .lock()
-                    .map_err(|_| DbError::database("table page manager lock poisoned"))?;
-                for r in &tx_ops {
-                    if matches!(
-                        r.record_type,
-                        LogRecordType::DataInsert
-                            | LogRecordType::DataUpdate
-                            | LogRecordType::DataDelete
-                    ) {
-                        let _ = g.apply_log_record_recovery(r, false);
-                    }
+            if let Some(fid) = record_file_id(r) {
+                if let Some(pm) = pm_by_file_id.get(&fid) {
+                    let mut g = pm
+                        .lock()
+                        .map_err(|_| DbError::database("page manager lock poisoned"))?;
+                    let _ = g.apply_log_record_recovery(r, false);
                 }
             }
         }
