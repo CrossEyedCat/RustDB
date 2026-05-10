@@ -10,6 +10,7 @@
 // - `UPDATE` RHS expressions are limited to literals in RustDB’s SQL surface; all increments are
 //   implemented as SELECT-then-UPDATE with computed literals (TPC-C §2 semantics preserved).
 // - `history.h_pk` is a surrogate key (RustDB has no AUTOINCREMENT); allocated with an Atomic counter.
+// - Secondary indexes: `CREATE INDEX` is not wired in the QUIC SQL engine yet — omitted (table scans).
 
 //! TPC-C-style QUIC benchmark for RustDB: deterministic **load** vs **measurement** phases,
 //! standard mix weights, per-mix latency quantiles, and structured JSON/text reports.
@@ -411,9 +412,6 @@ fn ddl_drop_create() -> Vec<String> {
             h_data VARCHAR(24) NOT NULL\
         )"
         .to_string(),
-        "CREATE INDEX idx_customer_last ON customer (c_last)".to_string(),
-        "CREATE INDEX idx_order_line_sel ON order_line (ol_w_id, ol_d_id, ol_o_id)".to_string(),
-        "CREATE INDEX idx_stock_qty ON stock (s_w_id, s_qty)".to_string(),
     ]
 }
 
