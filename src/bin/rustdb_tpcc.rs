@@ -206,9 +206,9 @@ fn txn_sql(kind: TxnKind, seed: u64, global_txn_id: u64) -> Vec<String> {
             "BEGIN TRANSACTION".to_string(),
             // Keep the benchmark compatible with a minimal SQL parser: avoid arithmetic operators
             // in expressions (e.g. `col = col + 1`), which may not be supported.
-            // No-op updates still exercise the write path and locking.
+            // Some engine paths additionally require UPDATE RHS values to be literals.
             format!(
-                "UPDATE district SET d_next_o_id = d_next_o_id WHERE d_w_id = {w_id} AND d_id = {d_id}"
+                "UPDATE district SET d_next_o_id = 1 WHERE d_w_id = {w_id} AND d_id = {d_id}"
             ),
             format!(
                 "INSERT INTO oorder (o_id, o_d_id, o_w_id, o_c_id, o_ol_cnt) VALUES ({o_id}, {d_id}, {w_id}, {c_id}, 1)"
@@ -217,7 +217,7 @@ fn txn_sql(kind: TxnKind, seed: u64, global_txn_id: u64) -> Vec<String> {
                 "INSERT INTO new_order (no_o_id, no_d_id, no_w_id) VALUES ({o_id}, {d_id}, {w_id})"
             ),
             format!(
-                "UPDATE stock SET s_qty = s_qty, s_ytd = s_ytd, s_order_cnt = s_order_cnt WHERE s_w_id = {w_id} AND s_i_id = {i_id}"
+                "UPDATE stock SET s_qty = 100, s_ytd = 0, s_order_cnt = 0 WHERE s_w_id = {w_id} AND s_i_id = {i_id}"
             ),
             format!(
                 "INSERT INTO order_line (ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_qty, ol_amount) VALUES ({o_id}, {d_id}, {w_id}, 1, {i_id}, {qty}, {amount})"
@@ -227,13 +227,13 @@ fn txn_sql(kind: TxnKind, seed: u64, global_txn_id: u64) -> Vec<String> {
         TxnKind::Payment => vec![
             "BEGIN TRANSACTION".to_string(),
             format!(
-                "UPDATE warehouse SET w_ytd = w_ytd WHERE w_id = {w_id}"
+                "UPDATE warehouse SET w_ytd = 0 WHERE w_id = {w_id}"
             ),
             format!(
-                "UPDATE district SET d_ytd = d_ytd WHERE d_w_id = {w_id} AND d_id = {d_id}"
+                "UPDATE district SET d_ytd = 0 WHERE d_w_id = {w_id} AND d_id = {d_id}"
             ),
             format!(
-                "UPDATE customer SET c_balance = c_balance WHERE c_w_id = {w_id} AND c_d_id = {d_id} AND c_id = {c_id}"
+                "UPDATE customer SET c_balance = 0 WHERE c_w_id = {w_id} AND c_d_id = {d_id} AND c_id = {c_id}"
             ),
             "COMMIT".to_string(),
         ],
