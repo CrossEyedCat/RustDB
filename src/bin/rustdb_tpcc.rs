@@ -17,6 +17,7 @@ use rustdb::network::query_stream::read_application_frame_into;
 use rustls::pki_types::CertificateDer;
 use serde::Serialize;
 use std::fs;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -196,6 +197,7 @@ fn txn_sql(kind: TxnKind, seed: u64, global_txn_id: u64) -> Vec<String> {
     let c_id = lcg_next(&mut st) % 5 + 1;
     let i_id = lcg_next(&mut st) % 5 + 1;
     let qty = lcg_next(&mut st) % 5 + 1;
+    let amount = qty * 10;
     let o_id = global_txn_id;
 
     // Keep statements simple; RustDB engine may not support all SQL-92 features yet.
@@ -216,7 +218,7 @@ fn txn_sql(kind: TxnKind, seed: u64, global_txn_id: u64) -> Vec<String> {
                 "UPDATE stock SET s_qty = s_qty - {qty}, s_ytd = s_ytd + {qty}, s_order_cnt = s_order_cnt + 1 WHERE s_w_id = {w_id} AND s_i_id = {i_id}"
             ),
             format!(
-                "INSERT INTO order_line (ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_qty, ol_amount) VALUES ({o_id}, {d_id}, {w_id}, 1, {i_id}, {qty}, {qty}*10)"
+                "INSERT INTO order_line (ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_qty, ol_amount) VALUES ({o_id}, {d_id}, {w_id}, 1, {i_id}, {qty}, {amount})"
             ),
             "COMMIT".to_string(),
         ],
@@ -313,6 +315,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let global_txn_counter = Arc::new(AtomicU64::new(0));
     let new_orders = Arc::new(AtomicU64::new(0));
     let errors = Arc::new(AtomicU64::new(0));
+    let printed_errors = Arc::new(AtomicU64::new(0));
+    let print_limit: u64 = 50;
 
     let start = Instant::now();
     let mut handles = Vec::with_capacity(args.concurrency);
@@ -324,6 +328,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let global_txn_counter = global_txn_counter.clone();
         let new_orders = new_orders.clone();
         let errors = errors.clone();
+        let printed_errors = printed_errors.clone();
         let mix_str = args.mix.clone();
 
         let base = tx_total / args.concurrency.max(1);
@@ -356,6 +361,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     completed = completed.wrapping_add(1);
                     if res.is_err() {
                         errors.fetch_add(1, Ordering::Relaxed);
+                        let n = printed_errors.fetch_add(1, Ordering::Relaxed);
+                        if n < print_limit {
+                            eprintln!(
+                                "[tpcc] txn_error kind={kind:?} tx={global_tx} err={:?}",
+                                res.err()
+                            );
+                        }
                     }
                 }
                 Ok::<(Vec<u128>, String, u64), Box<dyn std::error::Error + Send + Sync>>((
@@ -378,6 +390,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     completed += 1;
                     if res.is_err() {
                         errors.fetch_add(1, Ordering::Relaxed);
+                        let n = printed_errors.fetch_add(1, Ordering::Relaxed);
+                        if n < print_limit {
+                            eprintln!(
+                                "[tpcc] txn_error kind={kind:?} tx={global_tx} err={:?}",
+                                res.err()
+                            );
+                        }
                     }
                 }
                 Ok::<(Vec<u128>, String, u64), Box<dyn std::error::Error + Send + Sync>>((
@@ -422,12 +441,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         mix: mix_str,
     };
 
-    if report.err > 0 {
-        return Err(format!("workload completed with {} error(s)", report.err).into());
-    }
-
     if args.json {
         println!("{}", serde_json::to_string(&report)?);
+        // Best-effort flush so CI still gets tpcc.json even if we exit non-zero.
+        let _ = std::io::stdout().flush();
     } else {
         println!("== rustdb_tpcc ==");
         println!("concurrency: {}", report.concurrency);
@@ -442,6 +459,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         );
         println!("err: {}", report.err);
         println!("mix: {}", report.mix);
+    }
+
+    if report.err > 0 {
+        return Err(format!("workload completed with {} error(s)", report.err).into());
     }
 
     Ok(())

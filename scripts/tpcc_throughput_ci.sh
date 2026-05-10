@@ -102,7 +102,7 @@ set +e
   --concurrency "$CONCURRENCY" \
   "${TXN_ARGS[@]}" \
   --mix "$MIX" \
-  --json > "$OUT_DIR_ABS/tpcc.json"
+  --json > "$OUT_DIR_ABS/tpcc.json" 2> "$OUT_DIR_ABS/tpcc_stderr.log"
 rc=$?
 set -e
 
