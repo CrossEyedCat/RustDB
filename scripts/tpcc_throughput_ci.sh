@@ -1,7 +1,150 @@
 #!/usr/bin/env bash
 #
-# Back-compat wrapper: CI uses scripts/bench_rustdb_tpcc.sh directly.
+# TPC-C-ish throughput benchmark for RustDB in CI.
+# Starts server from GHCR image (produced by workflow), seeds a tiny dataset via CLI,
+# then runs the QUIC load generator `rustdb_tpcc` from the host build.
+#
+# Outputs:
+#   tpcc-out/tpcc.json   (machine readable; txns_per_s = successful txns / elapsed)
+#   tpcc-out/tpcc.txt    (human readable)
+#   tpcc-out/tpcc_txn.log (CSV: worker_id,global_attempt_id,kind,ok,elapsed_us,error)
 #
 set -euo pipefail
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-exec "$ROOT/scripts/bench_rustdb_tpcc.sh"
+cd "$ROOT"
+
+RUSTDB_IMAGE="${RUSTDB_IMAGE:?RUSTDB_IMAGE must be set (e.g. ghcr.io/org/repo:sha-xxxxxxx)}"
+OUT_DIR="${OUT_DIR:-$ROOT/tpcc-out}"
+UDP_PORT="${UDP_PORT:-15432}"
+CONTAINER_NAME="${CONTAINER_NAME:-rustdb-tpcc-server}"
+VOL_NAME="${VOL_NAME:-rustdb_tpcc_ci_data}"
+
+CONCURRENCY="${CONCURRENCY:-64}"
+TXNS="${TXNS:-5000}"
+DURATION_SECS="${DURATION_SECS:-}"
+MIX="${MIX:-new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04}"
+
+mkdir -p "$OUT_DIR"
+# Docker bind mounts require absolute host paths; resolve once.
+OUT_DIR_ABS="$(cd "$OUT_DIR" && pwd)"
+rm -f "$OUT_DIR_ABS"/tpcc.* || true
+
+echo "==> pull image: $RUSTDB_IMAGE"
+docker pull "$RUSTDB_IMAGE" >/dev/null
+
+echo "==> prepare volume + seed schema/data"
+docker volume rm -f "$VOL_NAME" >/dev/null 2>&1 || true
+docker volume create "$VOL_NAME" >/dev/null
+
+# rustdb query --batch-file expects one statement per line and does not accept SQL comments.
+# Filter out `-- ...` comments and blank lines for CI robustness.
+SEED_IN="$ROOT/scripts/tpcc_seed.sql"
+SEED_FILTERED="$OUT_DIR_ABS/tpcc_seed.filtered.sql"
+python3 - <<PY
+import pathlib, re
+src = pathlib.Path(r"${SEED_IN}")
+out = pathlib.Path(r"${SEED_FILTERED}")
+lines = []
+for line in src.read_text(encoding="utf-8").splitlines():
+    s = line.strip()
+    if not s:
+        continue
+    if s.startswith("--"):
+        continue
+    lines.append(line)
+out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+print(f"filtered seed: {out} (lines={len(lines)})")
+PY
+
+# Seed using CLI path (local engine) before server starts.
+docker run --rm -i \
+  -v "$VOL_NAME:/app/data" \
+  -v "$SEED_FILTERED:/tmp/tpcc_seed.sql:ro" \
+  "$RUSTDB_IMAGE" \
+  sh -c 'rustdb query --batch-file /tmp/tpcc_seed.sql' >/dev/null
+
+echo "==> start QUIC server (UDP host :$UDP_PORT -> container :5432)"
+docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+docker run -d --name "$CONTAINER_NAME" \
+  -p "${UDP_PORT}:5432/udp" \
+  -v "$VOL_NAME:/app/data" \
+  -v "$ROOT/config.toml:/app/config/config.toml:ro" \
+  "$RUSTDB_IMAGE" \
+  sh -c 'rustdb --config /app/config/config.toml server --host 0.0.0.0 --port 5432 --cert-out /tmp/server.der' >/dev/null
+
+for i in $(seq 1 120); do
+  if docker exec "$CONTAINER_NAME" sh -c "test -s /tmp/server.der" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.25
+done
+
+echo "==> copy leaf cert"
+CERT="$OUT_DIR_ABS/server.der"
+docker cp "$CONTAINER_NAME:/tmp/server.der" "$CERT"
+test -s "$CERT"
+
+echo "==> build rustdb_tpcc (host)"
+cargo build -q --bin rustdb_tpcc
+
+echo "==> run rustdb_tpcc"
+TXN_ARGS=()
+if [[ -n "${DURATION_SECS:-}" ]]; then
+  TXN_ARGS=(--duration-seconds "$DURATION_SECS")
+else
+  TXN_ARGS=(--transactions "$TXNS")
+fi
+set +e
+./target/debug/rustdb_tpcc \
+  --addr "127.0.0.1:${UDP_PORT}" \
+  --cert "$CERT" \
+  --server-name localhost \
+  --concurrency "$CONCURRENCY" \
+  "${TXN_ARGS[@]}" \
+  --mix "$MIX" \
+  --txn-log "$OUT_DIR_ABS/tpcc_txn.log" \
+  --json > "$OUT_DIR_ABS/tpcc.json"
+rc=$?
+set -e
+
+echo "==> capture server tail logs"
+docker logs "$CONTAINER_NAME" 2>&1 | tail -n 200 > "$OUT_DIR_ABS/server_tail.log" || true
+
+echo "==> stop server + volume"
+docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+docker volume rm -f "$VOL_NAME" >/dev/null 2>&1 || true
+
+if [[ "$rc" -ne 0 ]]; then
+  echo "tpcc benchmark failed (exit $rc). See $OUT_DIR/server_tail.log"
+  exit "$rc"
+fi
+
+python3 - <<'PY'
+import json, sys, pathlib
+out_dir = pathlib.Path("tpcc-out")
+p = out_dir / "tpcc.json"
+data = json.loads(p.read_text())
+txt = []
+txt.append("== rustdb_tpcc throughput ==")
+txt.append(f"concurrency: {data['concurrency']}")
+txt.append(f"txn_attempts: {data.get('txn_attempts', data.get('transactions', 0))}")
+txt.append(f"txn_successes: {data.get('txn_successes', 0)}")
+txt.append(f"success_rate_pct: {data.get('success_rate_pct', 0.0):.2f}")
+txt.append(f"elapsed_s: {data['elapsed_s']:.3f}")
+txt.append(f"txns_per_s (successful only): {data['txns_per_s']:.1f}")
+txt.append(f"attempts_per_s (all tries): {data.get('attempts_per_s', 0.0):.1f}")
+txt.append(f"new_orders (successful only): {data['new_orders']}")
+txt.append(f"tpmC: {data['tpmC']:.1f}")
+txt.append(f"p50_ms: {data['p50_ms']:.2f}  p95_ms: {data['p95_ms']:.2f}  p99_ms: {data['p99_ms']:.2f}")
+txt.append(f"failed_attempts: {data.get('err', 0)}")
+if data.get("txn_log_path"):
+    txt.append(f"txn_log: {data['txn_log_path']}")
+if data.get("txn_log_truncated"):
+    txt.append("txn_log_truncated: true")
+out_dir.joinpath("tpcc.txt").write_text("\n".join(txt) + "\n")
+print("\n".join(txt))
+PY
+
+echo "==> wrote $OUT_DIR_ABS/tpcc.json and tpcc.txt"
+
