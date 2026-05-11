@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["VersionState"],"struct":["MVCCManager","MVCCStatistics","RowKey","RowVersion","Timestamp"],"type":["VersionId"]};

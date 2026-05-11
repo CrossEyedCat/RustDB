@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["VERSION"],"fn":["open_sql_engine"],"mod":["analyzer","catalog","cli","common","core","debug","embedded","executor","logging","network","parser","planner","sql_session","storage","test_env","tracing_setup"],"struct":["Database"]};

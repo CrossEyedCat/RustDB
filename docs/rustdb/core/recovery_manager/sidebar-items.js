@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RecoveryTransactionState"],"struct":["AdvancedRecoveryManager","AnalysisResult","RecoveryConfig","RecoveryStatistics","RecoveryTransactionInfo"]};

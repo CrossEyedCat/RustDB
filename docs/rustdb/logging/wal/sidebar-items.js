@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TransactionState","WalCommand"],"struct":["TransactionInfo","WalConfig","WalStatistics","WriteAheadLog"]};

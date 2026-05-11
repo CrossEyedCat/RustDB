@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["IoOperationType","IoPriority"],"struct":["BufferedIoManager","BufferedWrite","IoBufferConfig","IoRequest","IoResult","IoStatistics","PageCache"]};

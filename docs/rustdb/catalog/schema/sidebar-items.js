@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["CheckConstraint","ForeignKeyConstraintDef","SchemaCatalogFile","SchemaCatalogTable","SchemaManager","TableSchema","UniqueConstraintDef"]};

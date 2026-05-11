@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_RECORD_SIZE","PAGE_HEADER_SIZE","PAGE_SIZE"],"enum":["DataType","ForeignKeyAction","IndexType"],"struct":["Column","ColumnValue","ForeignKey","Index","Row","Schema"],"type":["PageId","RecordId","SessionId","TransactionId","UserId"]};

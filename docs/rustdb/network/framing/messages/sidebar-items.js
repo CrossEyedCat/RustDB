@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ClientMessage","MessageKind","ServerMessage"],"struct":["ClientHelloPayload","ErrorPayload","ExecutionOkPayload","QueryPayload","ResultSetPayload","ServerReadyPayload"]};

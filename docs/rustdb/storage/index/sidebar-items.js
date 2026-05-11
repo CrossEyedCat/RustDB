@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["IndexType"],"mod":["btree","hash_index","simple_hash_index"],"struct":["IndexConfig","IndexStatistics"],"trait":["Index"]};

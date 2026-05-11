@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SchemaOperation","SchemaOperationType"],"struct":["BasicSchemaValidator","SchemaChange","SchemaManager"],"trait":["SchemaValidator"]};

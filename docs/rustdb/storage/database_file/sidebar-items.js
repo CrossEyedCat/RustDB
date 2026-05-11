@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BLOCK_SIZE","PAGE_SIZE"],"enum":["DatabaseFileState","DatabaseFileType","ExtensionReason","ExtensionStrategy"],"struct":["DatabaseFileHeader","ExtensionRecord","ExtensionStatistics","FileExtensionManager","FreePageMap","FreePageMapEntry","FreePageMapHeader"],"type":["DatabaseFileId","PageId"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AccessWarningType","ObjectAccessType","Permission"],"struct":["AccessCheckError","AccessCheckResult","AccessCheckWarning","AccessChecker","AccessRule","Role","User"]};

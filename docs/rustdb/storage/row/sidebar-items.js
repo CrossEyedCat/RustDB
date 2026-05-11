@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["Row","RowStats","Table","TableMetadata","TableOptions","TableStats"]};

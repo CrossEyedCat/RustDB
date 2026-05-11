@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["IsolationLevel","LockGranularity"],"struct":["ConcurrencyConfig","ConcurrencyManager"]};

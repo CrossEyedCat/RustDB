@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BlockType"],"struct":["Block","BlockHeader","BlockLinks","BlockManager"],"type":["BlockId"]};

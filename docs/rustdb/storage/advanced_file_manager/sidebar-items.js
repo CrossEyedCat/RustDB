@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["AdvancedDatabaseFile","AdvancedFileManager","FileInfo","FileStatistics","GlobalStatistics"],"type":["AdvancedFileId"]};

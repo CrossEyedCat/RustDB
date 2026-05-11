@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_DEGREE","MIN_DEGREE"],"struct":["BPlusTree","BTreeNode"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BottleneckType","SeverityLevel"],"struct":["AnalysisStats","Bottleneck","PerformanceAnalysis","PerformanceAnalyzer","PerformanceMetric","Thresholds"]};
