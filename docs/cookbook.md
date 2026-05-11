@@ -79,6 +79,11 @@ The second form uses `-d` / `--database` to resolve data under `data_directory` 
 Use `--batch-file` to run **one statement per line** in a single process, using one `SessionContext`.
 This is required if you want to test transactions (`BEGIN/COMMIT/ROLLBACK`) across multiple statements.
 
+**Auto-commit note:** if you run DML outside an explicit `BEGIN … COMMIT`, RustDB executes each DML
+statement as an **implicit short transaction** (auto-commit). That means standalone
+`INSERT/UPDATE/DELETE` statements are WAL-logged and committed at statement end (subject to the
+selected durability mode; see [`docs/durability-and-recovery.md`](durability-and-recovery.md)).
+
 Example via stdin (`--batch-file -`):
 
 ```bash

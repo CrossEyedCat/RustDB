@@ -413,6 +413,21 @@ impl PageManager {
                         .as_ref()
                         .ok_or_else(|| Error::internal("recovery REDO INSERT: missing new_data"))?;
                     if page.update_record_by_offset(slot_off, nd).is_err() {
+                        // Idempotent replay: if the slot offset no longer matches (page defrag/split),
+                        // avoid duplicating the row by checking whether the payload already exists
+                        // somewhere on the page.
+                        //
+                        // Tuple rows include a monotonic tuple_id in the payload bytes, so this
+                        // is a stable way to detect "this insert was already applied" without
+                        // relying on the (potentially stale) byte offset embedded in record ids.
+                        if let Ok(existing) = page.scan_records() {
+                            if existing
+                                .iter()
+                                .any(|(_off, bytes)| bytes.as_slice() == nd.as_slice())
+                            {
+                                return Ok(());
+                            }
+                        }
                         let _ = page.delete_record_by_offset(slot_off);
                         page.add_record_at_offset(nd, rid, slot_off)?;
                     }

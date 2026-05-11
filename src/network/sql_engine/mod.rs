@@ -57,6 +57,40 @@ mod alter_table_ops;
 /// engine transaction across all sessions.
 static STRONG_ISO_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
+// Test-only crash injection (enabled via env vars) to deterministically simulate
+// "process crash mid-statement" while keeping the test runner alive.
+//
+// - `RUSTDB_SIMULATE_CRASH_AFTER_DML_OPS=<n>`: panic on the n-th DML row-level op
+//   (insert/update/delete tuple operation) in the current process.
+// - `RUSTDB_SIMULATE_CRASH_POINT=<point>` (optional): only crash at a matching point
+//   (e.g. `insert_row`, `update_row`, `delete_row`).
+//
+// Note: env vars are read dynamically so integration tests can toggle them per-test.
+static SIM_CRASH_DML_OP_COUNTER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+fn maybe_simulate_dml_crash(point: &'static str) {
+    let target = match std::env::var("RUSTDB_SIMULATE_CRASH_AFTER_DML_OPS") {
+        Ok(v) => v.parse::<u64>().ok().filter(|n| *n > 0),
+        Err(_) => {
+            SIM_CRASH_DML_OP_COUNTER.store(0, Ordering::SeqCst);
+            None
+        }
+    };
+    let Some(target) = target else {
+        return;
+    };
+    if let Ok(p) = std::env::var("RUSTDB_SIMULATE_CRASH_POINT") {
+        if p != point {
+            return;
+        }
+    }
+    let now = SIM_CRASH_DML_OP_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+    if now == target {
+        panic!("simulated crash at {point} (op #{now})");
+    }
+}
+
 /// Engine backed by the in-process planner, optimizer, and executor (single default table file per data directory).
 #[derive(Clone)]
 pub struct SqlEngine {
@@ -315,7 +349,9 @@ impl SqlEngine {
                     .storage_access
                     .write()
                     .map_err(|_| lock_poisoned_engine())?;
-                execute_insert(state, ctx, stmt, ins)
+                execute_dml_autocommit(state, ctx, |state, ctx| {
+                    execute_insert(state, ctx, stmt, ins)
+                })
             }
             SqlStatement::Update(upd) => {
                 let s = info_span!("sql.update", table = %upd.table);
@@ -324,7 +360,9 @@ impl SqlEngine {
                     .storage_access
                     .write()
                     .map_err(|_| lock_poisoned_engine())?;
-                execute_update(state, ctx, stmt, upd)
+                execute_dml_autocommit(state, ctx, |state, ctx| {
+                    execute_update(state, ctx, stmt, upd)
+                })
             }
             SqlStatement::Delete(del) => {
                 let s = info_span!("sql.delete", table = %del.table);
@@ -333,7 +371,9 @@ impl SqlEngine {
                     .storage_access
                     .write()
                     .map_err(|_| lock_poisoned_engine())?;
-                execute_delete(state, ctx, stmt, del)
+                execute_dml_autocommit(state, ctx, |state, ctx| {
+                    execute_delete(state, ctx, stmt, del)
+                })
             }
             SqlStatement::CreateTable(ct) => {
                 let s = info_span!("sql.create_table", table = %ct.table_name);
@@ -432,6 +472,38 @@ fn lock_poisoned_engine() -> EngineError {
     EngineError::new(engine_error_code::INTERNAL, "storage lock poisoned")
 }
 
+fn execute_dml_autocommit<T>(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    f: impl FnOnce(&SqlEngineState, &mut SessionContext) -> Result<T, EngineError>,
+) -> Result<T, EngineError> {
+    if ctx.transaction.is_some() {
+        return f(state, ctx);
+    }
+
+    // Statement-level implicit transaction (auto-commit) for DML.
+    // Use a predictable baseline isolation: ReadCommitted without the strong isolation lock.
+    let iso = SqlIsolationLevel::ReadCommitted;
+    let strong_iso = None;
+    let mut tx = SqlTransaction::new(iso, strong_iso);
+    tx.implicit_autocommit = true;
+    if let Some(ref wal) = state.wal {
+        wal.log_begin(&mut tx, iso)?;
+    }
+    ctx.transaction = Some(tx);
+
+    match f(state, ctx) {
+        Ok(out) => {
+            commit_transaction(state, ctx)?;
+            Ok(out)
+        }
+        Err(e) => match rollback_transaction(state, ctx) {
+            Ok(_) => Err(e),
+            Err(rb) => Err(rb),
+        },
+    }
+}
+
 fn default_session_isolation() -> SqlIsolationLevel {
     match std::env::var("RUSTDB_DEFAULT_ISOLATION").as_deref() {
         Ok("repeatable_read") | Ok("REPEATABLE_READ") => SqlIsolationLevel::RepeatableRead,
@@ -507,16 +579,21 @@ fn rollback_transaction(
             "no active transaction",
         )
     })?;
-    if let Some(ref wal) = state.wal {
-        wal.log_abort(&mut tx)?;
-    }
-    for op in tx.undo.into_iter().rev() {
+    let undo = std::mem::take(&mut tx.undo);
+    for op in undo.into_iter().rev() {
         apply_undo(state, op)?;
     }
     rebuild_all_constraint_runtime(state)?;
     // Persist rollback: otherwise the next process sees heap pages from disk that still contain
     // undone inserts (WAL replay does not redo aborted txs, so durability must match).
     crate::network::sql_engine_wal::flush_all_page_managers(state).map_err(map_db_err)?;
+    // Only append an ABORT marker after the UNDO is applied *and* persisted.
+    //
+    // If we mark the transaction as aborted in WAL first and then crash before the UNDO is flushed,
+    // recovery would skip UNDO (seeing ABORT) while the heap still contains uncommitted changes.
+    if let Some(ref wal) = state.wal {
+        wal.log_abort(&mut tx)?;
+    }
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
@@ -557,7 +634,29 @@ fn apply_undo(state: &SqlEngineState, op: UndoEntry) -> Result<(), EngineError> 
                 sql_constraints::unregister_row(&mut rt, &table, rid, &tuple, s, &cat_clone)?;
             }
             let mut g = pm.lock().map_err(|_| lock_poisoned_engine())?;
-            g.delete(rid).map_err(map_db_err)?;
+            match g.delete(rid) {
+                Ok(_) => {}
+                Err(e) => {
+                    // During error paths (e.g. failed INSERT that already performed a compensating
+                    // delete), the row might already be gone by the time we roll back.
+                    // Treat "not found" as idempotent for rollback/recovery.
+                    let msg = e.to_string();
+                    if !msg.contains("Record not found") {
+                        return Err(map_db_err(e));
+                    }
+
+                    // RecordIds encode a byte offset within the page; page split/merge/defrag can
+                    // move records and invalidate stored `rid`s within the same transaction.
+                    // As a fallback, locate and delete the row by its payload bytes.
+                    if let Ok(snapshot) = g.select(None) {
+                        if let Some((found_rid, _)) =
+                            snapshot.into_iter().find(|(_rid, bytes)| *bytes == payload)
+                        {
+                            let _ = g.delete(found_rid);
+                        }
+                    }
+                }
+            }
         }
         UndoEntry::Delete {
             table,
@@ -840,6 +939,7 @@ fn execute_insert(
                 let bytes = tuple.to_bytes().map_err(map_db_err)?;
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
                 let ins = pm.insert(&bytes).map_err(map_db_err)?;
+                maybe_simulate_dml_crash("insert_row");
                 if let Some(tx) = ctx.transaction.as_mut() {
                     if let Some(ref wal) = state.wal {
                         let page_id = (ins.record_id >> 32) as u64;
@@ -861,7 +961,34 @@ fn execute_insert(
                 }
                 if let Err(e) = register_row_for_insert(state, &insert.table, ins.record_id, &tuple)
                 {
+                    // We already logged the INSERT to WAL (for crash recovery). If the statement
+                    // fails after that point (e.g. PK/UNIQUE violation), we must also log the
+                    // compensating DELETE in the *same* transaction so a later COMMIT cannot
+                    // resurrect the rejected row on recovery (redo would replay insert+delete).
+                    if let Some(tx) = ctx.transaction.as_mut() {
+                        if let Some(ref wal) = state.wal {
+                            let page_id = (ins.record_id >> 32) as u64;
+                            let off = (ins.record_id & 0xffff_ffff) as u32;
+                            let record_offset: u16 = off.try_into().map_err(|_| {
+                                EngineError::new(
+                                    engine_error_code::INTERNAL,
+                                    "record offset too large for WAL",
+                                )
+                            })?;
+                            wal.log_data_delete(
+                                tx,
+                                pm.file_id(),
+                                page_id,
+                                record_offset,
+                                bytes.clone(),
+                            )?;
+                        }
+                    }
                     pm.delete(ins.record_id).map_err(map_db_err)?;
+                    // Persist the compensating delete: otherwise an erroring insert could leave the
+                    // row on disk (insert flushed earlier by the page manager), corrupting
+                    // constraints on the next open.
+                    pm.flush_dirty_pages().map_err(map_db_err)?;
                     return Err(e);
                 }
                 push_undo(
@@ -894,6 +1021,7 @@ fn execute_insert(
                 drop(pm);
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
                 let ins = pm.insert(&bytes).map_err(map_db_err)?;
+                maybe_simulate_dml_crash("insert_row");
                 if let Some(tx) = ctx.transaction.as_mut() {
                     if let Some(ref wal) = state.wal {
                         let page_id = (ins.record_id >> 32) as u64;
@@ -915,7 +1043,31 @@ fn execute_insert(
                 }
                 if let Err(e) = register_row_for_insert(state, &insert.table, ins.record_id, &tuple)
                 {
+                    // Mirror the WAL-visible INSERT with a WAL-visible compensating DELETE so
+                    // a later COMMIT cannot replay an otherwise rejected row on recovery.
+                    if let Some(tx) = ctx.transaction.as_mut() {
+                        if let Some(ref wal) = state.wal {
+                            let page_id = (ins.record_id >> 32) as u64;
+                            let off = (ins.record_id & 0xffff_ffff) as u32;
+                            let record_offset: u16 = off.try_into().map_err(|_| {
+                                EngineError::new(
+                                    engine_error_code::INTERNAL,
+                                    "record offset too large for WAL",
+                                )
+                            })?;
+                            wal.log_data_delete(
+                                tx,
+                                pm.file_id(),
+                                page_id,
+                                record_offset,
+                                bytes.clone(),
+                            )?;
+                        }
+                    }
                     pm.delete(ins.record_id).map_err(map_db_err)?;
+                    // Persist the compensating delete: otherwise a failed insert (e.g. PK/UNIQUE)
+                    // can leave the row visible after restart.
+                    pm.flush_dirty_pages().map_err(map_db_err)?;
                     return Err(e);
                 }
                 push_undo(
@@ -1099,6 +1251,7 @@ fn execute_update(
             }
         }
         pm.update(rid, &new_bytes).map_err(map_db_err)?;
+        maybe_simulate_dml_crash("update_row");
         push_undo(
             ctx,
             UndoEntry::Update {
@@ -1180,6 +1333,7 @@ fn execute_delete(
             },
         );
         pm.delete(rid).map_err(map_db_err)?;
+        maybe_simulate_dml_crash("delete_row");
         if let Some(tx) = ctx.transaction.as_mut() {
             if let Some(ref wal) = state.wal {
                 let page_id = (rid >> 32) as u64;
@@ -1844,6 +1998,87 @@ mod tests {
                     rows[0][1]
                 );
             }
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
+    fn sql_engine_autocommit_dml_rolls_back_on_error() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+
+        eng.execute_sql("CREATE TABLE tuniq (a INTEGER UNIQUE)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("INSERT INTO tuniq (a) VALUES (1)", &mut ctx)
+            .unwrap();
+
+        // In auto-commit mode, the whole statement must behave atomically: if it errors mid-way,
+        // it must not leave partial changes behind.
+        assert!(eng
+            .execute_sql("INSERT INTO tuniq (a) VALUES (2), (1)", &mut ctx)
+            .is_err());
+
+        let out = eng
+            .execute_sql("SELECT a FROM tuniq WHERE a = 2", &mut ctx)
+            .unwrap();
+        match out {
+            EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 0),
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
+    fn sql_engine_autocommit_pk_violation_does_not_corrupt_on_reopen() {
+        let dir = TempDir::new().unwrap();
+        {
+            let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+            let mut ctx = SessionContext::default();
+            eng.execute_sql("CREATE TABLE tpk (id INT PRIMARY KEY)", &mut ctx)
+                .unwrap();
+            eng.execute_sql("INSERT INTO tpk (id) VALUES (1)", &mut ctx)
+                .unwrap();
+            assert!(eng
+                .execute_sql("INSERT INTO tpk (id) VALUES (1)", &mut ctx)
+                .is_err());
+        }
+
+        // After reopen, constraints must rebuild cleanly and the duplicate row must not persist.
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        let out = eng
+            .execute_sql("SELECT id FROM tpk WHERE id = 1", &mut ctx)
+            .unwrap();
+        match out {
+            EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 1),
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
+    fn sql_engine_rollback_survives_page_splits() {
+        // Regression: record ids encode byte offsets, so page split/merge can invalidate them.
+        // Rollback must still remove all uncommitted rows, even if their offsets moved.
+        let dir = TempDir::new().unwrap();
+        {
+            let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+            let mut ctx = SessionContext::default();
+            eng.execute_sql("CREATE TABLE t (a INTEGER)", &mut ctx)
+                .unwrap();
+            eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+            // Insert enough rows to force at least one page split (MAX_RECORDS_PER_PAGE=100).
+            for i in 0..180 {
+                let sql = format!("INSERT INTO t (a) VALUES ({})", i);
+                eng.execute_sql(&sql, &mut ctx).unwrap();
+            }
+            eng.execute_sql("ROLLBACK", &mut ctx).unwrap();
+        }
+        // After reopen, no rows should remain.
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        let out = eng.execute_sql("SELECT a FROM t", &mut ctx).unwrap();
+        match out {
+            EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 0),
             _ => panic!("expected result set"),
         }
     }

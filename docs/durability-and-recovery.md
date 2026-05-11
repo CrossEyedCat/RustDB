@@ -1,38 +1,48 @@
 ## Durability & crash recovery (SqlEngine WAL)
 
-Этот документ фиксирует **текущее** поведение долговечности (durability) и восстановления (crash-recovery) для сетевого движка `SqlEngine` и его WAL-интеграции.
+This document specifies the **current** durability and crash-recovery behavior of `SqlEngine` and
+its write-ahead log (WAL) integration.
 
-Цель — убрать неоднозначность вокруг «что именно считается коммитом» и какие гарантии ожидаются при рестарте после падения процесса/ОС.
+The goal is to remove ambiguity around:
 
-### Где это реализовано
+- what exactly counts as a “commit”
+- when changes are considered durable
+- what to expect after a process/OS crash and subsequent restart
 
-- **SQL-движок**: `src/network/sql_engine/mod.rs`
-- **WAL интеграция** (BEGIN/COMMIT/ABORT + DML records + replay): `src/network/sql_engine_wal.rs`
-- **Формат log records**: `src/logging/log_record.rs`
-- **RecoveryManager** (общая реализация, используется на `SqlEngine::open`): `src/logging/recovery.rs`
-- **CheckpointManager**: `src/logging/checkpoint.rs`
-- **Commit log (минимальный durability hook)**: `src/network/sql_commit_log.rs`
+### Where this is implemented
 
-### Термины
+- **SQL engine**: `src/network/sql_engine/mod.rs`
+- **WAL integration** (BEGIN/COMMIT/ABORT + DML records + replay): `src/network/sql_engine_wal.rs`
+- **Log record format**: `src/logging/log_record.rs`
+- **Recovery manager** (used from `SqlEngine::open`): `src/logging/recovery.rs`
+- **Checkpoint manager**: `src/logging/checkpoint.rs`
+- **Commit log (minimal durability hook)**: `src/network/sql_commit_log.rs`
 
-- **WAL**: append-only журнальные записи изменений, хранятся в `data_dir/.rustdb/wal/*.log`.
-- **LSN**: log sequence number (`u64`), монотонно возрастающий идентификатор записи WAL.
-- **Txn id**: `transaction_id` (`u64`) внутри WAL.
-- **Commit point**: момент, после которого транзакция должна считаться «зафиксированной» и должна пережить рестарт (при выбранной политике fsync).
+### Terms
 
-### Политика включения WAL / checkpoints и durability
+- **WAL**: append-only log records stored under `data_dir/.rustdb/wal/*.log`.
+- **LSN**: log sequence number (`u64`), monotonically increasing WAL record id.
+- **Txn id**: `transaction_id` (`u64`) carried by transactional WAL records.
+- **Commit point**: the moment after which a transaction must be treated as committed and must
+  survive a restart (subject to the chosen fsync policy / durability mode).
 
-По умолчанию WAL **включён**. Переменные окружения:
+### WAL/checkpoints and durability policy
 
-- `RUSTDB_DISABLE_WAL=1`: отключить WAL целиком (не будет recovery по WAL; поведение после crash может отражать незакоммиченные изменения, т.к. heap writes происходят напрямую).
-- `RUSTDB_DISABLE_CHECKPOINT=1`: отключить checkpoints, даже если WAL включён.
-- `RUSTDB_AUTO_CHECKPOINT=1`: включить авто-checkpoint (иначе только ручной `SqlEngine::checkpoint()`).
-- `RUSTDB_CHECKPOINT_INTERVAL_SECS=<n>`: интервал авто-checkpoint (секунды).
-- `RUSTDB_FSYNC_COMMIT=1`: включить «синхронный commit» (commit points ждут `fsync`) на уровне WAL writer и `commits.log` (см. ниже). Это также переключает `SqlEngineConfig::default()` в режим `DurabilityMode::Safe`; без этой переменной дефолт для server/CLI — `Fast`.
+WAL is **enabled by default**. Environment variables:
 
-### Что пишется в WAL
+- `RUSTDB_DISABLE_WAL=1`: disable WAL entirely (no WAL recovery; crash behavior may reflect
+  uncommitted changes because heap writes happen directly).
+- `RUSTDB_DISABLE_CHECKPOINT=1`: disable checkpoints even if WAL is enabled.
+- `RUSTDB_AUTO_CHECKPOINT=1`: enable automatic checkpoints (otherwise only manual
+  `SqlEngine::checkpoint()`).
+- `RUSTDB_CHECKPOINT_INTERVAL_SECS=<n>`: automatic checkpoint interval in seconds.
+- `RUSTDB_FSYNC_COMMIT=1`: enable “synchronous commit” (commit points wait for fsync / `sync_all`
+  where applicable). This switches `SqlEngineConfig::default()` to `DurabilityMode::Safe`; without
+  it, the default for server/CLI is `Fast`.
 
-Транзакционные записи (все имеют `transaction_id`):
+### What is written to the WAL
+
+Transactional records (all have a `transaction_id`):
 
 - `TransactionBegin`
 - `DataInsert`
@@ -41,48 +51,112 @@
 - `TransactionCommit`
 - `TransactionAbort`
 
-Системные/метаданные записи:
+System/metadata records:
 
-- `Checkpoint` / `CheckpointEnd` (создаёт `CheckpointManager`)
-- `MetadataUpdate` (используется как marker после успешной записи `catalog.json`)
+- `Checkpoint` / `CheckpointEnd` (emitted by `CheckpointManager`)
+- `MetadataUpdate` (used as a marker after a successful `catalog.json` write)
 
-Примечание: marker `MetadataUpdate(kind=catalog_json)` **не привязан** к user transaction (нет `transaction_id`) и в текущем поведении **не влияет** на WAL replay; он нужен для наблюдаемости/диагностики порядка сохранения каталога.
+Note: `MetadataUpdate(kind=catalog_json)` is **not** tied to a user transaction (no
+`transaction_id`) and currently does **not** affect WAL replay; it exists primarily for
+observability/diagnostics around catalog persistence ordering.
 
-### Текущее поведение DML внутри explicit transaction
+### DML inside an explicit transaction (BEGIN … COMMIT/ROLLBACK)
 
-`SqlEngine` реализует минимальные транзакции на уровне сессии:
+`SqlEngine` implements minimal session-level transactions:
 
-- `BEGIN`: создаёт `SqlTransaction` в `SessionContext` и пишет WAL `TransactionBegin` (если WAL включён).
-- DML (`INSERT/UPDATE/DELETE`) **сразу** модифицирует heap (`PageManager`) и пишет соответствующие WAL records (если WAL включён и есть активная транзакция).
-- После DML движок вызывает `flush_dirty_pages()` для page manager (видимость на диске повышается даже для незакоммиченных данных).
-- `ROLLBACK`: пишет WAL `TransactionAbort`, применяет in-memory undo log и затем принудительно `flush_all_page_managers()` (чтобы “откатанные” вставки/апдейты не остались видимыми после рестарта).
-- `COMMIT`: пишет WAL `TransactionCommit` и добавляет строку в `data_dir/.rustdb/commits.log`.
+- `BEGIN`: creates an `SqlTransaction` in `SessionContext` and writes WAL `TransactionBegin`
+  (when WAL is enabled).
+- DML (`INSERT/UPDATE/DELETE`) immediately modifies the heap (`PageManager`) and writes the
+  corresponding WAL `Data*` record (when WAL is enabled and the session has an active
+  transaction).
+- After each DML statement, the engine calls `flush_dirty_pages()` on the page manager (this
+  increases on-disk visibility even for uncommitted data).
+- `ROLLBACK`: writes WAL `TransactionAbort`, applies the in-memory undo log, then forces
+  `flush_all_page_managers()` so that “rolled back” heap writes do not remain visible after a
+  restart.
+- `COMMIT`: writes WAL `TransactionCommit` and appends a line to `data_dir/.rustdb/commits.log`.
 
-### Commit point (зафиксированная спецификация для текущей реализации)
+### DML outside an explicit transaction (implicit auto-commit)
 
-Для explicit transaction `BEGIN … COMMIT` commit point определяется так:
+When the session is **not** inside an explicit transaction, each DML statement runs as an
+**implicit short transaction**:
 
-1. В WAL записан `TransactionCommit` для `transaction_id` этой транзакции.\n+2. Если `RUSTDB_FSYNC_COMMIT=1`, запись WAL commit выполнена в режиме `synchronous_commit` (fsync/эквивалент на уровне log writer) и строка в `commits.log` записана с `sync_all()`.
+1. The engine creates an internal transaction id and writes `TransactionBegin`.
+2. The statement executes and emits one or more `DataInsert` / `DataUpdate` / `DataDelete` WAL
+   records under that transaction id.
+3. The engine writes `TransactionCommit` for that transaction id and appends a commit marker to
+   `commits.log`.
 
-Следствия:
+This makes standalone DML **WAL-logged and crash-recoverable**, even without an explicit
+`BEGIN/COMMIT`.
 
-- При **WAL включён**: при рестарте выполняется анализ WAL, и операции транзакций с `TransactionCommit` попадают в REDO (см. `analyze_wal_for_replay`), а транзакции без `Commit/Abort` — в UNDO.
-- При **WAL выключен** (`RUSTDB_DISABLE_WAL=1`): commit point в строгом смысле отсутствует; устойчивость зависит от того, что и когда успело попасть на диск через `flush_dirty_pages()` и OS buffers.
+### Commit point (current spec)
 
-### Recovery / replay на `SqlEngine::open`
+For both explicit transactions and implicit auto-commit DML, the commit point is:
 
-`SqlEngine::open` (при включённом WAL) выполняет:
+1. `TransactionCommit` for the transaction id is appended to the WAL.
+2. If `RUSTDB_FSYNC_COMMIT=1` / `DurabilityMode::Safe` is active, the WAL writer performs the
+   synchronous commit (fsync / equivalent) and the commit marker line in `commits.log` is written
+   with `sync_all()`.
 
-1. `RecoveryManager::recover_database(wal_dir)` — общий recovery-проход по WAL директории (в режиме `quiet=true`, `enable_validation=false`).
-2. `replay_wal_into_engine(state, wal_dir)`:\n+   - анализирует WAL и получает:\n+     - `redo`: все `Data*` операций для транзакций, которые `committed && !aborted`\n+     - `undo_per_tx`: операции `Data*` для “активных” транзакций (нет commit и нет abort), в обратном LSN порядке\n+   - применяет REDO по LSN возрастанию\n+   - применяет UNDO по каждой активной транзакции в обратном порядке (по сути «компенсация» на уровне PageManager)\n+
-Важно: текущее replay — **страница-ориентированное** (см. `PageManager::apply_log_record_recovery`) и предполагает, что `record_offset` (`u16`) адресует слот внутри страницы.
+Statement-level commit point for implicit auto-commit DML:
 
-### Гарантии и ограничения (v1)
+- The commit point is reached **after the statement finishes successfully**, when the engine has
+  written the WAL commit record (and performed fsync in `Safe` mode). If the statement errors, the
+  implicit transaction is aborted and must not become visible after restart.
 
-- **Гарантия (при WAL ON)**: после рестарта транзакции без `COMMIT` не должны “просачиваться” в итоговое состояние: их DML изменения компенсируются UNDO при `open()`.
-- **Гарантия (при `RUSTDB_FSYNC_COMMIT=1`)**: commit marker в WAL и commit line в `commits.log` должны быть устойчивы к падению после возврата из `COMMIT`.
-- **Ограничение**: DML изменения физически записываются в heap ещё до `COMMIT` (и даже могут быть сброшены на диск после statement-level flush). Корректность после рестарта достигается **за счёт UNDO**.\n+  Это отличается от классического “WAL-first + no-force” дизайна и должно учитываться при дальнейшем развитии.\n+- **Ограничение**: DDL запрещён внутри explicit transaction (см. `README.md`), поэтому WAL для DDL пока не формализован как часть user transactions.\n+
-### Инварианты (для тестов / regression gates)
+Durability expectations by mode:
 
-Рекомендуемые инварианты, которые должны быть покрыты тестами:\n+
-1. **Crash before commit**: после `BEGIN; INSERT …; <crash>` и последующего `open()` результат запроса не включает вставленную строку.\n+2. **Crash after commit**: после `BEGIN; INSERT …; COMMIT; <crash>` и `open()` вставленная строка присутствует.\n+3. **Rollback durability**: после `BEGIN; INSERT …; ROLLBACK; <crash>` и `open()` вставленная строка отсутствует.\n+4. **Idempotent replay**: повторный `open()` без новых операций не меняет содержимое (повторный replay не «дублирует» строки).\n+
+- **`DurabilityMode::Fast` (default for server/CLI)**: commits are recorded, but the engine does
+  not wait for fsync at the commit point. A power loss / kernel crash can lose the most recent
+  committed transactions that were still in OS buffers, even though they were “committed” from the
+  client’s perspective.
+- **`DurabilityMode::Safe` (`RUSTDB_FSYNC_COMMIT=1`)**: commit points wait for durability of the
+  WAL commit record (and the `commits.log` marker). After `COMMIT` returns (or an implicit DML
+  statement returns successfully), the committed effects should survive a crash consistent with the
+  platform’s fsync semantics.
+
+### Recovery / replay on `SqlEngine::open`
+
+When WAL is enabled, `SqlEngine::open` performs:
+
+1. `RecoveryManager::recover_database(wal_dir)` — a generic WAL recovery pass over the WAL
+   directory (currently `quiet=true`, `enable_validation=false`).
+2. `replay_wal_into_engine(state, wal_dir)`:
+   - analyzes WAL and computes:
+     - `redo`: all `Data*` operations for transactions that are `committed && !aborted`
+     - `undo_per_tx`: `Data*` operations for “active” transactions (no commit and no abort), in
+       reverse LSN order
+   - applies REDO in increasing LSN order
+   - applies UNDO per active transaction in reverse order (page-manager compensation)
+
+Important: current replay is **page-oriented** (see `PageManager::apply_log_record_recovery`) and
+assumes `record_offset` (`u16`) addresses a slot within a page.
+
+### Guarantees and limitations (v1)
+
+- **Guarantee (WAL ON)**: after restart, transactions without a commit record must not “leak” into
+  the final state; their DML effects are compensated by UNDO during `open()`.
+- **Guarantee (`RUSTDB_FSYNC_COMMIT=1`)**: the WAL commit marker and the commit line in
+  `commits.log` are expected to be durable after returning from `COMMIT` / successful auto-commit
+  DML.
+- **Limitation**: DML heap writes may be persisted before `COMMIT` (and can be flushed after each
+  statement). Correctness after restart is achieved **via UNDO**. This differs from a classic
+  “WAL-first + no-force” design and should be kept in mind as the storage layer evolves.
+- **Limitation**: DDL is currently forbidden inside an explicit transaction (see `README.md`), so
+  DDL WAL semantics are not yet formalized as part of user transactions.
+
+### Invariants (for tests / regression gates)
+
+Recommended invariants to cover with tests:
+
+1. **Crash before commit**: after `BEGIN; INSERT …; <crash>` and then `open()`, the inserted row is
+   not visible.
+2. **Crash after commit**: after `BEGIN; INSERT …; COMMIT; <crash>` and then `open()`, the inserted
+   row is visible.
+3. **Rollback durability**: after `BEGIN; INSERT …; ROLLBACK; <crash>` and then `open()`, the
+   inserted row is not visible.
+4. **Auto-commit crash behavior**: after `INSERT …; <crash>` and then `open()`, the inserted row is
+   visible iff the implicit transaction reached its commit point.
+5. **Idempotent replay**: reopening without new operations does not change contents (replay does
+   not duplicate rows).

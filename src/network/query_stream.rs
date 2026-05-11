@@ -20,8 +20,8 @@ use crate::network::engine::{
 };
 use crate::network::framing::{
     decode_client_frame_v1, encode_server_message_v1, encode_server_message_write, ClientMessage,
-    FrameHeader, ProtocolError, ServerMessage, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_BYTES,
-    PROTOCOL_VERSION_V1,
+    FrameHeader, ProtocolError, QueryPayload, ServerMessage, FRAME_HEADER_LEN,
+    MAX_FRAME_PAYLOAD_BYTES, PROTOCOL_VERSION_V1,
 };
 use crate::network::metrics::{QueryHandledOutcome, QuicMetrics};
 
@@ -358,6 +358,19 @@ pub async fn handle_query_bidi_stream(
                     &mut session_ctx,
                 );
                 let _ = reply_tx.send(r);
+            }
+
+            // If the client dropped the stream mid-transaction (e.g. it errored and disconnected),
+            // clean up the per-stream session state to avoid leaking an open transaction in the engine.
+            if session_ctx.transaction.is_some() {
+                let _ = dispatch_client_message_with_ctx(
+                    ClientMessage::Query(QueryPayload {
+                        sql: "ROLLBACK".to_string(),
+                    }),
+                    engine_worker.as_ref(),
+                    &policy_worker,
+                    &mut session_ctx,
+                );
             }
         })
         .expect("spawn rustdb-quic-sql-session thread");
