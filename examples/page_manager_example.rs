@@ -84,6 +84,7 @@ fn demo_create_page_manager(data_dir: &Path) -> Result<(), Box<dyn std::error::E
         use_async_flush: true,
         defer_data_flush: false,
         flush_interval_ms: 0,
+        enable_auto_merge: false,
     };
 
     println!("\n📊 Custom configuration:");

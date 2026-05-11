@@ -50,6 +50,13 @@ pub struct PageManagerConfig {
     pub defer_data_flush: bool,
     /// When defer_data_flush is true, minimum ms between flushes (0 = caller controls manually)
     pub flush_interval_ms: u64,
+    /// Allow `delete_record_internal` to silently merge a sparse page with a neighbor.
+    ///
+    /// This is unsafe with the current WAL design: `merge_pages` moves committed records from one
+    /// page to another without writing a WAL record, so a subsequent crash recovery may REDO the
+    /// original INSERT onto the (now empty) source page and end up with the row visible on both
+    /// pages. Off by default; enable only in self-contained tests that exercise the merge path.
+    pub enable_auto_merge: bool,
 }
 
 impl Default for PageManagerConfig {
@@ -66,6 +73,7 @@ impl Default for PageManagerConfig {
             use_async_flush: true,
             defer_data_flush: false,
             flush_interval_ms: 0,
+            enable_auto_merge: false,
         }
     }
 }
@@ -816,18 +824,25 @@ impl PageManager {
 
         self.page_cache.insert(page_id, page_info);
 
-        if needs_merge {
-            // Try to merge (no latch held - merge_pages acquires its own)
-            if let Ok(merged) = self.try_merge_page(page_id) {
-                if merged {
+        // Auto-merging on delete silently moves committed records between pages without writing a
+        // WAL record. After a crash, REDO replays the original INSERT against the source page and
+        // resurrects the row there, so the row becomes visible on both source and destination
+        // pages. Page merging must be an explicit maintenance step, not a side effect of delete.
+        let merged = if needs_merge && self.config.enable_auto_merge {
+            match self.try_merge_page(page_id) {
+                Ok(true) => {
                     self.statistics.page_merges += 1;
+                    true
                 }
+                _ => false,
             }
-        }
+        } else {
+            false
+        };
 
         Ok(DeleteResult {
             physical_delete: true,
-            page_merge: needs_merge,
+            page_merge: merged,
         })
     }
 

@@ -342,6 +342,9 @@ fn test_page_merge() {
             flush_on_commit: true,
             batch_flush_size: 10,
             use_async_flush: true,
+            // Auto-merge is off by default because it can break WAL recovery; enable it here
+            // explicitly since this test directly exercises the merge path on a standalone manager.
+            enable_auto_merge: true,
             ..Default::default()
         };
 
