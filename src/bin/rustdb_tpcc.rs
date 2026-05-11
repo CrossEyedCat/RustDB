@@ -384,7 +384,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let mut attempts: u64 = 0;
             let mut successes: u64 = 0;
             let mut new_orders_ok: u64 = 0;
-            let mut log_lines: Vec<String> = if want_log { Vec::new() } else { Vec::new() };
+            let mut log_lines: Vec<String> = Vec::new();
 
             if let Some(dl) = deadline {
                 while Instant::now() < dl {
@@ -501,7 +501,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let elapsed = start.elapsed().as_secs_f64().max(1e-9);
     all_lat.sort_unstable();
 
-    let txn_attempts = total_attempts.max(0);
+    let txn_attempts = total_attempts;
     let txn_successes = total_successes;
     let err = txn_attempts.saturating_sub(txn_successes);
     let success_rate_pct = if txn_attempts > 0 {
