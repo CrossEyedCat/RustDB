@@ -64,6 +64,11 @@ struct Args {
     #[arg(long, default_value_t = false)]
     json: bool,
 
+    /// Append one CSV line per transaction attempt (worker,attempt_id,kind,ok,elapsed_us,error).
+    /// Can grow large on long runs; use for CI triage.
+    #[arg(long)]
+    txn_log: Option<PathBuf>,
+
     /// QUIC max concurrent bidirectional streams.
     #[arg(long, default_value_t = 512)]
     quic_max_streams: usize,
@@ -263,12 +268,28 @@ fn quantile_ms(sorted_us: &[u128], q: f64) -> f64 {
     sorted_us[idx] as f64 / 1000.0
 }
 
+fn skip_false(b: &bool) -> bool {
+    !*b
+}
+
 #[derive(Serialize)]
 struct TpccReport {
-    concurrency: usize,
+    /// Total transaction attempts (success + failure).
+    #[serde(rename = "txn_attempts")]
+    txn_attempts: u64,
+    /// Attempts that completed all statements without server/network error.
+    #[serde(rename = "txn_successes")]
+    txn_successes: u64,
+    /// Same as `txn_attempts` (legacy field name used by older CI parsers).
     transactions: usize,
+    concurrency: usize,
     elapsed_s: f64,
+    /// Throughput of **successful** (committed) transactions only.
     txns_per_s: f64,
+    /// Attempts per second (includes failures; legacy inflated metric).
+    attempts_per_s: f64,
+    /// 100.0 * txn_successes / txn_attempts (0 if no attempts).
+    success_rate_pct: f64,
     new_orders: u64,
     #[serde(rename = "tpmC")]
     tpm_c: f64,
@@ -277,6 +298,39 @@ struct TpccReport {
     p99_ms: f64,
     err: u64,
     mix: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    txn_log_path: Option<String>,
+    #[serde(default, skip_serializing_if = "skip_false")]
+    txn_log_truncated: bool,
+}
+
+fn txn_kind_tag(k: TxnKind) -> &'static str {
+    match k {
+        TxnKind::NewOrder => "new_order",
+        TxnKind::Payment => "payment",
+        TxnKind::OrderStatus => "order_status",
+        TxnKind::Delivery => "delivery",
+        TxnKind::StockLevel => "stock_level",
+    }
+}
+
+fn csv_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    let need_quote = s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r');
+    if need_quote {
+        out.push('"');
+        for ch in s.chars() {
+            if ch == '"' {
+                out.push_str("\"\"");
+            } else {
+                out.push(ch);
+            }
+        }
+        out.push('"');
+        out
+    } else {
+        s.to_string()
+    }
 }
 
 #[tokio::main]
@@ -302,8 +356,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let duration = args.duration_seconds;
     let deadline = duration.map(|s| Instant::now() + Duration::from_secs(s.max(1)));
     let global_txn_counter = Arc::new(AtomicU64::new(0));
-    let new_orders = Arc::new(AtomicU64::new(0));
-    let errors = Arc::new(AtomicU64::new(0));
+
+    const TXN_LOG_MAX_LINES: usize = 2_000_000;
 
     let start = Instant::now();
     let mut handles = Vec::with_capacity(args.concurrency);
@@ -313,9 +367,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let conn = conn.clone();
         let mix = mix.clone();
         let global_txn_counter = global_txn_counter.clone();
-        let new_orders = new_orders.clone();
-        let errors = errors.clone();
         let mix_str = args.mix.clone();
+        let want_log = args.txn_log.is_some();
 
         let base = tx_total / args.concurrency.max(1);
         let extra = (worker_id < (tx_total % args.concurrency.max(1))) as usize;
@@ -324,11 +377,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         handles.push(tokio::spawn(async move {
             let _permit = permit;
-            let mut lat_us: Vec<u128> = Vec::with_capacity(my_tx);
+            let mut lat_ok: Vec<u128> = Vec::with_capacity(my_tx);
             let seed = 0xC0FFEE_u64 ^ (worker_id as u64).wrapping_mul(0xA5A5A5A5A5A5A5A5);
             let mut seen: u64 = 0;
             let mut rng = seed ^ 0xD6E8FEB86659FD93;
-            let mut completed: u64 = 0;
+            let mut attempts: u64 = 0;
+            let mut successes: u64 = 0;
+            let mut new_orders_ok: u64 = 0;
+            let mut log_lines: Vec<String> = if want_log { Vec::new() } else { Vec::new() };
 
             if let Some(dl) = deadline {
                 while Instant::now() < dl {
@@ -336,21 +392,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     let mut st = seed ^ global_tx.wrapping_mul(0xD1B54A32D192ED03);
                     let u = rand_f64_0_1(&mut st);
                     let kind = mix.pick(u);
-                    if kind == TxnKind::NewOrder {
-                        new_orders.fetch_add(1, Ordering::Relaxed);
-                    }
                     let sqls = txn_sql(kind, seed, global_tx);
                     let t0 = Instant::now();
                     let res = run_sql_seq_on_stream(&conn, &sqls).await;
                     let dt = t0.elapsed();
-                    reservoir_sample_push(&mut lat_us, &mut seen, &mut rng, dt.as_micros());
-                    completed = completed.wrapping_add(1);
-                    if res.is_err() {
-                        errors.fetch_add(1, Ordering::Relaxed);
+                    let us = dt.as_micros();
+                    attempts = attempts.wrapping_add(1);
+                    let ok = res.is_ok();
+                    if ok {
+                        successes = successes.wrapping_add(1);
+                        if kind == TxnKind::NewOrder {
+                            new_orders_ok = new_orders_ok.wrapping_add(1);
+                        }
+                        reservoir_sample_push(&mut lat_ok, &mut seen, &mut rng, us);
+                    }
+                    if want_log && log_lines.len() < TXN_LOG_MAX_LINES {
+                        let err = res.err().map(|e| e.to_string()).unwrap_or_default();
+                        log_lines.push(format!(
+                            "{},{},{},{},{},{}",
+                            worker_id,
+                            global_tx,
+                            txn_kind_tag(kind),
+                            if ok { 1 } else { 0 },
+                            us,
+                            csv_escape(&err)
+                        ));
                     }
                 }
-                Ok::<(Vec<u128>, String, u64), Box<dyn std::error::Error + Send + Sync>>((
-                    lat_us, mix_str, completed,
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>((
+                    lat_ok,
+                    mix_str,
+                    attempts,
+                    successes,
+                    new_orders_ok,
+                    log_lines,
                 ))
             } else {
                 for j in 0..my_tx {
@@ -358,21 +433,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     let mut st = seed ^ global_tx.wrapping_mul(0xD1B54A32D192ED03);
                     let u = rand_f64_0_1(&mut st);
                     let kind = mix.pick(u);
-                    if kind == TxnKind::NewOrder {
-                        new_orders.fetch_add(1, Ordering::Relaxed);
-                    }
                     let sqls = txn_sql(kind, seed, global_tx);
                     let t0 = Instant::now();
                     let res = run_sql_seq_on_stream(&conn, &sqls).await;
                     let dt = t0.elapsed();
-                    reservoir_sample_push(&mut lat_us, &mut seen, &mut rng, dt.as_micros());
-                    completed += 1;
-                    if res.is_err() {
-                        errors.fetch_add(1, Ordering::Relaxed);
+                    let us = dt.as_micros();
+                    attempts += 1;
+                    let ok = res.is_ok();
+                    if ok {
+                        successes += 1;
+                        if kind == TxnKind::NewOrder {
+                            new_orders_ok += 1;
+                        }
+                        reservoir_sample_push(&mut lat_ok, &mut seen, &mut rng, us);
+                    }
+                    if want_log && log_lines.len() < TXN_LOG_MAX_LINES {
+                        let err = res.err().map(|e| e.to_string()).unwrap_or_default();
+                        log_lines.push(format!(
+                            "{},{},{},{},{},{}",
+                            worker_id,
+                            global_tx,
+                            txn_kind_tag(kind),
+                            if ok { 1 } else { 0 },
+                            us,
+                            csv_escape(&err)
+                        ));
                     }
                 }
-                Ok::<(Vec<u128>, String, u64), Box<dyn std::error::Error + Send + Sync>>((
-                    lat_us, mix_str, completed,
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>((
+                    lat_ok,
+                    mix_str,
+                    attempts,
+                    successes,
+                    new_orders_ok,
+                    log_lines,
                 ))
             }
         }));
@@ -380,37 +474,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let mut all_lat: Vec<u128> = Vec::with_capacity(tx_total);
     let mut mix_str = args.mix.clone();
-    let mut total_done: u64 = 0;
+    let mut total_attempts: u64 = 0;
+    let mut total_successes: u64 = 0;
+    let mut total_new_orders_ok: u64 = 0;
+    let mut merged_log: Vec<String> = Vec::new();
+    let mut log_truncated = false;
+
     for h in handles {
-        let (mut lat, mx, done) = h.await??;
+        let (mut lat, mx, att, succ, no_ok, lines) = h.await??;
         all_lat.append(&mut lat);
         mix_str = mx;
-        total_done = total_done.wrapping_add(done);
+        total_attempts = total_attempts.wrapping_add(att);
+        total_successes = total_successes.wrapping_add(succ);
+        total_new_orders_ok = total_new_orders_ok.wrapping_add(no_ok);
+        if args.txn_log.is_some() {
+            let cap = TXN_LOG_MAX_LINES.saturating_sub(merged_log.len());
+            if cap > 0 {
+                merged_log.extend(lines.into_iter().take(cap));
+            }
+            if merged_log.len() >= TXN_LOG_MAX_LINES {
+                log_truncated = true;
+            }
+        }
     }
 
     let elapsed = start.elapsed().as_secs_f64().max(1e-9);
     all_lat.sort_unstable();
-    let report_txns = if duration.is_some() {
-        total_done.max(1) as usize
+
+    let txn_attempts = total_attempts.max(0);
+    let txn_successes = total_successes;
+    let err = txn_attempts.saturating_sub(txn_successes);
+    let success_rate_pct = if txn_attempts > 0 {
+        100.0 * (txn_successes as f64) / (txn_attempts as f64)
     } else {
-        tx_total
+        0.0
     };
-    let txns_per_s = (report_txns as f64) / elapsed;
-    let no = new_orders.load(Ordering::Relaxed);
-    let tpmc = (no as f64) / (elapsed / 60.0);
+    let txns_per_s = (txn_successes as f64) / elapsed;
+    let attempts_per_s = (txn_attempts as f64) / elapsed;
+
+    let tpmc = (total_new_orders_ok as f64) / (elapsed / 60.0);
+
+    if let Some(ref path) = args.txn_log {
+        let header = "worker_id,global_attempt_id,kind,ok,elapsed_us,error\n";
+        let mut body = String::new();
+        for line in &merged_log {
+            body.push_str(line);
+            body.push('\n');
+        }
+        let mut out = header.to_string();
+        out.push_str(&body);
+        if log_truncated {
+            out.push_str("# truncated: exceeded TXN_LOG_MAX_LINES\n");
+        }
+        fs::write(path, out)?;
+    }
 
     let report = TpccReport {
+        txn_attempts,
+        txn_successes,
+        transactions: txn_attempts.try_into().unwrap_or(usize::MAX),
         concurrency: args.concurrency.max(1),
-        transactions: report_txns,
         elapsed_s: elapsed,
         txns_per_s,
-        new_orders: no,
+        attempts_per_s,
+        success_rate_pct,
+        new_orders: total_new_orders_ok,
         tpm_c: tpmc,
         p50_ms: quantile_ms(&all_lat, 0.50),
         p95_ms: quantile_ms(&all_lat, 0.95),
         p99_ms: quantile_ms(&all_lat, 0.99),
-        err: errors.load(Ordering::Relaxed),
+        err,
         mix: mix_str,
+        txn_log_path: args.txn_log.as_ref().map(|p| p.display().to_string()),
+        txn_log_truncated: log_truncated,
     };
 
     if args.json {
@@ -418,17 +554,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     } else {
         println!("== rustdb_tpcc ==");
         println!("concurrency: {}", report.concurrency);
-        println!("transactions: {}", report.transactions);
+        println!("txn_attempts: {}", report.txn_attempts);
+        println!("txn_successes: {}", report.txn_successes);
+        println!("success_rate_pct: {:.2}", report.success_rate_pct);
         println!("elapsed_s: {:.3}", report.elapsed_s);
-        println!("txns_per_s: {:.1}", report.txns_per_s);
-        println!("new_orders: {}", report.new_orders);
+        println!("txns_per_s (successful only): {:.1}", report.txns_per_s);
+        println!("attempts_per_s (all tries): {:.1}", report.attempts_per_s);
+        println!("new_orders (successful only): {}", report.new_orders);
         println!("tpmC: {:.1}", report.tpm_c);
         println!(
-            "latency_ms: p50={:.2} p95={:.2} p99={:.2}",
+            "latency_ms (successful only): p50={:.2} p95={:.2} p99={:.2}",
             report.p50_ms, report.p95_ms, report.p99_ms
         );
-        println!("err: {}", report.err);
+        println!("err (failed attempts): {}", report.err);
         println!("mix: {}", report.mix);
+        if let Some(ref p) = report.txn_log_path {
+            println!("txn_log: {p}");
+        }
     }
 
     Ok(())

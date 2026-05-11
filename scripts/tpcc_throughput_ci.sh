@@ -5,8 +5,9 @@
 # then runs the QUIC load generator `rustdb_tpcc` from the host build.
 #
 # Outputs:
-#   tpcc-out/tpcc.json   (machine readable)
+#   tpcc-out/tpcc.json   (machine readable; txns_per_s = successful txns / elapsed)
 #   tpcc-out/tpcc.txt    (human readable)
+#   tpcc-out/tpcc_txn.log (CSV: worker_id,global_attempt_id,kind,ok,elapsed_us,error)
 #
 set -euo pipefail
 
@@ -102,6 +103,7 @@ set +e
   --concurrency "$CONCURRENCY" \
   "${TXN_ARGS[@]}" \
   --mix "$MIX" \
+  --txn-log "$OUT_DIR_ABS/tpcc_txn.log" \
   --json > "$OUT_DIR_ABS/tpcc.json"
 rc=$?
 set -e
@@ -126,12 +128,20 @@ data = json.loads(p.read_text())
 txt = []
 txt.append("== rustdb_tpcc throughput ==")
 txt.append(f"concurrency: {data['concurrency']}")
-txt.append(f"transactions: {data['transactions']}")
+txt.append(f"txn_attempts: {data.get('txn_attempts', data.get('transactions', 0))}")
+txt.append(f"txn_successes: {data.get('txn_successes', 0)}")
+txt.append(f"success_rate_pct: {data.get('success_rate_pct', 0.0):.2f}")
 txt.append(f"elapsed_s: {data['elapsed_s']:.3f}")
-txt.append(f"txns_per_s: {data['txns_per_s']:.1f}")
-txt.append(f"new_orders: {data['new_orders']}")
+txt.append(f"txns_per_s (successful only): {data['txns_per_s']:.1f}")
+txt.append(f"attempts_per_s (all tries): {data.get('attempts_per_s', 0.0):.1f}")
+txt.append(f"new_orders (successful only): {data['new_orders']}")
 txt.append(f"tpmC: {data['tpmC']:.1f}")
 txt.append(f"p50_ms: {data['p50_ms']:.2f}  p95_ms: {data['p95_ms']:.2f}  p99_ms: {data['p99_ms']:.2f}")
+txt.append(f"failed_attempts: {data.get('err', 0)}")
+if data.get("txn_log_path"):
+    txt.append(f"txn_log: {data['txn_log_path']}")
+if data.get("txn_log_truncated"):
+    txt.append("txn_log_truncated: true")
 out_dir.joinpath("tpcc.txt").write_text("\n".join(txt) + "\n")
 print("\n".join(txt))
 PY
