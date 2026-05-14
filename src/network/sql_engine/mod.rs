@@ -582,9 +582,9 @@ fn validate_dml_where_structure(expr: &Expression) -> Result<(), EngineError> {
             op: BinaryOperator::Equal,
             right,
         } => {
-            if column_name_expr(left).is_some() && value_expr(right).is_some() {
-                Ok(())
-            } else if column_name_expr(right).is_some() && value_expr(left).is_some() {
+            let ok = (column_name_expr(left).is_some() && value_expr(right).is_some())
+                || (column_name_expr(right).is_some() && value_expr(left).is_some());
+            if ok {
                 Ok(())
             } else {
                 Err(EngineError::new(
