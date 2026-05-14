@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Consolidated RustDB tpcc + PostgreSQL pgbench comparison for CI."""
+"""Consolidated RustDB tpcc + PostgreSQL postgres_tpcc comparison for CI."""
 
 from __future__ import annotations
 
@@ -45,6 +45,20 @@ def num(d: dict[str, Any] | None, *keys: str, default: float = 0.0) -> float:
         return default
 
 
+def latency_triple(obj: dict[str, Any] | None) -> tuple[float, float, float]:
+    """p50, p95, p99 in ms for rustdb_tpcc / postgres_tpcc JSON."""
+    if not obj:
+        return (0.0, 0.0, 0.0)
+    nested = obj.get("overall_latency_ms")
+    if isinstance(nested, dict):
+        return (
+            num(nested, "p50"),
+            num(nested, "p95"),
+            num(nested, "p99"),
+        )
+    return (num(obj, "p50_ms"), num(obj, "p95_ms"), num(obj, "p99_ms"))
+
+
 def main() -> int:
     if len(sys.argv) != 4:
         print(
@@ -63,32 +77,48 @@ def main() -> int:
     if rust_dir.is_dir() and any(rust_dir.iterdir()):
         shutil.copytree(rust_dir, raw_root / "bench-rustdb-tpcc-result", dirs_exist_ok=True)
     if pg_dir.is_dir() and any(pg_dir.iterdir()):
-        shutil.copytree(pg_dir, raw_root / "bench-postgres-pgbench-result", dirs_exist_ok=True)
+        shutil.copytree(pg_dir, raw_root / "bench-postgres-tpcc-result", dirs_exist_ok=True)
 
     tpcc_path = resolve_under(rust_dir, "tpcc.json")
-    pgb_path = resolve_under(pg_dir, "pgbench.json")
+    pg_tpcc_path = resolve_under(pg_dir, "postgres_tpcc.json")
+    # Backward compatibility with older pgbench artifacts
+    pgbench_path = resolve_under(pg_dir, "pgbench.json")
+
     tpcc = read_json(tpcc_path)
-    pgb = read_json(pgb_path)
+    pg_tpcc = read_json(pg_tpcc_path)
+    pgbench = read_json(pgbench_path) if pg_tpcc is None else None
 
     rust_missing = tpcc is None
-    pg_missing = pgb is None
+    pg_missing = pg_tpcc is None and pgbench is None
 
     rd_tps = num(tpcc, "txns_per_s") if tpcc else 0.0
-    pg_tps = num(pgb, "tps") if pgb else 0.0
+    rd_tpmc = num(tpcc, "tpmC") if tpcc else 0.0
+    if pg_tpcc:
+        pg_tps = num(pg_tpcc, "txns_per_s")
+        pg_label = "postgres_tpcc"
+        pg_rd50, pg_rd95, pg_rd99 = latency_triple(pg_tpcc)
+        pg_tpmc = num(pg_tpcc, "tpmC")
+    elif pgbench:
+        pg_tps = num(pgbench, "tps")
+        pg_label = "pgbench (legacy)"
+        pg_rd50 = pg_rd95 = pg_rd99 = 0.0
+        pg_tpmc = 0.0
+    else:
+        pg_tps = 0.0
+        pg_label = "postgres_tpcc"
+        pg_rd50 = pg_rd95 = pg_rd99 = 0.0
+        pg_tpmc = 0.0
 
-    rd_lat = tpcc.get("overall_latency_ms", {}) if tpcc else {}
-    rd_p50 = num(rd_lat, "p50") if isinstance(rd_lat, dict) else 0.0
-    rd_p95 = num(rd_lat, "p95") if isinstance(rd_lat, dict) else 0.0
-    rd_p99 = num(rd_lat, "p99") if isinstance(rd_lat, dict) else 0.0
-
-    pg_lat_ms = num(pgb, "latency_avg_ms") if pgb else 0.0
+    rd_p50, rd_p95, rd_p99 = latency_triple(tpcc)
 
     ratio = (100.0 * rd_tps / pg_tps) if (pg_tps > 0 and rd_tps >= 0) else None
 
     lines: list[str] = []
     lines.append("## RustDB vs PostgreSQL (baseline)")
     lines.append("")
-    lines.append("| Metric | RustDB (`rustdb_tpcc`) | PostgreSQL (`pgbench`) |")
+    lines.append(
+        f"| Metric | RustDB (`rustdb_tpcc`) | PostgreSQL (`{pg_label}`) |"
+    )
     lines.append("| --- | --- | --- |")
 
     def cell_rust(s: str) -> str:
@@ -98,26 +128,29 @@ def main() -> int:
         return s if not pg_missing else "**(missing — job failed)**"
 
     lines.append(
-        f"| txns/s or tps | {cell_rust(f'{rd_tps:.2f}')} | {cell_pg(f'{pg_tps:.2f}')} |"
+        f"| txns/s (successful) | {cell_rust(f'{rd_tps:.2f}')} | {cell_pg(f'{pg_tps:.2f}')} |"
     )
     lines.append(
-        f"| latency p50 (ms) | {cell_rust(f'{rd_p50:.3f}')} | {cell_pg('n/a (see avg)')} |"
+        f"| tpmC (successful new-orders / min) | {cell_rust(f'{rd_tpmc:.1f}')} | {cell_pg(f'{pg_tpmc:.1f}')} |"
     )
     lines.append(
-        f"| latency p95 (ms) | {cell_rust(f'{rd_p95:.3f}')} | {cell_pg('n/a')} |"
+        f"| latency p50 (ms) | {cell_rust(f'{rd_p50:.3f}')} | {cell_pg(f'{pg_rd50:.3f}')} |"
     )
     lines.append(
-        f"| latency p99 (ms) | {cell_rust(f'{rd_p99:.3f}')} | {cell_pg('n/a')} |"
+        f"| latency p95 (ms) | {cell_rust(f'{rd_p95:.3f}')} | {cell_pg(f'{pg_rd95:.3f}')} |"
     )
     lines.append(
-        f"| pgbench latency avg (ms) | n/a | {cell_pg(f'{pg_lat_ms:.3f}')} |"
+        f"| latency p99 (ms) | {cell_rust(f'{rd_p99:.3f}')} | {cell_pg(f'{pg_rd99:.3f}')} |"
     )
+
     if ratio is not None:
         lines.append("")
-        lines.append(f"- **rustdb_tpcc / pgbench tps**: **{ratio:.1f}%**")
+        lines.append(f"- **rustdb_tpcc / {pg_label} txns/s**: **{ratio:.1f}%**")
     else:
         lines.append("")
-        lines.append("- **rustdb_tpcc / pgbench tps**: *(unable to compute — missing side)*")
+        lines.append(
+            f"- **rustdb_tpcc / {pg_label} txns/s**: *(unable to compute — missing side)*"
+        )
 
     lines.append("")
     lines.append("### RustDB (`tpcc.txt` excerpt)")
@@ -132,15 +165,17 @@ def main() -> int:
     lines.append("```")
 
     lines.append("")
-    lines.append("### PostgreSQL (`pgbench.txt` excerpt)")
+    lines.append("### PostgreSQL (`postgres_tpcc.txt` excerpt)")
     lines.append("")
     lines.append("```")
-    g_txt = resolve_under(pg_dir, "pgbench.txt")
+    g_txt = resolve_under(pg_dir, "postgres_tpcc.txt")
+    if not g_txt.is_file():
+        g_txt = resolve_under(pg_dir, "pgbench.txt")
     if g_txt.is_file() and g_txt.stat().st_size > 0:
         txt = g_txt.read_text(encoding="utf-8", errors="replace")
         lines.append(txt.rstrip())
     else:
-        lines.append("(missing pgbench.txt)")
+        lines.append("(missing postgres_tpcc.txt)")
     lines.append("```")
 
     report_md = "\n".join(lines) + "\n"
@@ -149,13 +184,18 @@ def main() -> int:
 
     report_obj = {
         "rustdb": tpcc,
-        "postgres_pgbench": pgb,
+        "postgres_tpcc": pg_tpcc,
+        "postgres_pgbench_legacy": pgbench,
         "comparison": {
             "rustdb_txns_per_s": None if rust_missing else rd_tps,
-            "postgres_tps": None if pg_missing else pg_tps,
+            "postgres_txns_per_s": None if pg_missing else pg_tps,
             "ratio_percent_rustdb_over_postgres": ratio,
-            "rustdb_overall_latency_ms": rd_lat if tpcc else None,
-            "postgres_latency_avg_ms": None if pg_missing else pg_lat_ms,
+            "rustdb_latency_ms": {"p50": rd_p50, "p95": rd_p95, "p99": rd_p99}
+            if tpcc
+            else None,
+            "postgres_latency_ms": {"p50": pg_rd50, "p95": pg_rd95, "p99": pg_rd99}
+            if (pg_tpcc or pgbench)
+            else None,
         },
         "artifacts_missing": {
             "rustdb": rust_missing,

@@ -150,15 +150,15 @@ PowerShell: `$env:RUSTFLAGS='--cfg rustdb_loom'; cargo test ...`. Default `cargo
 This repository’s CI runs a lightweight **baseline comparison** to track performance trends over time:
 
 - **RustDB**: `rustdb_tpcc` (TPC‑C-ish mix) over **QUIC**
-- **PostgreSQL**: `pgbench` (builtin TPC‑B-like) over **TCP**
+- **PostgreSQL**: `postgres_tpcc` (same SQL mix and `scripts/tpcc_seed.sql` schema) over **TCP**
 
-Because the workloads and protocols differ, treat the numbers as **trend indicators**, not a strict “winner/loser” claim.
+Protocols still differ (QUIC vs TCP), but the **transaction mix and statements** match; treat absolute numbers as **trend indicators**, not a formal audit.
 
 CI reports in the GitHub Actions step summary (workflow `CI/CD Pipeline`):
 
 - RustDB `txns_per_s`
-- PostgreSQL `pgbench` `tps`
-- **Ratio (%)**: \(100 * \frac{rustdb\_tps}{postgres\_tps}\)
+- PostgreSQL `postgres_tpcc` `txns_per_s` (successful transactions only)
+- **Ratio (%)**: \(100 * \frac{rustdb\_txns\_per\_s}{postgres\_txns\_per\_s}\)
 
 ### More honest comparison: same SQL workload
 

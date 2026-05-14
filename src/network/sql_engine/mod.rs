@@ -7,10 +7,10 @@
 //! **Phase 6 — transactions & concurrency (minimal)**:
 //! - `BEGIN` / `COMMIT` / `ROLLBACK` with an undo log for DML in the current [`SessionContext`].
 //! - **Per-table storage locks**: each physical table name has a lazily allocated [`RwLock`] in
-//!   [`SqlEngineState::table_storage_locks`]. `SELECT` / set operations take shared (`read`) locks on
+//!   `SqlEngineState::table_storage_locks`. `SELECT` / set operations take shared (`read`) locks on
 //!   every referenced base table (sorted name order) for plan + optimize + execute; `INSERT ... VALUES`,
 //!   `UPDATE`, and `DELETE` take an exclusive (`write`) lock on the target table only.
-//! - A **global** [`SqlEngineState::storage_access`] still serializes DDL, `ROLLBACK`, and
+//! - A **global** `SqlEngineState::storage_access` still serializes DDL, `ROLLBACK`, and
 //!   `INSERT ... SELECT` (mixed read/write on the same statement) against storage-wide invariants.
 //! - Read committed baseline: each statement sees data committed before that statement began,
 //!   excluding the current session’s own uncommitted writes which are already on the heap.
