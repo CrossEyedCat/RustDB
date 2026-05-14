@@ -6,9 +6,14 @@
 //!
 //! **Phase 6 — transactions & concurrency (minimal)**:
 //! - `BEGIN` / `COMMIT` / `ROLLBACK` with an undo log for DML in the current [`SessionContext`].
-//! - A [`RwLock`] serializes writers vs readers at **statement** granularity (read committed baseline:
-//!   each statement sees data committed before that statement began, excluding the current session’s
-//!   own uncommitted writes which are already on the heap).
+//! - **Per-table storage locks**: each physical table name has a lazily allocated [`RwLock`] in
+//!   [`SqlEngineState::table_storage_locks`]. `SELECT` / set operations take shared (`read`) locks on
+//!   every referenced base table (sorted name order) for plan + optimize + execute; `INSERT ... VALUES`,
+//!   `UPDATE`, and `DELETE` take an exclusive (`write`) lock on the target table only.
+//! - A **global** [`SqlEngineState::storage_access`] still serializes DDL, `ROLLBACK`, and
+//!   `INSERT ... SELECT` (mixed read/write on the same statement) against storage-wide invariants.
+//! - Read committed baseline: each statement sees data committed before that statement began,
+//!   excluding the current session’s own uncommitted writes which are already on the heap.
 //! - Stronger isolation ([`crate::network::engine::SqlIsolationLevel::RepeatableRead`] /
 //!   [`crate::network::engine::SqlIsolationLevel::Serializable`]) uses a global lock so at most one
 //!   such transaction runs at a time (see `RUSTDB_DEFAULT_ISOLATION`).
@@ -38,8 +43,8 @@ use crate::network::sql_constraints::{self, ConstraintRuntime};
 use crate::parser::ast::{
     AlterTableOperation, AlterTableStatement, BinaryOperator, ColumnConstraint,
     CreateTableStatement, DataType as SqlDataType, DeleteStatement, DropTableStatement, Expression,
-    InsertStatement, InsertValues, Literal, SelectItem, SelectStatement, TableConstraint,
-    UpdateStatement,
+    FromClause, InList, InsertStatement, InsertValues, Literal, SelectItem, SelectStatement,
+    TableConstraint, TableReference, UpdateStatement,
 };
 use crate::parser::{SqlParser, SqlStatement};
 use crate::planner::{QueryOptimizer, QueryPlanner};
@@ -151,6 +156,8 @@ pub(crate) struct SqlEngineState {
     constraint_runtime: Mutex<ConstraintRuntime>,
     /// Serializes storage-mutating statements vs table scans (`SELECT` with `FROM`).
     storage_access: RwLock<()>,
+    /// Per physical table: coordinates concurrent `SELECT` (shared) vs DML writers (exclusive).
+    table_storage_locks: Mutex<HashMap<String, Arc<RwLock<()>>>>,
     /// Structured WAL (`src/logging`); disabled when `RUSTDB_DISABLE_WAL` is set.
     wal: Option<crate::network::sql_engine_wal::SqlEngineWal>,
 }
@@ -208,6 +215,7 @@ impl SqlEngine {
             catalog: Mutex::new(catalog),
             constraint_runtime: Mutex::new(ConstraintRuntime::new()),
             storage_access: RwLock::new(()),
+            table_storage_locks: Mutex::new(HashMap::new()),
             wal,
         });
         if state.wal.is_some() && wal_dir.is_dir() {
@@ -315,52 +323,96 @@ impl SqlEngine {
                 Ok(out)
             }
             SqlStatement::Select(_) | SqlStatement::SetOperation(_) => {
-                let _storage = state
-                    .storage_access
-                    .read()
-                    .map_err(|_| lock_poisoned_engine())?;
-                let plan = {
-                    let s = info_span!("sql.plan");
-                    let _sg = s.enter();
-                    state.planner.create_plan(stmt).map_err(map_db_err)?
-                };
-                let optimized = {
-                    let s = info_span!("sql.optimize");
-                    let _sg = s.enter();
-                    state.optimizer.optimize(plan).map_err(map_db_err)?
-                };
-                let rows = {
-                    let s = info_span!("sql.exec_plan");
-                    let _sg = s.enter();
-                    state
-                        .executor
-                        .execute(&optimized.optimized_plan)
-                        .map_err(map_db_err)?
-                };
-                {
-                    let s = info_span!("sql.encode_rows", row_count = rows.len());
-                    let _eg = s.enter();
-                    rows_to_engine_output(rows)
+                let table_names = collect_physical_tables_for_read_stmt(stmt);
+                if table_names.is_empty() {
+                    let _storage = state
+                        .storage_access
+                        .read()
+                        .map_err(|_| lock_poisoned_engine())?;
+                    let plan = {
+                        let s = info_span!("sql.plan");
+                        let _sg = s.enter();
+                        state.planner.create_plan(stmt).map_err(map_db_err)?
+                    };
+                    let optimized = {
+                        let s = info_span!("sql.optimize");
+                        let _sg = s.enter();
+                        state.optimizer.optimize(plan).map_err(map_db_err)?
+                    };
+                    let rows = {
+                        let s = info_span!("sql.exec_plan");
+                        let _sg = s.enter();
+                        state
+                            .executor
+                            .execute(&optimized.optimized_plan)
+                            .map_err(map_db_err)?
+                    };
+                    {
+                        let s = info_span!("sql.encode_rows", row_count = rows.len());
+                        let _eg = s.enter();
+                        rows_to_engine_output(rows)
+                    }
+                } else {
+                    let locks: Vec<Arc<RwLock<()>>> = table_names
+                        .iter()
+                        .map(|n| table_storage_lock_arc(state, n))
+                        .collect::<Result<_, _>>()?;
+                    let _table_reads: Vec<std::sync::RwLockReadGuard<'_, ()>> = locks
+                        .iter()
+                        .map(|l| l.read().map_err(|_| lock_poisoned_engine()))
+                        .collect::<Result<_, _>>()?;
+                    let plan = {
+                        let s = info_span!("sql.plan");
+                        let _sg = s.enter();
+                        state.planner.create_plan(stmt).map_err(map_db_err)?
+                    };
+                    let optimized = {
+                        let s = info_span!("sql.optimize");
+                        let _sg = s.enter();
+                        state.optimizer.optimize(plan).map_err(map_db_err)?
+                    };
+                    let rows = {
+                        let s = info_span!("sql.exec_plan");
+                        let _sg = s.enter();
+                        state
+                            .executor
+                            .execute(&optimized.optimized_plan)
+                            .map_err(map_db_err)?
+                    };
+                    {
+                        let s = info_span!("sql.encode_rows", row_count = rows.len());
+                        let _eg = s.enter();
+                        rows_to_engine_output(rows)
+                    }
                 }
             }
             SqlStatement::Insert(ins) => {
                 let s = info_span!("sql.insert", table = %ins.table);
                 let _sg = s.enter();
-                let _storage = state
-                    .storage_access
-                    .write()
-                    .map_err(|_| lock_poisoned_engine())?;
-                execute_dml_autocommit(state, ctx, |state, ctx| {
-                    execute_insert(state, ctx, stmt, ins)
-                })
+                match &ins.values {
+                    InsertValues::Select(_) => {
+                        let _storage = state
+                            .storage_access
+                            .write()
+                            .map_err(|_| lock_poisoned_engine())?;
+                        execute_dml_autocommit(state, ctx, |state, ctx| {
+                            execute_insert(state, ctx, stmt, ins)
+                        })
+                    }
+                    InsertValues::Values(_) => {
+                        let lock = table_storage_lock_arc(state, &ins.table)?;
+                        let _table_write = lock.write().map_err(|_| lock_poisoned_engine())?;
+                        execute_dml_autocommit(state, ctx, |state, ctx| {
+                            execute_insert(state, ctx, stmt, ins)
+                        })
+                    }
+                }
             }
             SqlStatement::Update(upd) => {
                 let s = info_span!("sql.update", table = %upd.table);
                 let _sg = s.enter();
-                let _storage = state
-                    .storage_access
-                    .write()
-                    .map_err(|_| lock_poisoned_engine())?;
+                let lock = table_storage_lock_arc(state, &upd.table)?;
+                let _table_write = lock.write().map_err(|_| lock_poisoned_engine())?;
                 execute_dml_autocommit(state, ctx, |state, ctx| {
                     execute_update(state, ctx, stmt, upd)
                 })
@@ -368,10 +420,8 @@ impl SqlEngine {
             SqlStatement::Delete(del) => {
                 let s = info_span!("sql.delete", table = %del.table);
                 let _sg = s.enter();
-                let _storage = state
-                    .storage_access
-                    .write()
-                    .map_err(|_| lock_poisoned_engine())?;
+                let lock = table_storage_lock_arc(state, &del.table)?;
+                let _table_write = lock.write().map_err(|_| lock_poisoned_engine())?;
                 execute_dml_autocommit(state, ctx, |state, ctx| {
                     execute_delete(state, ctx, stmt, del)
                 })
@@ -471,6 +521,138 @@ fn map_db_err(e: DbError) -> EngineError {
 
 fn lock_poisoned_engine() -> EngineError {
     EngineError::new(engine_error_code::INTERNAL, "storage lock poisoned")
+}
+
+fn table_storage_lock_arc(
+    state: &SqlEngineState,
+    table: &str,
+) -> Result<Arc<RwLock<()>>, EngineError> {
+    let mut map = state
+        .table_storage_locks
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?;
+    Ok(map
+        .entry(table.to_string())
+        .or_insert_with(|| Arc::new(RwLock::new(())))
+        .clone())
+}
+
+/// Physical base table names from [`TableReference::Table`] only (not `QualifiedIdentifier`).
+fn collect_tables_expr(out: &mut HashSet<String>, expr: &Expression) {
+    match expr {
+        Expression::Literal(_) | Expression::Identifier(_) => {}
+        Expression::QualifiedIdentifier { .. } => {}
+        Expression::BinaryOp { left, right, .. } => {
+            collect_tables_expr(out, left);
+            collect_tables_expr(out, right);
+        }
+        Expression::UnaryOp { expr, .. } => collect_tables_expr(out, expr),
+        Expression::Function { args, .. } => {
+            for a in args {
+                collect_tables_expr(out, a);
+            }
+        }
+        Expression::Case {
+            expr,
+            when_clauses,
+            else_clause,
+        } => {
+            if let Some(e) = expr {
+                collect_tables_expr(out, e);
+            }
+            for w in when_clauses {
+                collect_tables_expr(out, &w.condition);
+                collect_tables_expr(out, &w.result);
+            }
+            if let Some(e) = else_clause {
+                collect_tables_expr(out, e);
+            }
+        }
+        Expression::Exists(s) => collect_tables_for_select(out, s),
+        Expression::In { expr, list } => {
+            collect_tables_expr(out, expr);
+            match list {
+                InList::Values(vals) => {
+                    for v in vals {
+                        collect_tables_expr(out, v);
+                    }
+                }
+                InList::Subquery(s) => collect_tables_for_select(out, s),
+            }
+        }
+        Expression::Between { expr, low, high } => {
+            collect_tables_expr(out, expr);
+            collect_tables_expr(out, low);
+            collect_tables_expr(out, high);
+        }
+        Expression::IsNull { expr, .. } => collect_tables_expr(out, expr),
+        Expression::Like { expr, pattern, .. } => {
+            collect_tables_expr(out, expr);
+            collect_tables_expr(out, pattern);
+        }
+    }
+}
+
+fn collect_tables_table_reference(out: &mut HashSet<String>, tr: &TableReference) {
+    match tr {
+        TableReference::Table { name, .. } => {
+            out.insert(name.clone());
+        }
+        TableReference::Subquery { query, .. } => {
+            collect_tables_for_select(out, query);
+        }
+    }
+}
+
+fn collect_tables_from_clause(out: &mut HashSet<String>, from: &FromClause) {
+    collect_tables_table_reference(out, &from.table);
+    for j in &from.joins {
+        collect_tables_table_reference(out, &j.table);
+        if let Some(cond) = &j.condition {
+            collect_tables_expr(out, cond);
+        }
+    }
+}
+
+fn collect_tables_for_select(out: &mut HashSet<String>, sel: &SelectStatement) {
+    if let Some(ref from) = sel.from {
+        collect_tables_from_clause(out, from);
+    }
+    if let Some(ref w) = sel.where_clause {
+        collect_tables_expr(out, w);
+    }
+    for e in &sel.group_by {
+        collect_tables_expr(out, e);
+    }
+    if let Some(ref h) = sel.having {
+        collect_tables_expr(out, h);
+    }
+    for ob in &sel.order_by {
+        collect_tables_expr(out, &ob.expr);
+    }
+    for item in &sel.select_list {
+        match item {
+            SelectItem::Wildcard => {}
+            SelectItem::Expression { expr, .. } => collect_tables_expr(out, expr),
+        }
+    }
+}
+
+/// Sorted, deduplicated physical table names referenced by a `SELECT` or set-operation statement.
+fn collect_physical_tables_for_read_stmt(stmt: &SqlStatement) -> Vec<String> {
+    let mut set = HashSet::new();
+    match stmt {
+        SqlStatement::Select(s) => collect_tables_for_select(&mut set, s),
+        SqlStatement::SetOperation(b) => {
+            collect_tables_for_select(&mut set, &b.left);
+            collect_tables_for_select(&mut set, &b.right);
+        }
+        _ => {}
+    }
+    let mut names: Vec<String> = set.into_iter().collect();
+    names.sort();
+    names.dedup();
+    names
 }
 
 fn execute_dml_autocommit<T>(
