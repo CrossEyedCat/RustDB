@@ -466,3 +466,307 @@ pub async fn run_tpcc<E: TpccExec>(
         txn_log_truncated: log_truncated,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use tempfile::tempdir;
+
+    #[test]
+    fn mix_parse_trims_and_normalizes_weights() {
+        let m = Mix::parse(" new_order=2 , payment=2 ").unwrap();
+        assert_eq!(m.cumulative.len(), 2);
+        assert_eq!(m.pick(0.0), TxnKind::NewOrder);
+        assert_eq!(m.pick(0.5), TxnKind::NewOrder);
+        assert_eq!(m.pick(0.51), TxnKind::Payment);
+        assert_eq!(m.pick(1.0), TxnKind::Payment);
+    }
+
+    #[test]
+    fn mix_parse_errors() {
+        assert!(Mix::parse("").unwrap_err().contains("empty"));
+        assert!(Mix::parse("   ").unwrap_err().contains("empty"));
+        assert!(Mix::parse("nope").unwrap_err().contains("bad mix"));
+        assert!(Mix::parse("new_order=x").unwrap_err().contains("bad weight"));
+        assert!(Mix::parse("unknown=1").unwrap_err().contains("unknown"));
+        assert!(Mix::parse("new_order=-1").unwrap_err().contains("negative"));
+        assert!(Mix::parse("new_order=0,payment=0")
+            .unwrap_err()
+            .contains("mix sum"));
+        assert!(Mix::parse("new_order=0").unwrap_err().contains("mix sum"));
+    }
+
+    #[test]
+    fn mix_pick_fallback_past_last_bucket() {
+        let m = Mix::parse("new_order=1").unwrap();
+        assert_eq!(m.pick(1.0000000001), TxnKind::NewOrder);
+    }
+
+    #[test]
+    fn lcg_and_rand_and_quantile() {
+        let mut s = 1_u64;
+        let a = lcg_next(&mut s);
+        let b = lcg_next(&mut s);
+        assert_ne!(a, b);
+        let mut r = 0xABC_u64;
+        let x = rand_f64_0_1(&mut r);
+        assert!((0.0..=1.0).contains(&x));
+        assert_eq!(quantile_ms(&[], 0.5), 0.0);
+        let one = vec![5000_u128];
+        assert_eq!(quantile_ms(&one, 0.0), 5.0);
+        assert_eq!(quantile_ms(&one, 1.0), 5.0);
+        let mut v = vec![1000, 2000, 3000, 4000];
+        v.sort_unstable();
+        assert!(quantile_ms(&v, 0.5) > 0.0);
+    }
+
+    #[test]
+    fn reservoir_under_cap_and_at_cap() {
+        let mut samples = Vec::new();
+        let mut seen = 0_u64;
+        let mut rng = 0xFEED_u64;
+        for i in 0..10_u128 {
+            reservoir_sample_push(&mut samples, &mut seen, &mut rng, i);
+        }
+        assert_eq!(samples.len(), 10);
+        assert_eq!(seen, 10);
+
+        let mut samples: Vec<u128> = (0..MAX_LATENCY_SAMPLES as u128).collect();
+        let mut seen = MAX_LATENCY_SAMPLES as u64;
+        let extra = 50_usize;
+        for i in 0..extra {
+            reservoir_sample_push(
+                &mut samples,
+                &mut seen,
+                &mut rng,
+                1000 + i as u128,
+            );
+        }
+        assert_eq!(samples.len(), MAX_LATENCY_SAMPLES);
+        assert_eq!(seen, MAX_LATENCY_SAMPLES as u64 + extra as u64);
+    }
+
+    #[test]
+    fn txn_sql_each_kind_contains_expected_keywords() {
+        for k in [
+            TxnKind::NewOrder,
+            TxnKind::Payment,
+            TxnKind::OrderStatus,
+            TxnKind::Delivery,
+            TxnKind::StockLevel,
+        ] {
+            let sqls = txn_sql(k, 99, 42);
+            assert!(!sqls.is_empty());
+            assert!(sqls.iter().any(|s| s.contains("BEGIN") || s.contains("BEGIN TRANSACTION")));
+        }
+        let no = txn_sql(TxnKind::NewOrder, 1, 7);
+        assert!(no.iter().any(|s| s.contains("oorder")));
+        let pay = txn_sql(TxnKind::Payment, 1, 7);
+        assert!(pay.iter().any(|s| s.contains("warehouse")));
+        let st = txn_sql(TxnKind::StockLevel, 3, 9);
+        assert!(st.iter().any(|s| s.contains("stock")));
+    }
+
+    #[test]
+    fn txn_kind_tag_roundtrip_names() {
+        assert_eq!(txn_kind_tag(TxnKind::NewOrder), "new_order");
+        assert_eq!(txn_kind_tag(TxnKind::Payment), "payment");
+        assert_eq!(txn_kind_tag(TxnKind::OrderStatus), "order_status");
+        assert_eq!(txn_kind_tag(TxnKind::Delivery), "delivery");
+        assert_eq!(txn_kind_tag(TxnKind::StockLevel), "stock_level");
+    }
+
+    #[test]
+    fn csv_escape_cases() {
+        assert_eq!(csv_escape("ok"), "ok");
+        assert_eq!(csv_escape("a,b"), "\"a,b\"");
+        assert_eq!(csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
+        assert_eq!(csv_escape("x\ny"), "\"x\ny\"");
+        assert_eq!(csv_escape("r\rz"), "\"r\rz\"");
+    }
+
+    #[derive(Clone)]
+    struct CountingExec {
+        calls: Arc<AtomicU64>,
+        fail_if: Arc<dyn Fn(u64) -> bool + Send + Sync>,
+    }
+
+    impl CountingExec {
+        fn new(fail_if: impl Fn(u64) -> bool + Send + Sync + 'static) -> Self {
+            Self {
+                calls: Arc::new(AtomicU64::new(0)),
+                fail_if: Arc::new(fail_if),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl TpccExec for CountingExec {
+        async fn run_sql_batch(
+            &self,
+            sqls: &[String],
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            let n = self.calls.fetch_add(1, Ordering::Relaxed);
+            if !sqls.is_empty() && (self.fail_if)(n) {
+                Err("injected".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn run_tpcc_rejects_worker_mismatch() {
+        let exec = Arc::new(CountingExec::new(|_| false));
+        let mix = Mix::parse("new_order=1").unwrap();
+        let err = run_tpcc(
+            vec![exec],
+            TpccRunConfig {
+                concurrency: 2,
+                transactions: 4,
+                duration: None,
+                mix,
+                mix_string: "new_order=1".into(),
+                txn_log: None,
+            },
+        )
+        .await
+        .err()
+        .expect("expected worker mismatch error");
+        assert!(err.to_string().contains("worker count"));
+    }
+
+    #[tokio::test]
+    async fn run_tpcc_fixed_count_ok_and_errors() {
+        let mix = Mix::parse("new_order=1").unwrap();
+        let exec_ok = Arc::new(CountingExec::new(|_| false));
+        let workers: Vec<_> = (0..2).map(|_| exec_ok.clone()).collect();
+        let rep = run_tpcc(
+            workers,
+            TpccRunConfig {
+                concurrency: 2,
+                transactions: 6,
+                duration: None,
+                mix: mix.clone(),
+                mix_string: "new_order=1".into(),
+                txn_log: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(rep.txn_attempts, 6);
+        assert_eq!(rep.txn_successes, 6);
+        assert_eq!(rep.err, 0);
+        assert!(rep.new_orders >= 1);
+
+        let exec_flaky = Arc::new(CountingExec::new(|n| n % 2 == 1));
+        let workers: Vec<_> = (0..2).map(|_| exec_flaky.clone()).collect();
+        let rep2 = run_tpcc(
+            workers,
+            TpccRunConfig {
+                concurrency: 2,
+                transactions: 8,
+                duration: None,
+                mix,
+                mix_string: "new_order=1".into(),
+                txn_log: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(rep2.txn_attempts, 8);
+        assert!(rep2.txn_successes < rep2.txn_attempts);
+        assert!(rep2.err > 0);
+    }
+
+    #[tokio::test]
+    async fn run_tpcc_duration_mode() {
+        let mix = Mix::parse("payment=1").unwrap();
+        let exec = Arc::new(CountingExec::new(|_| false));
+        let workers: Vec<_> = (0..2).map(|_| exec.clone()).collect();
+        let rep = run_tpcc(
+            workers,
+            TpccRunConfig {
+                concurrency: 2,
+                transactions: 1,
+                duration: Some(Duration::from_millis(80)),
+                mix,
+                mix_string: "payment=1".into(),
+                txn_log: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(rep.txn_attempts >= 2);
+        assert_eq!(rep.txn_successes, rep.txn_attempts);
+    }
+
+    #[tokio::test]
+    async fn run_tpcc_txn_log_written() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("t.csv");
+        let mix = Mix::parse("new_order=1").unwrap();
+        let exec = Arc::new(CountingExec::new(|n| n == 2));
+        let workers: Vec<_> = (0..2).map(|_| exec.clone()).collect();
+        let rep = run_tpcc(
+            workers,
+            TpccRunConfig {
+                concurrency: 2,
+                transactions: 5,
+                duration: None,
+                mix,
+                mix_string: "new_order=1".into(),
+                txn_log: Some(path.clone()),
+            },
+        )
+        .await
+        .unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.starts_with("worker_id,global_attempt_id,kind,ok,elapsed_us,error\n"));
+        assert!(body.contains("new_order"));
+        assert!(body.contains("injected") || body.contains("0") || body.contains("1"));
+        assert_eq!(rep.txn_log_path.as_deref(), Some(path.to_str().unwrap()));
+        assert!(!rep.txn_log_truncated);
+    }
+
+    #[test]
+    fn tpcc_report_json_shape() {
+        let r = TpccReport {
+            txn_attempts: 10,
+            txn_successes: 9,
+            transactions: 10,
+            concurrency: 2,
+            elapsed_s: 1.0,
+            txns_per_s: 9.0,
+            attempts_per_s: 10.0,
+            success_rate_pct: 90.0,
+            new_orders: 3,
+            tpm_c: 180.0,
+            p50_ms: 1.0,
+            p95_ms: 2.0,
+            p99_ms: 3.0,
+            overall_latency_ms: OverallLatencyMs {
+                p50: 1.0,
+                p95: 2.0,
+                p99: 3.0,
+            },
+            err: 1,
+            mix: "new_order=1".into(),
+            txn_log_path: None,
+            txn_log_truncated: false,
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(s.contains("\"txn_attempts\":10"));
+        assert!(s.contains("\"tpmC\":180"));
+        assert!(!s.contains("txn_log_truncated"));
+
+        let r2 = TpccReport {
+            txn_log_truncated: true,
+            ..r
+        };
+        let s2 = serde_json::to_string(&r2).unwrap();
+        assert!(s2.contains("txn_log_truncated"));
+    }
+}
