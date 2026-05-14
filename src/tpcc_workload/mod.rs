@@ -489,7 +489,9 @@ mod tests {
         assert!(Mix::parse("").unwrap_err().contains("empty"));
         assert!(Mix::parse("   ").unwrap_err().contains("empty"));
         assert!(Mix::parse("nope").unwrap_err().contains("bad mix"));
-        assert!(Mix::parse("new_order=x").unwrap_err().contains("bad weight"));
+        assert!(Mix::parse("new_order=x")
+            .unwrap_err()
+            .contains("bad weight"));
         assert!(Mix::parse("unknown=1").unwrap_err().contains("unknown"));
         assert!(Mix::parse("new_order=-1").unwrap_err().contains("negative"));
         assert!(Mix::parse("new_order=0,payment=0")
@@ -537,12 +539,7 @@ mod tests {
         let mut seen = MAX_LATENCY_SAMPLES as u64;
         let extra = 50_usize;
         for i in 0..extra {
-            reservoir_sample_push(
-                &mut samples,
-                &mut seen,
-                &mut rng,
-                1000 + i as u128,
-            );
+            reservoir_sample_push(&mut samples, &mut seen, &mut rng, 1000 + i as u128);
         }
         assert_eq!(samples.len(), MAX_LATENCY_SAMPLES);
         assert_eq!(seen, MAX_LATENCY_SAMPLES as u64 + extra as u64);
@@ -559,7 +556,9 @@ mod tests {
         ] {
             let sqls = txn_sql(k, 99, 42);
             assert!(!sqls.is_empty());
-            assert!(sqls.iter().any(|s| s.contains("BEGIN") || s.contains("BEGIN TRANSACTION")));
+            assert!(sqls
+                .iter()
+                .any(|s| s.contains("BEGIN") || s.contains("BEGIN TRANSACTION")));
         }
         let no = txn_sql(TxnKind::NewOrder, 1, 7);
         assert!(no.iter().any(|s| s.contains("oorder")));
