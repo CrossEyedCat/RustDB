@@ -381,6 +381,28 @@ fn test_parse_update_with_where() -> Result<()> {
 }
 
 #[test]
+fn test_parse_update_arithmetic_rhs() -> Result<()> {
+    let mut parser = SqlParser::new("UPDATE warehouse SET w_ytd = w_ytd + 1 WHERE w_id = 1")?;
+    let statement = parser.parse()?;
+
+    match statement {
+        SqlStatement::Update(update_stmt) => {
+            assert_eq!(update_stmt.table, "warehouse");
+            assert_eq!(update_stmt.assignments.len(), 1);
+            assert_eq!(update_stmt.assignments[0].column, "w_ytd");
+            assert!(matches!(
+                update_stmt.assignments[0].value,
+                Expression::BinaryOp { .. }
+            ));
+            assert!(update_stmt.where_clause.is_some());
+        }
+        _ => panic!("Expected UPDATE statement"),
+    }
+
+    Ok(())
+}
+
+#[test]
 fn test_parse_delete_simple() -> Result<()> {
     let mut parser = SqlParser::new("DELETE FROM users")?;
     let statement = parser.parse()?;

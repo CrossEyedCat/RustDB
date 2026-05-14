@@ -25,8 +25,9 @@ use crate::catalog::schema::{
 use crate::common::types::{ColumnValue, DataType, RecordId};
 use crate::common::DurabilityMode;
 use crate::common::Error as DbError;
-use crate::executor::operators::eval_predicate_expression;
-use crate::executor::operators::ScanOperatorFactory;
+use crate::executor::operators::{
+    eval_predicate_expression, eval_scalar_expression, ScanOperatorFactory,
+};
 use crate::executor::QueryExecutor;
 use crate::network::engine::{
     engine_error_code, EngineError, EngineHandle, EngineOutput, SessionContext, SqlIsolationLevel,
@@ -1144,6 +1145,14 @@ fn build_insert_tuple_from_row(
     Ok(tuple)
 }
 
+fn tuple_as_eval_row(tuple: &Tuple) -> Row {
+    let mut row = Row::with_capacity(tuple.values.len());
+    for (k, v) in &tuple.values {
+        row.set_value_fast(k, v.clone());
+    }
+    row
+}
+
 fn execute_update(
     state: &SqlEngineState,
     ctx: &mut SessionContext,
@@ -1184,8 +1193,9 @@ fn execute_update(
                 &cat_snapshot,
             )?;
         }
+        let eval_row = tuple_as_eval_row(&tuple);
         for a in &update.assignments {
-            let cv = expr_to_column_value(&a.value)?;
+            let cv = eval_scalar_expression(&eval_row, &a.value);
             tuple.set_value(&a.column, cv);
         }
         if let Err(e) = apply_defaults_and_validate(state, &update.table, &mut tuple) {
@@ -1826,13 +1836,8 @@ fn value_expr(expr: &Expression) -> Option<&Literal> {
 }
 
 fn expr_to_column_value(expr: &Expression) -> Result<ColumnValue, EngineError> {
-    match expr {
-        Expression::Literal(l) => Ok(literal_to_column_value(l)),
-        _ => Err(EngineError::new(
-            engine_error_code::UNSUPPORTED_SQL,
-            "value must be a literal in INSERT/UPDATE for this engine",
-        )),
-    }
+    let row = Row::with_capacity(0);
+    Ok(eval_scalar_expression(&row, expr))
 }
 
 fn literal_to_column_value(l: &Literal) -> ColumnValue {
@@ -1975,6 +1980,54 @@ mod tests {
             .execute_sql("DELETE FROM users WHERE true", &mut ctx)
             .unwrap();
         assert_eq!(del, EngineOutput::ExecutionOk { rows_affected: 1 });
+    }
+
+    #[test]
+    fn sql_engine_update_arithmetic_set_rhs() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE cnt (id INT, v INT)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("INSERT INTO cnt (id, v) VALUES (1, 10)", &mut ctx)
+            .unwrap();
+        let out = eng
+            .execute_sql("UPDATE cnt SET v = v + 5 WHERE id = 1", &mut ctx)
+            .unwrap();
+        assert_eq!(out, EngineOutput::ExecutionOk { rows_affected: 1 });
+        let sel = eng
+            .execute_sql("SELECT v FROM cnt WHERE id = 1", &mut ctx)
+            .unwrap();
+        match sel {
+            EngineOutput::ResultSet { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert!(
+                    rows[0][0].contains("15"),
+                    "expected v=15, got {:?}",
+                    rows[0][0]
+                );
+            }
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
+    fn sql_engine_insert_values_arithmetic_literal() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE tmul (a INT)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("INSERT INTO tmul (a) VALUES (3 * 10)", &mut ctx)
+            .unwrap();
+        let sel = eng.execute_sql("SELECT a FROM tmul", &mut ctx).unwrap();
+        match sel {
+            EngineOutput::ResultSet { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert!(rows[0][0].contains("30"), "got {:?}", rows[0][0]);
+            }
+            _ => panic!("expected result set"),
+        }
     }
 
     #[test]

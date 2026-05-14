@@ -80,6 +80,28 @@ fn eval_value_to_column_value(v: EvalValue) -> ColumnValue {
     }
 }
 
+/// `UPDATE` / `INSERT` arithmetic often flows through [`EvalValue::Float`]; map integral doubles back
+/// to [`DataType::Integer`] so `INTEGER` columns accept `x = x + 1`.
+fn narrow_numeric_column_value(cv: ColumnValue) -> ColumnValue {
+    match &cv.data_type {
+        DataType::Double(f)
+            if f.fract() == 0.0 && *f >= i32::MIN as f64 && *f <= i32::MAX as f64 =>
+        {
+            ColumnValue::new(DataType::Integer(*f as i32))
+        }
+        _ => cv,
+    }
+}
+
+/// Evaluate a scalar [`Expression`] against a single-row binding (heap [`Row`]).
+///
+/// Used by the SQL engine for `UPDATE … SET col = <expr>` and for `INSERT … VALUES` cells that may
+/// contain arithmetic on literals.
+pub fn eval_scalar_expression(row: &Row, expr: &Expression) -> ColumnValue {
+    let ev = eval_expression(row, expr);
+    narrow_numeric_column_value(eval_value_to_column_value(ev))
+}
+
 impl ProjectionOperator {
     pub fn new(input: Box<dyn Operator>, columns: Vec<ProjectionColumn>) -> Result<Self> {
         let wildcard = columns.iter().any(|c| c.name == "*");

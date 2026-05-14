@@ -1001,7 +1001,8 @@ impl SqlParser {
         loop {
             let column = self.parse_identifier()?;
             self.expect_token(&TokenType::Equal)?;
-            let value = self.parse_simple_expression()?;
+            // Full scalar expressions (`col + 1`, `qty * 10`, etc.) — not only literals/identifiers.
+            let value = self.parse_expression()?;
 
             assignments.push(Assignment { column, value });
 
