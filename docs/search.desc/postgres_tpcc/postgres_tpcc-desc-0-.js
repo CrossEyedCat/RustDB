@@ -1,0 +1,1 @@
+searchState.loadedDescShard("postgres_tpcc", 0, "TPC-C-ish throughput load generator for PostgreSQL (TCP + …\nReturns the argument unchanged.\nReturns the argument unchanged.\nCalls <code>U::from(self)</code>.\nCalls <code>U::from(self)</code>.")

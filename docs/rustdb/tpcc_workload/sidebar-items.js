@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_LATENCY_SAMPLES","TXN_LOG_MAX_LINES"],"enum":["TxnKind"],"fn":["csv_escape","lcg_next","quantile_ms","rand_f64_0_1","reservoir_sample_push","run_tpcc","skip_false","txn_kind_tag","txn_sql"],"struct":["Mix","OverallLatencyMs","TpccReport","TpccRunConfig"],"trait":["TpccExec"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_LATENCY_SAMPLES"],"enum":["TxnKind"],"fn":["csv_escape","lcg_next","main","quantile_ms","rand_f64_0_1","reservoir_sample_push","run_sql_seq_on_stream","skip_false","txn_kind_tag","txn_sql"],"struct":["Args","Mix","TpccReport"]};
+window.SIDEBAR_ITEMS = {"fn":["main"],"struct":["Args","QuicExec"]};
