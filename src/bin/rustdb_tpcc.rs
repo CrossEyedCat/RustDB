@@ -87,10 +87,14 @@ impl TpccExec for QuicExec {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let (mut send, mut recv) = self.conn.open_bi().await?;
         let mut recv_buf = Vec::new();
+        // Pipeline: send all frames first, then read responses (same ordering as sequential mode;
+        // reduces per-statement round-trip latency when the server processes frames in order).
         for sql in sqls {
             let frame =
                 encode_client_message_v1(&ClientMessage::Query(QueryPayload { sql: sql.clone() }))?;
             send.write_all(&frame).await?;
+        }
+        for _ in sqls {
             read_application_frame_into(&mut recv, 64 * 1024 * 1024, &mut recv_buf).await?;
             let msg = decode_server_frame_v1(&recv_buf)?;
             if let rustdb::network::framing::ServerMessage::Error(p) = msg {

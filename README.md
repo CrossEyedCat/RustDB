@@ -170,6 +170,12 @@ For a closer apples-to-apples baseline, CI also runs **the same SQL statements**
 This “same SQL” summary (QPS + p99 + ratio) is emitted in the CI step summary under **Same SQL comparison** and
 the full report is uploaded as the `sqlite-vs-rustdb-bench` artifact (`bench-out/bench.md`, `bench-out/bench.csv`).
 
+### Local profiling (Docker + QUIC + `rustdb_tpcc`)
+
+- **Script:** [`scripts/profile_tpcc_local_docker.sh`](scripts/profile_tpcc_local_docker.sh) — builds the image (unless `SKIP_BUILD_IMAGE=1`), seeds TPC-C tables, starts the QUIC server with **`RUSTDB_SQL_PHASE_LOG=1`** by default, runs a short `rustdb_tpcc` workload, and writes `tpcc-profile-out/profile.json` plus `server_tail.log` (grep for `rustdb::sql_phases` / `sql_parse` / `update` / `delete`).
+- **SQL phase logs:** server env **`RUSTDB_SQL_PHASE_LOG=1`** (disable with `0` or `false`). Filter client noise with `RUST_LOG=rustdb::sql_phases=info` inside the container if needed.
+- **Optional heap flush deferral (WAL on):** set **`RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=1`** on the server to skip `flush_dirty_pages` after successful DML (throughput experiment; default remains flush every DML for predictable on-disk heaps).
+
 ---
 
 ## Project status

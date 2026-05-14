@@ -22,7 +22,14 @@
 //!   [`crate::logging::checkpoint::CheckpointManager`] is attached (unless `RUSTDB_DISABLE_CHECKPOINT=1`);
 //!   call [`SqlEngine::checkpoint`] for a manual checkpoint (flushes heaps + writes a checkpoint record).
 //!   After each successful write of `catalog.json` (DDL), the WAL records a `MetadataUpdate` marker when WAL is on.
+//! - With WAL enabled, you may set **`RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=1`** to skip `flush_dirty_pages`
+//!   after successful DML (higher throughput; heap catches up at checkpoint / process exit). Default
+//!   remains **flush after each successful DML** so standalone heap files stay coherent for tests and
+//!   tooling that reopen without relying on WAL replay ordering.
 //! - DDL (`CREATE` / `DROP` / `ALTER`) is rejected while a transaction is open.
+//!
+//! **Profiling:** set `RUSTDB_SQL_PHASE_LOG=1` to emit `tracing` events on target `rustdb::sql_phases`
+//! (parse latency, `UPDATE`/`DELETE` scan vs row loop). Use `RUST_LOG=rustdb::sql_phases=info` to filter.
 
 use crate::catalog::schema::{
     CheckConstraint, ForeignKeyConstraintDef, SchemaManager, TableSchema, UniqueConstraintDef,
@@ -55,7 +62,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use tracing::info_span;
+use std::time::Instant;
+use tracing::{info, info_span};
 
 mod alter_table_ops;
 
@@ -283,6 +291,8 @@ impl SqlEngine {
         );
         let _g = span.enter();
 
+        let parse_clock = sql_phase_log_enabled().then(Instant::now);
+
         // Hot path: deterministic "SELECT <literals>" queries without FROM can be memoized by SQL.
         // This avoids repeated parse/AST construction in tight loops (e.g. select_literal bench).
         if likely_select_without_from(sql) {
@@ -299,6 +309,14 @@ impl SqlEngine {
             let _sg = s.enter();
             parser.parse_multiple().map_err(map_db_err)?
         };
+        if let Some(t0) = parse_clock {
+            info!(
+                target: "rustdb::sql_phases",
+                parse_us = t0.elapsed().as_micros(),
+                sql = %summarize_sql(sql),
+                "sql_parse"
+            );
+        }
         if stmts.is_empty() {
             return Err(EngineError::new(
                 engine_error_code::PROTOCOL,
@@ -521,6 +539,65 @@ fn map_db_err(e: DbError) -> EngineError {
 
 fn lock_poisoned_engine() -> EngineError {
     EngineError::new(engine_error_code::INTERNAL, "storage lock poisoned")
+}
+
+/// When set (non-empty, not `0`/`false`), emit `tracing` on target `rustdb::sql_phases` for statement timing.
+fn sql_phase_log_enabled() -> bool {
+    match std::env::var("RUSTDB_SQL_PHASE_LOG") {
+        Ok(s) if s == "0" || s.eq_ignore_ascii_case("false") => false,
+        Ok(_) => true,
+        Err(_) => false,
+    }
+}
+
+/// Flush dirty heap pages after successful DML. When WAL is on, flushing may be skipped if
+/// `RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML` is set (benchmark throughput); otherwise always flush so heap
+/// files remain coherent across process restarts without depending on replay timing.
+fn flush_heap_after_dml_success(
+    state: &SqlEngineState,
+    pm: &mut PageManager,
+) -> Result<(), EngineError> {
+    let defer = state.wal.is_some()
+        && std::env::var_os("RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML").is_some_and(|v| v != "0");
+    if !defer {
+        pm.flush_dirty_pages().map_err(map_db_err)?;
+    }
+    Ok(())
+}
+
+/// `expr` must use only shapes supported by [`match_where_tuple`] (for pushdown into [`PageManager::select`]).
+fn validate_dml_where_structure(expr: &Expression) -> Result<(), EngineError> {
+    match expr {
+        Expression::Literal(Literal::Boolean(_)) => Ok(()),
+        Expression::BinaryOp {
+            left,
+            op: BinaryOperator::And,
+            right,
+        } => {
+            validate_dml_where_structure(left)?;
+            validate_dml_where_structure(right)
+        }
+        Expression::BinaryOp {
+            left,
+            op: BinaryOperator::Equal,
+            right,
+        } => {
+            if column_name_expr(left).is_some() && value_expr(right).is_some() {
+                Ok(())
+            } else if column_name_expr(right).is_some() && value_expr(left).is_some() {
+                Ok(())
+            } else {
+                Err(EngineError::new(
+                    engine_error_code::UNSUPPORTED_SQL,
+                    "WHERE for UPDATE/DELETE supports only column = literal (and AND)",
+                ))
+            }
+        }
+        _ => Err(EngineError::new(
+            engine_error_code::UNSUPPORTED_SQL,
+            "WHERE for UPDATE/DELETE supports only column = literal (and AND)",
+        )),
+    }
 }
 
 fn table_storage_lock_arc(
@@ -1186,7 +1263,7 @@ fn execute_insert(
             }
             {
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-                pm.flush_dirty_pages().map_err(map_db_err)?;
+                flush_heap_after_dml_success(state, &mut pm)?;
             }
             Ok(EngineOutput::ExecutionOk { rows_affected })
         }
@@ -1265,7 +1342,7 @@ fn execute_insert(
             }
             {
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-                pm.flush_dirty_pages().map_err(map_db_err)?;
+                flush_heap_after_dml_success(state, &mut pm)?;
             }
             Ok(EngineOutput::ExecutionOk { rows_affected })
         }
@@ -1344,13 +1421,32 @@ fn execute_update(
     validate_plan(state, stmt)?;
     let pm_for_table = table_page_manager(state, &update.table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-    let snapshot = pm.select(None).map_err(map_db_err)?;
+    let scan_clock = sql_phase_log_enabled().then(Instant::now);
+    let (snapshot, where_pre_filtered) = match &update.where_clause {
+        None => (pm.select(None).map_err(map_db_err)?, false),
+        Some(expr) => {
+            validate_dml_where_structure(expr)?;
+            let expr = expr.clone();
+            let pred = Box::new(move |data: &[u8]| {
+                let tuple = Tuple::from_bytes(data).expect("heap tuple must deserialize");
+                match_where_tuple(&expr, &tuple).expect("WHERE validated for heap predicate")
+            });
+            (pm.select(Some(pred)).map_err(map_db_err)?, true)
+        }
+    };
+    let scan_us = scan_clock.map(|t| t.elapsed().as_micros() as u64);
+    let snapshot_len = snapshot.len();
+    let row_clock = sql_phase_log_enabled().then(Instant::now);
     let mut rows_affected = 0u64;
     for (rid, data) in snapshot {
         let mut tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
-        let keep = match &update.where_clause {
-            None => true,
-            Some(expr) => match_where_tuple(expr, &tuple)?,
+        let keep = if where_pre_filtered {
+            true
+        } else {
+            match &update.where_clause {
+                None => true,
+                Some(expr) => match_where_tuple(expr, &tuple)?,
+            }
         };
         if !keep {
             continue;
@@ -1454,7 +1550,18 @@ fn execute_update(
         );
         rows_affected += 1;
     }
-    pm.flush_dirty_pages().map_err(map_db_err)?;
+    if let Some(t0) = row_clock {
+        info!(
+            target: "rustdb::sql_phases",
+            table = %update.table,
+            scan_us = scan_us.unwrap_or(0),
+            row_loop_us = t0.elapsed().as_micros() as u64,
+            snapshot_rows = snapshot_len,
+            rows_affected,
+            "update"
+        );
+    }
+    flush_heap_after_dml_success(state, &mut pm)?;
     Ok(EngineOutput::ExecutionOk { rows_affected })
 }
 
@@ -1467,7 +1574,22 @@ fn execute_delete(
     validate_plan(state, stmt)?;
     let pm_for_table = table_page_manager(state, &delete.table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-    let snapshot = pm.select(None).map_err(map_db_err)?;
+    let scan_clock = sql_phase_log_enabled().then(Instant::now);
+    let (snapshot, where_pre_filtered) = match &delete.where_clause {
+        None => (pm.select(None).map_err(map_db_err)?, false),
+        Some(expr) => {
+            validate_dml_where_structure(expr)?;
+            let expr = expr.clone();
+            let pred = Box::new(move |data: &[u8]| {
+                let tuple = Tuple::from_bytes(data).expect("heap tuple must deserialize");
+                match_where_tuple(&expr, &tuple).expect("WHERE validated for heap predicate")
+            });
+            (pm.select(Some(pred)).map_err(map_db_err)?, true)
+        }
+    };
+    let scan_us = scan_clock.map(|t| t.elapsed().as_micros() as u64);
+    let snapshot_len = snapshot.len();
+    let row_clock = sql_phase_log_enabled().then(Instant::now);
     let cat_snapshot = {
         let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
         cat.clone()
@@ -1476,9 +1598,13 @@ fn execute_delete(
     let mut to_delete: Vec<(RecordId, Vec<u8>)> = Vec::new();
     for (rid, data) in snapshot {
         let tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
-        let keep = match &delete.where_clause {
-            None => true,
-            Some(expr) => match_where_tuple(expr, &tuple)?,
+        let keep = if where_pre_filtered {
+            true
+        } else {
+            match &delete.where_clause {
+                None => true,
+                Some(expr) => match_where_tuple(expr, &tuple)?,
+            }
         };
         if keep {
             if let Some(ref sch) = schema {
@@ -1541,7 +1667,18 @@ fn execute_delete(
         }
         rows_affected += 1;
     }
-    pm.flush_dirty_pages().map_err(map_db_err)?;
+    if let Some(t0) = row_clock {
+        info!(
+            target: "rustdb::sql_phases",
+            table = %delete.table,
+            scan_us = scan_us.unwrap_or(0),
+            row_loop_us = t0.elapsed().as_micros() as u64,
+            snapshot_rows = snapshot_len,
+            rows_affected,
+            "delete"
+        );
+    }
+    flush_heap_after_dml_success(state, &mut pm)?;
     Ok(EngineOutput::ExecutionOk { rows_affected })
 }
 
