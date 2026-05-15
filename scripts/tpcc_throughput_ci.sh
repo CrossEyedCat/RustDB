@@ -8,6 +8,8 @@
 #   tpcc-out/tpcc.json   (machine readable; txns_per_s = successful txns / elapsed)
 #   tpcc-out/tpcc.txt    (human readable)
 #   tpcc-out/tpcc_txn.log (CSV: worker_id,global_attempt_id,kind,ok,elapsed_us,error)
+#   tpcc-out/server_full.log — full `docker logs` (stdout+stderr) for the QUIC server (CI artifact)
+#   tpcc-out/server_tail.log — last 400 lines of server_full.log (quick grep in PRs)
 #
 set -euo pipefail
 
@@ -70,6 +72,9 @@ docker run -d --name "$CONTAINER_NAME" \
   -p "${UDP_PORT}:5432/udp" \
   -v "$VOL_NAME:/app/data" \
   -v "$ROOT/config.toml:/app/config/config.toml:ro" \
+  -e NO_COLOR=1 \
+  -e RUSTDB_SQL_PHASE_LOG=1 \
+  -e RUST_LOG="${RUST_LOG:-info}" \
   "$RUSTDB_IMAGE" \
   sh -c 'rustdb --config /app/config/config.toml server --host 0.0.0.0 --port 5432 --cert-out /tmp/server.der' >/dev/null
 
@@ -108,15 +113,20 @@ set +e
 rc=$?
 set -e
 
-echo "==> capture server tail logs"
-docker logs "$CONTAINER_NAME" 2>&1 | tail -n 200 > "$OUT_DIR_ABS/server_tail.log" || true
+echo "==> capture server logs (full stdout+stderr for artifact)"
+docker logs "$CONTAINER_NAME" 2>&1 > "$OUT_DIR_ABS/server_full.log" || true
+if [[ -s "$OUT_DIR_ABS/server_full.log" ]]; then
+  tail -n 400 "$OUT_DIR_ABS/server_full.log" > "$OUT_DIR_ABS/server_tail.log" || true
+else
+  : >"$OUT_DIR_ABS/server_tail.log"
+fi
 
 echo "==> stop server + volume"
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker volume rm -f "$VOL_NAME" >/dev/null 2>&1 || true
 
 if [[ "$rc" -ne 0 ]]; then
-  echo "tpcc benchmark failed (exit $rc). See $OUT_DIR/server_tail.log"
+  echo "tpcc benchmark failed (exit $rc). See $OUT_DIR/server_full.log (and server_tail.log)"
   exit "$rc"
 fi
 

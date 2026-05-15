@@ -569,6 +569,18 @@ jobs:
             echo "- rustdb_tpcc success_rate_pct: **${rustdb_sr}%**"
             echo "- postgres_tpcc txns_per_s (successful only): **${pg_tps}**"
             echo "- rustdb / postgres: **${ratio}%**"
+            echo ""
+            echo "### RustDB server log (sql phase summary)"
+            echo ""
+            echo "Full QUIC server stdout+stderr is in artifact **\`tpcc-out/server_full.log\`** (also \`server_tail.log\` = last 400 lines)."
+            echo ""
+            echo '```'
+            if [[ -s "tpcc-out/server_full.log" ]]; then
+              python3 scripts/summarize_sql_phase_log.py tpcc-out/server_full.log || echo "(summarize_sql_phase_log.py failed or no matching lines)"
+            else
+              echo "(missing tpcc-out/server_full.log)"
+            fi
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload TPC-C artifacts
@@ -584,6 +596,7 @@ jobs:
             tpcc-out/postgres_tpcc.txt
             tpcc-out/postgres_tpcc_txn.log
             tpcc-out/server.der
+            tpcc-out/server_full.log
             tpcc-out/server_tail.log
       - name: Stop PostgreSQL (docker)
         if: always()

@@ -175,6 +175,10 @@ the full report is uploaded as the `sqlite-vs-rustdb-bench` artifact (`bench-out
 - **Script:** [`scripts/profile_tpcc_local_docker.sh`](scripts/profile_tpcc_local_docker.sh) — builds the image (unless `SKIP_BUILD_IMAGE=1`), seeds TPC-C tables, starts the QUIC server with **`RUSTDB_SQL_PHASE_LOG=1`** by default, runs a short `rustdb_tpcc` workload, and writes `tpcc-profile-out/profile.json` plus `server_tail.log` (grep for `rustdb::sql_phases` / `sql_parse` / `update` / `delete`).
 - **SQL phase logs:** server env **`RUSTDB_SQL_PHASE_LOG=1`** (disable with `0` or `false`). Filter client noise with `RUST_LOG=rustdb::sql_phases=info` inside the container if needed.
 - **Optional heap flush deferral (WAL on):** set **`RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=1`** on the server to skip `flush_dirty_pages` after successful DML (throughput experiment; default remains flush every DML for predictable on-disk heaps).
+- **Windows / no Docker:** [`scripts/profile_tpcc_native.ps1`](scripts/profile_tpcc_native.ps1) — seeds into `tpcc-local-out/data`, starts `rustdb server`, runs `rustdb_tpcc`, then runs the analyzers below. Use `--server-name 127.0.0.1` on the client (matches dev cert SAN). Tracing lines land in **`server_stdout.log`**; the script merges stdout+stderr into `server_combined.log` for [`summarize_sql_phase_log.py`](scripts/summarize_sql_phase_log.py).
+- **Txn log histograms:** [`scripts/analyze_tpcc_txn_log.py`](scripts/analyze_tpcc_txn_log.py) — p50/p95/p99/mean **latency by `kind`** from `tpcc_txn.log` (or any CSV with the same header). Example: `python3 scripts/analyze_tpcc_txn_log.py tpcc-local-out/tpcc_txn.log --only-ok`.
+- **SQL phase aggregates:** [`scripts/summarize_sql_phase_log.py`](scripts/summarize_sql_phase_log.py) — aggregates `parse_us` (`sql_parse`) and `scan_us` / `row_loop_us` (`update`/`delete` lines from `rustdb::sql_phases`) from a server log file.
+- **Linux CPU sample (optional):** [`scripts/profile_cpu_linux.sh`](scripts/profile_cpu_linux.sh) — `perf record -g` for a PID (install `linux-tools` / use WSL2 with `perf`).
 
 ---
 
