@@ -21,6 +21,20 @@ CREATE TABLE new_order (no_o_id INTEGER, no_d_id INTEGER, no_w_id INTEGER);
 
 CREATE TABLE order_line (ol_o_id INTEGER, ol_d_id INTEGER, ol_w_id INTEGER, ol_number INTEGER, ol_i_id INTEGER, ol_qty INTEGER, ol_amount INTEGER);
 
+-- Hot-path indexes (see `txn_sql` in `src/tpcc_workload/mod.rs`).
+-- order_status: SELECT ... FROM oorder WHERE o_w_id AND o_d_id AND o_c_id
+CREATE INDEX idx_oorder_wdc ON oorder (o_w_id, o_d_id, o_c_id);
+-- new_order + payment: UPDATE district ... WHERE d_w_id AND d_id
+CREATE INDEX idx_district_wd ON district (d_w_id, d_id);
+-- new_order: UPDATE stock ... WHERE s_w_id AND s_i_id
+CREATE INDEX idx_stock_ws ON stock (s_w_id, s_i_id);
+-- payment: UPDATE warehouse ... WHERE w_id
+CREATE INDEX idx_warehouse_w ON warehouse (w_id);
+-- payment: UPDATE customer ... WHERE c_w_id AND c_d_id AND c_id
+CREATE INDEX idx_customer_wdc ON customer (c_w_id, c_d_id, c_id);
+-- delivery: DELETE FROM new_order WHERE no_w_id AND no_d_id
+CREATE INDEX idx_new_order_wd ON new_order (no_w_id, no_d_id);
+
 -- Seed: 1 warehouse.
 INSERT INTO warehouse (w_id, w_name, w_tax, w_ytd) VALUES (1, 'W1', 8, 0);
 

@@ -122,7 +122,7 @@ fn test_conditional_scan_operator() -> Result<()> {
 #[test]
 fn test_scan_operator_factory() -> Result<()> {
     let (_temp, page_manager) = common::create_test_page_manager();
-    let mut factory = ScanOperatorFactory::new(page_manager);
+    let factory = ScanOperatorFactory::new(page_manager);
 
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
 

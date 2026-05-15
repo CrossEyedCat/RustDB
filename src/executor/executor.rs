@@ -53,6 +53,11 @@ impl QueryExecutor {
         })
     }
 
+    /// Shared scan factory (indexes, per-table heaps).
+    pub fn scan_factory(&self) -> &Arc<ScanOperatorFactory> {
+        &self.scan_factory
+    }
+
     /// Creates executor with custom config
     pub fn with_config(
         scan_factory: Arc<ScanOperatorFactory>,

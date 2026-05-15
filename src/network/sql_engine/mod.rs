@@ -49,12 +49,13 @@ use crate::network::sql_commit_log;
 use crate::network::sql_constraints::{self, ConstraintRuntime};
 use crate::parser::ast::{
     AlterTableOperation, AlterTableStatement, BinaryOperator, ColumnConstraint,
-    CreateTableStatement, DataType as SqlDataType, DeleteStatement, DropTableStatement, Expression,
-    FromClause, InList, InsertStatement, InsertValues, Literal, SelectItem, SelectStatement,
-    TableConstraint, TableReference, UpdateStatement,
+    CreateIndexStatement, CreateTableStatement, DataType as SqlDataType, DeleteStatement,
+    DropTableStatement, Expression, FromClause, InList, InsertStatement, InsertValues, Literal,
+    SelectItem, SelectStatement, TableConstraint, TableReference, UpdateStatement,
 };
 use crate::parser::{SqlParser, SqlStatement};
 use crate::planner::{QueryOptimizer, QueryPlanner};
+use crate::storage::index_registry::IndexRegistry;
 use crate::storage::page_manager::{PageManager, PageManagerConfig};
 use crate::storage::tuple::Tuple;
 use crate::Row;
@@ -154,8 +155,10 @@ pub(crate) struct SqlEngineState {
     /// Monotonic id assigned to inserted [`Tuple`] rows (persisted in tuple bytes).
     next_tuple_id: AtomicU64,
     planner: QueryPlanner,
-    optimizer: QueryOptimizer,
+    optimizer: Mutex<QueryOptimizer>,
     executor: QueryExecutor,
+    /// Secondary indexes maintained for `CREATE INDEX` (not persisted across bare-metal restarts).
+    index_registry: Arc<Mutex<IndexRegistry>>,
     /// Cache for deterministic `SELECT` queries without `FROM` (literal projections only).
     ///
     /// These queries are common in benchmarks (`SELECT 1`) and are safe to memoize.
@@ -204,10 +207,12 @@ impl SqlEngine {
         let pm = Arc::new(Mutex::new(pm));
         let table_pms: Arc<Mutex<HashMap<String, Arc<Mutex<PageManager>>>>> =
             Arc::new(Mutex::new(HashMap::new()));
+        let index_registry = Arc::new(Mutex::new(IndexRegistry::new()));
         let factory = Arc::new(ScanOperatorFactory::with_tables(
             pm.clone(),
             table_pms.clone(),
             data_dir.clone(),
+            Some(index_registry.clone()),
         ));
         let executor = QueryExecutor::new(factory)?;
         let state = Arc::new(SqlEngineState {
@@ -217,8 +222,9 @@ impl SqlEngine {
             table_page_managers: table_pms,
             next_tuple_id: AtomicU64::new(1),
             planner: QueryPlanner::new()?,
-            optimizer: QueryOptimizer::new()?,
+            optimizer: Mutex::new(QueryOptimizer::new()?),
             executor,
+            index_registry,
             select_no_from_cache: Mutex::new(HashMap::new()),
             catalog: Mutex::new(catalog),
             constraint_runtime: Mutex::new(ConstraintRuntime::new()),
@@ -355,7 +361,12 @@ impl SqlEngine {
                     let optimized = {
                         let s = info_span!("sql.optimize");
                         let _sg = s.enter();
-                        state.optimizer.optimize(plan).map_err(map_db_err)?
+                        state
+                            .optimizer
+                            .lock()
+                            .map_err(|_| lock_poisoned_engine())?
+                            .optimize(plan)
+                            .map_err(map_db_err)?
                     };
                     let rows = {
                         let s = info_span!("sql.exec_plan");
@@ -387,7 +398,12 @@ impl SqlEngine {
                     let optimized = {
                         let s = info_span!("sql.optimize");
                         let _sg = s.enter();
-                        state.optimizer.optimize(plan).map_err(map_db_err)?
+                        state
+                            .optimizer
+                            .lock()
+                            .map_err(|_| lock_poisoned_engine())?
+                            .optimize(plan)
+                            .map_err(map_db_err)?
                     };
                     let rows = {
                         let s = info_span!("sql.exec_plan");
@@ -443,6 +459,19 @@ impl SqlEngine {
                 execute_dml_autocommit(state, ctx, |state, ctx| {
                     execute_delete(state, ctx, stmt, del)
                 })
+            }
+            SqlStatement::CreateIndex(ci) => {
+                let s = info_span!(
+                    "sql.create_index",
+                    table = %ci.table_name,
+                    index = %ci.index_name
+                );
+                let _sg = s.enter();
+                let _storage = state
+                    .storage_access
+                    .write()
+                    .map_err(|_| lock_poisoned_engine())?;
+                execute_create_index(state, ctx, ci)
             }
             SqlStatement::CreateTable(ct) => {
                 let s = info_span!("sql.create_table", table = %ct.table_name);
@@ -1084,6 +1113,14 @@ fn physical_drop_table(state: &SqlEngineState, table: &str) -> Result<(), Engine
     }
 
     {
+        let mut ir = state
+            .index_registry
+            .lock()
+            .map_err(|_| lock_poisoned_engine())?;
+        ir.remove_all_indexes_for_table(table);
+    }
+
+    {
         let mut g = state
             .table_page_managers
             .lock()
@@ -1094,6 +1131,7 @@ fn physical_drop_table(state: &SqlEngineState, table: &str) -> Result<(), Engine
     let _ = std::fs::remove_file(path);
     let mut cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
     cat.drop_table(table);
+    rebuild_optimizer_with_indexes(state)?;
     Ok(())
 }
 
@@ -1164,9 +1202,143 @@ fn execute_alter_table(
     }
 }
 
+fn tuple_to_index_column_map(tuple: &Tuple) -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    for (name, cv) in &tuple.values {
+        if cv.is_null {
+            m.insert(name.clone(), String::new());
+            continue;
+        }
+        let s = match &cv.data_type {
+            DataType::Null => String::new(),
+            DataType::Boolean(b) => b.to_string(),
+            DataType::TinyInt(v) => v.to_string(),
+            DataType::SmallInt(v) => v.to_string(),
+            DataType::Integer(v) => v.to_string(),
+            DataType::BigInt(v) => v.to_string(),
+            DataType::Float(v) => v.to_string(),
+            DataType::Double(v) => v.to_string(),
+            DataType::Char(s) | DataType::Varchar(s) | DataType::Text(s) => s.clone(),
+            DataType::Date(s) | DataType::Time(s) | DataType::Timestamp(s) => s.clone(),
+            DataType::Blob(_) => String::new(),
+        };
+        m.insert(name.clone(), s);
+    }
+    m
+}
+
+fn sync_index_after_insert(
+    state: &SqlEngineState,
+    table: &str,
+    rid: RecordId,
+    tuple: &Tuple,
+) -> Result<(), EngineError> {
+    let m = tuple_to_index_column_map(tuple);
+    let mut ir = state
+        .index_registry
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?;
+    ir.insert_into_indexes(table, rid, &m)
+        .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index insert: {e}")))?;
+    Ok(())
+}
+
+fn sync_index_after_update(
+    state: &SqlEngineState,
+    table: &str,
+    rid: RecordId,
+    old_tuple: &Tuple,
+    new_tuple: &Tuple,
+) -> Result<(), EngineError> {
+    let old_m = tuple_to_index_column_map(old_tuple);
+    let new_m = tuple_to_index_column_map(new_tuple);
+    let mut ir = state
+        .index_registry
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?;
+    ir.update_indexes(table, rid, &old_m, &new_m)
+        .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index update: {e}")))?;
+    Ok(())
+}
+
+fn sync_index_after_delete(
+    state: &SqlEngineState,
+    table: &str,
+    rid: RecordId,
+    tuple: &Tuple,
+) -> Result<(), EngineError> {
+    let m = tuple_to_index_column_map(tuple);
+    let mut ir = state
+        .index_registry
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?;
+    ir.delete_from_indexes(table, rid, &m)
+        .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index delete: {e}")))?;
+    Ok(())
+}
+
+fn rebuild_optimizer_with_indexes(state: &SqlEngineState) -> Result<(), EngineError> {
+    let snapshot = state
+        .index_registry
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?
+        .clone();
+    let mut opt = state.optimizer.lock().map_err(|_| lock_poisoned_engine())?;
+    *opt = if snapshot.is_empty() {
+        QueryOptimizer::new().map_err(map_db_err)?
+    } else {
+        QueryOptimizer::new()
+            .map_err(map_db_err)?
+            .with_index_registry(Arc::new(snapshot))
+    };
+    Ok(())
+}
+
+fn execute_create_index(
+    state: &SqlEngineState,
+    ctx: &SessionContext,
+    ci: &CreateIndexStatement,
+) -> Result<EngineOutput, EngineError> {
+    ensure_no_active_transaction(ctx)?;
+    let table = ci.table_name.as_str();
+    let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+    let Some(schema) = cat.schema(table) else {
+        return Err(EngineError::new(
+            engine_error_code::CONSTRAINT_VIOLATION,
+            format!("table {table} does not exist"),
+        ));
+    };
+    for col in &ci.columns {
+        if !schema.columns.iter().any(|c| c.name == *col) {
+            return Err(EngineError::new(
+                engine_error_code::CONSTRAINT_VIOLATION,
+                format!("unknown column {table}.{col}"),
+            ));
+        }
+    }
+    drop(cat);
+    {
+        let mut reg = state
+            .index_registry
+            .lock()
+            .map_err(|_| lock_poisoned_engine())?;
+        reg.create_index(table, &ci.index_name, ci.columns.clone())
+            .map_err(|e| {
+                EngineError::new(engine_error_code::CONSTRAINT_VIOLATION, e.to_string())
+            })?;
+    }
+    rebuild_optimizer_with_indexes(state)?;
+    Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+}
+
 fn validate_plan(state: &SqlEngineState, stmt: &SqlStatement) -> Result<(), EngineError> {
     let plan = state.planner.create_plan(stmt).map_err(map_db_err)?;
-    let _ = state.optimizer.optimize(plan).map_err(map_db_err)?;
+    let _ = state
+        .optimizer
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?
+        .optimize(plan)
+        .map_err(map_db_err)?;
     Ok(())
 }
 
@@ -1185,7 +1357,12 @@ fn execute_insert(
                 .planner
                 .create_plan(&select_stmt)
                 .map_err(map_db_err)?;
-            let optimized = state.optimizer.optimize(plan).map_err(map_db_err)?;
+            let optimized = state
+                .optimizer
+                .lock()
+                .map_err(|_| lock_poisoned_engine())?
+                .optimize(plan)
+                .map_err(map_db_err)?;
             let rows = state
                 .executor
                 .execute(&optimized.optimized_plan)
@@ -1539,6 +1716,7 @@ fn execute_update(
             }
         }
         pm.update(rid, &new_bytes).map_err(map_db_err)?;
+        sync_index_after_update(state, &update.table, rid, &old_tuple, &tuple)?;
         maybe_simulate_dml_crash("update_row");
         push_undo(
             ctx,
@@ -1650,6 +1828,7 @@ fn execute_delete(
                 payload: data.clone(),
             },
         );
+        sync_index_after_delete(state, &delete.table, rid, &tuple)?;
         pm.delete(rid).map_err(map_db_err)?;
         maybe_simulate_dml_crash("delete_row");
         if let Some(tx) = ctx.transaction.as_mut() {
@@ -2083,7 +2262,10 @@ fn register_row_for_insert(
         .constraint_runtime
         .lock()
         .map_err(|_| lock_poisoned_engine())?;
-    sql_constraints::register_row(&mut rt, table, rid, tuple, &schema, &snapshot)
+    sql_constraints::register_row(&mut rt, table, rid, tuple, &schema, &snapshot)?;
+    drop(rt);
+    sync_index_after_insert(state, table, rid, tuple)?;
+    Ok(())
 }
 
 fn apply_defaults_and_validate(

@@ -10,6 +10,7 @@ use crate::planner::planner::SimpleEqualityFilter;
 use crate::planner::{ExecutionPlan, PlanNode};
 use crate::storage::index::BPlusTree;
 use crate::storage::index::Index;
+use crate::storage::index_registry::IndexRegistry;
 use crate::storage::page_manager::PageManager as StoragePageManager;
 use crate::storage::page_manager::PageManagerConfig;
 use crate::storage::tuple::Tuple;
@@ -2353,8 +2354,10 @@ pub struct ScanOperatorFactory {
     /// Page manager
     default_page_manager: Arc<Mutex<StoragePageManager>>,
     table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<StoragePageManager>>>>>,
-    /// Indexes: (table_name, index_name) -> B+ tree
-    indexes: HashMap<(String, String), Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>>,
+    /// Indexes: (table_name, index_name) -> B+ tree (used when `index_registry` is `None`, e.g. tests)
+    indexes: Mutex<HashMap<(String, String), Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>>>,
+    /// When set, `CREATE INDEX` / DML maintain this registry and index scans resolve through it.
+    index_registry: Option<Arc<Mutex<IndexRegistry>>>,
     /// When set, a table name not yet in `table_page_managers` opens `<data_dir>/<table>.tbl`
     /// using the same per-table heap files as [`SqlEngine`](crate::network::SqlEngine) for DML. This
     /// lets `SELECT` in a new process see rows inserted into a named heap file earlier.
@@ -2368,7 +2371,8 @@ impl ScanOperatorFactory {
         Self {
             default_page_manager: page_manager,
             table_page_managers: Arc::new(Mutex::new(HashMap::new())),
-            indexes: HashMap::new(),
+            indexes: Mutex::new(HashMap::new()),
+            index_registry: None,
             data_dir: None,
             pm_config: PageManagerConfig::default(),
         }
@@ -2378,11 +2382,13 @@ impl ScanOperatorFactory {
         default_page_manager: Arc<Mutex<StoragePageManager>>,
         table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<StoragePageManager>>>>>,
         data_dir: PathBuf,
+        index_registry: Option<Arc<Mutex<IndexRegistry>>>,
     ) -> Self {
         Self {
             default_page_manager,
             table_page_managers,
-            indexes: HashMap::new(),
+            indexes: Mutex::new(HashMap::new()),
+            index_registry,
             data_dir: Some(data_dir),
             pm_config: PageManagerConfig::default(),
         }
@@ -2426,15 +2432,18 @@ impl ScanOperatorFactory {
         Ok(())
     }
 
-    /// Add index for table
+    /// Add index for table (tests / examples; uses the local map when no shared [`IndexRegistry`]).
     pub fn add_index(
-        &mut self,
+        &self,
         table_name: &str,
         index_name: &str,
         index: Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>,
     ) {
-        self.indexes
-            .insert((table_name.to_string(), index_name.to_string()), index);
+        let mut g = self
+            .indexes
+            .lock()
+            .expect("scan factory indexes mutex poisoned");
+        g.insert((table_name.to_string(), index_name.to_string()), index);
     }
 
     /// Create table scan operator
@@ -2480,19 +2489,29 @@ impl ScanOperatorFactory {
         schema: Vec<String>,
     ) -> Result<Box<dyn Operator>> {
         let key = (table_name.clone(), index_name.clone());
-        if let Some(index) = self.indexes.get(&key) {
-            let operator = IndexScanOperator::new(
-                table_name,
-                index_name,
-                index.clone(),
-                self.default_page_manager.clone(),
-                search_conditions,
-                schema,
-            )?;
-            Ok(Box::new(operator))
+        let index = if let Some(reg) = &self.index_registry {
+            let g = reg
+                .lock()
+                .map_err(|_| Error::lock("index registry mutex poisoned"))?;
+            g.get_index(&table_name, &index_name)
+                .ok_or_else(|| Error::query_execution("Index not found for table"))?
         } else {
-            Err(Error::query_execution("Index not found for table"))
-        }
+            self.indexes
+                .lock()
+                .map_err(|_| Error::lock("scan factory indexes mutex poisoned"))?
+                .get(&key)
+                .cloned()
+                .ok_or_else(|| Error::query_execution("Index not found for table"))?
+        };
+        let operator = IndexScanOperator::new(
+            table_name,
+            index_name,
+            index,
+            self.default_page_manager.clone(),
+            search_conditions,
+            schema,
+        )?;
+        Ok(Box::new(operator))
     }
 }
 

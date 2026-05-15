@@ -117,7 +117,7 @@ fn main() -> Result<()> {
 
     // Example 6: Operator Factory
     println!("6. Factory operators:");
-    let mut factory = ScanOperatorFactory::new(page_manager.clone());
+    let factory = ScanOperatorFactory::new(page_manager.clone());
 
     // Adding an index
     let index_for_factory = Arc::new(Mutex::new(BPlusTree::new_default()));

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 /// Entry for a single index
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IndexEntry {
     /// Indexed column names
     pub columns: Vec<String>,
@@ -19,7 +19,7 @@ pub struct IndexEntry {
 }
 
 /// Registry of indexes per table
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct IndexRegistry {
     /// (table_name, index_name) -> IndexEntry
     indexes: HashMap<(String, String), IndexEntry>,
@@ -31,6 +31,16 @@ impl IndexRegistry {
         Self {
             indexes: HashMap::new(),
         }
+    }
+
+    /// True if no indexes are registered.
+    pub fn is_empty(&self) -> bool {
+        self.indexes.is_empty()
+    }
+
+    /// Removes every index defined on `table_name` (e.g. after `DROP TABLE`).
+    pub fn remove_all_indexes_for_table(&mut self, table_name: &str) {
+        self.indexes.retain(|(t, _), _| t.as_str() != table_name);
     }
 
     /// Creates and registers a new index

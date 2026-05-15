@@ -315,12 +315,13 @@ fn test_executor_distinct_operator() -> crate::common::Result<()> {
 #[test]
 fn test_executor_index_scan_with_index() -> crate::common::Result<()> {
     let (_tmp, pm) = common::create_test_page_manager();
-    let mut factory = crate::executor::operators::ScanOperatorFactory::new(pm.clone());
+    let factory = Arc::new(crate::executor::operators::ScanOperatorFactory::new(
+        pm.clone(),
+    ));
     let idx = Arc::new(std::sync::Mutex::new(
         crate::storage::index::BPlusTree::new(4),
     ));
     factory.add_index("t", "ix_id", idx);
-    let factory = Arc::new(factory);
     let ex = QueryExecutor::new(factory)?;
     let plan = ExecutionPlan {
         root: PlanNode::IndexScan(IndexScanNode {
