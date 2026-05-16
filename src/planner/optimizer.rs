@@ -634,7 +634,10 @@ impl QueryOptimizer {
             PlanNode::Filter(filter) => {
                 let optimized_input = self.select_indexes_recursive(&filter.input)?;
                 let input = if let PlanNode::TableScan(ref table_scan) = optimized_input {
-                    let eq = self.equality_hints_for_table_scan(table_scan, &self.eq_filters_from_filter(filter));
+                    let eq = self.equality_hints_for_table_scan(
+                        table_scan,
+                        &self.eq_filters_from_filter(filter),
+                    );
                     self.find_best_index(table_scan, &eq)?
                         .map(PlanNode::IndexScan)
                         .unwrap_or(optimized_input)
@@ -784,7 +787,7 @@ impl QueryOptimizer {
             if let Some(conditions) = leading_index_conditions(&columns, &eq) {
                 let better = best
                     .as_ref()
-                    .map_or(true, |(_, prev)| conditions.len() > prev.len());
+                    .is_none_or(|(_, prev)| conditions.len() > prev.len());
                 if better {
                     best = Some((index_name, conditions));
                 }

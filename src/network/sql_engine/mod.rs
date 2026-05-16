@@ -32,7 +32,7 @@
 //!
 //! **DML plan validation:** `INSERT` / `UPDATE` / `DELETE` skip redundant full plan+optimize when the
 //! same SQL text was already validated for the current catalog/index epoch (see
-//! [`DmlPlanValidationCache`]). Cache is cleared on catalog persist and optimizer rebuild.
+//! `DmlPlanValidationCache`). Cache is cleared on catalog persist and optimizer rebuild.
 //!
 //! **Profiling:** set `RUSTDB_SQL_PHASE_LOG=1` to emit `tracing` events on target `rustdb::sql_phases`
 //! (parse latency, `UPDATE`/`DELETE` scan vs row loop). Use `RUST_LOG=rustdb::sql_phases=info` to filter.
@@ -1764,8 +1764,7 @@ fn execute_update(
                 let expr = expr.clone();
                 let pred = Box::new(move |data: &[u8]| {
                     let tuple = Tuple::from_bytes(data).expect("heap tuple must deserialize");
-                    match_where_tuple(&expr, &tuple)
-                        .expect("WHERE validated for heap predicate")
+                    match_where_tuple(&expr, &tuple).expect("WHERE validated for heap predicate")
                 });
                 (pm.select(Some(pred)).map_err(map_db_err)?, true)
             }
@@ -1924,8 +1923,7 @@ fn execute_delete(
                 let expr = expr.clone();
                 let pred = Box::new(move |data: &[u8]| {
                     let tuple = Tuple::from_bytes(data).expect("heap tuple must deserialize");
-                    match_where_tuple(&expr, &tuple)
-                        .expect("WHERE validated for heap predicate")
+                    match_where_tuple(&expr, &tuple).expect("WHERE validated for heap predicate")
                 });
                 (pm.select(Some(pred)).map_err(map_db_err)?, true)
             }
@@ -2661,9 +2659,7 @@ mod tests {
             .unwrap();
         assert_eq!(upd, EngineOutput::ExecutionOk { rows_affected: 1 });
 
-        let sel = eng
-            .execute_sql("SELECT qty FROM stock", &mut ctx)
-            .unwrap();
+        let sel = eng.execute_sql("SELECT qty FROM stock", &mut ctx).unwrap();
         match sel {
             EngineOutput::ResultSet { rows, .. } => {
                 assert_eq!(
@@ -2952,7 +2948,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
         let mut ctx = SessionContext::default();
-        eng.execute_sql("CREATE TABLE tddl (a INT)", &mut ctx).unwrap();
+        eng.execute_sql("CREATE TABLE tddl (a INT)", &mut ctx)
+            .unwrap();
         eng.execute_sql("INSERT INTO tddl (a) VALUES (1)", &mut ctx)
             .unwrap();
         eng.execute_sql("ALTER TABLE tddl ADD COLUMN b INT", &mut ctx)

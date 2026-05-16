@@ -89,7 +89,9 @@ struct QuicExec {
 }
 
 impl QuicExec {
-    async fn open_stream(conn: &Connection) -> Result<WorkerBiStream, Box<dyn std::error::Error + Send + Sync>> {
+    async fn open_stream(
+        conn: &Connection,
+    ) -> Result<WorkerBiStream, Box<dyn std::error::Error + Send + Sync>> {
         let (send, recv) = conn.open_bi().await?;
         Ok(WorkerBiStream {
             send,

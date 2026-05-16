@@ -1,8 +1,8 @@
 //! Additional coverage of `optimizer.rs` branches (reorder, index registry, filter/join).
 
 use crate::common::Result;
-use crate::parser::SqlParser;
 use crate::parser::ast::{BinaryOperator, Expression, Literal};
+use crate::parser::SqlParser;
 use crate::planner::planner::{
     ExecutionPlan, FilterNode, JoinNode, JoinType, PlanMetadata, PlanNode, PlanStatistics,
     TableScanNode,
@@ -114,7 +114,10 @@ fn test_optimizer_composite_index_prefix_match() -> Result<()> {
 
     let res = opt.optimize(plan)?;
     let PlanNode::Filter(f) = &res.optimized_plan.root else {
-        panic!("expected filter over index scan, got {:?}", res.optimized_plan.root);
+        panic!(
+            "expected filter over index scan, got {:?}",
+            res.optimized_plan.root
+        );
     };
     let PlanNode::IndexScan(idx) = f.input.as_ref() else {
         panic!("expected index scan, got {:?}", f.input);

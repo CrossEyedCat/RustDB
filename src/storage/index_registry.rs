@@ -168,7 +168,7 @@ impl IndexRegistry {
         Ok(())
     }
 
-    /// Builds a composite index key from column values (same encoding as [`Self::build_index_key`]).
+    /// Builds a composite index key from column values (same encoding as `build_index_key`).
     pub fn build_index_key_from_map(
         columns: &[String],
         values: &HashMap<String, String>,
@@ -195,7 +195,8 @@ impl IndexRegistry {
         if equalities.is_empty() {
             return Ok(None);
         }
-        let Some((entry, prefix_len)) = self.best_index_for_equalities(table_name, equalities) else {
+        let Some((entry, prefix_len)) = self.best_index_for_equalities(table_name, equalities)
+        else {
             return Ok(None);
         };
         let index = entry

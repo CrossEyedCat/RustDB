@@ -168,7 +168,7 @@ pub fn dispatch_client_message(
 }
 
 /// Same as [`dispatch_client_message`], but uses `session_ctx` so `BEGIN` / `COMMIT` persist across
-/// multiple queries on the same QUIC bidirectional stream (see [`handle_query_bidi_stream`]).
+/// multiple queries on the same QUIC bidirectional stream (see `handle_query_bidi_stream`).
 pub fn dispatch_client_message_with_ctx(
     msg: ClientMessage,
     engine: &dyn EngineHandle,
@@ -457,7 +457,7 @@ async fn write_error_response(
     name = "network.query_stream",
     skip(send, recv, conn_sessions, policy, metrics, _permit)
 )]
-pub async fn handle_query_bidi_stream(
+pub(crate) async fn handle_query_bidi_stream(
     mut send: SendStream,
     mut recv: RecvStream,
     conn_sessions: Arc<ConnectionSqlSessions>,

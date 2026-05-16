@@ -648,9 +648,7 @@ impl PageManager {
     ) -> Result<Option<Vec<u8>>> {
         let (_pid, offset) = self.parse_record_id(record_id);
         if let Some(page) = self.dirty_pages.get(&page_id) {
-            return Ok(page
-                .get_record_at_offset(offset)
-                .map(|s| s.to_vec()));
+            return Ok(page.get_record_at_offset(offset).map(|s| s.to_vec()));
         }
         let page_data = self.file_manager.read_page(self.file_id, page_id)?;
         let page = Page::from_bytes(&page_data)?;
