@@ -387,11 +387,7 @@ pub(crate) fn flush_page_managers_for_tables(
     let pms: Vec<Arc<Mutex<PageManager>>> = tables
         .iter()
         .filter_map(|name| map.get(name).cloned())
-        .filter(|pm| {
-            pm.lock()
-                .map(|g| g.dirty_page_count() > 0)
-                .unwrap_or(false)
-        })
+        .filter(|pm| pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false))
         .collect();
     drop(map);
     coalesced_flush_page_managers(pms)

@@ -770,7 +770,12 @@ fn resolve_dml_row_lock_rids(
     Ok(Some((rids, index_exact)))
 }
 
-fn log_dml_lock_path(table: &str, lock_path: &'static str, reason: Option<&str>, row_count: Option<usize>) {
+fn log_dml_lock_path(
+    table: &str,
+    lock_path: &'static str,
+    reason: Option<&str>,
+    row_count: Option<usize>,
+) {
     if !sql_phase_log_enabled() {
         return;
     }
@@ -3206,7 +3211,9 @@ where
     };
 
     if exact_key {
-        return state.row_locks.with_write_locks(table, row_lock_rids, apply);
+        return state
+            .row_locks
+            .with_write_locks(table, row_lock_rids, apply);
     }
     let lock = table_storage_lock_arc(state, table)?;
     let _guard = acquire_table_storage_write_lock(&lock, table)?;
