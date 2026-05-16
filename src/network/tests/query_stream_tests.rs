@@ -3,7 +3,7 @@
 use crate::network::engine::{engine_error_code, EngineOutput, StubEngine};
 use crate::network::framing::{
     decode_server_frame_v1, encode_client_message_v1, ClientHelloPayload, ClientMessage,
-    QueryPayload, ServerMessage,
+    ExecuteScriptPayload, QueryPayload, ServerMessage,
 };
 use crate::network::query_stream::{dispatch_client_frame, DispatchError, StreamPolicy};
 
@@ -77,6 +77,20 @@ fn dispatch_rejects_result_rows_over_limit() {
             assert_eq!(e.code, engine_error_code::RESULT_ROWS_TOO_LARGE);
         }
         _ => panic!("expected RESULT_ROWS_TOO_LARGE"),
+    }
+}
+
+#[test]
+fn dispatch_execute_script_returns_single_execution_ok() {
+    let engine = StubEngine::fixed_ok(EngineOutput::ExecutionOk { rows_affected: 3 });
+    let req = encode_client_message_v1(&ClientMessage::ExecuteScript(ExecuteScriptPayload {
+        sqls: vec!["BEGIN TRANSACTION".into(), "COMMIT".into()],
+    }))
+    .expect("encode");
+    let resp = dispatch_client_frame(&req, &engine, &StreamPolicy::default()).expect("dispatch");
+    match decode_server_frame_v1(resp.as_ref()).expect("decode") {
+        ServerMessage::ExecutionOk(p) => assert_eq!(p.rows_affected, 6),
+        _ => panic!("expected ExecutionOk"),
     }
 }
 

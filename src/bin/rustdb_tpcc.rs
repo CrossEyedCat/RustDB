@@ -11,8 +11,10 @@ use quinn::{Connection, RecvStream, SendStream};
 use rustdb::network::client::{
     build_quinn_client_config_with_limits, connect, make_client_endpoint,
 };
+use rustdb::network::engine::engine_error_code;
 use rustdb::network::framing::{
-    decode_server_frame_v1, encode_client_message_v1, ClientMessage, QueryPayload, ServerMessage,
+    decode_server_frame_v1, encode_client_message_v1, ClientMessage, ExecuteScriptPayload,
+    QueryPayload, ServerMessage,
 };
 use rustdb::network::query_stream::read_application_frame_into;
 use rustdb::tpcc_workload::{run_tpcc, Mix, TpccExec, TpccRunConfig};
@@ -20,6 +22,7 @@ use rustls::pki_types::CertificateDer;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -73,6 +76,14 @@ struct Args {
     /// QUIC max idle timeout (seconds).
     #[arg(long, default_value_t = 30)]
     quic_idle_secs: u64,
+
+    /// Share one QUIC connection across all workers (legacy; serializes on one server SQL pool per conn).
+    #[arg(long, default_value_t = false)]
+    shared_connection: bool,
+
+    /// Number of QUIC connections when not using `--shared-connection` (default: one per worker).
+    #[arg(long)]
+    connections: Option<usize>,
 }
 
 /// One worker's long-lived bidirectional QUIC stream (reused across transactions).
@@ -86,6 +97,7 @@ struct WorkerBiStream {
 struct QuicExec {
     conn: Connection,
     stream: Arc<Mutex<Option<WorkerBiStream>>>,
+    execute_script: Arc<AtomicBool>,
 }
 
 impl QuicExec {
@@ -100,12 +112,35 @@ impl QuicExec {
         })
     }
 
-    async fn run_batch_on_stream(
+    fn execute_script_unsupported(msg: &ServerMessage) -> bool {
+        match msg {
+            ServerMessage::Error(p) if p.code == engine_error_code::PROTOCOL => {
+                let m = p.message.to_ascii_lowercase();
+                m.contains("unknown message kind")
+                    || m.contains("message kind")
+                    || m.contains("wrong direction")
+            }
+            _ => false,
+        }
+    }
+
+    async fn run_execute_script_on_stream(
+        bi: &mut WorkerBiStream,
+        sqls: &[String],
+    ) -> Result<ServerMessage, Box<dyn std::error::Error + Send + Sync>> {
+        let frame =
+            encode_client_message_v1(&ClientMessage::ExecuteScript(ExecuteScriptPayload {
+                sqls: sqls.to_vec(),
+            }))?;
+        bi.send.write_all(&frame).await?;
+        read_application_frame_into(&mut bi.recv, 64 * 1024 * 1024, &mut bi.recv_buf).await?;
+        Ok(decode_server_frame_v1(&bi.recv_buf)?)
+    }
+
+    async fn run_multi_query_on_stream(
         bi: &mut WorkerBiStream,
         sqls: &[String],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Pipeline: send all frames first, then read responses (same ordering as sequential mode;
-        // reduces per-statement round-trip latency when the server processes frames in order).
         for sql in sqls {
             let frame =
                 encode_client_message_v1(&ClientMessage::Query(QueryPayload { sql: sql.clone() }))?;
@@ -119,6 +154,26 @@ impl QuicExec {
             }
         }
         Ok(())
+    }
+
+    async fn run_batch_on_stream(
+        bi: &mut WorkerBiStream,
+        sqls: &[String],
+        try_execute_script: &AtomicBool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if try_execute_script.load(Ordering::Relaxed) {
+            match Self::run_execute_script_on_stream(bi, sqls).await {
+                Ok(msg) if Self::execute_script_unsupported(&msg) => {
+                    try_execute_script.store(false, Ordering::Relaxed);
+                }
+                Ok(ServerMessage::Error(p)) => {
+                    return Err(format!("server error: {}: {}", p.code, p.message).into());
+                }
+                Ok(_) => return Ok(()),
+                Err(e) => return Err(e),
+            }
+        }
+        Self::run_multi_query_on_stream(bi, sqls).await
     }
 }
 
@@ -135,7 +190,7 @@ impl TpccExec for QuicExec {
                 *guard = Some(Self::open_stream(&self.conn).await?);
             }
             let bi = guard.as_mut().expect("stream just opened");
-            match Self::run_batch_on_stream(bi, sqls).await {
+            match Self::run_batch_on_stream(bi, sqls, &self.execute_script).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     *guard = None;
@@ -163,17 +218,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Duration::from_secs(args.quic_idle_secs),
     )?;
     let endpoint = make_client_endpoint(client_cfg)?;
-    let conn = connect(&endpoint, addr, &args.server_name).await?;
-
     let concurrency = args.concurrency.max(1);
-    let workers: Vec<Arc<QuicExec>> = (0..concurrency)
-        .map(|_| {
-            Arc::new(QuicExec {
-                conn: conn.clone(),
-                stream: Arc::new(Mutex::new(None)),
+    if args.shared_connection && args.connections.is_some() {
+        return Err("--connections cannot be used with --shared-connection".into());
+    }
+    let workers: Vec<Arc<QuicExec>> = if args.shared_connection {
+        let conn = connect(&endpoint, addr, &args.server_name).await?;
+        (0..concurrency)
+            .map(|_| {
+                Arc::new(QuicExec {
+                    conn: conn.clone(),
+                    stream: Arc::new(Mutex::new(None)),
+                    execute_script: Arc::new(AtomicBool::new(true)),
+                })
             })
-        })
-        .collect();
+            .collect()
+    } else {
+        let conn_count = args.connections.unwrap_or(concurrency).max(1);
+        let mut conns = Vec::with_capacity(conn_count);
+        for _ in 0..conn_count {
+            conns.push(connect(&endpoint, addr, &args.server_name).await?);
+        }
+        (0..concurrency)
+            .map(|worker_idx| {
+                Arc::new(QuicExec {
+                    conn: conns[worker_idx % conn_count].clone(),
+                    stream: Arc::new(Mutex::new(None)),
+                    execute_script: Arc::new(AtomicBool::new(true)),
+                })
+            })
+            .collect()
+    };
 
     let duration = args.duration_seconds.map(|s| Duration::from_secs(s.max(1)));
     let report = run_tpcc(

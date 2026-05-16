@@ -14,6 +14,7 @@ pub enum MessageKind {
     Error = 4,
     ClientHello = 5,
     ServerReady = 6,
+    ExecuteScript = 7,
 }
 
 impl MessageKind {
@@ -34,6 +35,7 @@ impl TryFrom<u16> for MessageKind {
             4 => Ok(MessageKind::Error),
             5 => Ok(MessageKind::ClientHello),
             6 => Ok(MessageKind::ServerReady),
+            7 => Ok(MessageKind::ExecuteScript),
             _ => Err(()),
         }
     }
@@ -53,11 +55,18 @@ pub struct ClientHelloPayload {
     pub client_version: String,
 }
 
+/// Run multiple SQL statements in one dispatch (one wire round-trip).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecuteScriptPayload {
+    pub sqls: Vec<String>,
+}
+
 /// Messages sent from client to server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientMessage {
     Query(QueryPayload),
     ClientHello(ClientHelloPayload),
+    ExecuteScript(ExecuteScriptPayload),
 }
 
 // --- Server → client payloads ------------------------------------------------

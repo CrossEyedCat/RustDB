@@ -67,6 +67,21 @@ fn test_index_registry_insert_delete_update() -> Result<()> {
 }
 
 #[test]
+fn test_index_registry_named_index_insert() -> Result<()> {
+    let mut registry = IndexRegistry::new();
+    registry.create_index("t", "idx_k", vec!["k".to_string()])?;
+    let mut m = HashMap::new();
+    m.insert("k".to_string(), "1".to_string());
+    registry.insert_into_named_index("t", "idx_k", 7, &m)?;
+    let (ids, exact) = registry
+        .lookup_record_ids_by_equalities("t", &m)?
+        .expect("lookup");
+    assert!(exact);
+    assert_eq!(ids, vec![7]);
+    Ok(())
+}
+
+#[test]
 fn test_index_registry_composite_equality_lookup() -> Result<()> {
     let mut registry = IndexRegistry::new();
     registry.create_index(
@@ -84,15 +99,17 @@ fn test_index_registry_composite_equality_lookup() -> Result<()> {
     let mut eq = HashMap::new();
     eq.insert("d_w_id".to_string(), "1".to_string());
     eq.insert("d_id".to_string(), "4".to_string());
-    let ids = registry
+    let (ids, exact) = registry
         .lookup_record_ids_by_equalities("district", &eq)?
         .expect("index should match");
+    assert!(exact);
     assert_eq!(ids, vec![100]);
 
     eq.remove("d_id");
-    let ids = registry
+    let (ids, exact) = registry
         .lookup_record_ids_by_equalities("district", &eq)?
         .expect("prefix index match");
+    assert!(!exact);
     assert_eq!(ids.len(), 2);
     assert!(ids.contains(&100));
     assert!(ids.contains(&101));

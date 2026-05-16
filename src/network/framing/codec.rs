@@ -5,8 +5,8 @@ use std::io::Write;
 use super::error::FrameDirection;
 use super::header::{FrameHeader, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_BYTES, PROTOCOL_VERSION_V1};
 use super::messages::{
-    ClientHelloPayload, ClientMessage, ErrorPayload, ExecutionOkPayload, MessageKind, QueryPayload,
-    ResultSetPayload, ServerMessage, ServerReadyPayload,
+    ClientHelloPayload, ClientMessage, ErrorPayload, ExecuteScriptPayload, ExecutionOkPayload,
+    MessageKind, QueryPayload, ResultSetPayload, ServerMessage, ServerReadyPayload,
 };
 use super::{EncodeError, ProtocolError};
 
@@ -63,6 +63,10 @@ pub fn encode_client_message_write<W: Write>(
         ),
         ClientMessage::ClientHello(p) => (
             MessageKind::ClientHello,
+            postcard::to_allocvec(p).map_err(EncodeError::Postcard)?,
+        ),
+        ClientMessage::ExecuteScript(p) => (
+            MessageKind::ExecuteScript,
             postcard::to_allocvec(p).map_err(EncodeError::Postcard)?,
         ),
     };
@@ -141,7 +145,7 @@ pub fn decode_client_frame(
     let kind = MessageKind::try_from(header.message_kind)
         .map_err(|_| ProtocolError::UnknownMessageKind(header.message_kind))?;
     match kind {
-        MessageKind::Query | MessageKind::ClientHello => {}
+        MessageKind::Query | MessageKind::ClientHello | MessageKind::ExecuteScript => {}
         _ => {
             return Err(ProtocolError::WrongDirection {
                 kind,
@@ -160,6 +164,11 @@ pub fn decode_client_frame(
             let p: ClientHelloPayload = postcard::from_bytes(body)
                 .map_err(|e| ProtocolError::PostcardDecode(format!("{e:?}")))?;
             Ok(ClientMessage::ClientHello(p))
+        }
+        MessageKind::ExecuteScript => {
+            let p: ExecuteScriptPayload = postcard::from_bytes(body)
+                .map_err(|e| ProtocolError::PostcardDecode(format!("{e:?}")))?;
+            Ok(ClientMessage::ExecuteScript(p))
         }
         _ => unreachable!(),
     }

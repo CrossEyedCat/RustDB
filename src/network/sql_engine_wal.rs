@@ -10,6 +10,7 @@ use crate::logging::log_writer::{LogWriter, LogWriterConfig};
 use crate::logging::recovery::{RecoveryConfig, RecoveryManager};
 use crate::network::engine::{engine_error_code, EngineError, SqlIsolationLevel, SqlTransaction};
 use crate::storage::page_manager::PageManager;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -292,6 +293,33 @@ pub fn recover_sql_engine_wal(log_dir: &Path) -> DbResult<()> {
     });
     rt.block_on(async move { rm.recover_database(log_dir).await })?;
     Ok(())
+}
+
+/// Flushes dirty pages for the given physical table heaps only.
+///
+/// When `tables` is empty, this is a no-op (e.g. `BEGIN` … `COMMIT` with no DML).
+pub(crate) fn flush_page_managers_for_tables(
+    state: &crate::network::sql_engine::SqlEngineState,
+    tables: &HashSet<String>,
+) -> DbResult<usize> {
+    if tables.is_empty() {
+        return Ok(0);
+    }
+    let map = state
+        .table_page_managers
+        .lock()
+        .map_err(|_| DbError::database("table pm map lock poisoned"))?;
+    let mut n = 0usize;
+    for name in tables {
+        if let Some(pm) = map.get(name) {
+            n += pm
+                .lock()
+                .map_err(|_| DbError::database("table page manager lock poisoned"))?
+                .flush_dirty_pages()
+                .map_err(|e| DbError::database(e.to_string()))?;
+        }
+    }
+    Ok(n)
 }
 
 pub(crate) fn flush_all_page_managers(

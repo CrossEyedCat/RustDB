@@ -5,15 +5,26 @@ use std::io::Write;
 use crate::network::framing::{
     decode_client_frame_v1, decode_server_frame_v1, encode_client_message_v1,
     encode_client_message_write, encode_server_message_v1, ClientHelloPayload, ClientMessage,
-    EncodeError, ErrorPayload, ExecutionOkPayload, FrameDirection, FrameHeader, MessageKind,
-    ProtocolError, QueryPayload, ResultSetPayload, ServerMessage, ServerReadyPayload,
-    FRAME_HEADER_LEN, FRAME_MAGIC, MAX_FRAME_PAYLOAD_BYTES, PROTOCOL_VERSION_V1,
+    EncodeError, ErrorPayload, ExecuteScriptPayload, ExecutionOkPayload, FrameDirection,
+    FrameHeader, MessageKind, ProtocolError, QueryPayload, ResultSetPayload, ServerMessage,
+    ServerReadyPayload, FRAME_HEADER_LEN, FRAME_MAGIC, MAX_FRAME_PAYLOAD_BYTES,
+    PROTOCOL_VERSION_V1,
 };
 
 #[test]
 fn roundtrip_client_query() {
     let msg = ClientMessage::Query(QueryPayload {
         sql: "SELECT 1".into(),
+    });
+    let wire = encode_client_message_v1(&msg).unwrap();
+    let out = decode_client_frame_v1(&wire).unwrap();
+    assert_eq!(out, msg);
+}
+
+#[test]
+fn roundtrip_client_execute_script() {
+    let msg = ClientMessage::ExecuteScript(ExecuteScriptPayload {
+        sqls: vec!["BEGIN TRANSACTION".into(), "COMMIT".into()],
     });
     let wire = encode_client_message_v1(&msg).unwrap();
     let out = decode_client_frame_v1(&wire).unwrap();

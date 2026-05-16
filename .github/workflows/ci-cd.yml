@@ -591,6 +591,24 @@ jobs:
             echo "- postgres_tpcc txns_per_s (successful only): **${pg_tps}**"
             echo "- rustdb / postgres: **${ratio}%**"
             echo ""
+            echo "### Full mix txn latency by kind"
+            echo ""
+            echo '```'
+            if [[ -s "tpcc-out/tpcc_txn.log" ]]; then
+              echo "--- RustDB (rustdb_tpcc) ---"
+              python3 scripts/analyze_tpcc_txn_log.py tpcc-out/tpcc_txn.log || true
+            else
+              echo "(missing tpcc-out/tpcc_txn.log)"
+            fi
+            if [[ -s "tpcc-out/postgres_tpcc_txn.log" ]]; then
+              echo ""
+              echo "--- PostgreSQL (postgres_tpcc) ---"
+              python3 scripts/analyze_tpcc_txn_log.py tpcc-out/postgres_tpcc_txn.log || true
+            else
+              echo "(missing tpcc-out/postgres_tpcc_txn.log)"
+            fi
+            echo '```'
+            echo ""
             echo "### RustDB server log (sql phase summary)"
             echo ""
             echo "Full QUIC server stdout+stderr is in artifact **\`tpcc-out/server_full.log\`** (also \`server_tail.log\` = last 400 lines)."
@@ -623,6 +641,28 @@ jobs:
             fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # Soft throughput thresholds (informational; do not fail the job).
+          micro_rd="$(python3 -c 'import json,pathlib; p=pathlib.Path("tpcc-out/order_status_micro/tpcc.json"); print(json.loads(p.read_text(encoding="utf-8")).get("txns_per_s", 0.0) if p.is_file() else 0.0)')"
+          micro_pg="$(python3 -c 'import json,pathlib; p=pathlib.Path("tpcc-out/order_status_micro/postgres_tpcc.json"); print(json.loads(p.read_text(encoding="utf-8")).get("txns_per_s", 0.0) if p.is_file() else 0.0)')"
+          micro_ratio="$(python3 -c "rd=float('$micro_rd'); pg=float('$micro_pg'); print(f'{(100.0*rd/pg):.1f}' if pg>0 else '0.0')")"
+          {
+            echo ""
+            echo "### Throughput thresholds (informational)"
+            echo ""
+            echo "- Full mix rustdb/postgres: **${ratio}%** (soft floor: 25%)"
+            echo "- order_status micro rustdb/postgres: **${micro_ratio}%** (soft floor: 40%)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if python3 -c "exit(0 if float('${ratio}') >= 25.0 else 1)"; then
+            :
+          else
+            echo "::warning::Full mix RustDB/PostgreSQL TPS ratio ${ratio}% is below the 25% soft threshold"
+          fi
+          if python3 -c "exit(0 if float('${micro_ratio}') >= 40.0 else 1)"; then
+            :
+          else
+            echo "::warning::order_status micro RustDB/PostgreSQL TPS ratio ${micro_ratio}% is below the 40% soft threshold"
+          fi
 
       - name: Upload TPC-C artifacts
         if: always()

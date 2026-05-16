@@ -24,8 +24,11 @@
 //!   After each successful write of `catalog.json` (DDL), the WAL records a `MetadataUpdate` marker when WAL is on.
 //! - With WAL enabled, you may set **`RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=1`** to skip `flush_dirty_pages`
 //!   after successful implicit auto-commit DML (higher throughput; heap catches up at checkpoint /
-//!   `COMMIT`). Explicit `BEGIN … COMMIT` transactions defer per-statement heap flush and flush all
-//!   page managers on `COMMIT` (and on `ROLLBACK` after undo).
+//!   `COMMIT`). Explicit `BEGIN … COMMIT` transactions defer per-statement heap flush and flush only
+//!   heap page managers for tables touched by DML on `COMMIT` / `ROLLBACK` (see
+//!   `SqlTransaction::touched_tables`).
+//! - WAL group commit knobs: `RUSTDB_GROUP_COMMIT_ENABLED`, `RUSTDB_GROUP_COMMIT_INTERVAL_MS`,
+//!   `RUSTDB_GROUP_COMMIT_MAX_BATCH`, `RUSTDB_FORCE_FLUSH_IMMEDIATELY` (see `crate::network::sql_engine_wal`).
 //! - Implicit auto-commit DML still flushes after each statement by default so standalone heap files
 //!   stay coherent for tests and tooling that reopen without relying on WAL replay ordering.
 //! - DDL (`CREATE` / `DROP` / `ALTER`) is rejected while a transaction is open.
@@ -596,7 +599,7 @@ fn sql_phase_log_enabled() -> bool {
 /// Flush dirty heap pages after successful DML.
 ///
 /// Skips per-statement flush inside an explicit `BEGIN … COMMIT` transaction (heap is flushed on
-/// `COMMIT` via [`crate::network::sql_engine_wal::flush_all_page_managers`]). Implicit auto-commit
+/// `COMMIT` via [`crate::network::sql_engine_wal::flush_page_managers_for_tables`]). Implicit auto-commit
 /// DML still flushes after each statement unless `RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML` is set (WAL on).
 fn flush_heap_after_dml_success(
     state: &SqlEngineState,
@@ -865,7 +868,9 @@ fn commit_transaction(
     if let Some(ref wal) = state.wal {
         wal.log_commit(&mut tx)?;
     }
-    crate::network::sql_engine_wal::flush_all_page_managers(state).map_err(map_db_err)?;
+    let touched = std::mem::take(&mut tx.touched_tables);
+    crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &touched)
+        .map_err(map_db_err)?;
     sql_commit_log::append_commit_log_line(&state.data_dir, state.durability.fsync_on_commit())
         .map_err(map_db_err)?;
     drop(tx);
@@ -894,14 +899,19 @@ fn rollback_transaction(
             "no active transaction",
         )
     })?;
+    let mut flush_tables = std::mem::take(&mut tx.touched_tables);
     let undo = std::mem::take(&mut tx.undo);
+    for op in undo.iter() {
+        flush_tables.insert(undo_entry_table(op));
+    }
     for op in undo.into_iter().rev() {
         apply_undo(state, op)?;
     }
     rebuild_all_constraint_runtime(state)?;
     // Persist rollback: otherwise the next process sees heap pages from disk that still contain
     // undone inserts (WAL replay does not redo aborted txs, so durability must match).
-    crate::network::sql_engine_wal::flush_all_page_managers(state).map_err(map_db_err)?;
+    crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &flush_tables)
+        .map_err(map_db_err)?;
     // Only append an ABORT marker after the UNDO is applied *and* persisted.
     //
     // If we mark the transaction as aborted in WAL first and then crash before the UNDO is flushed,
@@ -925,6 +935,20 @@ fn ensure_no_active_transaction(ctx: &SessionContext) -> Result<(), EngineError>
 fn push_undo(ctx: &mut SessionContext, entry: UndoEntry) {
     if let Some(tx) = ctx.transaction.as_mut() {
         tx.undo.push(entry);
+    }
+}
+
+fn undo_entry_table(entry: &UndoEntry) -> String {
+    match entry {
+        UndoEntry::Insert { table, .. }
+        | UndoEntry::Delete { table, .. }
+        | UndoEntry::Update { table, .. } => table.clone(),
+    }
+}
+
+fn record_touched_table(ctx: &mut SessionContext, table: &str) {
+    if let Some(tx) = ctx.transaction.as_mut() {
+        tx.touched_tables.insert(table.to_string());
     }
 }
 
@@ -1292,12 +1316,15 @@ fn literal_to_index_key_string(lit: &Literal) -> String {
 }
 
 /// Index-backed row fetch for UPDATE/DELETE when a matching index exists.
+///
+/// Returns `(rows, skip_heap_where)` when an index applies; `skip_heap_where` is true when the
+/// `WHERE` clause is a conjunction of equalities fully covered by an exact index key lookup.
 fn try_dml_rows_via_index(
     state: &SqlEngineState,
     table: &str,
     where_expr: &Expression,
     pm: &mut PageManager,
-) -> Result<Option<Vec<(RecordId, Vec<u8>)>>, EngineError> {
+) -> Result<Option<(Vec<(RecordId, Vec<u8>)>, bool)>, EngineError> {
     let lit_eq = extract_dml_where_equalities(where_expr);
     if lit_eq.is_empty() {
         return Ok(None);
@@ -1310,19 +1337,24 @@ fn try_dml_rows_via_index(
         .index_registry
         .lock()
         .map_err(|_| lock_poisoned_engine())?;
-    let Some(rids) = ir
+    let Some((rids, index_exact)) = ir
         .lookup_record_ids_by_equalities(table, &equalities)
         .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index lookup: {e}")))?
     else {
         return Ok(None);
     };
+    let where_eq_cols: HashSet<String> = extract_dml_where_equalities(where_expr)
+        .into_keys()
+        .collect();
+    let lit_eq_cols: HashSet<String> = lit_eq.keys().cloned().collect();
+    let skip_heap_where = index_exact && where_eq_cols == lit_eq_cols && !where_eq_cols.is_empty();
     let mut rows = Vec::with_capacity(rids.len());
     for rid in rids {
         if let Some(data) = pm.get_record(rid).map_err(map_db_err)? {
             rows.push((rid, data));
         }
     }
-    Ok(Some(rows))
+    Ok(Some((rows, skip_heap_where)))
 }
 
 fn sync_index_after_insert(
@@ -1463,8 +1495,35 @@ fn execute_create_index(
                 EngineError::new(engine_error_code::CONSTRAINT_VIOLATION, e.to_string())
             })?;
     }
+    backfill_index_from_heap(state, table, &ci.index_name)?;
     rebuild_optimizer_with_indexes(state)?;
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+}
+
+fn backfill_index_from_heap(
+    state: &SqlEngineState,
+    table: &str,
+    index_name: &str,
+) -> Result<(), EngineError> {
+    let pm = table_page_manager(state, table)?;
+    let snapshot = pm
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?
+        .select(None)
+        .map_err(map_db_err)?;
+    let mut ir = state
+        .index_registry
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?;
+    for (rid, data) in snapshot {
+        let tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
+        let m = tuple_to_index_column_map(&tuple);
+        ir.insert_into_named_index(table, index_name, rid, &m)
+            .map_err(|e| {
+                EngineError::new(engine_error_code::INTERNAL, format!("index backfill: {e}"))
+            })?;
+    }
+    Ok(())
 }
 
 fn validate_plan(
@@ -1503,6 +1562,7 @@ fn execute_insert(
     insert: &InsertStatement,
 ) -> Result<EngineOutput, EngineError> {
     validate_plan(state, sql, stmt)?;
+    record_touched_table(ctx, &insert.table);
     match &insert.values {
         InsertValues::Select(sel) => {
             // Plan/execute the SELECT subquery and insert its resulting rows.
@@ -1751,6 +1811,7 @@ fn execute_update(
     update: &UpdateStatement,
 ) -> Result<EngineOutput, EngineError> {
     validate_plan(state, sql, stmt)?;
+    record_touched_table(ctx, &update.table);
     let pm_for_table = table_page_manager(state, &update.table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let scan_clock = sql_phase_log_enabled().then(Instant::now);
@@ -1758,8 +1819,10 @@ fn execute_update(
         None => (pm.select(None).map_err(map_db_err)?, false),
         Some(expr) => {
             validate_dml_where_structure(expr)?;
-            if let Some(rows) = try_dml_rows_via_index(state, &update.table, expr, &mut pm)? {
-                (rows, false)
+            if let Some((rows, skip_where)) =
+                try_dml_rows_via_index(state, &update.table, expr, &mut pm)?
+            {
+                (rows, skip_where)
             } else {
                 let expr = expr.clone();
                 let pred = Box::new(move |data: &[u8]| {
@@ -1910,6 +1973,7 @@ fn execute_delete(
     delete: &DeleteStatement,
 ) -> Result<EngineOutput, EngineError> {
     validate_plan(state, sql, stmt)?;
+    record_touched_table(ctx, &delete.table);
     let pm_for_table = table_page_manager(state, &delete.table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let scan_clock = sql_phase_log_enabled().then(Instant::now);
@@ -1917,8 +1981,10 @@ fn execute_delete(
         None => (pm.select(None).map_err(map_db_err)?, false),
         Some(expr) => {
             validate_dml_where_structure(expr)?;
-            if let Some(rows) = try_dml_rows_via_index(state, &delete.table, expr, &mut pm)? {
-                (rows, false)
+            if let Some((rows, skip_where)) =
+                try_dml_rows_via_index(state, &delete.table, expr, &mut pm)?
+            {
+                (rows, skip_where)
             } else {
                 let expr = expr.clone();
                 let pred = Box::new(move |data: &[u8]| {
@@ -2631,6 +2697,42 @@ mod tests {
     }
 
     #[test]
+    fn create_index_backfills_heap_for_delivery_style_delete() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql(
+            "CREATE TABLE new_order (no_o_id INTEGER, no_d_id INTEGER, no_w_id INTEGER)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "INSERT INTO new_order (no_o_id, no_d_id, no_w_id) VALUES (1, 4, 1), (2, 4, 1), (3, 5, 1)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "CREATE INDEX idx_new_order_wd ON new_order (no_w_id, no_d_id)",
+            &mut ctx,
+        )
+        .unwrap();
+        let del = eng
+            .execute_sql(
+                "DELETE FROM new_order WHERE no_w_id = 1 AND no_d_id = 4",
+                &mut ctx,
+            )
+            .unwrap();
+        assert_eq!(del, EngineOutput::ExecutionOk { rows_affected: 2 });
+        let left = eng
+            .execute_sql("SELECT no_o_id FROM new_order", &mut ctx)
+            .unwrap();
+        match left {
+            EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 1),
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
     fn sql_engine_update_delete_use_composite_index() {
         let dir = TempDir::new().unwrap();
         let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
@@ -2864,6 +2966,38 @@ mod tests {
             EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 1),
             _ => panic!("expected result set"),
         }
+    }
+
+    #[test]
+    fn explicit_transaction_selective_flush_only_touched_tables() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE ta (k INT PRIMARY KEY)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("CREATE TABLE tb (k INT PRIMARY KEY)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("INSERT INTO tb (k) VALUES (0)", &mut ctx)
+            .unwrap();
+        let pm_b = table_page_manager(eng.state_for_test(), "tb").unwrap();
+        assert_eq!(pm_b.lock().unwrap().dirty_page_count(), 0);
+
+        eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+        eng.execute_sql("INSERT INTO ta (k) VALUES (1)", &mut ctx)
+            .unwrap();
+        let pm_a = table_page_manager(eng.state_for_test(), "ta").unwrap();
+        assert!(
+            pm_a.lock().unwrap().dirty_page_count() > 0,
+            "touched table ta should have dirty pages before COMMIT"
+        );
+        assert_eq!(
+            pm_b.lock().unwrap().dirty_page_count(),
+            0,
+            "untouched table tb should not be flushed mid-txn"
+        );
+        eng.execute_sql("COMMIT", &mut ctx).unwrap();
+        assert_eq!(pm_a.lock().unwrap().dirty_page_count(), 0);
+        assert_eq!(pm_b.lock().unwrap().dirty_page_count(), 0);
     }
 
     #[test]

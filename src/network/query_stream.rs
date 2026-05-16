@@ -22,8 +22,8 @@ use crate::network::engine::{
 };
 use crate::network::framing::{
     decode_client_frame_v1, encode_server_message_v1, encode_server_message_write, ClientMessage,
-    FrameHeader, ProtocolError, QueryPayload, ServerMessage, FRAME_HEADER_LEN,
-    MAX_FRAME_PAYLOAD_BYTES, PROTOCOL_VERSION_V1,
+    ExecuteScriptPayload, ExecutionOkPayload, FrameHeader, ProtocolError, QueryPayload,
+    ServerMessage, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_BYTES, PROTOCOL_VERSION_V1,
 };
 use crate::network::metrics::{QueryHandledOutcome, QuicMetrics};
 
@@ -229,12 +229,61 @@ pub fn dispatch_client_message_with_ctx(
             }
             Ok(bytes)
         }
+        ClientMessage::ExecuteScript(script) => {
+            dispatch_execute_script(script, engine, policy, session_ctx)
+        }
         ClientMessage::ClientHello(_) => Err(EngineError::new(
             engine_error_code::PROTOCOL,
             "expected Query frame on this bidirectional stream (ClientHello is not supported here)",
         )
         .into()),
     }
+}
+
+fn dispatch_execute_script(
+    script: ExecuteScriptPayload,
+    engine: &dyn EngineHandle,
+    policy: &StreamPolicy,
+    session_ctx: &mut SessionContext,
+) -> Result<Arc<[u8]>, DispatchError> {
+    let span = info_span!("sql.execute_script", statement_count = script.sqls.len());
+    let _g = span.enter();
+    let mut rows_affected: u64 = 0;
+    for sql in &script.sqls {
+        if sql.len() > policy.max_sql_bytes {
+            return Err(EngineError::new(
+                engine_error_code::SQL_TOO_LONG,
+                "SQL text exceeds configured max_sql_bytes",
+            )
+            .into());
+        }
+        let out = engine.execute_sql(sql, session_ctx)?;
+        let out = enforce_max_result_rows(out, policy.max_result_rows)?;
+        match out {
+            EngineOutput::ExecutionOk { rows_affected: n } => {
+                rows_affected = rows_affected.saturating_add(n)
+            }
+            EngineOutput::ResultSet { .. } => {}
+        }
+    }
+    let server = ServerMessage::ExecutionOk(ExecutionOkPayload { rows_affected });
+    TL_ENCODE_BUF.with(|b| {
+        let mut buf = b.borrow_mut();
+        buf.clear();
+        let cap = buf.capacity();
+        if cap < 256 {
+            buf.reserve(256 - cap);
+        }
+        encode_server_message_write(PROTOCOL_VERSION_V1, &server, &mut *buf)?;
+        let owned = std::mem::take(&mut *buf);
+        Ok(Arc::from(owned.into_boxed_slice()))
+    })
+}
+
+fn connection_sql_worker_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get().clamp(1, 8))
+        .unwrap_or(1)
 }
 
 /// Sync dispatch: decode → engine → encode (used inside per-query timeout).
@@ -301,13 +350,13 @@ fn enforce_max_result_rows(
     }
 }
 
-/// Per-connection SQL worker: one OS thread multiplexes all bidirectional streams.
+/// Per-connection SQL workers: a small thread pool shards work by `stream_id`.
 ///
-/// Each QUIC stream gets its own [`SessionContext`] (`BEGIN` / `COMMIT` span frames on that stream).
-/// Tradeoff: SQL on concurrent streams within the same connection is serialized on this thread
-/// (avoids one OS thread per stream and keeps `SessionContext` / `MutexGuard` on a fixed thread).
+/// Each QUIC stream gets its own [`SessionContext`] on the worker that owns that shard
+/// (`stream_id % worker_count`), so `BEGIN` / `COMMIT` still span frames on one stream.
 pub(crate) struct ConnectionSqlSessions {
-    job_tx: sync_mpsc::Sender<ConnectionSqlCommand>,
+    worker_txs: Vec<sync_mpsc::Sender<ConnectionSqlCommand>>,
+    worker_count: usize,
     next_stream_id: AtomicU64,
 }
 
@@ -316,6 +365,7 @@ enum ConnectionSqlCommand {
         stream_id: u64,
         msg: ClientMessage,
         reply_tx: sync_mpsc::Sender<Result<Arc<[u8]>, DispatchError>>,
+        queued_at: Instant,
     },
     EndStream {
         stream_id: u64,
@@ -335,53 +385,70 @@ impl Drop for StreamSessionGuard {
 
 impl ConnectionSqlSessions {
     fn new(engine: Arc<dyn EngineHandle>, policy: StreamPolicy) -> Arc<Self> {
-        let (job_tx, job_rx) = sync_mpsc::channel::<ConnectionSqlCommand>();
-        let engine_worker = engine;
-        let policy_worker = policy;
-        std::thread::Builder::new()
-            .name("rustdb-quic-conn-sql".into())
-            .spawn(move || {
-                let mut sessions: HashMap<u64, SessionContext> = HashMap::new();
-                while let Ok(cmd) = job_rx.recv() {
-                    match cmd {
-                        ConnectionSqlCommand::Dispatch {
-                            stream_id,
-                            msg,
-                            reply_tx,
-                        } => {
-                            let ctx = sessions.entry(stream_id).or_default();
-                            let r = dispatch_client_message_with_ctx(
-                                msg,
-                                engine_worker.as_ref(),
-                                &policy_worker,
-                                ctx,
-                            );
-                            let _ = reply_tx.send(r);
-                        }
-                        ConnectionSqlCommand::EndStream { stream_id } => {
-                            rollback_stream_if_needed(
-                                &mut sessions,
+        let worker_count = connection_sql_worker_count();
+        let mut worker_txs = Vec::with_capacity(worker_count);
+        for worker_idx in 0..worker_count {
+            let (job_tx, job_rx) = sync_mpsc::channel::<ConnectionSqlCommand>();
+            let engine_worker = engine.clone();
+            let policy_worker = policy.clone();
+            std::thread::Builder::new()
+                .name(format!("rustdb-quic-conn-sql-{worker_idx}"))
+                .spawn(move || {
+                    let mut sessions: HashMap<u64, SessionContext> = HashMap::new();
+                    while let Ok(cmd) = job_rx.recv() {
+                        match cmd {
+                            ConnectionSqlCommand::Dispatch {
                                 stream_id,
-                                engine_worker.as_ref(),
-                                &policy_worker,
-                            );
+                                msg,
+                                reply_tx,
+                                queued_at,
+                            } => {
+                                let queue_wait_us =
+                                    queued_at.elapsed().as_micros().min(u128::from(u64::MAX))
+                                        as u64;
+                                let _queue_wait =
+                                    info_span!("network.queue_wait", queue_wait_us, stream_id)
+                                        .entered();
+                                let ctx = sessions.entry(stream_id).or_default();
+                                let r = dispatch_client_message_with_ctx(
+                                    msg,
+                                    engine_worker.as_ref(),
+                                    &policy_worker,
+                                    ctx,
+                                );
+                                let _ = reply_tx.send(r);
+                            }
+                            ConnectionSqlCommand::EndStream { stream_id } => {
+                                rollback_stream_if_needed(
+                                    &mut sessions,
+                                    stream_id,
+                                    engine_worker.as_ref(),
+                                    &policy_worker,
+                                );
+                            }
                         }
                     }
-                }
-                for stream_id in sessions.keys().copied().collect::<Vec<_>>() {
-                    rollback_stream_if_needed(
-                        &mut sessions,
-                        stream_id,
-                        engine_worker.as_ref(),
-                        &policy_worker,
-                    );
-                }
-            })
-            .expect("spawn rustdb-quic-conn-sql thread");
+                    for stream_id in sessions.keys().copied().collect::<Vec<_>>() {
+                        rollback_stream_if_needed(
+                            &mut sessions,
+                            stream_id,
+                            engine_worker.as_ref(),
+                            &policy_worker,
+                        );
+                    }
+                })
+                .expect("spawn rustdb-quic-conn-sql worker");
+            worker_txs.push(job_tx);
+        }
         Arc::new(Self {
-            job_tx,
+            worker_txs,
+            worker_count,
             next_stream_id: AtomicU64::new(0),
         })
+    }
+
+    fn worker_for_stream(&self, stream_id: u64) -> usize {
+        (stream_id as usize) % self.worker_count
     }
 
     fn alloc_stream_id(&self) -> u64 {
@@ -393,19 +460,20 @@ impl ConnectionSqlSessions {
         stream_id: u64,
         msg: ClientMessage,
         reply_tx: sync_mpsc::Sender<Result<Arc<[u8]>, DispatchError>>,
+        queued_at: Instant,
     ) -> Result<(), ()> {
-        self.job_tx
+        self.worker_txs[self.worker_for_stream(stream_id)]
             .send(ConnectionSqlCommand::Dispatch {
                 stream_id,
                 msg,
                 reply_tx,
+                queued_at,
             })
             .map_err(|_| ())
     }
 
     fn end_stream(&self, stream_id: u64) {
-        let _ = self
-            .job_tx
+        let _ = self.worker_txs[self.worker_for_stream(stream_id)]
             .send(ConnectionSqlCommand::EndStream { stream_id });
     }
 }
@@ -451,7 +519,8 @@ async fn write_error_response(
 /// One bidirectional stream: read one request frame, run engine (with timeout), write one response.
 ///
 /// Parent span **`network.query_stream`** groups per-stream work in `tracing` / Chrome traces;
-/// nested spans include `network.read_frame`, `dispatch_client_frame`, `sql.query`, `network.write_response`.
+/// nested spans include `network.read_frame`, `network.queue_wait`, `dispatch_client_frame`,
+/// `sql.query`, `network.write_response`.
 #[instrument(
     level = "info",
     name = "network.query_stream",
@@ -484,8 +553,8 @@ pub(crate) async fn handle_query_bidi_stream(
         let read_res = read_application_frame_into(&mut recv, max_frame, &mut frame_buf)
             .instrument(tracing::info_span!("network.read_frame"))
             .await;
-        match read_res {
-            Ok(()) => {}
+        let queued_at = match read_res {
+            Ok(()) => Instant::now(),
             Err(ReadFrameError::Recv(_)) => {
                 // Client closed the stream (EOF / reset). Treat as graceful end-of-stream.
                 let _ = send.finish();
@@ -499,7 +568,7 @@ pub(crate) async fn handle_query_bidi_stream(
                 let _ = send.reset(quinn::VarInt::from_u32(0));
                 return;
             }
-        }
+        };
 
         // Decode cost (no network wait) so we can compare with `network.read_frame`.
         // Kept outside `dispatch_client_frame` for time-slicing in Chrome traces.
@@ -513,7 +582,10 @@ pub(crate) async fn handle_query_bidi_stream(
             Err(e) => Err(e.into()),
             Ok(msg) => {
                 let (reply_tx, reply_rx) = sync_mpsc::channel::<Result<Arc<[u8]>, DispatchError>>();
-                if conn_sessions.dispatch(stream_id, msg, reply_tx).is_err() {
+                if conn_sessions
+                    .dispatch(stream_id, msg, reply_tx, queued_at)
+                    .is_err()
+                {
                     Err(EngineError::new(
                         engine_error_code::INTERNAL,
                         "connection sql worker disconnected",

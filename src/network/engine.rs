@@ -31,6 +31,7 @@ pub mod engine_error_code {
 }
 
 use crate::common::types::RecordId;
+use std::collections::HashSet;
 
 /// Isolation level for the SQL engine session transaction (`BEGIN` … `COMMIT`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -82,6 +83,8 @@ pub struct SqlTransaction {
     pub wal_tx_id: Option<u64>,
     pub wal_begin_lsn: Option<crate::logging::log_record::LogSequenceNumber>,
     pub wal_last_lsn: Option<crate::logging::log_record::LogSequenceNumber>,
+    /// Physical heap tables modified by DML in this transaction (for selective flush on COMMIT/ROLLBACK).
+    pub(crate) touched_tables: HashSet<String>,
 }
 
 impl std::fmt::Debug for SqlTransaction {
@@ -92,6 +95,7 @@ impl std::fmt::Debug for SqlTransaction {
             .field("implicit_autocommit", &self.implicit_autocommit)
             .field("wal_tx_id", &self.wal_tx_id)
             .field("wal_last_lsn", &self.wal_last_lsn)
+            .field("touched_tables", &self.touched_tables.len())
             .field("strong_iso_held", &self.strong_iso.is_some())
             .finish()
     }
@@ -110,6 +114,7 @@ impl SqlTransaction {
             wal_tx_id: None,
             wal_begin_lsn: None,
             wal_last_lsn: None,
+            touched_tables: HashSet::new(),
         }
     }
 }

@@ -106,6 +106,35 @@ impl IndexRegistry {
             .collect()
     }
 
+    /// Inserts a record into a single named index.
+    pub fn insert_into_named_index(
+        &self,
+        table_name: &str,
+        index_name: &str,
+        record_id: RecordId,
+        column_values: &HashMap<String, String>,
+    ) -> Result<()> {
+        let key = (table_name.to_string(), index_name.to_string());
+        let entry = self.indexes.get(&key).ok_or_else(|| {
+            Error::validation(format!(
+                "Index {} not found on table {}",
+                index_name, table_name
+            ))
+        })?;
+        let index_key = Self::build_index_key(&entry.columns, column_values)?;
+        let mut index = entry
+            .index
+            .lock()
+            .map_err(|_| Error::internal("Lock poisoned"))?;
+        if let Some(mut ids) = index.search(&index_key)? {
+            ids.push(record_id);
+            index.insert(index_key, ids)?;
+        } else {
+            index.insert(index_key, vec![record_id])?;
+        }
+        Ok(())
+    }
+
     /// Inserts a record into all indexes of a table
     /// column_values: map from column name to serialized value
     pub fn insert_into_indexes(
@@ -191,7 +220,7 @@ impl IndexRegistry {
         &self,
         table_name: &str,
         equalities: &HashMap<String, String>,
-    ) -> Result<Option<Vec<RecordId>>> {
+    ) -> Result<Option<(Vec<RecordId>, bool)>> {
         if equalities.is_empty() {
             return Ok(None);
         }
@@ -205,7 +234,8 @@ impl IndexRegistry {
             .map_err(|_| Error::internal("Lock poisoned"))?;
         let prefix_cols = &entry.columns[..prefix_len];
         let key = Self::build_index_key(prefix_cols, equalities)?;
-        let rids = if prefix_len == entry.columns.len() {
+        let exact_key = prefix_len == entry.columns.len();
+        let rids = if exact_key {
             index.search(&key)?.unwrap_or_default()
         } else {
             let end = format!("{key}\0\u{10FFFF}");
@@ -215,7 +245,7 @@ impl IndexRegistry {
                 .flat_map(|(_, ids)| ids)
                 .collect()
         };
-        Ok(Some(rids))
+        Ok(Some((rids, exact_key)))
     }
 
     /// Picks the index with the longest leading column prefix present in `equalities`.

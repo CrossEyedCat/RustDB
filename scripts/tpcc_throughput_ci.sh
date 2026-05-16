@@ -136,9 +136,9 @@ if [[ "$rc" -ne 0 ]]; then
   exit "$rc"
 fi
 
-python3 - <<'PY'
+python3 - <<PY
 import json, sys, pathlib
-out_dir = pathlib.Path("tpcc-out")
+out_dir = pathlib.Path(r"${OUT_DIR_ABS}")
 p = out_dir / "tpcc.json"
 data = json.loads(p.read_text())
 txt = []
