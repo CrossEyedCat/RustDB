@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ClientMessage","MessageKind","ServerMessage"],"struct":["ClientHelloPayload","ErrorPayload","ExecuteScriptPayload","ExecutionOkPayload","QueryPayload","ResultSetPayload","ServerReadyPayload"]};
+window.SIDEBAR_ITEMS = {"enum":["ClientMessage","MessageKind","ServerMessage"],"struct":["ClientHelloPayload","ErrorPayload","ExecuteScriptPayload","ExecuteTpccPayload","ExecutionOkPayload","QueryPayload","ResultSetPayload","ServerReadyPayload"]};

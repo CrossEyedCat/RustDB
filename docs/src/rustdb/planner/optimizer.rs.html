@@ -727,15 +727,15 @@
 <a href=#727 id=727 data-nosnippet>727</a>    }
 <a href=#728 id=728 data-nosnippet>728</a>
 <a href=#729 id=729 data-nosnippet>729</a>    <span class="kw">fn </span>eq_filters_from_filter(<span class="kw-2">&amp;</span><span class="self">self</span>, filter: <span class="kw-2">&amp;</span>FilterNode) -&gt; HashMap&lt;String, String&gt; {
-<a href=#730 id=730 data-nosnippet>730</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(pred) = <span class="kw-2">&amp;</span>filter.predicate {
-<a href=#731 id=731 data-nosnippet>731</a>            extract_equality_filters(pred)
-<a href=#732 id=732 data-nosnippet>732</a>        } <span class="kw">else if let </span><span class="prelude-val">Some</span>(eq) = <span class="kw-2">&amp;</span>filter.equality {
-<a href=#733 id=733 data-nosnippet>733</a>            <span class="kw">let </span><span class="kw-2">mut </span>map = HashMap::new();
-<a href=#734 id=734 data-nosnippet>734</a>            map.insert(eq.column.clone(), literal_to_string(<span class="kw-2">&amp;</span>eq.literal));
-<a href=#735 id=735 data-nosnippet>735</a>            map
-<a href=#736 id=736 data-nosnippet>736</a>        } <span class="kw">else </span>{
-<a href=#737 id=737 data-nosnippet>737</a>            HashMap::new()
-<a href=#738 id=738 data-nosnippet>738</a>        }
+<a href=#730 id=730 data-nosnippet>730</a>        <span class="kw">let </span><span class="kw-2">mut </span>map = filter
+<a href=#731 id=731 data-nosnippet>731</a>            .predicate
+<a href=#732 id=732 data-nosnippet>732</a>            .as_ref()
+<a href=#733 id=733 data-nosnippet>733</a>            .map(extract_equality_filters)
+<a href=#734 id=734 data-nosnippet>734</a>            .unwrap_or_default();
+<a href=#735 id=735 data-nosnippet>735</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(eq) = <span class="kw-2">&amp;</span>filter.equality {
+<a href=#736 id=736 data-nosnippet>736</a>            map.insert(eq.column.clone(), literal_to_string(<span class="kw-2">&amp;</span>eq.literal));
+<a href=#737 id=737 data-nosnippet>737</a>        }
+<a href=#738 id=738 data-nosnippet>738</a>        map
 <a href=#739 id=739 data-nosnippet>739</a>    }
 <a href=#740 id=740 data-nosnippet>740</a>
 <a href=#741 id=741 data-nosnippet>741</a>    <span class="doccomment">/// Merges filter-node equalities with legacy bare-literal `TableScan.filter` hints.
