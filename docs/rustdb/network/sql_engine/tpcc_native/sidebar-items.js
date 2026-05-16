@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["execute_tpcc","txn_kind_from_u8"]};
+window.SIDEBAR_ITEMS = {"fn":["execute_tpcc","lcg_next","new_tuple_with_columns","run_delivery","run_new_order","run_payment","tpcc_params","txn_kind_from_wire"]};
