@@ -3,8 +3,9 @@
 use crate::analyzer::{AnalysisContext, SemanticAnalyzer};
 use crate::common::{Error, Result};
 use crate::planner::planner::{
-    estimate_selectivity, extract_simple_equality, ExecutionPlan, FilterNode, IndexScanNode,
-    JoinNode, PlanNode, SemiJoinNode, TableScanNode,
+    estimate_selectivity, extract_equality_filters, extract_simple_equality, literal_to_string,
+    ExecutionPlan, FilterNode, IndexCondition, IndexScanNode, JoinNode, PlanNode, ProjectionNode,
+    SemiJoinNode, TableScanNode,
 };
 use crate::storage::index_registry::IndexRegistry;
 use serde::{Deserialize, Serialize};
@@ -72,6 +73,29 @@ pub struct OptimizationStatistics {
     pub indexes_applied: usize,
     /// Number of expression simplifications
     pub expression_simplifications: usize,
+}
+
+/// Builds index seek conditions for consecutive leading columns with equality predicates.
+fn leading_index_conditions(
+    index_columns: &[String],
+    eq_filters: &HashMap<String, String>,
+) -> Option<Vec<IndexCondition>> {
+    let mut conditions = Vec::new();
+    for col in index_columns {
+        match eq_filters.get(col) {
+            Some(value) => conditions.push(IndexCondition {
+                column: col.clone(),
+                operator: "=".to_string(),
+                value: value.clone(),
+            }),
+            None => break,
+        }
+    }
+    if conditions.is_empty() {
+        None
+    } else {
+        Some(conditions)
+    }
 }
 
 /// Optimization result
@@ -600,27 +624,146 @@ impl QueryOptimizer {
     fn select_indexes_recursive(&self, node: &PlanNode) -> Result<PlanNode> {
         match node {
             PlanNode::TableScan(table_scan) => {
-                // Check if there is a suitable index for this table
-                if let Some(index_scan) = self.find_best_index(table_scan)? {
+                let eq = self.equality_hints_for_table_scan(table_scan, &HashMap::new());
+                if let Some(index_scan) = self.find_best_index(table_scan, &eq)? {
                     Ok(PlanNode::IndexScan(index_scan))
                 } else {
                     Ok(node.clone())
                 }
             }
-            _ => {
-                let child_nodes = self.get_child_nodes(node);
-                if child_nodes.is_empty() {
-                    Ok(node.clone())
+            PlanNode::Filter(filter) => {
+                let optimized_input = self.select_indexes_recursive(&filter.input)?;
+                let input = if let PlanNode::TableScan(ref table_scan) = optimized_input {
+                    let eq = self.equality_hints_for_table_scan(table_scan, &self.eq_filters_from_filter(filter));
+                    self.find_best_index(table_scan, &eq)?
+                        .map(PlanNode::IndexScan)
+                        .unwrap_or(optimized_input)
                 } else {
-                    // Simplified processing - just clone the node
-                    Ok(node.clone())
-                }
+                    optimized_input
+                };
+                Ok(PlanNode::Filter(FilterNode {
+                    condition: filter.condition.clone(),
+                    predicate: filter.predicate.clone(),
+                    equality: filter.equality.clone(),
+                    input: Box::new(input),
+                    selectivity: filter.selectivity,
+                    cost: filter.cost,
+                }))
             }
+            PlanNode::Projection(p) => {
+                let input = self.select_indexes_recursive(&p.input)?;
+                Ok(PlanNode::Projection(ProjectionNode {
+                    columns: p.columns.clone(),
+                    input: Box::new(input),
+                    cost: p.cost,
+                }))
+            }
+            PlanNode::Join(join) => {
+                let left = self.select_indexes_recursive(&join.left)?;
+                let right = self.select_indexes_recursive(&join.right)?;
+                Ok(PlanNode::Join(JoinNode {
+                    join_type: join.join_type.clone(),
+                    condition: join.condition.clone(),
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    cost: join.cost,
+                }))
+            }
+            PlanNode::GroupBy(g) => {
+                let input = self.select_indexes_recursive(&g.input)?;
+                Ok(PlanNode::GroupBy(crate::planner::planner::GroupByNode {
+                    group_columns: g.group_columns.clone(),
+                    aggregates: g.aggregates.clone(),
+                    input: Box::new(input),
+                    cost: g.cost,
+                }))
+            }
+            PlanNode::Sort(s) => {
+                let input = self.select_indexes_recursive(&s.input)?;
+                Ok(PlanNode::Sort(crate::planner::planner::SortNode {
+                    sort_columns: s.sort_columns.clone(),
+                    input: Box::new(input),
+                    cost: s.cost,
+                }))
+            }
+            PlanNode::Limit(l) => {
+                let input = self.select_indexes_recursive(&l.input)?;
+                Ok(PlanNode::Limit(crate::planner::planner::LimitNode {
+                    limit: l.limit,
+                    input: Box::new(input),
+                    cost: l.cost,
+                }))
+            }
+            PlanNode::Offset(o) => {
+                let input = self.select_indexes_recursive(&o.input)?;
+                Ok(PlanNode::Offset(crate::planner::planner::OffsetNode {
+                    offset: o.offset,
+                    input: Box::new(input),
+                    cost: o.cost,
+                }))
+            }
+            PlanNode::Distinct(d) => {
+                let input = self.select_indexes_recursive(&d.input)?;
+                Ok(PlanNode::Distinct(crate::planner::planner::DistinctNode {
+                    input: Box::new(input),
+                    cost: d.cost,
+                }))
+            }
+            PlanNode::SemiJoin(s) => {
+                let left = self.select_indexes_recursive(&s.left)?;
+                let right = self.select_indexes_recursive(&s.right)?;
+                Ok(PlanNode::SemiJoin(SemiJoinNode {
+                    condition: s.condition.clone(),
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    cost: s.cost,
+                }))
+            }
+            _ => Ok(node.clone()),
         }
     }
 
-    /// Find the best index for a table
-    fn find_best_index(&self, table_scan: &TableScanNode) -> Result<Option<IndexScanNode>> {
+    fn eq_filters_from_filter(&self, filter: &FilterNode) -> HashMap<String, String> {
+        if let Some(pred) = &filter.predicate {
+            extract_equality_filters(pred)
+        } else if let Some(eq) = &filter.equality {
+            let mut map = HashMap::new();
+            map.insert(eq.column.clone(), literal_to_string(&eq.literal));
+            map
+        } else {
+            HashMap::new()
+        }
+    }
+
+    /// Merges filter-node equalities with legacy bare-literal `TableScan.filter` hints.
+    fn equality_hints_for_table_scan(
+        &self,
+        table_scan: &TableScanNode,
+        filter_eq: &HashMap<String, String>,
+    ) -> HashMap<String, String> {
+        let mut eq = filter_eq.clone();
+        if let Some(registry) = &self.index_registry {
+            if eq.is_empty() {
+                if let Some(raw) = &table_scan.filter {
+                    if !raw.contains('=') {
+                        for (_, cols) in registry.list_indexes_for_table(&table_scan.table_name) {
+                            if cols.len() == 1 {
+                                eq.insert(cols[0].clone(), raw.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eq
+    }
+
+    /// Find the best index for a table using leading-prefix equality match.
+    fn find_best_index(
+        &self,
+        table_scan: &TableScanNode,
+        eq_filters: &HashMap<String, String>,
+    ) -> Result<Option<IndexScanNode>> {
         let registry = match &self.index_registry {
             Some(r) => r,
             None => return Ok(None),
@@ -631,22 +774,30 @@ impl QueryOptimizer {
             return Ok(None);
         }
 
-        // Use first available index for this table
-        let (index_name, columns) = &indexes[0];
-        let conditions: Vec<crate::planner::planner::IndexCondition> = table_scan
-            .filter
-            .as_ref()
-            .map(|cond| crate::planner::planner::IndexCondition {
-                column: columns.first().cloned().unwrap_or_default(),
-                operator: "=".to_string(),
-                value: cond.clone(),
-            })
-            .map(|c| vec![c])
-            .unwrap_or_default();
+        let eq = self.equality_hints_for_table_scan(table_scan, eq_filters);
+        if eq.is_empty() {
+            return Ok(None);
+        }
+
+        let mut best: Option<(String, Vec<IndexCondition>)> = None;
+        for (index_name, columns) in indexes {
+            if let Some(conditions) = leading_index_conditions(&columns, &eq) {
+                let better = best
+                    .as_ref()
+                    .map_or(true, |(_, prev)| conditions.len() > prev.len());
+                if better {
+                    best = Some((index_name, conditions));
+                }
+            }
+        }
+
+        let Some((index_name, conditions)) = best else {
+            return Ok(None);
+        };
 
         Ok(Some(IndexScanNode {
             table_name: table_scan.table_name.clone(),
-            index_name: index_name.clone(),
+            index_name,
             conditions,
             cost: table_scan.cost * 0.5,
             estimated_rows: table_scan.estimated_rows,

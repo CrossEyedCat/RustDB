@@ -5,6 +5,8 @@
 //! See `docs/network/stream-models.md`.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self as sync_mpsc, RecvTimeoutError};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
@@ -299,6 +301,136 @@ fn enforce_max_result_rows(
     }
 }
 
+/// Per-connection SQL worker: one OS thread multiplexes all bidirectional streams.
+///
+/// Each QUIC stream gets its own [`SessionContext`] (`BEGIN` / `COMMIT` span frames on that stream).
+/// Tradeoff: SQL on concurrent streams within the same connection is serialized on this thread
+/// (avoids one OS thread per stream and keeps `SessionContext` / `MutexGuard` on a fixed thread).
+pub(crate) struct ConnectionSqlSessions {
+    job_tx: sync_mpsc::Sender<ConnectionSqlCommand>,
+    next_stream_id: AtomicU64,
+}
+
+enum ConnectionSqlCommand {
+    Dispatch {
+        stream_id: u64,
+        msg: ClientMessage,
+        reply_tx: sync_mpsc::Sender<Result<Arc<[u8]>, DispatchError>>,
+    },
+    EndStream {
+        stream_id: u64,
+    },
+}
+
+struct StreamSessionGuard {
+    sessions: Arc<ConnectionSqlSessions>,
+    stream_id: u64,
+}
+
+impl Drop for StreamSessionGuard {
+    fn drop(&mut self) {
+        self.sessions.end_stream(self.stream_id);
+    }
+}
+
+impl ConnectionSqlSessions {
+    fn new(engine: Arc<dyn EngineHandle>, policy: StreamPolicy) -> Arc<Self> {
+        let (job_tx, job_rx) = sync_mpsc::channel::<ConnectionSqlCommand>();
+        let engine_worker = engine;
+        let policy_worker = policy;
+        std::thread::Builder::new()
+            .name("rustdb-quic-conn-sql".into())
+            .spawn(move || {
+                let mut sessions: HashMap<u64, SessionContext> = HashMap::new();
+                while let Ok(cmd) = job_rx.recv() {
+                    match cmd {
+                        ConnectionSqlCommand::Dispatch {
+                            stream_id,
+                            msg,
+                            reply_tx,
+                        } => {
+                            let ctx = sessions.entry(stream_id).or_default();
+                            let r = dispatch_client_message_with_ctx(
+                                msg,
+                                engine_worker.as_ref(),
+                                &policy_worker,
+                                ctx,
+                            );
+                            let _ = reply_tx.send(r);
+                        }
+                        ConnectionSqlCommand::EndStream { stream_id } => {
+                            rollback_stream_if_needed(
+                                &mut sessions,
+                                stream_id,
+                                engine_worker.as_ref(),
+                                &policy_worker,
+                            );
+                        }
+                    }
+                }
+                for stream_id in sessions.keys().copied().collect::<Vec<_>>() {
+                    rollback_stream_if_needed(
+                        &mut sessions,
+                        stream_id,
+                        engine_worker.as_ref(),
+                        &policy_worker,
+                    );
+                }
+            })
+            .expect("spawn rustdb-quic-conn-sql thread");
+        Arc::new(Self {
+            job_tx,
+            next_stream_id: AtomicU64::new(0),
+        })
+    }
+
+    fn alloc_stream_id(&self) -> u64 {
+        self.next_stream_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn dispatch(
+        &self,
+        stream_id: u64,
+        msg: ClientMessage,
+        reply_tx: sync_mpsc::Sender<Result<Arc<[u8]>, DispatchError>>,
+    ) -> Result<(), ()> {
+        self.job_tx
+            .send(ConnectionSqlCommand::Dispatch {
+                stream_id,
+                msg,
+                reply_tx,
+            })
+            .map_err(|_| ())
+    }
+
+    fn end_stream(&self, stream_id: u64) {
+        let _ = self
+            .job_tx
+            .send(ConnectionSqlCommand::EndStream { stream_id });
+    }
+}
+
+fn rollback_stream_if_needed(
+    sessions: &mut HashMap<u64, SessionContext>,
+    stream_id: u64,
+    engine: &dyn EngineHandle,
+    policy: &StreamPolicy,
+) {
+    let Some(mut ctx) = sessions.remove(&stream_id) else {
+        return;
+    };
+    if ctx.transaction.is_some() {
+        let _ = dispatch_client_message_with_ctx(
+            ClientMessage::Query(QueryPayload {
+                sql: "ROLLBACK".to_string(),
+            }),
+            engine,
+            policy,
+            &mut ctx,
+        );
+    }
+}
+
 async fn write_error_response(
     send: &mut SendStream,
     err: &DispatchError,
@@ -323,57 +455,23 @@ async fn write_error_response(
 #[instrument(
     level = "info",
     name = "network.query_stream",
-    skip(send, recv, engine, policy, metrics, _permit)
+    skip(send, recv, conn_sessions, policy, metrics, _permit)
 )]
 pub async fn handle_query_bidi_stream(
     mut send: SendStream,
     mut recv: RecvStream,
-    engine: Arc<dyn EngineHandle>,
+    conn_sessions: Arc<ConnectionSqlSessions>,
     policy: Arc<StreamPolicy>,
     metrics: Option<QuicMetrics>,
     _permit: OwnedSemaphorePermit,
 ) {
     let _keep_permit = _permit;
     let max_frame = policy.max_frame_payload_bytes.min(MAX_FRAME_PAYLOAD_BYTES);
-
-    // One OS thread per bidirectional stream owns [`SessionContext`] so `BEGIN` … `COMMIT` spans
-    // multiple wire frames (see `rustdb_load --tx-sql-file`). The async task only does I/O; SQL runs
-    // on the session thread without moving `SessionContext` across `spawn_blocking` workers (which
-    // would break `MutexGuard` inside stronger isolation modes).
-    let engine_worker = engine.clone();
-    let policy_worker = (*policy).clone();
-    let (job_tx, job_rx) = sync_mpsc::channel::<(
-        ClientMessage,
-        sync_mpsc::Sender<Result<Arc<[u8]>, DispatchError>>,
-    )>();
-    let _session_worker = std::thread::Builder::new()
-        .name("rustdb-quic-sql-session".into())
-        .spawn(move || {
-            let mut session_ctx = SessionContext::default();
-            while let Ok((msg, reply_tx)) = job_rx.recv() {
-                let r = dispatch_client_message_with_ctx(
-                    msg,
-                    engine_worker.as_ref(),
-                    &policy_worker,
-                    &mut session_ctx,
-                );
-                let _ = reply_tx.send(r);
-            }
-
-            // If the client dropped the stream mid-transaction (e.g. it errored and disconnected),
-            // clean up the per-stream session state to avoid leaking an open transaction in the engine.
-            if session_ctx.transaction.is_some() {
-                let _ = dispatch_client_message_with_ctx(
-                    ClientMessage::Query(QueryPayload {
-                        sql: "ROLLBACK".to_string(),
-                    }),
-                    engine_worker.as_ref(),
-                    &policy_worker,
-                    &mut session_ctx,
-                );
-            }
-        })
-        .expect("spawn rustdb-quic-sql-session thread");
+    let stream_id = conn_sessions.alloc_stream_id();
+    let _stream_guard = StreamSessionGuard {
+        sessions: conn_sessions.clone(),
+        stream_id,
+    };
 
     // Variant A compatibility: old clients use one query per stream; newer clients may send
     // multiple frames on the same stream for better throughput.
@@ -415,10 +513,10 @@ pub async fn handle_query_bidi_stream(
             Err(e) => Err(e.into()),
             Ok(msg) => {
                 let (reply_tx, reply_rx) = sync_mpsc::channel::<Result<Arc<[u8]>, DispatchError>>();
-                if job_tx.send((msg, reply_tx)).is_err() {
+                if conn_sessions.dispatch(stream_id, msg, reply_tx).is_err() {
                     Err(EngineError::new(
                         engine_error_code::INTERNAL,
-                        "sql session worker disconnected",
+                        "connection sql worker disconnected",
                     )
                     .into())
                 } else {
@@ -432,7 +530,7 @@ pub async fn handle_query_bidi_stream(
                             .into()),
                             Err(RecvTimeoutError::Disconnected) => Err(EngineError::new(
                                 engine_error_code::INTERNAL,
-                                "sql session worker disconnected before reply",
+                                "connection sql worker disconnected before reply",
                             )
                             .into()),
                         }
@@ -506,6 +604,7 @@ pub async fn run_connection_streams(
     let max = policy.max_concurrent_streams_per_connection.max(1);
     let sem = Arc::new(tokio::sync::Semaphore::new(max));
     let remote = connection.remote_address();
+    let conn_sessions = ConnectionSqlSessions::new(engine.clone(), (*policy).clone());
 
     loop {
         // Includes waiting for the peer to open a stream.
@@ -544,11 +643,11 @@ pub async fn run_connection_streams(
             Err(_) => break,
         };
 
-        let eng = engine.clone();
+        let sessions = conn_sessions.clone();
         let pol = policy.clone();
         let m = metrics.clone();
         tokio::spawn(async move {
-            handle_query_bidi_stream(send, recv, eng, pol, m, permit).await;
+            handle_query_bidi_stream(send, recv, sessions, pol, m, permit).await;
         });
     }
 }

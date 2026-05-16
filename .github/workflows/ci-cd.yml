@@ -471,6 +471,10 @@ jobs:
     permissions:
       contents: read
       packages: read
+    # Throughput: defer per-DML heap flush when WAL is on (scripts/tpcc_throughput_ci.sh → docker).
+    # Explicit COMMIT still appends/fsyncs commits.log per durability (orthogonal to defer).
+    env:
+      RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML: "1"
 
     steps:
       - name: Checkout code
@@ -530,6 +534,23 @@ jobs:
           chmod +x scripts/tpcc_throughput_ci.sh
           ./scripts/tpcc_throughput_ci.sh
 
+      - name: Microbench order_status only (index A/B, 60s)
+        env:
+          OUT_DIR: tpcc-out/order_status_micro
+          CONCURRENCY: 64
+          DURATION_SECS: 60
+          MIX: order_status=1.0
+          POSTGRES_HOST_PORT: 15441
+          UDP_PORT: 15433
+          CONTAINER_NAME: rustdb-tpcc-os-micro
+          VOL_NAME: rustdb_tpcc_os_micro_data
+          POSTGRES_CONTAINER_NAME: postgres-tpcc-os-micro
+        run: |
+          set -euo pipefail
+          mkdir -p tpcc-out/order_status_micro
+          chmod +x scripts/tpcc_order_status_microbench.sh
+          ./scripts/tpcc_order_status_microbench.sh | tee tpcc-out/order_status_micro/summary.txt
+
       - name: Add benchmark summary (RustDB vs PostgreSQL)
         if: always()
         run: |
@@ -581,6 +602,26 @@ jobs:
               echo "(missing tpcc-out/server_full.log)"
             fi
             echo '```'
+            echo ""
+            echo "### order_status microbench (60s, mix=order_status only)"
+            echo ""
+            echo "Isolates \`idx_oorder_wdc\` vs full-mix noise; fresh DB per leg. Artifacts: \`tpcc-out/order_status_micro/\`."
+            echo ""
+            echo '```'
+            if [[ -s "tpcc-out/order_status_micro/summary.txt" ]]; then
+              cat tpcc-out/order_status_micro/summary.txt
+            else
+              echo "(missing tpcc-out/order_status_micro/summary.txt)"
+            fi
+            if [[ -s "tpcc-out/order_status_micro/tpcc_txn.log" ]]; then
+              echo ""
+              echo "--- RustDB txn log (order_status only) ---"
+              python3 scripts/analyze_tpcc_txn_log.py tpcc-out/order_status_micro/tpcc_txn.log || true
+              echo ""
+              echo "--- PostgreSQL txn log (order_status only) ---"
+              python3 scripts/analyze_tpcc_txn_log.py tpcc-out/order_status_micro/postgres_tpcc_txn.log || true
+            fi
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload TPC-C artifacts
@@ -598,10 +639,20 @@ jobs:
             tpcc-out/server.der
             tpcc-out/server_full.log
             tpcc-out/server_tail.log
+            tpcc-out/order_status_micro/tpcc.json
+            tpcc-out/order_status_micro/tpcc.txt
+            tpcc-out/order_status_micro/tpcc_txn.log
+            tpcc-out/order_status_micro/postgres_tpcc.json
+            tpcc-out/order_status_micro/postgres_tpcc.txt
+            tpcc-out/order_status_micro/postgres_tpcc_txn.log
+            tpcc-out/order_status_micro/server_full.log
+            tpcc-out/order_status_micro/summary.txt
       - name: Stop PostgreSQL (docker)
         if: always()
         run: |
           docker rm -f "${POSTGRES_TPCC_CONTAINER:-postgres-tpcc-bench}" >/dev/null 2>&1 || true
+          docker rm -f postgres-tpcc-os-micro >/dev/null 2>&1 || true
+          docker rm -f rustdb-tpcc-os-micro >/dev/null 2>&1 || true
 
   profile_quic_select_table:
     name: Trace profile (QUIC select_table @128)

@@ -11,6 +11,11 @@
 #   tpcc-out/server_full.log — full `docker logs` (stdout+stderr) for the QUIC server (CI artifact)
 #   tpcc-out/server_tail.log — last 400 lines of server_full.log (quick grep in PRs)
 #
+# Optional server env (CI bench_tpcc_throughput sets these on the host; forwarded into docker):
+#   RUSTDB_SQL_PHASE_LOG=1 — rustdb::sql_phases tracing (parse/update/delete timings)
+#   RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=1 — skip flush_dirty_pages after DML when WAL is on;
+#     explicit COMMIT still writes/fsyncs commits.log per durability (independent of defer)
+#
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -73,7 +78,8 @@ docker run -d --name "$CONTAINER_NAME" \
   -v "$VOL_NAME:/app/data" \
   -v "$ROOT/config.toml:/app/config/config.toml:ro" \
   -e NO_COLOR=1 \
-  -e RUSTDB_SQL_PHASE_LOG=1 \
+  -e RUSTDB_SQL_PHASE_LOG="${RUSTDB_SQL_PHASE_LOG:-1}" \
+  ${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML:+-e "RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML}"} \
   -e RUST_LOG="${RUST_LOG:-info}" \
   "$RUSTDB_IMAGE" \
   sh -c 'rustdb --config /app/config/config.toml server --host 0.0.0.0 --port 5432 --cert-out /tmp/server.der' >/dev/null

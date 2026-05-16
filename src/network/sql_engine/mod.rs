@@ -23,10 +23,16 @@
 //!   call [`SqlEngine::checkpoint`] for a manual checkpoint (flushes heaps + writes a checkpoint record).
 //!   After each successful write of `catalog.json` (DDL), the WAL records a `MetadataUpdate` marker when WAL is on.
 //! - With WAL enabled, you may set **`RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=1`** to skip `flush_dirty_pages`
-//!   after successful DML (higher throughput; heap catches up at checkpoint / process exit). Default
-//!   remains **flush after each successful DML** so standalone heap files stay coherent for tests and
-//!   tooling that reopen without relying on WAL replay ordering.
+//!   after successful implicit auto-commit DML (higher throughput; heap catches up at checkpoint /
+//!   `COMMIT`). Explicit `BEGIN … COMMIT` transactions defer per-statement heap flush and flush all
+//!   page managers on `COMMIT` (and on `ROLLBACK` after undo).
+//! - Implicit auto-commit DML still flushes after each statement by default so standalone heap files
+//!   stay coherent for tests and tooling that reopen without relying on WAL replay ordering.
 //! - DDL (`CREATE` / `DROP` / `ALTER`) is rejected while a transaction is open.
+//!
+//! **DML plan validation:** `INSERT` / `UPDATE` / `DELETE` skip redundant full plan+optimize when the
+//! same SQL text was already validated for the current catalog/index epoch (see
+//! [`DmlPlanValidationCache`]). Cache is cleared on catalog persist and optimizer rebuild.
 //!
 //! **Profiling:** set `RUSTDB_SQL_PHASE_LOG=1` to emit `tracing` events on target `rustdb::sql_phases`
 //! (parse latency, `UPDATE`/`DELETE` scan vs row loop). Use `RUST_LOG=rustdb::sql_phases=info` to filter.
@@ -59,7 +65,7 @@ use crate::storage::index_registry::IndexRegistry;
 use crate::storage::page_manager::{PageManager, PageManagerConfig};
 use crate::storage::tuple::Tuple;
 use crate::Row;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -163,6 +169,8 @@ pub(crate) struct SqlEngineState {
     ///
     /// These queries are common in benchmarks (`SELECT 1`) and are safe to memoize.
     select_no_from_cache: Mutex<HashMap<String, EngineOutput>>,
+    /// LRU of SQL texts that passed plan+optimize for DML (invalidated on schema/optimizer changes).
+    dml_plan_validation_cache: Mutex<DmlPlanValidationCache>,
     pub(crate) catalog: Mutex<SchemaManager>,
     constraint_runtime: Mutex<ConstraintRuntime>,
     /// Serializes storage-mutating statements vs table scans (`SELECT` with `FROM`).
@@ -226,6 +234,7 @@ impl SqlEngine {
             executor,
             index_registry,
             select_no_from_cache: Mutex::new(HashMap::new()),
+            dml_plan_validation_cache: Mutex::new(DmlPlanValidationCache::default()),
             catalog: Mutex::new(catalog),
             constraint_runtime: Mutex::new(ConstraintRuntime::new()),
             storage_access: RwLock::new(()),
@@ -275,6 +284,11 @@ impl SqlEngine {
     /// Root data directory backing this engine.
     pub fn data_dir(&self) -> &std::path::Path {
         &self.state.data_dir
+    }
+
+    #[cfg(test)]
+    pub(crate) fn state_for_test(&self) -> &SqlEngineState {
+        self.state.as_ref()
     }
 
     /// Checkpoint statistics (returns `None` when WAL or checkpoints are disabled).
@@ -430,14 +444,14 @@ impl SqlEngine {
                             .write()
                             .map_err(|_| lock_poisoned_engine())?;
                         execute_dml_autocommit(state, ctx, |state, ctx| {
-                            execute_insert(state, ctx, stmt, ins)
+                            execute_insert(state, ctx, sql, stmt, ins)
                         })
                     }
                     InsertValues::Values(_) => {
                         let lock = table_storage_lock_arc(state, &ins.table)?;
                         let _table_write = lock.write().map_err(|_| lock_poisoned_engine())?;
                         execute_dml_autocommit(state, ctx, |state, ctx| {
-                            execute_insert(state, ctx, stmt, ins)
+                            execute_insert(state, ctx, sql, stmt, ins)
                         })
                     }
                 }
@@ -448,7 +462,7 @@ impl SqlEngine {
                 let lock = table_storage_lock_arc(state, &upd.table)?;
                 let _table_write = lock.write().map_err(|_| lock_poisoned_engine())?;
                 execute_dml_autocommit(state, ctx, |state, ctx| {
-                    execute_update(state, ctx, stmt, upd)
+                    execute_update(state, ctx, sql, stmt, upd)
                 })
             }
             SqlStatement::Delete(del) => {
@@ -457,7 +471,7 @@ impl SqlEngine {
                 let lock = table_storage_lock_arc(state, &del.table)?;
                 let _table_write = lock.write().map_err(|_| lock_poisoned_engine())?;
                 execute_dml_autocommit(state, ctx, |state, ctx| {
-                    execute_delete(state, ctx, stmt, del)
+                    execute_delete(state, ctx, sql, stmt, del)
                 })
             }
             SqlStatement::CreateIndex(ci) => {
@@ -579,13 +593,23 @@ fn sql_phase_log_enabled() -> bool {
     }
 }
 
-/// Flush dirty heap pages after successful DML. When WAL is on, flushing may be skipped if
-/// `RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML` is set (benchmark throughput); otherwise always flush so heap
-/// files remain coherent across process restarts without depending on replay timing.
+/// Flush dirty heap pages after successful DML.
+///
+/// Skips per-statement flush inside an explicit `BEGIN … COMMIT` transaction (heap is flushed on
+/// `COMMIT` via [`crate::network::sql_engine_wal::flush_all_page_managers`]). Implicit auto-commit
+/// DML still flushes after each statement unless `RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML` is set (WAL on).
 fn flush_heap_after_dml_success(
     state: &SqlEngineState,
+    ctx: &SessionContext,
     pm: &mut PageManager,
 ) -> Result<(), EngineError> {
+    let in_explicit_txn = ctx
+        .transaction
+        .as_ref()
+        .is_some_and(|tx| !tx.implicit_autocommit);
+    if in_explicit_txn {
+        return Ok(());
+    }
     let defer = state.wal.is_some()
         && std::env::var_os("RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML").is_some_and(|v| v != "0");
     if !defer {
@@ -841,6 +865,7 @@ fn commit_transaction(
     if let Some(ref wal) = state.wal {
         wal.log_commit(&mut tx)?;
     }
+    crate::network::sql_engine_wal::flush_all_page_managers(state).map_err(map_db_err)?;
     sql_commit_log::append_commit_log_line(&state.data_dir, state.durability.fsync_on_commit())
         .map_err(map_db_err)?;
     drop(tx);
@@ -855,6 +880,7 @@ fn persist_catalog(state: &SqlEngineState) -> Result<(), EngineError> {
     if let Some(ref wal) = state.wal {
         wal.log_catalog_snapshot()?;
     }
+    invalidate_dml_plan_validation_cache(state);
     Ok(())
 }
 
@@ -1202,29 +1228,101 @@ fn execute_alter_table(
     }
 }
 
+fn column_value_to_index_string(cv: &ColumnValue) -> String {
+    if cv.is_null {
+        return String::new();
+    }
+    match &cv.data_type {
+        DataType::Null => String::new(),
+        DataType::Boolean(b) => b.to_string(),
+        DataType::TinyInt(v) => v.to_string(),
+        DataType::SmallInt(v) => v.to_string(),
+        DataType::Integer(v) => v.to_string(),
+        DataType::BigInt(v) => v.to_string(),
+        DataType::Float(v) => v.to_string(),
+        DataType::Double(v) => v.to_string(),
+        DataType::Char(s) | DataType::Varchar(s) | DataType::Text(s) => s.clone(),
+        DataType::Date(s) | DataType::Time(s) | DataType::Timestamp(s) => s.clone(),
+        DataType::Blob(_) => String::new(),
+    }
+}
+
 fn tuple_to_index_column_map(tuple: &Tuple) -> HashMap<String, String> {
     let mut m = HashMap::new();
     for (name, cv) in &tuple.values {
-        if cv.is_null {
-            m.insert(name.clone(), String::new());
-            continue;
-        }
-        let s = match &cv.data_type {
-            DataType::Null => String::new(),
-            DataType::Boolean(b) => b.to_string(),
-            DataType::TinyInt(v) => v.to_string(),
-            DataType::SmallInt(v) => v.to_string(),
-            DataType::Integer(v) => v.to_string(),
-            DataType::BigInt(v) => v.to_string(),
-            DataType::Float(v) => v.to_string(),
-            DataType::Double(v) => v.to_string(),
-            DataType::Char(s) | DataType::Varchar(s) | DataType::Text(s) => s.clone(),
-            DataType::Date(s) | DataType::Time(s) | DataType::Timestamp(s) => s.clone(),
-            DataType::Blob(_) => String::new(),
-        };
-        m.insert(name.clone(), s);
+        m.insert(name.clone(), column_value_to_index_string(cv));
     }
     m
+}
+
+/// Collects `column = literal` pairs from a DML `WHERE` (`AND` only).
+fn extract_dml_where_equalities(expr: &Expression) -> HashMap<String, Literal> {
+    match expr {
+        Expression::Literal(Literal::Boolean(_)) => HashMap::new(),
+        Expression::BinaryOp {
+            left,
+            op: BinaryOperator::And,
+            right,
+        } => {
+            let mut m = extract_dml_where_equalities(left);
+            for (k, v) in extract_dml_where_equalities(right) {
+                m.insert(k, v);
+            }
+            m
+        }
+        Expression::BinaryOp {
+            left,
+            op: BinaryOperator::Equal,
+            right,
+        } => {
+            let mut m = HashMap::new();
+            if let (Some(c), Some(l)) = (column_name_expr(left), value_expr(right)) {
+                m.insert(c, l.clone());
+            } else if let (Some(c), Some(l)) = (column_name_expr(right), value_expr(left)) {
+                m.insert(c, l.clone());
+            }
+            m
+        }
+        _ => HashMap::new(),
+    }
+}
+
+fn literal_to_index_key_string(lit: &Literal) -> String {
+    column_value_to_index_string(&literal_to_column_value(lit))
+}
+
+/// Index-backed row fetch for UPDATE/DELETE when a matching index exists.
+fn try_dml_rows_via_index(
+    state: &SqlEngineState,
+    table: &str,
+    where_expr: &Expression,
+    pm: &mut PageManager,
+) -> Result<Option<Vec<(RecordId, Vec<u8>)>>, EngineError> {
+    let lit_eq = extract_dml_where_equalities(where_expr);
+    if lit_eq.is_empty() {
+        return Ok(None);
+    }
+    let equalities: HashMap<String, String> = lit_eq
+        .iter()
+        .map(|(col, lit)| (col.clone(), literal_to_index_key_string(lit)))
+        .collect();
+    let ir = state
+        .index_registry
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?;
+    let Some(rids) = ir
+        .lookup_record_ids_by_equalities(table, &equalities)
+        .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index lookup: {e}")))?
+    else {
+        return Ok(None);
+    };
+    let mut rows = Vec::with_capacity(rids.len());
+    for rid in rids {
+        if let Some(data) = pm.get_record(rid).map_err(map_db_err)? {
+            rows.push((rid, data));
+        }
+    }
+    Ok(Some(rows))
 }
 
 fn sync_index_after_insert(
@@ -1291,7 +1389,45 @@ fn rebuild_optimizer_with_indexes(state: &SqlEngineState) -> Result<(), EngineEr
             .map_err(map_db_err)?
             .with_index_registry(Arc::new(snapshot))
     };
+    invalidate_dml_plan_validation_cache(state);
     Ok(())
+}
+
+/// Max distinct DML SQL texts remembered per catalog/index epoch (TPC-C hot statements).
+const DML_PLAN_VALIDATION_CACHE_CAP: usize = 256;
+
+#[derive(Default)]
+struct DmlPlanValidationCache {
+    schema_epoch: u64,
+    order: VecDeque<String>,
+    hits: HashSet<String>,
+}
+
+fn invalidate_dml_plan_validation_cache(state: &SqlEngineState) {
+    if let Ok(mut cache) = state.dml_plan_validation_cache.lock() {
+        cache.schema_epoch = cache.schema_epoch.wrapping_add(1);
+        cache.order.clear();
+        cache.hits.clear();
+    }
+}
+
+fn dml_plan_validation_cached(cache: &DmlPlanValidationCache, sql: &str) -> bool {
+    cache.hits.contains(sql)
+}
+
+fn record_dml_plan_validation(cache: &mut DmlPlanValidationCache, sql: String, epoch: u64) {
+    if cache.schema_epoch != epoch {
+        return;
+    }
+    if !cache.hits.insert(sql.clone()) {
+        return;
+    }
+    cache.order.push_back(sql);
+    while cache.order.len() > DML_PLAN_VALIDATION_CACHE_CAP {
+        if let Some(victim) = cache.order.pop_front() {
+            cache.hits.remove(&victim);
+        }
+    }
 }
 
 fn execute_create_index(
@@ -1331,7 +1467,21 @@ fn execute_create_index(
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
-fn validate_plan(state: &SqlEngineState, stmt: &SqlStatement) -> Result<(), EngineError> {
+fn validate_plan(
+    state: &SqlEngineState,
+    sql: &str,
+    stmt: &SqlStatement,
+) -> Result<(), EngineError> {
+    let epoch = {
+        let cache = state
+            .dml_plan_validation_cache
+            .lock()
+            .map_err(|_| lock_poisoned_engine())?;
+        if dml_plan_validation_cached(&cache, sql) {
+            return Ok(());
+        }
+        cache.schema_epoch
+    };
     let plan = state.planner.create_plan(stmt).map_err(map_db_err)?;
     let _ = state
         .optimizer
@@ -1339,16 +1489,20 @@ fn validate_plan(state: &SqlEngineState, stmt: &SqlStatement) -> Result<(), Engi
         .map_err(|_| lock_poisoned_engine())?
         .optimize(plan)
         .map_err(map_db_err)?;
+    if let Ok(mut cache) = state.dml_plan_validation_cache.lock() {
+        record_dml_plan_validation(&mut cache, sql.to_string(), epoch);
+    }
     Ok(())
 }
 
 fn execute_insert(
     state: &SqlEngineState,
     ctx: &mut SessionContext,
+    sql: &str,
     stmt: &SqlStatement,
     insert: &InsertStatement,
 ) -> Result<EngineOutput, EngineError> {
-    validate_plan(state, stmt)?;
+    validate_plan(state, sql, stmt)?;
     match &insert.values {
         InsertValues::Select(sel) => {
             // Plan/execute the SELECT subquery and insert its resulting rows.
@@ -1440,7 +1594,7 @@ fn execute_insert(
             }
             {
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-                flush_heap_after_dml_success(state, &mut pm)?;
+                flush_heap_after_dml_success(state, ctx, &mut pm)?;
             }
             Ok(EngineOutput::ExecutionOk { rows_affected })
         }
@@ -1519,7 +1673,7 @@ fn execute_insert(
             }
             {
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-                flush_heap_after_dml_success(state, &mut pm)?;
+                flush_heap_after_dml_success(state, ctx, &mut pm)?;
             }
             Ok(EngineOutput::ExecutionOk { rows_affected })
         }
@@ -1592,10 +1746,11 @@ fn tuple_as_eval_row(tuple: &Tuple) -> Row {
 fn execute_update(
     state: &SqlEngineState,
     ctx: &mut SessionContext,
+    sql: &str,
     stmt: &SqlStatement,
     update: &UpdateStatement,
 ) -> Result<EngineOutput, EngineError> {
-    validate_plan(state, stmt)?;
+    validate_plan(state, sql, stmt)?;
     let pm_for_table = table_page_manager(state, &update.table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let scan_clock = sql_phase_log_enabled().then(Instant::now);
@@ -1603,12 +1758,17 @@ fn execute_update(
         None => (pm.select(None).map_err(map_db_err)?, false),
         Some(expr) => {
             validate_dml_where_structure(expr)?;
-            let expr = expr.clone();
-            let pred = Box::new(move |data: &[u8]| {
-                let tuple = Tuple::from_bytes(data).expect("heap tuple must deserialize");
-                match_where_tuple(&expr, &tuple).expect("WHERE validated for heap predicate")
-            });
-            (pm.select(Some(pred)).map_err(map_db_err)?, true)
+            if let Some(rows) = try_dml_rows_via_index(state, &update.table, expr, &mut pm)? {
+                (rows, false)
+            } else {
+                let expr = expr.clone();
+                let pred = Box::new(move |data: &[u8]| {
+                    let tuple = Tuple::from_bytes(data).expect("heap tuple must deserialize");
+                    match_where_tuple(&expr, &tuple)
+                        .expect("WHERE validated for heap predicate")
+                });
+                (pm.select(Some(pred)).map_err(map_db_err)?, true)
+            }
         }
     };
     let scan_us = scan_clock.map(|t| t.elapsed().as_micros() as u64);
@@ -1739,17 +1899,18 @@ fn execute_update(
             "update"
         );
     }
-    flush_heap_after_dml_success(state, &mut pm)?;
+    flush_heap_after_dml_success(state, ctx, &mut pm)?;
     Ok(EngineOutput::ExecutionOk { rows_affected })
 }
 
 fn execute_delete(
     state: &SqlEngineState,
     ctx: &mut SessionContext,
+    sql: &str,
     stmt: &SqlStatement,
     delete: &DeleteStatement,
 ) -> Result<EngineOutput, EngineError> {
-    validate_plan(state, stmt)?;
+    validate_plan(state, sql, stmt)?;
     let pm_for_table = table_page_manager(state, &delete.table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let scan_clock = sql_phase_log_enabled().then(Instant::now);
@@ -1757,12 +1918,17 @@ fn execute_delete(
         None => (pm.select(None).map_err(map_db_err)?, false),
         Some(expr) => {
             validate_dml_where_structure(expr)?;
-            let expr = expr.clone();
-            let pred = Box::new(move |data: &[u8]| {
-                let tuple = Tuple::from_bytes(data).expect("heap tuple must deserialize");
-                match_where_tuple(&expr, &tuple).expect("WHERE validated for heap predicate")
-            });
-            (pm.select(Some(pred)).map_err(map_db_err)?, true)
+            if let Some(rows) = try_dml_rows_via_index(state, &delete.table, expr, &mut pm)? {
+                (rows, false)
+            } else {
+                let expr = expr.clone();
+                let pred = Box::new(move |data: &[u8]| {
+                    let tuple = Tuple::from_bytes(data).expect("heap tuple must deserialize");
+                    match_where_tuple(&expr, &tuple)
+                        .expect("WHERE validated for heap predicate")
+                });
+                (pm.select(Some(pred)).map_err(map_db_err)?, true)
+            }
         }
     };
     let scan_us = scan_clock.map(|t| t.elapsed().as_micros() as u64);
@@ -1857,7 +2023,7 @@ fn execute_delete(
             "delete"
         );
     }
-    flush_heap_after_dml_success(state, &mut pm)?;
+    flush_heap_after_dml_success(state, ctx, &mut pm)?;
     Ok(EngineOutput::ExecutionOk { rows_affected })
 }
 
@@ -2467,6 +2633,101 @@ mod tests {
     }
 
     #[test]
+    fn sql_engine_update_delete_use_composite_index() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql(
+            "CREATE TABLE stock (s_w_id INTEGER, s_i_id INTEGER, qty INTEGER)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "CREATE INDEX idx_stock_wid_iid ON stock (s_w_id, s_i_id)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "INSERT INTO stock (s_w_id, s_i_id, qty) VALUES (1, 4, 10), (1, 5, 20), (2, 4, 30)",
+            &mut ctx,
+        )
+        .unwrap();
+
+        let upd = eng
+            .execute_sql(
+                "UPDATE stock SET qty = 99 WHERE s_w_id = 1 AND s_i_id = 4",
+                &mut ctx,
+            )
+            .unwrap();
+        assert_eq!(upd, EngineOutput::ExecutionOk { rows_affected: 1 });
+
+        let sel = eng
+            .execute_sql("SELECT qty FROM stock", &mut ctx)
+            .unwrap();
+        match sel {
+            EngineOutput::ResultSet { rows, .. } => {
+                assert_eq!(
+                    rows.iter().filter(|r| r[0].contains("99")).count(),
+                    1,
+                    "expected one row with qty=99, got {:?}",
+                    rows
+                );
+            }
+            _ => panic!("expected result set"),
+        }
+
+        let del = eng
+            .execute_sql(
+                "DELETE FROM stock WHERE s_w_id = 1 AND s_i_id = 5",
+                &mut ctx,
+            )
+            .unwrap();
+        assert_eq!(del, EngineOutput::ExecutionOk { rows_affected: 1 });
+
+        let left = eng
+            .execute_sql("SELECT s_w_id, s_i_id FROM stock", &mut ctx)
+            .unwrap();
+        match left {
+            EngineOutput::ResultSet { rows, .. } => {
+                assert_eq!(rows.len(), 2);
+            }
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
+    fn sql_engine_update_delete_use_single_column_index() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE t (a INTEGER, b INTEGER)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("CREATE INDEX idx_t_a ON t (a)", &mut ctx)
+            .unwrap();
+        eng.execute_sql(
+            "INSERT INTO t (a, b) VALUES (1, 10), (1, 11), (2, 20)",
+            &mut ctx,
+        )
+        .unwrap();
+
+        let upd = eng
+            .execute_sql("UPDATE t SET b = 0 WHERE a = 1", &mut ctx)
+            .unwrap();
+        assert_eq!(upd, EngineOutput::ExecutionOk { rows_affected: 2 });
+
+        let del = eng
+            .execute_sql("DELETE FROM t WHERE a = 2", &mut ctx)
+            .unwrap();
+        assert_eq!(del, EngineOutput::ExecutionOk { rows_affected: 1 });
+
+        let left = eng.execute_sql("SELECT a FROM t", &mut ctx).unwrap();
+        match left {
+            EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 2),
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
     fn sql_engine_update_delete_roundtrip_heap() {
         let dir = TempDir::new().unwrap();
         let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
@@ -2607,6 +2868,99 @@ mod tests {
             EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 1),
             _ => panic!("expected result set"),
         }
+    }
+
+    #[test]
+    fn explicit_transaction_defers_per_statement_heap_flush() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE defer_flush (k INT PRIMARY KEY)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+        eng.execute_sql("INSERT INTO defer_flush (k) VALUES (1)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("INSERT INTO defer_flush (k) VALUES (2)", &mut ctx)
+            .unwrap();
+        let pm = table_page_manager(eng.state_for_test(), "defer_flush").unwrap();
+        let dirty_mid_txn = pm.lock().expect("page manager lock").dirty_page_count();
+        assert!(
+            dirty_mid_txn > 0,
+            "expected dirty heap pages before COMMIT, got {dirty_mid_txn}"
+        );
+        eng.execute_sql("COMMIT", &mut ctx).unwrap();
+        let dirty_after_commit = pm.lock().unwrap().dirty_page_count();
+        assert_eq!(
+            dirty_after_commit, 0,
+            "COMMIT should flush dirty heap pages"
+        );
+    }
+
+    #[test]
+    fn explicit_transaction_multi_insert_commit_survives_reopen() {
+        let dir = TempDir::new().unwrap();
+        {
+            let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+            let mut ctx = SessionContext::default();
+            eng.execute_sql("CREATE TABLE txn_persist (k INT PRIMARY KEY)", &mut ctx)
+                .unwrap();
+            eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+            for k in 1..=3 {
+                let sql = format!("INSERT INTO txn_persist (k) VALUES ({k})");
+                eng.execute_sql(&sql, &mut ctx).unwrap();
+            }
+            eng.execute_sql("COMMIT", &mut ctx).unwrap();
+        }
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        let out = eng
+            .execute_sql("SELECT k FROM txn_persist ORDER BY k", &mut ctx)
+            .unwrap();
+        match out {
+            EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 3),
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
+    fn sql_engine_repeated_dml_plan_validation_cache() {
+        // Regression: repeated INSERT/UPDATE/DELETE must stay correct when plan validation is cached.
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE tc (id INT, n INT)", &mut ctx)
+            .unwrap();
+        for i in 0..32 {
+            let ins = format!("INSERT INTO tc (id, n) VALUES ({}, {})", i, i);
+            let out = eng.execute_sql(&ins, &mut ctx).unwrap();
+            assert_eq!(out, EngineOutput::ExecutionOk { rows_affected: 1 });
+        }
+        for _ in 0..8 {
+            let out = eng
+                .execute_sql("UPDATE tc SET n = n + 1 WHERE id = 0", &mut ctx)
+                .unwrap();
+            assert_eq!(out, EngineOutput::ExecutionOk { rows_affected: 1 });
+        }
+        let del = eng
+            .execute_sql("DELETE FROM tc WHERE id = 0", &mut ctx)
+            .unwrap();
+        assert_eq!(del, EngineOutput::ExecutionOk { rows_affected: 1 });
+    }
+
+    #[test]
+    fn sql_engine_dml_plan_cache_invalidated_after_ddl() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE tddl (a INT)", &mut ctx).unwrap();
+        eng.execute_sql("INSERT INTO tddl (a) VALUES (1)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("ALTER TABLE tddl ADD COLUMN b INT", &mut ctx)
+            .unwrap();
+        let out = eng
+            .execute_sql("INSERT INTO tddl (a, b) VALUES (2, 3)", &mut ctx)
+            .unwrap();
+        assert_eq!(out, EngineOutput::ExecutionOk { rows_affected: 1 });
     }
 
     #[test]

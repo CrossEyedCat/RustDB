@@ -65,3 +65,36 @@ fn test_index_registry_insert_delete_update() -> Result<()> {
     registry.delete_from_indexes("t", 1, &m)?;
     Ok(())
 }
+
+#[test]
+fn test_index_registry_composite_equality_lookup() -> Result<()> {
+    let mut registry = IndexRegistry::new();
+    registry.create_index(
+        "district",
+        "idx_d_w_id_d_id",
+        vec!["d_w_id".to_string(), "d_id".to_string()],
+    )?;
+    let mut m = HashMap::new();
+    m.insert("d_w_id".to_string(), "1".to_string());
+    m.insert("d_id".to_string(), "4".to_string());
+    registry.insert_into_indexes("district", 100, &m)?;
+    m.insert("d_id".to_string(), "5".to_string());
+    registry.insert_into_indexes("district", 101, &m)?;
+
+    let mut eq = HashMap::new();
+    eq.insert("d_w_id".to_string(), "1".to_string());
+    eq.insert("d_id".to_string(), "4".to_string());
+    let ids = registry
+        .lookup_record_ids_by_equalities("district", &eq)?
+        .expect("index should match");
+    assert_eq!(ids, vec![100]);
+
+    eq.remove("d_id");
+    let ids = registry
+        .lookup_record_ids_by_equalities("district", &eq)?
+        .expect("prefix index match");
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(&100));
+    assert!(ids.contains(&101));
+    Ok(())
+}

@@ -474,6 +474,41 @@ pub(crate) fn extract_simple_equality(expr: &Expression) -> Option<SimpleEqualit
     }
 }
 
+/// Collects `column = literal` predicates from an expression tree (`AND` chains).
+pub(crate) fn extract_equality_filters(expr: &Expression) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    collect_equality_filters(expr, &mut out);
+    out
+}
+
+fn collect_equality_filters(expr: &Expression, out: &mut HashMap<String, String>) {
+    match expr {
+        Expression::BinaryOp {
+            left,
+            op: BinaryOperator::And,
+            right,
+        } => {
+            collect_equality_filters(left, out);
+            collect_equality_filters(right, out);
+        }
+        _ => {
+            if let Some(eq) = extract_simple_equality(expr) {
+                out.insert(eq.column, literal_to_string(&eq.literal));
+            }
+        }
+    }
+}
+
+pub(crate) fn literal_to_string(l: &Literal) -> String {
+    match l {
+        Literal::Null => "NULL".to_string(),
+        Literal::Boolean(b) => b.to_string(),
+        Literal::Integer(n) => n.to_string(),
+        Literal::Float(f) => f.to_string(),
+        Literal::String(s) => s.clone(),
+    }
+}
+
 fn order_by_expr_column_name(expr: &Expression) -> String {
     match expr {
         Expression::Identifier(s) => s.clone(),

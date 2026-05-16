@@ -471,19 +471,34 @@ impl Page {
         Ok(false)
     }
 
-    /// Gets a record by ID
+    /// Gets a record by slot `record_id` (legacy) or by byte offset when no slot matches.
     pub fn get_record(&self, record_id: u64) -> Option<&[u8]> {
-        if let Some(slot) = self
+        if let Some(bytes) = self.get_record_by_slot_id(record_id) {
+            return Some(bytes);
+        }
+        self.get_record_at_offset(record_id as u32)
+    }
+
+    /// Gets record bytes at a slot's logical `record_id`.
+    pub fn get_record_by_slot_id(&self, record_id: u64) -> Option<&[u8]> {
+        let slot = self
             .slots
             .iter()
-            .find(|s| s.record_id == record_id && !s.is_deleted)
-        {
-            let start = slot.offset as usize;
-            let end = start + slot.size as usize;
-            Some(&self.data[start..end])
-        } else {
-            None
-        }
+            .find(|s| s.record_id == record_id && !s.is_deleted)?;
+        let start = slot.offset as usize;
+        let end = start + slot.size as usize;
+        Some(&self.data[start..end])
+    }
+
+    /// Gets record bytes at a byte offset within the page (matches [`PageManager`] record id encoding).
+    pub fn get_record_at_offset(&self, offset: u32) -> Option<&[u8]> {
+        let slot = self
+            .slots
+            .iter()
+            .find(|s| s.offset == offset && !s.is_deleted)?;
+        let start = slot.offset as usize;
+        let end = start + slot.size as usize;
+        Some(&self.data[start..end])
     }
 
     /// Updates a record

@@ -168,6 +168,84 @@ impl IndexRegistry {
         Ok(())
     }
 
+    /// Builds a composite index key from column values (same encoding as [`Self::build_index_key`]).
+    pub fn build_index_key_from_map(
+        columns: &[String],
+        values: &HashMap<String, String>,
+    ) -> Result<String> {
+        Self::build_index_key(columns, values)
+    }
+
+    /// Resolves `column = literal` predicates via the best matching index on `table_name`.
+    ///
+    /// `equalities` maps column names to index-key strings (same encoding as
+    /// [`crate::network::sql_engine`] index maintenance). Returns `None` when no registered
+    /// index has a leading prefix covered by `equalities`. An empty vector means the index
+    /// matched but no rows were found.
+    ///
+    /// **Limits:** only equality on a leading prefix of the index column list is supported.
+    /// Partial-prefix lookups use B+tree range search and may include false positives when
+    /// index-key strings share prefixes (e.g. integer `1` vs `10`); callers must re-check the
+    /// full `WHERE` clause on heap tuples.
+    pub fn lookup_record_ids_by_equalities(
+        &self,
+        table_name: &str,
+        equalities: &HashMap<String, String>,
+    ) -> Result<Option<Vec<RecordId>>> {
+        if equalities.is_empty() {
+            return Ok(None);
+        }
+        let Some((entry, prefix_len)) = self.best_index_for_equalities(table_name, equalities) else {
+            return Ok(None);
+        };
+        let index = entry
+            .index
+            .lock()
+            .map_err(|_| Error::internal("Lock poisoned"))?;
+        let prefix_cols = &entry.columns[..prefix_len];
+        let key = Self::build_index_key(prefix_cols, equalities)?;
+        let rids = if prefix_len == entry.columns.len() {
+            index.search(&key)?.unwrap_or_default()
+        } else {
+            let end = format!("{key}\0\u{10FFFF}");
+            index
+                .range_search(&key, &end)?
+                .into_iter()
+                .flat_map(|(_, ids)| ids)
+                .collect()
+        };
+        Ok(Some(rids))
+    }
+
+    /// Picks the index with the longest leading column prefix present in `equalities`.
+    fn best_index_for_equalities(
+        &self,
+        table_name: &str,
+        equalities: &HashMap<String, String>,
+    ) -> Option<(&IndexEntry, usize)> {
+        let mut best: Option<(&IndexEntry, usize)> = None;
+        for ((t, _), entry) in self.indexes.iter() {
+            if t != table_name {
+                continue;
+            }
+            let mut prefix = 0usize;
+            for col in &entry.columns {
+                if equalities.contains_key(col) {
+                    prefix += 1;
+                } else {
+                    break;
+                }
+            }
+            if prefix == 0 {
+                continue;
+            }
+            if best.map(|(_, p)| prefix > p).unwrap_or(true) {
+                best = Some((entry, prefix));
+            }
+        }
+        best
+    }
+
     fn build_index_key(columns: &[String], values: &HashMap<String, String>) -> Result<String> {
         let parts: Vec<String> = columns
             .iter()

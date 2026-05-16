@@ -2,6 +2,7 @@
 
 use crate::common::Result;
 use crate::parser::SqlParser;
+use crate::parser::ast::{BinaryOperator, Expression, Literal};
 use crate::planner::planner::{
     ExecutionPlan, FilterNode, JoinNode, JoinType, PlanMetadata, PlanNode, PlanStatistics,
     TableScanNode,
@@ -53,6 +54,79 @@ fn test_optimizer_join_reorder_swaps_heavy_left() -> Result<()> {
     let res = opt.optimize(plan)?;
     assert!(matches!(res.optimized_plan.root, PlanNode::Join(_)));
     assert!(res.statistics.optimization_time_ms >= 0);
+    Ok(())
+}
+
+fn eq_col_lit(column: &str, lit: Literal) -> Expression {
+    Expression::BinaryOp {
+        left: Box::new(Expression::Identifier(column.to_string())),
+        op: BinaryOperator::Equal,
+        right: Box::new(Expression::Literal(lit)),
+    }
+}
+
+#[test]
+fn test_optimizer_composite_index_prefix_match() -> Result<()> {
+    let mut reg = IndexRegistry::new();
+    reg.create_index(
+        "oorder",
+        "idx_oorder_wdc",
+        vec![
+            "o_w_id".to_string(),
+            "o_d_id".to_string(),
+            "o_c_id".to_string(),
+        ],
+    )?;
+    reg.create_index("oorder", "idx_oorder_id", vec!["o_id".to_string()])?;
+
+    let mut opt = QueryOptimizer::new()?.with_index_registry(Arc::new(reg));
+
+    let where_clause = Expression::BinaryOp {
+        left: Box::new(eq_col_lit("o_w_id", Literal::Integer(1))),
+        op: BinaryOperator::And,
+        right: Box::new(Expression::BinaryOp {
+            left: Box::new(eq_col_lit("o_d_id", Literal::Integer(2))),
+            op: BinaryOperator::And,
+            right: Box::new(eq_col_lit("o_c_id", Literal::Integer(3))),
+        }),
+    };
+
+    let scan = PlanNode::TableScan(TableScanNode {
+        table_name: "oorder".into(),
+        alias: None,
+        columns: vec!["*".into()],
+        filter: None,
+        cost: 100.0,
+        estimated_rows: 1000,
+    });
+    let root = PlanNode::Filter(FilterNode {
+        condition: "tpcc order_status".into(),
+        predicate: Some(where_clause),
+        equality: None,
+        input: Box::new(scan),
+        selectivity: 0.01,
+        cost: 1.0,
+    });
+    let plan = ExecutionPlan {
+        root,
+        metadata: plan_meta(100.0),
+    };
+
+    let res = opt.optimize(plan)?;
+    let PlanNode::Filter(f) = &res.optimized_plan.root else {
+        panic!("expected filter over index scan, got {:?}", res.optimized_plan.root);
+    };
+    let PlanNode::IndexScan(idx) = f.input.as_ref() else {
+        panic!("expected index scan, got {:?}", f.input);
+    };
+    assert_eq!(idx.index_name, "idx_oorder_wdc");
+    assert_eq!(idx.conditions.len(), 3);
+    assert_eq!(idx.conditions[0].column, "o_w_id");
+    assert_eq!(idx.conditions[0].value, "1");
+    assert_eq!(idx.conditions[1].column, "o_d_id");
+    assert_eq!(idx.conditions[1].value, "2");
+    assert_eq!(idx.conditions[2].column, "o_c_id");
+    assert_eq!(idx.conditions[2].value, "3");
     Ok(())
 }
 

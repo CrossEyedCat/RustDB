@@ -7,12 +7,12 @@
 
 use async_trait::async_trait;
 use clap::Parser;
-use quinn::Connection;
+use quinn::{Connection, RecvStream, SendStream};
 use rustdb::network::client::{
     build_quinn_client_config_with_limits, connect, make_client_endpoint,
 };
 use rustdb::network::framing::{
-    decode_server_frame_v1, encode_client_message_v1, ClientMessage, QueryPayload,
+    decode_server_frame_v1, encode_client_message_v1, ClientMessage, QueryPayload, ServerMessage,
 };
 use rustdb::network::query_stream::read_application_frame_into;
 use rustdb::tpcc_workload::{run_tpcc, Mix, TpccExec, TpccRunConfig};
@@ -22,6 +22,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 #[derive(Parser, Debug)]
 #[command(name = "rustdb_tpcc")]
@@ -74,9 +75,49 @@ struct Args {
     quic_idle_secs: u64,
 }
 
+/// One worker's long-lived bidirectional QUIC stream (reused across transactions).
+struct WorkerBiStream {
+    send: SendStream,
+    recv: RecvStream,
+    recv_buf: Vec<u8>,
+}
+
 #[derive(Clone)]
 struct QuicExec {
     conn: Connection,
+    stream: Arc<Mutex<Option<WorkerBiStream>>>,
+}
+
+impl QuicExec {
+    async fn open_stream(conn: &Connection) -> Result<WorkerBiStream, Box<dyn std::error::Error + Send + Sync>> {
+        let (send, recv) = conn.open_bi().await?;
+        Ok(WorkerBiStream {
+            send,
+            recv,
+            recv_buf: Vec::new(),
+        })
+    }
+
+    async fn run_batch_on_stream(
+        bi: &mut WorkerBiStream,
+        sqls: &[String],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Pipeline: send all frames first, then read responses (same ordering as sequential mode;
+        // reduces per-statement round-trip latency when the server processes frames in order).
+        for sql in sqls {
+            let frame =
+                encode_client_message_v1(&ClientMessage::Query(QueryPayload { sql: sql.clone() }))?;
+            bi.send.write_all(&frame).await?;
+        }
+        for _ in sqls {
+            read_application_frame_into(&mut bi.recv, 64 * 1024 * 1024, &mut bi.recv_buf).await?;
+            let msg = decode_server_frame_v1(&bi.recv_buf)?;
+            if let ServerMessage::Error(p) = msg {
+                return Err(format!("server error: {}: {}", p.code, p.message).into());
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -85,24 +126,24 @@ impl TpccExec for QuicExec {
         &self,
         sqls: &[String],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let (mut send, mut recv) = self.conn.open_bi().await?;
-        let mut recv_buf = Vec::new();
-        // Pipeline: send all frames first, then read responses (same ordering as sequential mode;
-        // reduces per-statement round-trip latency when the server processes frames in order).
-        for sql in sqls {
-            let frame =
-                encode_client_message_v1(&ClientMessage::Query(QueryPayload { sql: sql.clone() }))?;
-            send.write_all(&frame).await?;
-        }
-        for _ in sqls {
-            read_application_frame_into(&mut recv, 64 * 1024 * 1024, &mut recv_buf).await?;
-            let msg = decode_server_frame_v1(&recv_buf)?;
-            if let rustdb::network::framing::ServerMessage::Error(p) = msg {
-                return Err(format!("server error: {}: {}", p.code, p.message).into());
+        const MAX_ATTEMPTS: usize = 2;
+        for attempt in 0..MAX_ATTEMPTS {
+            let mut guard = self.stream.lock().await;
+            if guard.is_none() {
+                *guard = Some(Self::open_stream(&self.conn).await?);
+            }
+            let bi = guard.as_mut().expect("stream just opened");
+            match Self::run_batch_on_stream(bi, sqls).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    *guard = None;
+                    if attempt + 1 >= MAX_ATTEMPTS {
+                        return Err(e);
+                    }
+                }
             }
         }
-        let _ = send.finish();
-        Ok(())
+        unreachable!()
     }
 }
 
@@ -124,7 +165,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let concurrency = args.concurrency.max(1);
     let workers: Vec<Arc<QuicExec>> = (0..concurrency)
-        .map(|_| Arc::new(QuicExec { conn: conn.clone() }))
+        .map(|_| {
+            Arc::new(QuicExec {
+                conn: conn.clone(),
+                stream: Arc::new(Mutex::new(None)),
+            })
+        })
         .collect();
 
     let duration = args.duration_seconds.map(|s| Duration::from_secs(s.max(1)));

@@ -505,6 +505,12 @@ impl PageManager {
         self.file_id
     }
 
+    /// Number of heap pages dirty in memory (not yet flushed).
+    #[cfg(test)]
+    pub fn dirty_page_count(&self) -> usize {
+        self.dirty_pages.len()
+    }
+
     /// Flushes all dirty pages to disk. Call after commit when using write-ahead.
     /// When `use_async_flush` is true and running in tokio context, disk I/O runs in
     /// `block_in_place` to avoid blocking the async runtime.
@@ -640,12 +646,15 @@ impl PageManager {
         page_id: PageId,
         record_id: RecordId,
     ) -> Result<Option<Vec<u8>>> {
+        let (_pid, offset) = self.parse_record_id(record_id);
         if let Some(page) = self.dirty_pages.get(&page_id) {
-            return Ok(page.get_record(record_id).map(|s| s.to_vec()));
+            return Ok(page
+                .get_record_at_offset(offset)
+                .map(|s| s.to_vec()));
         }
         let page_data = self.file_manager.read_page(self.file_id, page_id)?;
         let page = Page::from_bytes(&page_data)?;
-        Ok(page.get_record(record_id).map(|s| s.to_vec()))
+        Ok(page.get_record_at_offset(offset).map(|s| s.to_vec()))
     }
 
     /// Preallocates pages
