@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["execute_tpcc","tables_for_kind","txn_kind_from_u8"]};
+window.SIDEBAR_ITEMS = {"fn":["execute_tpcc","txn_kind_from_u8"]};
