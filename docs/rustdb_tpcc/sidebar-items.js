@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["main"],"struct":["Args","QuicExec"]};
+window.SIDEBAR_ITEMS = {"fn":["main"],"struct":["Args","QuicExec","WorkerBiStream"]};

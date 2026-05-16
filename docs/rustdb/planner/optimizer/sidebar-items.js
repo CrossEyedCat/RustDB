@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["OptimizationResult","OptimizationStatistics","OptimizerSettings","QueryOptimizer"]};
+window.SIDEBAR_ITEMS = {"fn":["leading_index_conditions"],"struct":["OptimizationResult","OptimizationStatistics","OptimizerSettings","QueryOptimizer"]};
