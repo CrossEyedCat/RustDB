@@ -615,10 +615,13 @@ jobs:
             echo ""
             echo '```'
             if [[ -s "tpcc-out/server_full.log" ]]; then
-              python3 scripts/summarize_sql_phase_log.py tpcc-out/server_full.log || echo "(summarize_sql_phase_log.py failed or no matching lines)"
+              echo "--- SQL phase summary (parse / locks / commit / execute_script) ---"
+              python3 scripts/summarize_sql_phase_log.py --warn-lock-p99-ms 50 tpcc-out/server_full.log || echo "(summarize_sql_phase_log.py failed or no matching lines)"
               echo ""
-              echo "--- COMMIT span samples (flush_us / wal_us) ---"
-              grep -E 'sql\.commit.*flush_us=' tpcc-out/server_full.log 2>/dev/null | tail -n 5 || echo "(no sql.commit spans in log)"
+              echo "--- COMMIT samples (flush_us / wal_us) ---"
+              grep -E 'rustdb::sql_phases: sql\.commit.*flush_us=' tpcc-out/server_full.log 2>/dev/null | tail -n 5 \
+                || grep -E 'sql\.commit.*flush_us=' tpcc-out/server_full.log 2>/dev/null | tail -n 5 \
+                || echo "(no sql.commit lines in log)"
             else
               echo "(missing tpcc-out/server_full.log)"
             fi
@@ -653,18 +656,18 @@ jobs:
             echo ""
             echo "### Throughput thresholds (informational)"
             echo ""
-            echo "- Full mix rustdb/postgres: **${ratio}%** (soft floor: 35%)"
-            echo "- order_status micro rustdb/postgres: **${micro_ratio}%** (soft floor: 65%)"
+            echo "- Full mix rustdb/postgres: **${ratio}%** (soft floor: 40%)"
+            echo "- order_status micro rustdb/postgres: **${micro_ratio}%** (soft floor: 70%)"
           } >> "$GITHUB_STEP_SUMMARY"
-          if python3 -c "exit(0 if float('${ratio}') >= 35.0 else 1)"; then
+          if python3 -c "exit(0 if float('${ratio}') >= 40.0 else 1)"; then
             :
           else
-            echo "::warning::Full mix RustDB/PostgreSQL TPS ratio ${ratio}% is below the 35% soft threshold"
+            echo "::warning::Full mix RustDB/PostgreSQL TPS ratio ${ratio}% is below the 40% soft threshold"
           fi
-          if python3 -c "exit(0 if float('${micro_ratio}') >= 65.0 else 1)"; then
+          if python3 -c "exit(0 if float('${micro_ratio}') >= 70.0 else 1)"; then
             :
           else
-            echo "::warning::order_status micro RustDB/PostgreSQL TPS ratio ${micro_ratio}% is below the 65% soft threshold"
+            echo "::warning::order_status micro RustDB/PostgreSQL TPS ratio ${micro_ratio}% is below the 70% soft threshold"
           fi
 
       - name: Upload TPC-C artifacts

@@ -19,6 +19,9 @@
 #   RUSTDB_GROUP_COMMIT_INTERVAL_MS — group commit timer (default 1 ms)
 #   RUSTDB_GROUP_COMMIT_MAX_BATCH — max records per group commit batch (default 10)
 #
+# Client (rustdb_tpcc on host):
+#   RUSTDB_TPCC_NATIVE=1 — pass --native-tpcc (ExecuteTpcc wire path, one RTT per txn)
+#
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -112,6 +115,10 @@ if [[ -n "${DURATION_SECS:-}" ]]; then
 else
   TXN_ARGS=(--transactions "$TXNS")
 fi
+TPCC_EXTRA=()
+if [[ "${RUSTDB_TPCC_NATIVE:-0}" == "1" ]]; then
+  TPCC_EXTRA+=(--native-tpcc)
+fi
 set +e
 ./target/debug/rustdb_tpcc \
   --addr "127.0.0.1:${UDP_PORT}" \
@@ -120,6 +127,7 @@ set +e
   --concurrency "$CONCURRENCY" \
   "${TXN_ARGS[@]}" \
   --mix "$MIX" \
+  "${TPCC_EXTRA[@]}" \
   --txn-log "$OUT_DIR_ABS/tpcc_txn.log" \
   --json > "$OUT_DIR_ABS/tpcc.json"
 rc=$?

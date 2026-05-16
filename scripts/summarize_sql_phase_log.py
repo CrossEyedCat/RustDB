@@ -4,13 +4,15 @@ Aggregate rustdb::sql_phases / sql_parse lines from a server stderr log (tracing
 
 Looks for:
   - message `sql_parse` and field parse_us=...
-  - message `table_storage_lock` with lock_wait_us=...
+  - message `table_storage_lock` with lock_wait_us=..., table=..., mode=...
+  - message `sql.commit` with flush_us=..., wal_us=..., flush_tables_count=...
   - message `update` with scan_us=..., row_loop_us=...
   - message `delete` with same fields
-  - span `sql.execute_script` with wall_us=...
+  - message `sql.execute_script` with wall_us=...
 
 Usage:
   python3 scripts/summarize_sql_phase_log.py path/to/server.log
+  python3 scripts/summarize_sql_phase_log.py --warn-lock-p99-ms 50 path/to/server.log
 """
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ import argparse
 import re
 import statistics
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 
@@ -30,21 +33,44 @@ def extract_parse_us(line: str) -> int | None:
     return None
 
 
-def extract_lock_wait_us(line: str) -> int | None:
+def extract_lock_wait(line: str) -> tuple[str, str, int] | None:
     if "table_storage_lock" not in line:
         return None
-    m = re.search(r"lock_wait_us=(\d+)", line)
-    if m:
-        return int(m.group(1))
+    m_wait = re.search(r"lock_wait_us=(\d+)", line)
+    m_table = re.search(r"table=(\S+)", line)
+    m_mode = re.search(r'mode="?(\w+)"?', line)
+    if m_wait and m_table and m_mode:
+        return m_table.group(1), m_mode.group(1), int(m_wait.group(1))
+    return None
+
+
+def extract_commit_metrics(line: str) -> tuple[int, int, int] | None:
+    if "rustdb::sql_phases" not in line or "sql.commit" not in line:
+        return None
+    m_flush = re.search(r"flush_us=(\d+)", line)
+    m_wal = re.search(r"wal_us=(\d+)", line)
+    m_count = re.search(r"flush_tables_count=(\d+)", line)
+    if m_flush and m_wal and m_count:
+        return int(m_flush.group(1)), int(m_wal.group(1)), int(m_count.group(1))
     return None
 
 
 def extract_execute_script_wall_us(line: str) -> int | None:
-    if "sql.execute_script" not in line:
+    if "wall_us=" not in line:
         return None
-    m = re.search(r"wall_us=(\d+)", line)
-    if m:
-        return int(m.group(1))
+    # Explicit rustdb::sql_phases event (Phase 14+).
+    if "rustdb::sql_phases" in line and "sql.execute_script" in line:
+        m = re.search(r"wall_us=(\d+)", line)
+        if m:
+            return int(m.group(1))
+    # Span close / inline span fields (tracing fmt with FmtSpan::CLOSE).
+    if "sql.execute_script" in line:
+        m = re.search(r"sql\.execute_script\{[^}]*wall_us=(\d+)", line)
+        if m:
+            return int(m.group(1))
+        m = re.search(r"wall_us=(\d+)", line)
+        if m:
+            return int(m.group(1))
     return None
 
 
@@ -71,8 +97,23 @@ def quantile(xs: list[float], q: float) -> float:
     return s[lo] * (1.0 - frac) + s[hi] * frac
 
 
+def print_us_stats(label: str, xs: list[float]) -> None:
+    print(
+        f"{label}: n={len(xs)} "
+        f"p50={quantile(xs, 0.5) / 1000:.3f}ms p95={quantile(xs, 0.95) / 1000:.3f}ms "
+        f"p99={quantile(xs, 0.99) / 1000:.3f}ms mean={statistics.fmean(xs) / 1000:.3f}ms"
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--warn-lock-p99-ms",
+        type=float,
+        default=0.0,
+        metavar="MS",
+        help="emit GitHub ::warning:: when table_storage_lock aggregate p99 exceeds MS (0=off)",
+    )
     ap.add_argument("path", type=Path)
     args = ap.parse_args()
     p = args.path
@@ -82,6 +123,10 @@ def main() -> int:
 
     parse_us: list[float] = []
     lock_wait_us: list[float] = []
+    lock_by_table_mode: dict[tuple[str, str], list[float]] = defaultdict(list)
+    commit_flush_us: list[float] = []
+    commit_wal_us: list[float] = []
+    commit_flush_tables_count: list[float] = []
     execute_script_wall_us: list[float] = []
     scan_us: list[float] = []
     row_loop_us: list[float] = []
@@ -93,57 +138,82 @@ def main() -> int:
             if pu is not None:
                 parse_us.append(float(pu))
                 phase_lines += 1
-            lw = extract_lock_wait_us(line)
-            if lw is not None:
-                lock_wait_us.append(float(lw))
+            lk = extract_lock_wait(line)
+            if lk is not None:
+                table, mode, wait = lk
+                lock_wait_us.append(float(wait))
+                lock_by_table_mode[(table, mode)].append(float(wait))
+                phase_lines += 1
+            cm = extract_commit_metrics(line)
+            if cm is not None:
+                commit_flush_us.append(float(cm[0]))
+                commit_wal_us.append(float(cm[1]))
+                commit_flush_tables_count.append(float(cm[2]))
+                phase_lines += 1
+            ew = extract_execute_script_wall_us(line)
+            if ew is not None:
+                execute_script_wall_us.append(float(ew))
                 phase_lines += 1
             up = extract_update_pair(line)
             if up is not None:
                 scan_us.append(float(up[0]))
                 row_loop_us.append(float(up[1]))
                 phase_lines += 1
-        ew = extract_execute_script_wall_us(line)
-        if ew is not None:
-            execute_script_wall_us.append(float(ew))
-            phase_lines += 1
+        else:
+            ew = extract_execute_script_wall_us(line)
+            if ew is not None:
+                execute_script_wall_us.append(float(ew))
+                phase_lines += 1
 
     print(f"file: {p}")
     print(f"matched_lines: {phase_lines}")
     if parse_us:
-        print(
-            f"sql_parse parse_us: n={len(parse_us)} "
-            f"p50={quantile(parse_us,0.5)/1000:.3f}ms p95={quantile(parse_us,0.95)/1000:.3f}ms "
-            f"p99={quantile(parse_us,0.99)/1000:.3f}ms mean={statistics.fmean(parse_us)/1000:.3f}ms"
-        )
+        print_us_stats("sql_parse parse_us", parse_us)
     else:
         print("sql_parse: (no matches — set RUSTDB_SQL_PHASE_LOG=1 and RUST_LOG=info or rustdb::sql_phases=info)")
     if lock_wait_us:
-        print(
-            f"table_storage_lock lock_wait_us: n={len(lock_wait_us)} "
-            f"p50={quantile(lock_wait_us,0.5)/1000:.3f}ms p95={quantile(lock_wait_us,0.95)/1000:.3f}ms "
-            f"p99={quantile(lock_wait_us,0.99)/1000:.3f}ms mean={statistics.fmean(lock_wait_us)/1000:.3f}ms"
-        )
+        print_us_stats("table_storage_lock lock_wait_us (all)", lock_wait_us)
+        print("table_storage_lock by table+mode:")
+        for (table, mode), xs in sorted(
+            lock_by_table_mode.items(),
+            key=lambda kv: quantile(kv[1], 0.99),
+            reverse=True,
+        ):
+            print(
+                f"  {table} mode={mode}: n={len(xs)} "
+                f"p50={quantile(xs, 0.5) / 1000:.3f}ms p95={quantile(xs, 0.95) / 1000:.3f}ms "
+                f"p99={quantile(xs, 0.99) / 1000:.3f}ms mean={statistics.fmean(xs) / 1000:.3f}ms"
+            )
+        if args.warn_lock_p99_ms > 0:
+            p99_ms = quantile(lock_wait_us, 0.99) / 1000.0
+            if p99_ms > args.warn_lock_p99_ms:
+                print(
+                    f"::warning::table_storage_lock aggregate p99 {p99_ms:.3f}ms "
+                    f"exceeds {args.warn_lock_p99_ms:.0f}ms soft threshold",
+                    flush=True,
+                )
     else:
         print("table_storage_lock: (no matches)")
-    if execute_script_wall_us:
+    if commit_flush_us:
+        print_us_stats("sql.commit flush_us", commit_flush_us)
+        print_us_stats("sql.commit wal_us", commit_wal_us)
+        mean_tables = statistics.fmean(commit_flush_tables_count)
         print(
-            f"sql.execute_script wall_us: n={len(execute_script_wall_us)} "
-            f"p50={quantile(execute_script_wall_us,0.5)/1000:.3f}ms p95={quantile(execute_script_wall_us,0.95)/1000:.3f}ms "
-            f"p99={quantile(execute_script_wall_us,0.99)/1000:.3f}ms mean={statistics.fmean(execute_script_wall_us)/1000:.3f}ms"
+            f"sql.commit flush_tables_count: n={len(commit_flush_tables_count)} "
+            f"mean={mean_tables:.2f} p50={quantile(commit_flush_tables_count, 0.5):.0f}"
         )
     else:
-        print("sql.execute_script: (no matches — requires RUST_LOG=info or tracing filter including sql.execute_script)")
+        print("sql.commit: (no matches — COMMIT path with RUSTDB_SQL_PHASE_LOG=1)")
+    if execute_script_wall_us:
+        print_us_stats("sql.execute_script wall_us", execute_script_wall_us)
+    else:
+        print(
+            "sql.execute_script: (no matches — set RUSTDB_SQL_PHASE_LOG=1; "
+            "requires rustdb::sql_phases execute_script events or span close with wall_us)"
+        )
     if scan_us:
-        print(
-            f"update/delete scan_us: n={len(scan_us)} "
-            f"p50={quantile(scan_us,0.5)/1000:.3f}ms p95={quantile(scan_us,0.95)/1000:.3f}ms "
-            f"p99={quantile(scan_us,0.99)/1000:.3f}ms"
-        )
-        print(
-            f"update/delete row_loop_us: n={len(row_loop_us)} "
-            f"p50={quantile(row_loop_us,0.5)/1000:.3f}ms p95={quantile(row_loop_us,0.95)/1000:.3f}ms "
-            f"p99={quantile(row_loop_us,0.99)/1000:.3f}ms"
-        )
+        print_us_stats("update/delete scan_us", scan_us)
+        print_us_stats("update/delete row_loop_us", row_loop_us)
     else:
         print("update/delete phase: (no matches — workload may not hit UPDATE/DELETE logs in sample)")
     return 0

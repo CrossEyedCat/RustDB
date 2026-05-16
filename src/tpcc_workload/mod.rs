@@ -152,6 +152,8 @@ pub fn txn_sql(kind: TxnKind, seed: u64, global_txn_id: u64) -> Vec<String> {
             format!("DELETE FROM new_order WHERE no_w_id = {w_id} AND no_d_id = {d_id}"),
             "COMMIT".to_string(),
         ],
+        // Stock-level uses a range predicate (`s_qty < 20`); the engine keeps the table read lock
+        // and scans index prefix on `s_w_id` (see `idx_stock_ws` in tpcc_seed.sql).
         TxnKind::StockLevel => vec![
             "BEGIN TRANSACTION".to_string(),
             format!("SELECT * FROM stock WHERE s_w_id = {w_id} AND s_qty < 20"),

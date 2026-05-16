@@ -33,9 +33,16 @@
 //!   stay coherent for tests and tooling that reopen without relying on WAL replay ordering.
 //! - DDL (`CREATE` / `DROP` / `ALTER`) is rejected while a transaction is open.
 //!
-//! **DML plan validation:** `INSERT` / `UPDATE` / `DELETE` skip redundant full plan+optimize when the
-//! same SQL text was already validated for the current catalog/index epoch (see
-//! `DmlPlanValidationCache`). Cache is cleared on catalog persist and optimizer rebuild.
+//! **SQL plan cache:** normalized SQL text maps to a validated, optimized [`ExecutionPlan`] for the
+//! current catalog/index epoch (LRU, shared by `ExecuteScript` / TPC-C and single-statement DML).
+//! Cleared on catalog persist and optimizer rebuild.
+//!
+//! **Index-backed DML:** `UPDATE` / `DELETE` with an index lookup acquire per-row write locks
+//! instead of a whole-table storage lock when possible (see [`RowLockManager`]).
+//!
+//! **Index-only SELECT:** single-table `SELECT` with a full index equality seek skips the table
+//! storage read lock (order-status style). Range predicates (e.g. stock-level `s_qty < 20`) still
+//! take the table read lock.
 //!
 //! **Profiling:** set `RUSTDB_SQL_PHASE_LOG=1` to emit `tracing` events on target `rustdb::sql_phases`
 //! (parse latency, per-table `lock_wait_us` on storage lock acquire, `UPDATE`/`DELETE` scan vs row loop).
@@ -64,7 +71,8 @@ use crate::parser::ast::{
     SelectItem, SelectStatement, TableConstraint, TableReference, UpdateStatement,
 };
 use crate::parser::{SqlParser, SqlStatement};
-use crate::planner::{QueryOptimizer, QueryPlanner};
+use crate::planner::planner::IndexScanNode;
+use crate::planner::{ExecutionPlan, PlanNode, QueryOptimizer, QueryPlanner};
 use crate::storage::index_registry::IndexRegistry;
 use crate::storage::page_manager::{PageManager, PageManagerConfig};
 use crate::storage::row_locks::RowLockManager;
@@ -175,7 +183,7 @@ pub(crate) struct SqlEngineState {
     ///
     /// These queries are common in benchmarks (`SELECT 1`) and are safe to memoize.
     select_no_from_cache: Mutex<HashMap<String, EngineOutput>>,
-    /// LRU of SQL texts that passed plan+optimize for DML (invalidated on schema/optimizer changes).
+    /// LRU of normalized SQL → optimized plans (DML validation + read path; invalidated on DDL).
     dml_plan_validation_cache: Mutex<DmlPlanValidationCache>,
     pub(crate) catalog: Mutex<SchemaManager>,
     constraint_runtime: Mutex<ConstraintRuntime>,
@@ -371,32 +379,24 @@ impl SqlEngine {
             }
             SqlStatement::Select(_) | SqlStatement::SetOperation(_) => {
                 let table_names = collect_physical_tables_for_read_stmt(stmt);
+                let optimized_plan = {
+                    let s = info_span!("sql.plan");
+                    let _sg = s.enter();
+                    plan_and_optimize_read(state, sql, stmt)?
+                };
+                let skip_read =
+                    select_skip_table_read_lock_tables(state, &table_names, &optimized_plan.root);
                 if table_names.is_empty() {
                     let _storage = state
                         .storage_access
                         .read()
                         .map_err(|_| lock_poisoned_engine())?;
-                    let plan = {
-                        let s = info_span!("sql.plan");
-                        let _sg = s.enter();
-                        state.planner.create_plan(stmt).map_err(map_db_err)?
-                    };
-                    let optimized = {
-                        let s = info_span!("sql.optimize");
-                        let _sg = s.enter();
-                        state
-                            .optimizer
-                            .lock()
-                            .map_err(|_| lock_poisoned_engine())?
-                            .optimize(plan)
-                            .map_err(map_db_err)?
-                    };
                     let rows = {
                         let s = info_span!("sql.exec_plan");
                         let _sg = s.enter();
                         state
                             .executor
-                            .execute(&optimized.optimized_plan)
+                            .execute(&optimized_plan)
                             .map_err(map_db_err)?
                     };
                     {
@@ -407,34 +407,24 @@ impl SqlEngine {
                 } else {
                     let locks: Vec<Arc<RwLock<()>>> = table_names
                         .iter()
+                        .filter(|n| !skip_read.contains(*n))
                         .map(|n| table_storage_lock_arc(state, n))
                         .collect::<Result<_, _>>()?;
+                    let locked_tables: Vec<&String> = table_names
+                        .iter()
+                        .filter(|n| !skip_read.contains(*n))
+                        .collect();
                     let _table_reads: Vec<std::sync::RwLockReadGuard<'_, ()>> = locks
                         .iter()
-                        .zip(table_names.iter())
+                        .zip(locked_tables.iter())
                         .map(|(l, table)| acquire_table_storage_read_lock(l, table))
                         .collect::<Result<_, _>>()?;
-                    let plan = {
-                        let s = info_span!("sql.plan");
-                        let _sg = s.enter();
-                        state.planner.create_plan(stmt).map_err(map_db_err)?
-                    };
-                    let optimized = {
-                        let s = info_span!("sql.optimize");
-                        let _sg = s.enter();
-                        state
-                            .optimizer
-                            .lock()
-                            .map_err(|_| lock_poisoned_engine())?
-                            .optimize(plan)
-                            .map_err(map_db_err)?
-                    };
                     let rows = {
                         let s = info_span!("sql.exec_plan");
                         let _sg = s.enter();
                         state
                             .executor
-                            .execute(&optimized.optimized_plan)
+                            .execute(&optimized_plan)
                             .map_err(map_db_err)?
                     };
                     {
@@ -469,20 +459,32 @@ impl SqlEngine {
             SqlStatement::Update(upd) => {
                 let s = info_span!("sql.update", table = %upd.table);
                 let _sg = s.enter();
-                with_dml_write_lock(state, &upd.table, ctx.skip_dml_storage_lock, || {
-                    execute_dml_autocommit(state, ctx, |state, ctx| {
-                        execute_update(state, ctx, sql, stmt, upd)
-                    })
-                })
+                with_dml_write_lock(
+                    state,
+                    &upd.table,
+                    upd.where_clause.as_ref(),
+                    ctx.skip_dml_storage_lock,
+                    || {
+                        execute_dml_autocommit(state, ctx, |state, ctx| {
+                            execute_update(state, ctx, sql, stmt, upd)
+                        })
+                    },
+                )
             }
             SqlStatement::Delete(del) => {
                 let s = info_span!("sql.delete", table = %del.table);
                 let _sg = s.enter();
-                with_dml_write_lock(state, &del.table, ctx.skip_dml_storage_lock, || {
-                    execute_dml_autocommit(state, ctx, |state, ctx| {
-                        execute_delete(state, ctx, sql, stmt, del)
-                    })
-                })
+                with_dml_write_lock(
+                    state,
+                    &del.table,
+                    del.where_clause.as_ref(),
+                    ctx.skip_dml_storage_lock,
+                    || {
+                        execute_dml_autocommit(state, ctx, |state, ctx| {
+                            execute_delete(state, ctx, sql, stmt, del)
+                        })
+                    },
+                )
             }
             SqlStatement::CreateIndex(ci) => {
                 let s = info_span!(
@@ -605,7 +607,7 @@ fn lock_poisoned_engine() -> EngineError {
 }
 
 /// When set (non-empty, not `0`/`false`), emit `tracing` on target `rustdb::sql_phases` for statement timing.
-fn sql_phase_log_enabled() -> bool {
+pub(crate) fn sql_phase_log_enabled() -> bool {
     match std::env::var("RUSTDB_SQL_PHASE_LOG") {
         Ok(s) if s == "0" || s.eq_ignore_ascii_case("false") => false,
         Ok(_) => true,
@@ -723,14 +725,38 @@ fn acquire_table_storage_write_lock<'a>(
     Ok(guard)
 }
 
+/// Resolves target row ids via index before DML locking (UPDATE/DELETE fast path).
+fn resolve_dml_row_lock_rids(
+    state: &SqlEngineState,
+    table: &str,
+    where_expr: &Expression,
+) -> Result<Option<(Vec<RecordId>, bool)>, EngineError> {
+    let pm_for_table = table_page_manager(state, table)?;
+    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    if let Some((rows, exact_key)) = try_dml_rows_via_index(state, table, where_expr, &mut pm)? {
+        let rids: Vec<RecordId> = rows.into_iter().map(|(rid, _)| rid).collect();
+        Ok(Some((rids, exact_key)))
+    } else {
+        Ok(None)
+    }
+}
+
 fn with_dml_write_lock<T>(
     state: &SqlEngineState,
     table: &str,
+    where_clause: Option<&Expression>,
     skip_storage_lock: bool,
     f: impl FnOnce() -> Result<T, EngineError>,
 ) -> Result<T, EngineError> {
     if skip_storage_lock {
         return f();
+    }
+    if let Some(expr) = where_clause {
+        if let Some((rids, exact_key)) = resolve_dml_row_lock_rids(state, table, expr)? {
+            if exact_key && rids.len() == 1 {
+                return state.row_locks.with_write_locks(table, rids, f);
+            }
+        }
     }
     let lock = table_storage_lock_arc(state, table)?;
     let _guard = acquire_table_storage_write_lock(&lock, table)?;
@@ -946,14 +972,26 @@ fn commit_transaction(
     if let Some(ref wal) = state.wal {
         wal.log_commit(&mut tx)?;
     }
-    if let Some(t0) = wal_clock {
-        span.record("wal_us", t0.elapsed().as_micros());
+    let wal_us = wal_clock.map(|t0| t0.elapsed().as_micros() as u64);
+    if let Some(us) = wal_us {
+        span.record("wal_us", us);
     }
     let touched = std::mem::take(&mut tx.touched_tables);
     let flush_clock = Instant::now();
     crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &touched)
         .map_err(map_db_err)?;
-    span.record("flush_us", flush_clock.elapsed().as_micros());
+    let flush_us = flush_clock.elapsed().as_micros() as u64;
+    span.record("flush_us", flush_us);
+    if sql_phase_log_enabled() {
+        info!(
+            target: "rustdb::sql_phases",
+            flush_us,
+            wal_us = wal_us.unwrap_or(0),
+            flush_tables_count,
+            commit_log_fsync,
+            "sql.commit"
+        );
+    }
     sql_commit_log::append_commit_log_line(&state.data_dir, commit_log_fsync)
         .map_err(map_db_err)?;
     drop(tx);
@@ -1530,41 +1568,140 @@ fn rebuild_optimizer_with_indexes(state: &SqlEngineState) -> Result<(), EngineEr
     Ok(())
 }
 
-/// Max distinct DML SQL texts remembered per catalog/index epoch (TPC-C hot statements).
+/// Max distinct normalized SQL texts remembered per catalog/index epoch (TPC-C / ExecuteScript).
 const DML_PLAN_VALIDATION_CACHE_CAP: usize = 256;
 
 #[derive(Default)]
 struct DmlPlanValidationCache {
     schema_epoch: u64,
     order: VecDeque<String>,
-    hits: HashSet<String>,
+    plans: HashMap<String, Arc<ExecutionPlan>>,
 }
 
 fn invalidate_dml_plan_validation_cache(state: &SqlEngineState) {
     if let Ok(mut cache) = state.dml_plan_validation_cache.lock() {
         cache.schema_epoch = cache.schema_epoch.wrapping_add(1);
         cache.order.clear();
-        cache.hits.clear();
+        cache.plans.clear();
     }
 }
 
-fn dml_plan_validation_cached(cache: &DmlPlanValidationCache, sql: &str) -> bool {
-    cache.hits.contains(sql)
+fn normalize_sql_for_plan_cache(sql: &str) -> String {
+    sql.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn record_dml_plan_validation(cache: &mut DmlPlanValidationCache, sql: String, epoch: u64) {
+fn cached_sql_plan(cache: &DmlPlanValidationCache, cache_key: &str) -> Option<Arc<ExecutionPlan>> {
+    cache.plans.get(cache_key).cloned()
+}
+
+fn record_sql_plan_cache(
+    cache: &mut DmlPlanValidationCache,
+    cache_key: String,
+    plan: Arc<ExecutionPlan>,
+    epoch: u64,
+) {
     if cache.schema_epoch != epoch {
         return;
     }
-    if !cache.hits.insert(sql.clone()) {
+    if cache.plans.contains_key(&cache_key) {
         return;
     }
-    cache.order.push_back(sql);
+    cache.plans.insert(cache_key.clone(), plan);
+    cache.order.push_back(cache_key);
     while cache.order.len() > DML_PLAN_VALIDATION_CACHE_CAP {
         if let Some(victim) = cache.order.pop_front() {
-            cache.hits.remove(&victim);
+            cache.plans.remove(&victim);
         }
     }
+}
+
+fn plan_and_optimize_read(
+    state: &SqlEngineState,
+    sql: &str,
+    stmt: &SqlStatement,
+) -> Result<ExecutionPlan, EngineError> {
+    let cache_key = normalize_sql_for_plan_cache(sql);
+    let epoch = {
+        let cache = state
+            .dml_plan_validation_cache
+            .lock()
+            .map_err(|_| lock_poisoned_engine())?;
+        if let Some(plan) = cached_sql_plan(&cache, &cache_key) {
+            return Ok((*plan).clone());
+        }
+        cache.schema_epoch
+    };
+    let plan = state.planner.create_plan(stmt).map_err(map_db_err)?;
+    let optimized = state
+        .optimizer
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?
+        .optimize(plan)
+        .map_err(map_db_err)?;
+    if let Ok(mut cache) = state.dml_plan_validation_cache.lock() {
+        record_sql_plan_cache(
+            &mut cache,
+            cache_key,
+            Arc::new(optimized.optimized_plan.clone()),
+            epoch,
+        );
+    }
+    Ok(optimized.optimized_plan)
+}
+
+fn index_columns_for_scan(
+    registry: &IndexRegistry,
+    table: &str,
+    index_name: &str,
+) -> Option<Vec<String>> {
+    registry
+        .list_indexes_for_table(table)
+        .into_iter()
+        .find(|(name, _)| name == index_name)
+        .map(|(_, cols)| cols)
+}
+
+fn index_scan_is_exact_key(registry: &IndexRegistry, idx: &IndexScanNode) -> bool {
+    let Some(cols) = index_columns_for_scan(registry, &idx.table_name, &idx.index_name) else {
+        return false;
+    };
+    if cols.is_empty() || idx.conditions.len() != cols.len() {
+        return false;
+    }
+    idx.conditions.iter().all(|c| c.operator == "=")
+}
+
+fn find_index_scan_node(node: &PlanNode) -> Option<&IndexScanNode> {
+    match node {
+        PlanNode::IndexScan(i) => Some(i),
+        PlanNode::Filter(f) => find_index_scan_node(&f.input),
+        PlanNode::Projection(p) => find_index_scan_node(&p.input),
+        _ => None,
+    }
+}
+
+/// Single-table `SELECT` with a full index equality seek can skip the table storage read lock.
+fn select_skip_table_read_lock_tables(
+    state: &SqlEngineState,
+    table_names: &[String],
+    plan_root: &PlanNode,
+) -> HashSet<String> {
+    if table_names.len() != 1 {
+        return HashSet::new();
+    }
+    let registry = match state.index_registry.read() {
+        Ok(r) => r,
+        Err(_) => return HashSet::new(),
+    };
+    let Some(idx) = find_index_scan_node(plan_root) else {
+        return HashSet::new();
+    };
+    if idx.table_name != table_names[0] || !index_scan_is_exact_key(&registry, idx) {
+        return HashSet::new();
+    }
+    let mut out = HashSet::new();
+    out.insert(table_names[0].clone());
+    out
 }
 
 fn execute_create_index(
@@ -1636,26 +1773,7 @@ fn validate_plan(
     sql: &str,
     stmt: &SqlStatement,
 ) -> Result<(), EngineError> {
-    let epoch = {
-        let cache = state
-            .dml_plan_validation_cache
-            .lock()
-            .map_err(|_| lock_poisoned_engine())?;
-        if dml_plan_validation_cached(&cache, sql) {
-            return Ok(());
-        }
-        cache.schema_epoch
-    };
-    let plan = state.planner.create_plan(stmt).map_err(map_db_err)?;
-    let _ = state
-        .optimizer
-        .lock()
-        .map_err(|_| lock_poisoned_engine())?
-        .optimize(plan)
-        .map_err(map_db_err)?;
-    if let Ok(mut cache) = state.dml_plan_validation_cache.lock() {
-        record_dml_plan_validation(&mut cache, sql.to_string(), epoch);
-    }
+    let _ = plan_and_optimize_read(state, sql, stmt)?;
     Ok(())
 }
 
@@ -2886,8 +3004,14 @@ mod tests {
 
     #[test]
     fn concurrent_payment_updates_on_hot_warehouse_row() {
-        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::{Arc, Barrier};
         use std::thread;
+        use std::time::{Duration, Instant};
+
+        const HOT_WORKERS: usize = 8;
+        const OTHER_WORKERS: usize = 4;
+        const ITERS: u32 = 32;
 
         let dir = TempDir::new().unwrap();
         let eng = Arc::new(SqlEngine::open(dir.path().to_path_buf()).unwrap());
@@ -2900,42 +3024,100 @@ mod tests {
         eng.execute_sql("CREATE INDEX idx_wh_id ON warehouse (w_id)", &mut ctx)
             .unwrap();
         eng.execute_sql(
-            "INSERT INTO warehouse (w_id, w_ytd) VALUES (1, 0)",
+            "INSERT INTO warehouse (w_id, w_ytd) VALUES (1, 0), (2, 0)",
             &mut ctx,
         )
         .unwrap();
 
-        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let progress = Arc::new(AtomicU64::new(0));
+        let other_done = Arc::new(AtomicU64::new(0));
+        let barrier = Arc::new(Barrier::new(HOT_WORKERS + OTHER_WORKERS + 1));
         let mut handles = Vec::new();
-        for _ in 0..2 {
+
+        for _ in 0..HOT_WORKERS {
             let eng = Arc::clone(&eng);
             let barrier = Arc::clone(&barrier);
+            let progress = Arc::clone(&progress);
             handles.push(thread::spawn(move || {
                 barrier.wait();
-                for _ in 0..32 {
+                for _ in 0..ITERS {
                     let mut ctx = SessionContext::default();
                     eng.execute_sql(
                         "UPDATE warehouse SET w_ytd = w_ytd + 1 WHERE w_id = 1",
                         &mut ctx,
                     )
                     .expect("concurrent payment update");
+                    progress.fetch_add(1, Ordering::Relaxed);
                 }
             }));
         }
+
+        for _ in 0..OTHER_WORKERS {
+            let eng = Arc::clone(&eng);
+            let barrier = Arc::clone(&barrier);
+            let other_done = Arc::clone(&other_done);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..ITERS {
+                    let mut ctx = SessionContext::default();
+                    eng.execute_sql(
+                        "UPDATE warehouse SET w_ytd = w_ytd + 1 WHERE w_id = 2",
+                        &mut ctx,
+                    )
+                    .expect("concurrent other-row update");
+                }
+                other_done.fetch_add(1, Ordering::Relaxed);
+            }));
+        }
+
+        barrier.wait();
+        let t0 = Instant::now();
+        let deadline = Duration::from_secs(5);
+        while other_done.load(Ordering::Relaxed) < OTHER_WORKERS as u64 {
+            assert!(
+                t0.elapsed() < deadline,
+                "w_id=2 workers did not finish (table-wide lock would stall here)"
+            );
+            if progress.load(Ordering::Relaxed) > 0 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            progress.load(Ordering::Relaxed) > 0,
+            "hot-row updates made no progress while other rows finished"
+        );
+
         for h in handles {
             h.join().expect("worker join");
         }
+
         let mut ctx = SessionContext::default();
         let out = eng
-            .execute_sql("SELECT w_ytd FROM warehouse WHERE w_id = 1", &mut ctx)
+            .execute_sql("SELECT w_id, w_ytd FROM warehouse ORDER BY w_id", &mut ctx)
             .unwrap();
         match out {
             EngineOutput::ResultSet { rows, .. } => {
-                assert_eq!(rows.len(), 1);
-                assert!(
-                    rows[0][0].contains("64"),
-                    "expected w_ytd=64 (2 workers x 32), got {:?}",
-                    rows[0]
+                assert_eq!(rows.len(), 2);
+                let hot_ytd: i64 = rows[0][1]
+                    .trim_start_matches("Integer(")
+                    .trim_end_matches(')')
+                    .parse()
+                    .unwrap_or_else(|_| rows[0][1].parse().expect("numeric w_ytd"));
+                let other_ytd: i64 = rows[1][1]
+                    .trim_start_matches("Integer(")
+                    .trim_end_matches(')')
+                    .parse()
+                    .unwrap_or_else(|_| rows[1][1].parse().expect("numeric w_ytd"));
+                assert_eq!(
+                    hot_ytd,
+                    (HOT_WORKERS as i64) * (ITERS as i64),
+                    "expected w_ytd for w_id=1"
+                );
+                assert_eq!(
+                    other_ytd,
+                    (OTHER_WORKERS as i64) * (ITERS as i64),
+                    "expected w_ytd for w_id=2"
                 );
             }
             _ => panic!("expected result set"),
