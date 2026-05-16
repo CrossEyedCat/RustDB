@@ -14,10 +14,10 @@ use rustdb::network::client::{
 use rustdb::network::engine::engine_error_code;
 use rustdb::network::framing::{
     decode_server_frame_v1, encode_client_message_v1, ClientMessage, ExecuteScriptPayload,
-    QueryPayload, ServerMessage,
+    ExecuteTpccPayload, QueryPayload, ServerMessage,
 };
 use rustdb::network::query_stream::read_application_frame_into;
-use rustdb::tpcc_workload::{run_tpcc, Mix, TpccExec, TpccRunConfig};
+use rustdb::tpcc_workload::{run_tpcc, txn_kind_as_u8, Mix, TpccExec, TpccRunConfig, TxnKind};
 use rustls::pki_types::CertificateDer;
 use std::fs;
 use std::net::SocketAddr;
@@ -81,6 +81,10 @@ struct Args {
     #[arg(long, default_value_t = false)]
     shared_connection: bool,
 
+    /// Use native `ExecuteTpcc` wire path (one RTT per txn); falls back to `ExecuteScript` if unsupported.
+    #[arg(long, default_value_t = false)]
+    native_tpcc: bool,
+
     /// Number of QUIC connections when not using `--shared-connection` (default: one per worker).
     #[arg(long)]
     connections: Option<usize>,
@@ -98,6 +102,7 @@ struct QuicExec {
     conn: Connection,
     stream: Arc<Mutex<Option<WorkerBiStream>>>,
     execute_script: Arc<AtomicBool>,
+    native_tpcc: Arc<AtomicBool>,
 }
 
 impl QuicExec {
@@ -156,6 +161,22 @@ impl QuicExec {
         Ok(())
     }
 
+    async fn run_execute_tpcc_on_stream(
+        bi: &mut WorkerBiStream,
+        kind: u8,
+        seed: u64,
+        global_txn_id: u64,
+    ) -> Result<ServerMessage, Box<dyn std::error::Error + Send + Sync>> {
+        let frame = encode_client_message_v1(&ClientMessage::ExecuteTpcc(ExecuteTpccPayload {
+            kind,
+            seed,
+            global_txn_id,
+        }))?;
+        bi.send.write_all(&frame).await?;
+        read_application_frame_into(&mut bi.recv, 64 * 1024 * 1024, &mut bi.recv_buf).await?;
+        Ok(decode_server_frame_v1(&bi.recv_buf)?)
+    }
+
     async fn run_batch_on_stream(
         bi: &mut WorkerBiStream,
         sqls: &[String],
@@ -179,6 +200,44 @@ impl QuicExec {
 
 #[async_trait]
 impl TpccExec for QuicExec {
+    fn native_tpcc_enabled(&self) -> bool {
+        self.native_tpcc.load(Ordering::Relaxed)
+    }
+
+    async fn run_native_tpcc(
+        &self,
+        kind: TxnKind,
+        seed: u64,
+        global_txn_id: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        const MAX_ATTEMPTS: usize = 2;
+        let wire_kind = txn_kind_as_u8(kind);
+        for attempt in 0..MAX_ATTEMPTS {
+            let mut guard = self.stream.lock().await;
+            if guard.is_none() {
+                *guard = Some(Self::open_stream(&self.conn).await?);
+            }
+            let bi = guard.as_mut().expect("stream just opened");
+            match Self::run_execute_tpcc_on_stream(bi, wire_kind, seed, global_txn_id).await {
+                Ok(ServerMessage::Error(p)) => {
+                    return Err(format!("server error: {}: {}", p.code, p.message).into());
+                }
+                Ok(msg) if Self::execute_script_unsupported(&msg) => {
+                    self.native_tpcc.store(false, Ordering::Relaxed);
+                    return Err("ExecuteTpcc not supported by server".into());
+                }
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    *guard = None;
+                    if attempt + 1 >= MAX_ATTEMPTS {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        unreachable!()
+    }
+
     async fn run_sql_batch(
         &self,
         sqls: &[String],
@@ -230,6 +289,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     conn: conn.clone(),
                     stream: Arc::new(Mutex::new(None)),
                     execute_script: Arc::new(AtomicBool::new(true)),
+                    native_tpcc: Arc::new(AtomicBool::new(args.native_tpcc)),
                 })
             })
             .collect()
@@ -245,6 +305,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     conn: conns[worker_idx % conn_count].clone(),
                     stream: Arc::new(Mutex::new(None)),
                     execute_script: Arc::new(AtomicBool::new(true)),
+                    native_tpcc: Arc::new(AtomicBool::new(args.native_tpcc)),
                 })
             })
             .collect()
@@ -260,6 +321,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             mix,
             mix_string: args.mix.clone(),
             txn_log: args.txn_log.clone(),
+            use_native_tpcc: args.native_tpcc,
         },
     )
     .await?;

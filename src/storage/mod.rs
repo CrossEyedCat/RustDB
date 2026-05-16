@@ -13,6 +13,7 @@ pub mod optimized_file_manager;
 pub mod page;
 pub mod page_manager;
 pub mod row;
+pub mod row_locks;
 pub mod schema_manager;
 pub mod tuple;
 

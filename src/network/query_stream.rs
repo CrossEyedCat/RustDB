@@ -22,8 +22,8 @@ use crate::network::engine::{
 };
 use crate::network::framing::{
     decode_client_frame_v1, encode_server_message_v1, encode_server_message_write, ClientMessage,
-    ExecuteScriptPayload, ExecutionOkPayload, FrameHeader, ProtocolError, QueryPayload,
-    ServerMessage, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_BYTES, PROTOCOL_VERSION_V1,
+    ExecuteScriptPayload, ExecuteTpccPayload, ExecutionOkPayload, FrameHeader, ProtocolError,
+    QueryPayload, ServerMessage, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_BYTES, PROTOCOL_VERSION_V1,
 };
 use crate::network::metrics::{QueryHandledOutcome, QuicMetrics};
 
@@ -232,6 +232,9 @@ pub fn dispatch_client_message_with_ctx(
         ClientMessage::ExecuteScript(script) => {
             dispatch_execute_script(script, engine, policy, session_ctx)
         }
+        ClientMessage::ExecuteTpcc(tpcc) => {
+            dispatch_execute_tpcc(tpcc, engine, policy, session_ctx)
+        }
         ClientMessage::ClientHello(_) => Err(EngineError::new(
             engine_error_code::PROTOCOL,
             "expected Query frame on this bidirectional stream (ClientHello is not supported here)",
@@ -246,38 +249,81 @@ fn dispatch_execute_script(
     policy: &StreamPolicy,
     session_ctx: &mut SessionContext,
 ) -> Result<Arc<[u8]>, DispatchError> {
-    let span = info_span!("sql.execute_script", statement_count = script.sqls.len());
+    let wall_clock = Instant::now();
+    let span = info_span!(
+        "sql.execute_script",
+        statement_count = script.sqls.len(),
+        wall_us = tracing::field::Empty,
+    );
     let _g = span.enter();
-    let mut rows_affected: u64 = 0;
-    for sql in &script.sqls {
-        if sql.len() > policy.max_sql_bytes {
-            return Err(EngineError::new(
-                engine_error_code::SQL_TOO_LONG,
-                "SQL text exceeds configured max_sql_bytes",
-            )
-            .into());
-        }
-        let out = engine.execute_sql(sql, session_ctx)?;
-        let out = enforce_max_result_rows(out, policy.max_result_rows)?;
-        match out {
-            EngineOutput::ExecutionOk { rows_affected: n } => {
-                rows_affected = rows_affected.saturating_add(n)
+    let out = (|| -> Result<Arc<[u8]>, DispatchError> {
+        let mut rows_affected: u64 = 0;
+        for sql in &script.sqls {
+            if sql.len() > policy.max_sql_bytes {
+                return Err(EngineError::new(
+                    engine_error_code::SQL_TOO_LONG,
+                    "SQL text exceeds configured max_sql_bytes",
+                )
+                .into());
             }
-            EngineOutput::ResultSet { .. } => {}
+            let out = engine.execute_sql(sql, session_ctx)?;
+            let out = enforce_max_result_rows(out, policy.max_result_rows)?;
+            match out {
+                EngineOutput::ExecutionOk { rows_affected: n } => {
+                    rows_affected = rows_affected.saturating_add(n)
+                }
+                EngineOutput::ResultSet { .. } => {}
+            }
         }
-    }
-    let server = ServerMessage::ExecutionOk(ExecutionOkPayload { rows_affected });
-    TL_ENCODE_BUF.with(|b| {
-        let mut buf = b.borrow_mut();
-        buf.clear();
-        let cap = buf.capacity();
-        if cap < 256 {
-            buf.reserve(256 - cap);
-        }
-        encode_server_message_write(PROTOCOL_VERSION_V1, &server, &mut *buf)?;
-        let owned = std::mem::take(&mut *buf);
-        Ok(Arc::from(owned.into_boxed_slice()))
-    })
+        let server = ServerMessage::ExecutionOk(ExecutionOkPayload { rows_affected });
+        TL_ENCODE_BUF.with(|b| {
+            let mut buf = b.borrow_mut();
+            buf.clear();
+            let cap = buf.capacity();
+            if cap < 256 {
+                buf.reserve(256 - cap);
+            }
+            encode_server_message_write(PROTOCOL_VERSION_V1, &server, &mut *buf)?;
+            let owned = std::mem::take(&mut *buf);
+            Ok(Arc::from(owned.into_boxed_slice()))
+        })
+    })();
+    span.record("wall_us", wall_clock.elapsed().as_micros());
+    out
+}
+
+fn dispatch_execute_tpcc(
+    tpcc: ExecuteTpccPayload,
+    engine: &dyn EngineHandle,
+    policy: &StreamPolicy,
+    session_ctx: &mut SessionContext,
+) -> Result<Arc<[u8]>, DispatchError> {
+    let wall_clock = Instant::now();
+    let span = info_span!(
+        "sql.execute_tpcc",
+        kind = tpcc.kind,
+        global_txn_id = tpcc.global_txn_id,
+        wall_us = tracing::field::Empty,
+    );
+    let _g = span.enter();
+    let out = (|| -> Result<Arc<[u8]>, DispatchError> {
+        let out = engine.execute_tpcc(tpcc.kind, tpcc.seed, tpcc.global_txn_id, session_ctx)?;
+        let out = enforce_max_result_rows(out, policy.max_result_rows)?;
+        let server = out.into_server_message();
+        TL_ENCODE_BUF.with(|b| {
+            let mut buf = b.borrow_mut();
+            buf.clear();
+            let cap = buf.capacity();
+            if cap < 256 {
+                buf.reserve(256 - cap);
+            }
+            encode_server_message_write(PROTOCOL_VERSION_V1, &server, &mut *buf)?;
+            let owned = std::mem::take(&mut *buf);
+            Ok(Arc::from(owned.into_boxed_slice()))
+        })
+    })();
+    span.record("wall_us", wall_clock.elapsed().as_micros());
+    out
 }
 
 fn connection_sql_worker_count() -> usize {

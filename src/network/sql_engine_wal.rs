@@ -10,6 +10,7 @@ use crate::logging::log_writer::{LogWriter, LogWriterConfig};
 use crate::logging::recovery::{RecoveryConfig, RecoveryManager};
 use crate::network::engine::{engine_error_code, EngineError, SqlIsolationLevel, SqlTransaction};
 use crate::storage::page_manager::PageManager;
+use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -309,17 +310,33 @@ pub(crate) fn flush_page_managers_for_tables(
         .table_page_managers
         .lock()
         .map_err(|_| DbError::database("table pm map lock poisoned"))?;
-    let mut n = 0usize;
-    for name in tables {
-        if let Some(pm) = map.get(name) {
+    let pms: Vec<Arc<Mutex<PageManager>>> = tables
+        .iter()
+        .filter_map(|name| map.get(name).cloned())
+        .collect();
+    drop(map);
+    if pms.len() <= 1 {
+        let mut n = 0usize;
+        for pm in pms {
             n += pm
                 .lock()
                 .map_err(|_| DbError::database("table page manager lock poisoned"))?
                 .flush_dirty_pages()
                 .map_err(|e| DbError::database(e.to_string()))?;
         }
+        return Ok(n);
     }
-    Ok(n)
+    Ok(pms
+        .par_iter()
+        .map(|pm| {
+            pm.lock()
+                .map_err(|_| DbError::database("table page manager lock poisoned"))?
+                .flush_dirty_pages()
+                .map_err(|e| DbError::database(e.to_string()))
+        })
+        .collect::<DbResult<Vec<_>>>()?
+        .into_iter()
+        .sum())
 }
 
 pub(crate) fn flush_all_page_managers(

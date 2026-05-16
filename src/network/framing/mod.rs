@@ -17,6 +17,7 @@ pub use header::{
     FrameHeader, FRAME_HEADER_LEN, FRAME_MAGIC, MAX_FRAME_PAYLOAD_BYTES, PROTOCOL_VERSION_V1,
 };
 pub use messages::{
-    ClientHelloPayload, ClientMessage, ErrorPayload, ExecuteScriptPayload, ExecutionOkPayload,
-    MessageKind, QueryPayload, ResultSetPayload, ServerMessage, ServerReadyPayload,
+    ClientHelloPayload, ClientMessage, ErrorPayload, ExecuteScriptPayload, ExecuteTpccPayload,
+    ExecutionOkPayload, MessageKind, QueryPayload, ResultSetPayload, ServerMessage,
+    ServerReadyPayload,
 };

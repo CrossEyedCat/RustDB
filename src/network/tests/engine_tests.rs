@@ -22,6 +22,7 @@ fn stub_returns_empty_rows() {
     let mut ctx = SessionContext {
         session_id: Some(42),
         transaction: None,
+        skip_dml_storage_lock: false,
     };
     let out = engine.execute_sql("SELECT * FROM t", &mut ctx).expect("ok");
     assert_eq!(

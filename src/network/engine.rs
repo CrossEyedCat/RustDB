@@ -126,6 +126,8 @@ pub struct SessionContext {
     pub session_id: Option<u64>,
     /// User transaction (`BEGIN` … `COMMIT` / `ROLLBACK`), if any.
     pub transaction: Option<SqlTransaction>,
+    /// When true, per-statement DML skips table/row locks (held by the native TPC-C batch path).
+    pub(crate) skip_dml_storage_lock: bool,
 }
 
 impl Default for SessionContext {
@@ -133,6 +135,7 @@ impl Default for SessionContext {
         Self {
             session_id: None,
             transaction: None,
+            skip_dml_storage_lock: false,
         }
     }
 }
@@ -202,6 +205,21 @@ impl EngineOutput {
 pub trait EngineHandle: Send + Sync {
     fn execute_sql(&self, sql: &str, ctx: &mut SessionContext)
         -> Result<EngineOutput, EngineError>;
+
+    /// Native TPC-C transaction (one round-trip). Default: not supported.
+    fn execute_tpcc(
+        &self,
+        kind: u8,
+        seed: u64,
+        global_txn_id: u64,
+        ctx: &mut SessionContext,
+    ) -> Result<EngineOutput, EngineError> {
+        let _ = (kind, seed, global_txn_id, ctx);
+        Err(EngineError::new(
+            engine_error_code::PROTOCOL,
+            "ExecuteTpcc not supported",
+        ))
+    }
 
     /// Whether the network layer may memoize and serve **pre-encoded** wire frames for deterministic
     /// `SELECT` queries without `FROM` (literal projections).

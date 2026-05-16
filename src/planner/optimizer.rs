@@ -727,15 +727,15 @@ impl QueryOptimizer {
     }
 
     fn eq_filters_from_filter(&self, filter: &FilterNode) -> HashMap<String, String> {
-        if let Some(pred) = &filter.predicate {
-            extract_equality_filters(pred)
-        } else if let Some(eq) = &filter.equality {
-            let mut map = HashMap::new();
+        let mut map = filter
+            .predicate
+            .as_ref()
+            .map(extract_equality_filters)
+            .unwrap_or_default();
+        if let Some(eq) = &filter.equality {
             map.insert(eq.column.clone(), literal_to_string(&eq.literal));
-            map
-        } else {
-            HashMap::new()
         }
+        map
     }
 
     /// Merges filter-node equalities with legacy bare-literal `TableScan.filter` hints.

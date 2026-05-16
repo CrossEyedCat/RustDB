@@ -138,7 +138,7 @@ impl QueryExecutor {
                 value: c.value.clone(),
             })
             .collect();
-        let schema = vec!["id".to_string(), "data".to_string()];
+        let schema = vec!["*".to_string()];
         let operator = self.scan_factory.create_index_scan(
             idx.table_name.clone(),
             idx.index_name.clone(),

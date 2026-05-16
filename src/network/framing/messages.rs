@@ -15,6 +15,7 @@ pub enum MessageKind {
     ClientHello = 5,
     ServerReady = 6,
     ExecuteScript = 7,
+    ExecuteTpcc = 8,
 }
 
 impl MessageKind {
@@ -36,6 +37,7 @@ impl TryFrom<u16> for MessageKind {
             5 => Ok(MessageKind::ClientHello),
             6 => Ok(MessageKind::ServerReady),
             7 => Ok(MessageKind::ExecuteScript),
+            8 => Ok(MessageKind::ExecuteTpcc),
             _ => Err(()),
         }
     }
@@ -61,12 +63,22 @@ pub struct ExecuteScriptPayload {
     pub sqls: Vec<String>,
 }
 
+/// Native TPC-C transaction (one wire round-trip; server runs the full txn).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecuteTpccPayload {
+    /// [`crate::tpcc_workload::TxnKind`] as `u8` (0=new_order … 4=stock_level).
+    pub kind: u8,
+    pub seed: u64,
+    pub global_txn_id: u64,
+}
+
 /// Messages sent from client to server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientMessage {
     Query(QueryPayload),
     ClientHello(ClientHelloPayload),
     ExecuteScript(ExecuteScriptPayload),
+    ExecuteTpcc(ExecuteTpccPayload),
 }
 
 // --- Server → client payloads ------------------------------------------------

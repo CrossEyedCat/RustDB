@@ -38,7 +38,8 @@
 //! `DmlPlanValidationCache`). Cache is cleared on catalog persist and optimizer rebuild.
 //!
 //! **Profiling:** set `RUSTDB_SQL_PHASE_LOG=1` to emit `tracing` events on target `rustdb::sql_phases`
-//! (parse latency, `UPDATE`/`DELETE` scan vs row loop). Use `RUST_LOG=rustdb::sql_phases=info` to filter.
+//! (parse latency, per-table `lock_wait_us` on storage lock acquire, `UPDATE`/`DELETE` scan vs row loop).
+//! Use `RUST_LOG=rustdb::sql_phases=info` to filter.
 
 use crate::catalog::schema::{
     CheckConstraint, ForeignKeyConstraintDef, SchemaManager, TableSchema, UniqueConstraintDef,
@@ -66,6 +67,7 @@ use crate::parser::{SqlParser, SqlStatement};
 use crate::planner::{QueryOptimizer, QueryPlanner};
 use crate::storage::index_registry::IndexRegistry;
 use crate::storage::page_manager::{PageManager, PageManagerConfig};
+use crate::storage::row_locks::RowLockManager;
 use crate::storage::tuple::Tuple;
 use crate::Row;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -76,6 +78,7 @@ use std::time::Instant;
 use tracing::{info, info_span};
 
 mod alter_table_ops;
+mod tpcc_native;
 
 /// Global lock: at most one [`SqlIsolationLevel::RepeatableRead`] or [`SqlIsolationLevel::Serializable`]
 /// engine transaction across all sessions.
@@ -167,7 +170,7 @@ pub(crate) struct SqlEngineState {
     optimizer: Mutex<QueryOptimizer>,
     executor: QueryExecutor,
     /// Secondary indexes maintained for `CREATE INDEX` (not persisted across bare-metal restarts).
-    index_registry: Arc<Mutex<IndexRegistry>>,
+    index_registry: Arc<RwLock<IndexRegistry>>,
     /// Cache for deterministic `SELECT` queries without `FROM` (literal projections only).
     ///
     /// These queries are common in benchmarks (`SELECT 1`) and are safe to memoize.
@@ -180,6 +183,8 @@ pub(crate) struct SqlEngineState {
     storage_access: RwLock<()>,
     /// Per physical table: coordinates concurrent `SELECT` (shared) vs DML writers (exclusive).
     table_storage_locks: Mutex<HashMap<String, Arc<RwLock<()>>>>,
+    /// Per-row locks for index-backed single-row UPDATE/DELETE.
+    row_locks: RowLockManager,
     /// Structured WAL (`src/logging`); disabled when `RUSTDB_DISABLE_WAL` is set.
     wal: Option<crate::network::sql_engine_wal::SqlEngineWal>,
 }
@@ -218,7 +223,7 @@ impl SqlEngine {
         let pm = Arc::new(Mutex::new(pm));
         let table_pms: Arc<Mutex<HashMap<String, Arc<Mutex<PageManager>>>>> =
             Arc::new(Mutex::new(HashMap::new()));
-        let index_registry = Arc::new(Mutex::new(IndexRegistry::new()));
+        let index_registry = Arc::new(RwLock::new(IndexRegistry::new()));
         let factory = Arc::new(ScanOperatorFactory::with_tables(
             pm.clone(),
             table_pms.clone(),
@@ -242,6 +247,7 @@ impl SqlEngine {
             constraint_runtime: Mutex::new(ConstraintRuntime::new()),
             storage_access: RwLock::new(()),
             table_storage_locks: Mutex::new(HashMap::new()),
+            row_locks: RowLockManager::new(),
             wal,
         });
         if state.wal.is_some() && wal_dir.is_dir() {
@@ -302,7 +308,7 @@ impl SqlEngine {
         wal.checkpoint_statistics()
     }
 
-    fn execute_sql_inner(
+    pub(crate) fn execute_sql_inner(
         state: &SqlEngineState,
         sql: &str,
         ctx: &mut SessionContext,
@@ -405,7 +411,8 @@ impl SqlEngine {
                         .collect::<Result<_, _>>()?;
                     let _table_reads: Vec<std::sync::RwLockReadGuard<'_, ()>> = locks
                         .iter()
-                        .map(|l| l.read().map_err(|_| lock_poisoned_engine()))
+                        .zip(table_names.iter())
+                        .map(|(l, table)| acquire_table_storage_read_lock(l, table))
                         .collect::<Result<_, _>>()?;
                     let plan = {
                         let s = info_span!("sql.plan");
@@ -452,7 +459,7 @@ impl SqlEngine {
                     }
                     InsertValues::Values(_) => {
                         let lock = table_storage_lock_arc(state, &ins.table)?;
-                        let _table_write = lock.write().map_err(|_| lock_poisoned_engine())?;
+                        let _table_write = acquire_table_storage_write_lock(&lock, &ins.table)?;
                         execute_dml_autocommit(state, ctx, |state, ctx| {
                             execute_insert(state, ctx, sql, stmt, ins)
                         })
@@ -462,19 +469,19 @@ impl SqlEngine {
             SqlStatement::Update(upd) => {
                 let s = info_span!("sql.update", table = %upd.table);
                 let _sg = s.enter();
-                let lock = table_storage_lock_arc(state, &upd.table)?;
-                let _table_write = lock.write().map_err(|_| lock_poisoned_engine())?;
-                execute_dml_autocommit(state, ctx, |state, ctx| {
-                    execute_update(state, ctx, sql, stmt, upd)
+                with_dml_write_lock(state, &upd.table, ctx.skip_dml_storage_lock, || {
+                    execute_dml_autocommit(state, ctx, |state, ctx| {
+                        execute_update(state, ctx, sql, stmt, upd)
+                    })
                 })
             }
             SqlStatement::Delete(del) => {
                 let s = info_span!("sql.delete", table = %del.table);
                 let _sg = s.enter();
-                let lock = table_storage_lock_arc(state, &del.table)?;
-                let _table_write = lock.write().map_err(|_| lock_poisoned_engine())?;
-                execute_dml_autocommit(state, ctx, |state, ctx| {
-                    execute_delete(state, ctx, sql, stmt, del)
+                with_dml_write_lock(state, &del.table, ctx.skip_dml_storage_lock, || {
+                    execute_dml_autocommit(state, ctx, |state, ctx| {
+                        execute_delete(state, ctx, sql, stmt, del)
+                    })
                 })
             }
             SqlStatement::CreateIndex(ci) => {
@@ -574,6 +581,16 @@ impl EngineHandle for SqlEngine {
         Self::execute_sql_inner(self.state.as_ref(), sql, ctx)
     }
 
+    fn execute_tpcc(
+        &self,
+        kind: u8,
+        seed: u64,
+        global_txn_id: u64,
+        ctx: &mut SessionContext,
+    ) -> Result<EngineOutput, EngineError> {
+        tpcc_native::execute_tpcc(self.state.as_ref(), kind, seed, global_txn_id, ctx)
+    }
+
     fn supports_select_no_from_wire_cache(&self) -> bool {
         true
     }
@@ -668,6 +685,56 @@ fn table_storage_lock_arc(
         .entry(table.to_string())
         .or_insert_with(|| Arc::new(RwLock::new(())))
         .clone())
+}
+
+fn acquire_table_storage_read_lock<'a>(
+    lock: &'a RwLock<()>,
+    table: &str,
+) -> Result<std::sync::RwLockReadGuard<'a, ()>, EngineError> {
+    let wait_clock = sql_phase_log_enabled().then(Instant::now);
+    let guard = lock.read().map_err(|_| lock_poisoned_engine())?;
+    if let Some(t0) = wait_clock {
+        info!(
+            target: "rustdb::sql_phases",
+            table = %table,
+            mode = "read",
+            lock_wait_us = t0.elapsed().as_micros() as u64,
+            "table_storage_lock"
+        );
+    }
+    Ok(guard)
+}
+
+fn acquire_table_storage_write_lock<'a>(
+    lock: &'a RwLock<()>,
+    table: &str,
+) -> Result<std::sync::RwLockWriteGuard<'a, ()>, EngineError> {
+    let wait_clock = sql_phase_log_enabled().then(Instant::now);
+    let guard = lock.write().map_err(|_| lock_poisoned_engine())?;
+    if let Some(t0) = wait_clock {
+        info!(
+            target: "rustdb::sql_phases",
+            table = %table,
+            mode = "write",
+            lock_wait_us = t0.elapsed().as_micros() as u64,
+            "table_storage_lock"
+        );
+    }
+    Ok(guard)
+}
+
+fn with_dml_write_lock<T>(
+    state: &SqlEngineState,
+    table: &str,
+    skip_storage_lock: bool,
+    f: impl FnOnce() -> Result<T, EngineError>,
+) -> Result<T, EngineError> {
+    if skip_storage_lock {
+        return f();
+    }
+    let lock = table_storage_lock_arc(state, table)?;
+    let _guard = acquire_table_storage_write_lock(&lock, table)?;
+    f()
 }
 
 /// Physical base table names from [`TableReference::Table`] only (not `QualifiedIdentifier`).
@@ -865,13 +932,29 @@ fn commit_transaction(
             "no active transaction",
         )
     })?;
+    let flush_tables_count = tx.touched_tables.len();
+    let commit_log_fsync = state.durability.fsync_on_commit();
+    let span = info_span!(
+        "sql.commit",
+        flush_tables_count,
+        flush_us = tracing::field::Empty,
+        wal_us = tracing::field::Empty,
+        commit_log_fsync,
+    );
+    let _g = span.enter();
+    let wal_clock = state.wal.is_some().then(Instant::now);
     if let Some(ref wal) = state.wal {
         wal.log_commit(&mut tx)?;
     }
+    if let Some(t0) = wal_clock {
+        span.record("wal_us", t0.elapsed().as_micros());
+    }
     let touched = std::mem::take(&mut tx.touched_tables);
+    let flush_clock = Instant::now();
     crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &touched)
         .map_err(map_db_err)?;
-    sql_commit_log::append_commit_log_line(&state.data_dir, state.durability.fsync_on_commit())
+    span.record("flush_us", flush_clock.elapsed().as_micros());
+    sql_commit_log::append_commit_log_line(&state.data_dir, commit_log_fsync)
         .map_err(map_db_err)?;
     drop(tx);
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
@@ -1165,7 +1248,7 @@ fn physical_drop_table(state: &SqlEngineState, table: &str) -> Result<(), Engine
     {
         let mut ir = state
             .index_registry
-            .lock()
+            .write()
             .map_err(|_| lock_poisoned_engine())?;
         ir.remove_all_indexes_for_table(table);
     }
@@ -1315,6 +1398,25 @@ fn literal_to_index_key_string(lit: &Literal) -> String {
     column_value_to_index_string(&literal_to_column_value(lit))
 }
 
+/// Emits `sql.dml.index_lookup` tracing span for DML index path observability.
+fn record_dml_index_lookup(
+    table: &str,
+    hit: bool,
+    exact_key: bool,
+    rids: usize,
+    reason: Option<&'static str>,
+) {
+    let _span = info_span!(
+        "sql.dml.index_lookup",
+        table = %table,
+        hit,
+        exact_key,
+        rids,
+        reason = reason.unwrap_or(""),
+    )
+    .entered();
+}
+
 /// Index-backed row fetch for UPDATE/DELETE when a matching index exists.
 ///
 /// Returns `(rows, skip_heap_where)` when an index applies; `skip_heap_where` is true when the
@@ -1327,6 +1429,7 @@ fn try_dml_rows_via_index(
 ) -> Result<Option<(Vec<(RecordId, Vec<u8>)>, bool)>, EngineError> {
     let lit_eq = extract_dml_where_equalities(where_expr);
     if lit_eq.is_empty() {
+        record_dml_index_lookup(table, false, false, 0, Some("parse_where_failed"));
         return Ok(None);
     }
     let equalities: HashMap<String, String> = lit_eq
@@ -1335,12 +1438,13 @@ fn try_dml_rows_via_index(
         .collect();
     let ir = state
         .index_registry
-        .lock()
+        .read()
         .map_err(|_| lock_poisoned_engine())?;
-    let Some((rids, index_exact)) = ir
+    let lookup = ir
         .lookup_record_ids_by_equalities(table, &equalities)
-        .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index lookup: {e}")))?
-    else {
+        .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index lookup: {e}")))?;
+    let Some((rids, index_exact)) = lookup else {
+        record_dml_index_lookup(table, false, false, 0, Some("no_index"));
         return Ok(None);
     };
     let where_eq_cols: HashSet<String> = extract_dml_where_equalities(where_expr)
@@ -1354,6 +1458,7 @@ fn try_dml_rows_via_index(
             rows.push((rid, data));
         }
     }
+    record_dml_index_lookup(table, true, index_exact, rows.len(), None);
     Ok(Some((rows, skip_heap_where)))
 }
 
@@ -1366,7 +1471,7 @@ fn sync_index_after_insert(
     let m = tuple_to_index_column_map(tuple);
     let mut ir = state
         .index_registry
-        .lock()
+        .write()
         .map_err(|_| lock_poisoned_engine())?;
     ir.insert_into_indexes(table, rid, &m)
         .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index insert: {e}")))?;
@@ -1384,7 +1489,7 @@ fn sync_index_after_update(
     let new_m = tuple_to_index_column_map(new_tuple);
     let mut ir = state
         .index_registry
-        .lock()
+        .write()
         .map_err(|_| lock_poisoned_engine())?;
     ir.update_indexes(table, rid, &old_m, &new_m)
         .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index update: {e}")))?;
@@ -1400,7 +1505,7 @@ fn sync_index_after_delete(
     let m = tuple_to_index_column_map(tuple);
     let mut ir = state
         .index_registry
-        .lock()
+        .write()
         .map_err(|_| lock_poisoned_engine())?;
     ir.delete_from_indexes(table, rid, &m)
         .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index delete: {e}")))?;
@@ -1410,7 +1515,7 @@ fn sync_index_after_delete(
 fn rebuild_optimizer_with_indexes(state: &SqlEngineState) -> Result<(), EngineError> {
     let snapshot = state
         .index_registry
-        .lock()
+        .read()
         .map_err(|_| lock_poisoned_engine())?
         .clone();
     let mut opt = state.optimizer.lock().map_err(|_| lock_poisoned_engine())?;
@@ -1488,7 +1593,7 @@ fn execute_create_index(
     {
         let mut reg = state
             .index_registry
-            .lock()
+            .write()
             .map_err(|_| lock_poisoned_engine())?;
         reg.create_index(table, &ci.index_name, ci.columns.clone())
             .map_err(|e| {
@@ -1513,7 +1618,7 @@ fn backfill_index_from_heap(
         .map_err(map_db_err)?;
     let mut ir = state
         .index_registry
-        .lock()
+        .write()
         .map_err(|_| lock_poisoned_engine())?;
     for (rid, data) in snapshot {
         let tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
@@ -2697,6 +2802,191 @@ mod tests {
     }
 
     #[test]
+    fn sql_engine_oorder_order_status_select_uses_index() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql(
+            "CREATE TABLE oorder (o_id INTEGER, o_d_id INTEGER, o_w_id INTEGER, o_c_id INTEGER, o_ol_cnt INTEGER)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "CREATE INDEX idx_oorder_wdc ON oorder (o_w_id, o_d_id, o_c_id)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "INSERT INTO oorder (o_id, o_d_id, o_w_id, o_c_id, o_ol_cnt) VALUES (1, 2, 1, 3, 1), (2, 2, 1, 4, 1), (3, 3, 1, 3, 1)",
+            &mut ctx,
+        )
+        .unwrap();
+        let out = eng
+            .execute_sql(
+                "SELECT o_id FROM oorder WHERE o_w_id = 1 AND o_d_id = 2 AND o_c_id = 3",
+                &mut ctx,
+            )
+            .unwrap();
+        match out {
+            EngineOutput::ResultSet { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert!(rows[0][0].contains('1'));
+            }
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
+    fn order_status_plan_uses_idx_oorder_wdc_index_scan() {
+        use crate::parser::{SqlParser, SqlStatement};
+        use crate::planner::{PlanNode, QueryPlanner};
+
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql(
+            "CREATE TABLE oorder (o_id INTEGER, o_d_id INTEGER, o_w_id INTEGER, o_c_id INTEGER, o_ol_cnt INTEGER)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "CREATE INDEX idx_oorder_wdc ON oorder (o_w_id, o_d_id, o_c_id)",
+            &mut ctx,
+        )
+        .unwrap();
+
+        let sql = "SELECT o_id FROM oorder WHERE o_w_id = 1 AND o_d_id = 2 AND o_c_id = 3";
+        let mut parser = SqlParser::new(sql).unwrap();
+        let stmt = parser.parse_multiple().unwrap().remove(0);
+        let SqlStatement::Select(sel) = stmt else {
+            panic!("expected SELECT");
+        };
+        let state = eng.state_for_test();
+        let plan = state
+            .planner
+            .create_plan(&SqlStatement::Select(sel))
+            .unwrap();
+        let optimized = state.optimizer.lock().unwrap().optimize(plan).unwrap();
+        fn plan_has_oorder_index_scan(node: &PlanNode) -> bool {
+            match node {
+                PlanNode::IndexScan(idx) => {
+                    idx.table_name == "oorder" && idx.index_name == "idx_oorder_wdc"
+                }
+                PlanNode::Filter(f) => plan_has_oorder_index_scan(&f.input),
+                PlanNode::Projection(p) => plan_has_oorder_index_scan(&p.input),
+                _ => false,
+            }
+        }
+        assert!(
+            plan_has_oorder_index_scan(&optimized.optimized_plan.root),
+            "expected IndexScan on oorder.idx_oorder_wdc, got {:?}",
+            optimized.optimized_plan.root
+        );
+    }
+
+    #[test]
+    fn concurrent_payment_updates_on_hot_warehouse_row() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = TempDir::new().unwrap();
+        let eng = Arc::new(SqlEngine::open(dir.path().to_path_buf()).unwrap());
+        let mut ctx = SessionContext::default();
+        eng.execute_sql(
+            "CREATE TABLE warehouse (w_id INTEGER, w_ytd INTEGER)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql("CREATE INDEX idx_wh_id ON warehouse (w_id)", &mut ctx)
+            .unwrap();
+        eng.execute_sql(
+            "INSERT INTO warehouse (w_id, w_ytd) VALUES (1, 0)",
+            &mut ctx,
+        )
+        .unwrap();
+
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let eng = Arc::clone(&eng);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..32 {
+                    let mut ctx = SessionContext::default();
+                    eng.execute_sql(
+                        "UPDATE warehouse SET w_ytd = w_ytd + 1 WHERE w_id = 1",
+                        &mut ctx,
+                    )
+                    .expect("concurrent payment update");
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("worker join");
+        }
+        let mut ctx = SessionContext::default();
+        let out = eng
+            .execute_sql("SELECT w_ytd FROM warehouse WHERE w_id = 1", &mut ctx)
+            .unwrap();
+        match out {
+            EngineOutput::ResultSet { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert!(
+                    rows[0][0].contains("64"),
+                    "expected w_ytd=64 (2 workers x 32), got {:?}",
+                    rows[0]
+                );
+            }
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
+    fn sql_engine_dml_index_lookup_exact_key() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql(
+            "CREATE TABLE warehouse (w_id INTEGER, w_ytd INTEGER)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql("CREATE INDEX idx_wh_id ON warehouse (w_id)", &mut ctx)
+            .unwrap();
+        eng.execute_sql(
+            "INSERT INTO warehouse (w_id, w_ytd) VALUES (1, 100), (2, 200)",
+            &mut ctx,
+        )
+        .unwrap();
+        let upd = eng
+            .execute_sql("UPDATE warehouse SET w_ytd = 150 WHERE w_id = 1", &mut ctx)
+            .unwrap();
+        assert_eq!(upd, EngineOutput::ExecutionOk { rows_affected: 1 });
+        let mut eq = HashMap::new();
+        eq.insert("w_id".to_string(), "1".to_string());
+        let indexed = eng
+            .state_for_test()
+            .index_registry
+            .read()
+            .expect("index registry read")
+            .lookup_record_ids_by_equalities("warehouse", &eq)
+            .expect("lookup")
+            .expect("index hit");
+        assert_eq!(indexed.0.len(), 1, "warehouse w_id=1 must be in index");
+        let sel = eng
+            .execute_sql("SELECT w_ytd FROM warehouse WHERE w_id = 1", &mut ctx)
+            .unwrap();
+        match sel {
+            EngineOutput::ResultSet { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert!(rows[0][0].contains("150"));
+            }
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
     fn create_index_backfills_heap_for_delivery_style_delete() {
         let dir = TempDir::new().unwrap();
         let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
@@ -2964,6 +3254,76 @@ mod tests {
             .unwrap();
         match out {
             EngineOutput::ResultSet { rows, .. } => assert_eq!(rows.len(), 1),
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
+    fn concurrent_update_district_row_locks() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let dir = TempDir::new().unwrap();
+        let eng = Arc::new(SqlEngine::open(dir.path().to_path_buf()).unwrap());
+        let mut setup = SessionContext::default();
+        eng.execute_sql(
+            "CREATE TABLE district (d_w_id INTEGER, d_id INTEGER, d_ytd INTEGER)",
+            &mut setup,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "CREATE INDEX idx_district_wd ON district (d_w_id, d_id)",
+            &mut setup,
+        )
+        .unwrap();
+        for d_id in 1..=4 {
+            eng.execute_sql(
+                &format!("INSERT INTO district (d_w_id, d_id, d_ytd) VALUES (1, {d_id}, 0)"),
+                &mut setup,
+            )
+            .unwrap();
+        }
+
+        let barrier = Arc::new(Barrier::new(5));
+        let mut handles = Vec::new();
+        for d_id in 1..=4 {
+            let eng = Arc::clone(&eng);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                let mut ctx = SessionContext::default();
+                for _ in 0..25 {
+                    eng.execute_sql(
+                        &format!(
+                            "UPDATE district SET d_ytd = d_ytd + 1 WHERE d_w_id = 1 AND d_id = {d_id}"
+                        ),
+                        &mut ctx,
+                    )
+                    .expect("update");
+                }
+            }));
+        }
+        barrier.wait();
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let mut ctx = SessionContext::default();
+        let out = eng
+            .execute_sql("SELECT d_id, d_ytd FROM district ORDER BY d_id", &mut ctx)
+            .unwrap();
+        match out {
+            EngineOutput::ResultSet { rows, .. } => {
+                assert_eq!(rows.len(), 4);
+                for row in rows {
+                    let ytd: i64 = row[1]
+                        .trim_start_matches("Integer(")
+                        .trim_end_matches(')')
+                        .parse()
+                        .unwrap_or_else(|_| row[1].parse().expect("numeric d_ytd"));
+                    assert_eq!(ytd, 25, "expected d_ytd=25 per district, got {:?}", row);
+                }
+            }
             _ => panic!("expected result set"),
         }
     }

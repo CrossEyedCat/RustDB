@@ -115,6 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             mix,
             mix_string: args.mix.clone(),
             txn_log: args.txn_log.clone(),
+            use_native_tpcc: false,
         },
     )
     .await?;

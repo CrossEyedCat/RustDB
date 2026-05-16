@@ -19,7 +19,7 @@ use crate::{RecordId, Row};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 /// Base trait for all operators
@@ -646,29 +646,42 @@ impl IndexScanOperator {
             let results = index.range_search(&String::new(), &"\u{10FFFF}".to_string())?;
             self.index_result = results.into_iter().flat_map(|(_, ids)| ids).collect();
         } else {
-            // Use first condition for index lookup
-            let cond = &self.search_conditions[0];
-            let key = cond.value.clone();
-
-            match cond.operator {
-                IndexOperator::Equal => {
-                    if let Some(ids) = index.search(&key)? {
-                        self.index_result = ids;
+            let all_eq = self
+                .search_conditions
+                .iter()
+                .all(|c| matches!(c.operator, IndexOperator::Equal));
+            if all_eq && !self.search_conditions.is_empty() {
+                let key = self
+                    .search_conditions
+                    .iter()
+                    .map(|c| c.value.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\0");
+                if let Some(ids) = index.search(&key)? {
+                    self.index_result = ids;
+                }
+            } else {
+                let cond = &self.search_conditions[0];
+                let key = cond.value.clone();
+                match cond.operator {
+                    IndexOperator::Equal => {
+                        if let Some(ids) = index.search(&key)? {
+                            self.index_result = ids;
+                        }
                     }
-                }
-                IndexOperator::LessThan
-                | IndexOperator::LessThanOrEqual
-                | IndexOperator::GreaterThan
-                | IndexOperator::GreaterThanOrEqual
-                | IndexOperator::Between => {
-                    let (start, end) = self.range_bounds_from_conditions();
-                    let results = index.range_search(&start, &end)?;
-                    self.index_result = results.into_iter().flat_map(|(_, ids)| ids).collect();
-                }
-                IndexOperator::In => {
-                    // IN: multiple equality lookups - for simplicity use range
-                    let results = index.range_search(&key.clone(), &key)?;
-                    self.index_result = results.into_iter().flat_map(|(_, ids)| ids).collect();
+                    IndexOperator::LessThan
+                    | IndexOperator::LessThanOrEqual
+                    | IndexOperator::GreaterThan
+                    | IndexOperator::GreaterThanOrEqual
+                    | IndexOperator::Between => {
+                        let (start, end) = self.range_bounds_from_conditions();
+                        let results = index.range_search(&start, &end)?;
+                        self.index_result = results.into_iter().flat_map(|(_, ids)| ids).collect();
+                    }
+                    IndexOperator::In => {
+                        let results = index.range_search(&key.clone(), &key)?;
+                        self.index_result = results.into_iter().flat_map(|(_, ids)| ids).collect();
+                    }
                 }
             }
         }
@@ -710,20 +723,13 @@ impl IndexScanOperator {
         Ok(row)
     }
 
-    /// Convert record bytes to Row (tries bincode, falls back to simple row)
+    /// Convert heap tuple bytes to a projection [`Row`] (same encoding as [`TableScanOperator`]).
     fn bytes_to_row(bytes: &[u8], schema: &[String]) -> Option<Row> {
-        if let Ok(row) = crate::common::bincode_io::deserialize::<Row>(bytes) {
-            return Some(row);
+        let tuple = Tuple::from_bytes(bytes).ok()?;
+        if tuple.is_deleted {
+            return None;
         }
-        // Fallback: create row with raw data as single column
-        let mut row = Row::new();
-        row.set_value(
-            "data",
-            ColumnValue::new(DataType::Varchar(
-                String::from_utf8_lossy(bytes).to_string(),
-            )),
-        );
-        Some(row)
+        Some(TableScanOperator::tuple_to_row(&tuple, schema))
     }
 
     /// Apply search conditions to row
@@ -2357,7 +2363,7 @@ pub struct ScanOperatorFactory {
     /// Indexes: (table_name, index_name) -> B+ tree (used when `index_registry` is `None`, e.g. tests)
     indexes: Mutex<HashMap<(String, String), Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>>>,
     /// When set, `CREATE INDEX` / DML maintain this registry and index scans resolve through it.
-    index_registry: Option<Arc<Mutex<IndexRegistry>>>,
+    index_registry: Option<Arc<RwLock<IndexRegistry>>>,
     /// When set, a table name not yet in `table_page_managers` opens `<data_dir>/<table>.tbl`
     /// using the same per-table heap files as [`SqlEngine`](crate::network::SqlEngine) for DML. This
     /// lets `SELECT` in a new process see rows inserted into a named heap file earlier.
@@ -2382,7 +2388,7 @@ impl ScanOperatorFactory {
         default_page_manager: Arc<Mutex<StoragePageManager>>,
         table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<StoragePageManager>>>>>,
         data_dir: PathBuf,
-        index_registry: Option<Arc<Mutex<IndexRegistry>>>,
+        index_registry: Option<Arc<RwLock<IndexRegistry>>>,
     ) -> Self {
         Self {
             default_page_manager,
@@ -2491,8 +2497,8 @@ impl ScanOperatorFactory {
         let key = (table_name.clone(), index_name.clone());
         let index = if let Some(reg) = &self.index_registry {
             let g = reg
-                .lock()
-                .map_err(|_| Error::lock("index registry mutex poisoned"))?;
+                .read()
+                .map_err(|_| Error::lock("index registry rwlock poisoned"))?;
             g.get_index(&table_name, &index_name)
                 .ok_or_else(|| Error::query_execution("Index not found for table"))?
         } else {
@@ -2503,14 +2509,9 @@ impl ScanOperatorFactory {
                 .cloned()
                 .ok_or_else(|| Error::query_execution("Index not found for table"))?
         };
-        let operator = IndexScanOperator::new(
-            table_name,
-            index_name,
-            index,
-            self.default_page_manager.clone(),
-            search_conditions,
-            schema,
-        )?;
+        let pm = self.page_manager_for_table(&table_name)?;
+        let operator =
+            IndexScanOperator::new(table_name, index_name, index, pm, search_conditions, schema)?;
         Ok(Box::new(operator))
     }
 }

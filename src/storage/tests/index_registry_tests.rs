@@ -82,6 +82,17 @@ fn test_index_registry_named_index_insert() -> Result<()> {
 }
 
 #[test]
+fn test_index_registry_lookup_miss_no_index() -> Result<()> {
+    let registry = IndexRegistry::new();
+    let mut eq = HashMap::new();
+    eq.insert("w_id".to_string(), "1".to_string());
+    assert!(registry
+        .lookup_record_ids_by_equalities("warehouse", &eq)?
+        .is_none());
+    Ok(())
+}
+
+#[test]
 fn test_index_registry_composite_equality_lookup() -> Result<()> {
     let mut registry = IndexRegistry::new();
     registry.create_index(

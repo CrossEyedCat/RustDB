@@ -207,6 +207,28 @@ pub struct TpccReport {
     pub txn_log_truncated: bool,
 }
 
+/// Wire / native API discriminant for [`TxnKind`].
+pub fn txn_kind_as_u8(k: TxnKind) -> u8 {
+    match k {
+        TxnKind::NewOrder => 0,
+        TxnKind::Payment => 1,
+        TxnKind::OrderStatus => 2,
+        TxnKind::Delivery => 3,
+        TxnKind::StockLevel => 4,
+    }
+}
+
+pub fn txn_kind_from_u8(v: u8) -> Option<TxnKind> {
+    match v {
+        0 => Some(TxnKind::NewOrder),
+        1 => Some(TxnKind::Payment),
+        2 => Some(TxnKind::OrderStatus),
+        3 => Some(TxnKind::Delivery),
+        4 => Some(TxnKind::StockLevel),
+        _ => None,
+    }
+}
+
 pub fn txn_kind_tag(k: TxnKind) -> &'static str {
     match k {
         TxnKind::NewOrder => "new_order",
@@ -242,6 +264,20 @@ pub trait TpccExec: Send + Sync + 'static {
         &self,
         sqls: &[String],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+    fn native_tpcc_enabled(&self) -> bool {
+        false
+    }
+
+    async fn run_native_tpcc(
+        &self,
+        kind: TxnKind,
+        seed: u64,
+        global_txn_id: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let _ = (kind, seed, global_txn_id);
+        Err("native TPC-C not supported".into())
+    }
 }
 
 pub struct TpccRunConfig {
@@ -251,6 +287,8 @@ pub struct TpccRunConfig {
     pub mix: Mix,
     pub mix_string: String,
     pub txn_log: Option<PathBuf>,
+    /// Use server `ExecuteTpcc` wire path when the executor supports it.
+    pub use_native_tpcc: bool,
 }
 
 pub async fn run_tpcc<E: TpccExec>(
@@ -273,6 +311,7 @@ pub async fn run_tpcc<E: TpccExec>(
         .duration
         .map(|d| Instant::now() + d.max(Duration::from_secs(1)));
     let global_txn_counter = Arc::new(AtomicU64::new(0));
+    let use_native_tpcc = config.use_native_tpcc;
 
     let start = Instant::now();
     let mut handles = Vec::with_capacity(concurrency);
@@ -284,6 +323,7 @@ pub async fn run_tpcc<E: TpccExec>(
         let global_txn_counter = global_txn_counter.clone();
         let mix_str = config.mix_string.clone();
         let want_log = config.txn_log.is_some();
+        let worker_deadline = deadline;
 
         let base = tx_total / concurrency;
         let extra = (worker_id < (tx_total % concurrency)) as usize;
@@ -301,15 +341,18 @@ pub async fn run_tpcc<E: TpccExec>(
             let mut new_orders_ok: u64 = 0;
             let mut log_lines: Vec<String> = Vec::new();
 
-            if let Some(dl) = deadline {
+            if let Some(dl) = worker_deadline {
                 while Instant::now() < dl {
                     let global_tx = global_txn_counter.fetch_add(1, Ordering::Relaxed);
                     let mut st = seed ^ global_tx.wrapping_mul(0xD1B54A32D192ED03);
                     let u = rand_f64_0_1(&mut st);
                     let kind = mix.pick(u);
-                    let sqls = txn_sql(kind, seed, global_tx);
                     let t0 = Instant::now();
-                    let res = exec.run_sql_batch(&sqls).await;
+                    let res = if use_native_tpcc && exec.native_tpcc_enabled() {
+                        exec.run_native_tpcc(kind, seed, global_tx).await
+                    } else {
+                        exec.run_sql_batch(&txn_sql(kind, seed, global_tx)).await
+                    };
                     let dt = t0.elapsed();
                     let us = dt.as_micros();
                     attempts = attempts.wrapping_add(1);
@@ -348,9 +391,12 @@ pub async fn run_tpcc<E: TpccExec>(
                     let mut st = seed ^ global_tx.wrapping_mul(0xD1B54A32D192ED03);
                     let u = rand_f64_0_1(&mut st);
                     let kind = mix.pick(u);
-                    let sqls = txn_sql(kind, seed, global_tx);
                     let t0 = Instant::now();
-                    let res = exec.run_sql_batch(&sqls).await;
+                    let res = if use_native_tpcc && exec.native_tpcc_enabled() {
+                        exec.run_native_tpcc(kind, seed, global_tx).await
+                    } else {
+                        exec.run_sql_batch(&txn_sql(kind, seed, global_tx)).await
+                    };
                     let dt = t0.elapsed();
                     let us = dt.as_micros();
                     attempts += 1;
@@ -629,6 +675,7 @@ mod tests {
                 mix,
                 mix_string: "new_order=1".into(),
                 txn_log: None,
+                use_native_tpcc: false,
             },
         )
         .await
@@ -651,6 +698,7 @@ mod tests {
                 mix: mix.clone(),
                 mix_string: "new_order=1".into(),
                 txn_log: None,
+                use_native_tpcc: false,
             },
         )
         .await
@@ -671,6 +719,7 @@ mod tests {
                 mix,
                 mix_string: "new_order=1".into(),
                 txn_log: None,
+                use_native_tpcc: false,
             },
         )
         .await
@@ -694,6 +743,7 @@ mod tests {
                 mix,
                 mix_string: "payment=1".into(),
                 txn_log: None,
+                use_native_tpcc: false,
             },
         )
         .await
@@ -718,6 +768,7 @@ mod tests {
                 mix,
                 mix_string: "new_order=1".into(),
                 txn_log: Some(path.clone()),
+                use_native_tpcc: false,
             },
         )
         .await

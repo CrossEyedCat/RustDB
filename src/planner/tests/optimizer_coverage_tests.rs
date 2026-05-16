@@ -65,6 +65,57 @@ fn eq_col_lit(column: &str, lit: Literal) -> Expression {
     }
 }
 
+fn plan_contains_index_scan_on(node: &PlanNode, table: &str, index: &str) -> bool {
+    match node {
+        PlanNode::IndexScan(idx) => idx.table_name == table && idx.index_name == index,
+        PlanNode::Filter(f) => plan_contains_index_scan_on(&f.input, table, index),
+        PlanNode::Projection(p) => plan_contains_index_scan_on(&p.input, table, index),
+        PlanNode::Join(j) => {
+            plan_contains_index_scan_on(&j.left, table, index)
+                || plan_contains_index_scan_on(&j.right, table, index)
+        }
+        PlanNode::GroupBy(g) => plan_contains_index_scan_on(&g.input, table, index),
+        PlanNode::Sort(s) => plan_contains_index_scan_on(&s.input, table, index),
+        PlanNode::Limit(l) => plan_contains_index_scan_on(&l.input, table, index),
+        PlanNode::Offset(o) => plan_contains_index_scan_on(&o.input, table, index),
+        PlanNode::Distinct(d) => plan_contains_index_scan_on(&d.input, table, index),
+        PlanNode::SemiJoin(s) => {
+            plan_contains_index_scan_on(&s.left, table, index)
+                || plan_contains_index_scan_on(&s.right, table, index)
+        }
+        _ => false,
+    }
+}
+
+#[test]
+fn test_tpcc_oorder_order_status_sql_uses_index_scan() -> Result<()> {
+    let mut reg = IndexRegistry::new();
+    reg.create_index(
+        "oorder",
+        "idx_oorder_wdc",
+        vec![
+            "o_w_id".to_string(),
+            "o_d_id".to_string(),
+            "o_c_id".to_string(),
+        ],
+    )?;
+
+    let mut opt = QueryOptimizer::new()?.with_index_registry(Arc::new(reg));
+    let planner = QueryPlanner::new()?;
+    let sql = "SELECT * FROM oorder WHERE o_w_id = 1 AND o_d_id = 2 AND o_c_id = 3";
+    let mut parser = SqlParser::new(sql)?;
+    let stmt = parser.parse()?;
+    let plan = planner.create_plan(&stmt)?;
+    let res = opt.optimize(plan)?;
+
+    assert!(
+        plan_contains_index_scan_on(&res.optimized_plan.root, "oorder", "idx_oorder_wdc"),
+        "expected IndexScan on oorder, got {:?}",
+        res.optimized_plan.root
+    );
+    Ok(())
+}
+
 #[test]
 fn test_optimizer_composite_index_prefix_match() -> Result<()> {
     let mut reg = IndexRegistry::new();

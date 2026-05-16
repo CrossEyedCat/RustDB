@@ -15,6 +15,9 @@
 #   RUSTDB_SQL_PHASE_LOG=1 — rustdb::sql_phases tracing (parse/update/delete timings)
 #   RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=1 — skip flush_dirty_pages after DML when WAL is on;
 #     explicit COMMIT still writes/fsyncs commits.log per durability (independent of defer)
+#   RUSTDB_GROUP_COMMIT_ENABLED=1 — WAL group commit (default on when unset in engine)
+#   RUSTDB_GROUP_COMMIT_INTERVAL_MS — group commit timer (default 1 ms)
+#   RUSTDB_GROUP_COMMIT_MAX_BATCH — max records per group commit batch (default 10)
 #
 set -euo pipefail
 
@@ -79,6 +82,9 @@ docker run -d --name "$CONTAINER_NAME" \
   -v "$ROOT/config.toml:/app/config/config.toml:ro" \
   -e NO_COLOR=1 \
   -e RUSTDB_SQL_PHASE_LOG="${RUSTDB_SQL_PHASE_LOG:-1}" \
+  -e RUSTDB_GROUP_COMMIT_ENABLED="${RUSTDB_GROUP_COMMIT_ENABLED:-1}" \
+  -e RUSTDB_GROUP_COMMIT_INTERVAL_MS="${RUSTDB_GROUP_COMMIT_INTERVAL_MS:-1}" \
+  -e RUSTDB_GROUP_COMMIT_MAX_BATCH="${RUSTDB_GROUP_COMMIT_MAX_BATCH:-32}" \
   ${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML:+-e "RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML}"} \
   -e RUST_LOG="${RUST_LOG:-info}" \
   "$RUSTDB_IMAGE" \
