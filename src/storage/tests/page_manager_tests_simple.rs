@@ -315,6 +315,54 @@ fn test_recovery_redo_delete_removes_record() {
 }
 
 #[test]
+fn flush_dirty_pages_no_sync_then_sync_heap_file_persists() {
+    let temp_dir = TempDir::new().expect("tempdir");
+    let cfg = PageManagerConfig {
+        batch_flush_size: 2,
+        ..Default::default()
+    };
+    let path = temp_dir.path().to_path_buf();
+    {
+        let mut pm = PageManager::new(path.clone(), "coalesce_sync", cfg.clone()).expect("new pm");
+        for i in 0..30 {
+            pm.insert(format!("row-{i:04}").as_bytes()).expect("insert");
+        }
+        assert!(
+            pm.dirty_page_count() > 0,
+            "expected dirty pages before coalesced flush"
+        );
+        let flushed = pm.flush_dirty_pages_no_sync().expect("write dirty");
+        assert!(flushed > 0);
+        assert_eq!(pm.dirty_page_count(), 0);
+        pm.sync_heap_file().expect("fsync heap");
+    }
+    let mut pm2 = PageManager::open(path, "coalesce_sync", cfg).expect("reopen");
+    let rows = pm2.select(None).expect("select");
+    assert_eq!(rows.len(), 30);
+}
+
+#[test]
+fn flush_dirty_pages_syncs_once_after_all_batches() {
+    let temp_dir = TempDir::new().expect("tempdir");
+    let cfg = PageManagerConfig {
+        batch_flush_size: 3,
+        ..Default::default()
+    };
+    let path = temp_dir.path().to_path_buf();
+    {
+        let mut pm = PageManager::new(path.clone(), "one_sync", cfg.clone()).expect("new");
+        for i in 0..20 {
+            pm.insert(format!("x-{i}").as_bytes()).expect("insert");
+        }
+        let flushed = pm.flush_dirty_pages().expect("flush");
+        assert!(flushed > 0);
+        assert_eq!(pm.dirty_page_count(), 0);
+    }
+    let mut pm2 = PageManager::open(path, "one_sync", cfg).expect("reopen");
+    assert_eq!(pm2.select(None).expect("select").len(), 20);
+}
+
+#[test]
 fn insert_flush_open_sees_records() {
     let dir = TempDir::new().expect("tempdir");
     let path = dir.path().to_path_buf();

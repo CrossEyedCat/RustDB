@@ -448,9 +448,21 @@ impl SqlEngine {
                         })
                     }
                     InsertValues::Values(_) => {
-                        let lock = table_storage_lock_arc(state, &ins.table)?;
-                        let _table_write = acquire_table_storage_write_lock(&lock, &ins.table)?;
+                        // Heap writes use per-page latches; tables with a PRIMARY KEY still take a
+                        // table write lock so concurrent inserts cannot race on the PK map.
+                        let table_lock = if table_has_primary_key(state, &ins.table) {
+                            Some((
+                                table_storage_lock_arc(state, &ins.table)?,
+                                ins.table.clone(),
+                            ))
+                        } else {
+                            None
+                        };
                         execute_dml_autocommit(state, ctx, |state, ctx| {
+                            let _guard = table_lock
+                                .as_ref()
+                                .map(|(l, t)| acquire_table_storage_write_lock(l, t))
+                                .transpose()?;
                             execute_insert(state, ctx, sql, stmt, ins)
                         })
                     }
@@ -726,19 +738,33 @@ fn acquire_table_storage_write_lock<'a>(
 }
 
 /// Resolves target row ids via index before DML locking (UPDATE/DELETE fast path).
+///
+/// Returns `(rids, index_exact)` where `index_exact` is true when the `WHERE` equalities
+/// form a full key on a registered index (see [`IndexRegistry::lookup_record_ids_by_equalities`]).
 fn resolve_dml_row_lock_rids(
     state: &SqlEngineState,
     table: &str,
     where_expr: &Expression,
 ) -> Result<Option<(Vec<RecordId>, bool)>, EngineError> {
-    let pm_for_table = table_page_manager(state, table)?;
-    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-    if let Some((rows, exact_key)) = try_dml_rows_via_index(state, table, where_expr, &mut pm)? {
-        let rids: Vec<RecordId> = rows.into_iter().map(|(rid, _)| rid).collect();
-        Ok(Some((rids, exact_key)))
-    } else {
-        Ok(None)
+    let lit_eq = extract_dml_where_equalities(where_expr);
+    if lit_eq.is_empty() {
+        return Ok(None);
     }
+    let equalities: HashMap<String, String> = lit_eq
+        .iter()
+        .map(|(col, lit)| (col.clone(), literal_to_index_key_string(lit)))
+        .collect();
+    let ir = state
+        .index_registry
+        .read()
+        .map_err(|_| lock_poisoned_engine())?;
+    let Some((rids, index_exact)) = ir
+        .lookup_record_ids_by_equalities(table, &equalities)
+        .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index lookup: {e}")))?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((rids, index_exact)))
 }
 
 fn with_dml_write_lock<T>(
@@ -749,14 +775,38 @@ fn with_dml_write_lock<T>(
     f: impl FnOnce() -> Result<T, EngineError>,
 ) -> Result<T, EngineError> {
     if skip_storage_lock {
+        if sql_phase_log_enabled() {
+            info!(
+                target: "rustdb::sql_phases",
+                table = %table,
+                lock_path = "skip",
+                "sql.dml.lock_path"
+            );
+        }
         return f();
     }
     if let Some(expr) = where_clause {
-        if let Some((rids, exact_key)) = resolve_dml_row_lock_rids(state, table, expr)? {
-            if exact_key && rids.len() == 1 {
+        if let Some((rids, index_exact)) = resolve_dml_row_lock_rids(state, table, expr)? {
+            if index_exact && rids.len() == 1 {
+                if sql_phase_log_enabled() {
+                    info!(
+                        target: "rustdb::sql_phases",
+                        table = %table,
+                        lock_path = "row",
+                        "sql.dml.lock_path"
+                    );
+                }
                 return state.row_locks.with_write_locks(table, rids, f);
             }
         }
+    }
+    if sql_phase_log_enabled() {
+        info!(
+            target: "rustdb::sql_phases",
+            table = %table,
+            lock_path = "table",
+            "sql.dml.lock_path"
+        );
     }
     let lock = table_storage_lock_arc(state, table)?;
     let _guard = acquire_table_storage_write_lock(&lock, table)?;
@@ -1676,6 +1726,12 @@ fn find_index_scan_node(node: &PlanNode) -> Option<&IndexScanNode> {
         PlanNode::IndexScan(i) => Some(i),
         PlanNode::Filter(f) => find_index_scan_node(&f.input),
         PlanNode::Projection(p) => find_index_scan_node(&p.input),
+        PlanNode::Limit(l) => find_index_scan_node(&l.input),
+        PlanNode::Sort(s) => find_index_scan_node(&s.input),
+        PlanNode::Offset(o) => find_index_scan_node(&o.input),
+        PlanNode::Aggregate(a) => find_index_scan_node(&a.input),
+        PlanNode::GroupBy(g) => find_index_scan_node(&g.input),
+        PlanNode::Distinct(d) => find_index_scan_node(&d.input),
         _ => None,
     }
 }
@@ -1810,70 +1866,13 @@ fn execute_insert(
             for r in rows {
                 let tuple =
                     build_insert_tuple_from_row(state, &insert.table, insert.columns.as_ref(), &r)?;
-                let bytes = tuple.to_bytes().map_err(map_db_err)?;
-                let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-                let ins = pm.insert(&bytes).map_err(map_db_err)?;
-                maybe_simulate_dml_crash("insert_row");
-                if let Some(tx) = ctx.transaction.as_mut() {
-                    if let Some(ref wal) = state.wal {
-                        let page_id = (ins.record_id >> 32) as u64;
-                        let off = (ins.record_id & 0xffff_ffff) as u32;
-                        let record_offset: u16 = off.try_into().map_err(|_| {
-                            EngineError::new(
-                                engine_error_code::INTERNAL,
-                                "record offset too large for WAL",
-                            )
-                        })?;
-                        wal.log_data_insert(
-                            tx,
-                            pm.file_id(),
-                            page_id,
-                            record_offset,
-                            bytes.clone(),
-                        )?;
-                    }
-                }
-                if let Err(e) = register_row_for_insert(state, &insert.table, ins.record_id, &tuple)
-                {
-                    // We already logged the INSERT to WAL (for crash recovery). If the statement
-                    // fails after that point (e.g. PK/UNIQUE violation), we must also log the
-                    // compensating DELETE in the *same* transaction so a later COMMIT cannot
-                    // resurrect the rejected row on recovery (redo would replay insert+delete).
-                    if let Some(tx) = ctx.transaction.as_mut() {
-                        if let Some(ref wal) = state.wal {
-                            let page_id = (ins.record_id >> 32) as u64;
-                            let off = (ins.record_id & 0xffff_ffff) as u32;
-                            let record_offset: u16 = off.try_into().map_err(|_| {
-                                EngineError::new(
-                                    engine_error_code::INTERNAL,
-                                    "record offset too large for WAL",
-                                )
-                            })?;
-                            wal.log_data_delete(
-                                tx,
-                                pm.file_id(),
-                                page_id,
-                                record_offset,
-                                bytes.clone(),
-                            )?;
-                        }
-                    }
-                    pm.delete(ins.record_id).map_err(map_db_err)?;
-                    // Persist the compensating delete: otherwise an erroring insert could leave the
-                    // row on disk (insert flushed earlier by the page manager), corrupting
-                    // constraints on the next open.
-                    pm.flush_dirty_pages().map_err(map_db_err)?;
-                    return Err(e);
-                }
-                push_undo(
+                rows_affected += insert_heap_row_in_execute_insert(
+                    state,
                     ctx,
-                    UndoEntry::Insert {
-                        table: insert.table.clone(),
-                        rid: ins.record_id,
-                        payload: bytes.clone(),
-                    },
-                );
-                rows_affected += 1;
+                    &insert.table,
+                    &tuple,
+                    &pm_for_table,
+                )?;
             }
             {
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
@@ -1886,73 +1885,13 @@ fn execute_insert(
             let pm_for_table = table_page_manager(state, &insert.table)?;
             for row in rows {
                 let tuple = build_insert_tuple(state, &insert.table, insert.columns.as_ref(), row)?;
-                let bytes = tuple.to_bytes().map_err(map_db_err)?;
-                let mut pm = state
-                    .default_page_manager
-                    .lock()
-                    .map_err(|_| lock_poisoned_engine())?;
-                // insert into per-table heap
-                drop(pm);
-                let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-                let ins = pm.insert(&bytes).map_err(map_db_err)?;
-                maybe_simulate_dml_crash("insert_row");
-                if let Some(tx) = ctx.transaction.as_mut() {
-                    if let Some(ref wal) = state.wal {
-                        let page_id = (ins.record_id >> 32) as u64;
-                        let off = (ins.record_id & 0xffff_ffff) as u32;
-                        let record_offset: u16 = off.try_into().map_err(|_| {
-                            EngineError::new(
-                                engine_error_code::INTERNAL,
-                                "record offset too large for WAL",
-                            )
-                        })?;
-                        wal.log_data_insert(
-                            tx,
-                            pm.file_id(),
-                            page_id,
-                            record_offset,
-                            bytes.clone(),
-                        )?;
-                    }
-                }
-                if let Err(e) = register_row_for_insert(state, &insert.table, ins.record_id, &tuple)
-                {
-                    // Mirror the WAL-visible INSERT with a WAL-visible compensating DELETE so
-                    // a later COMMIT cannot replay an otherwise rejected row on recovery.
-                    if let Some(tx) = ctx.transaction.as_mut() {
-                        if let Some(ref wal) = state.wal {
-                            let page_id = (ins.record_id >> 32) as u64;
-                            let off = (ins.record_id & 0xffff_ffff) as u32;
-                            let record_offset: u16 = off.try_into().map_err(|_| {
-                                EngineError::new(
-                                    engine_error_code::INTERNAL,
-                                    "record offset too large for WAL",
-                                )
-                            })?;
-                            wal.log_data_delete(
-                                tx,
-                                pm.file_id(),
-                                page_id,
-                                record_offset,
-                                bytes.clone(),
-                            )?;
-                        }
-                    }
-                    pm.delete(ins.record_id).map_err(map_db_err)?;
-                    // Persist the compensating delete: otherwise a failed insert (e.g. PK/UNIQUE)
-                    // can leave the row visible after restart.
-                    pm.flush_dirty_pages().map_err(map_db_err)?;
-                    return Err(e);
-                }
-                push_undo(
+                rows_affected += insert_heap_row_in_execute_insert(
+                    state,
                     ctx,
-                    UndoEntry::Insert {
-                        table: insert.table.clone(),
-                        rid: ins.record_id,
-                        payload: bytes.clone(),
-                    },
-                );
-                rows_affected += 1;
+                    &insert.table,
+                    &tuple,
+                    &pm_for_table,
+                )?;
             }
             {
                 let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
@@ -2699,6 +2638,512 @@ fn rebuild_all_constraint_runtime(state: &SqlEngineState) -> Result<(), EngineEr
     Ok(())
 }
 
+/// Runs a TPC-C native transaction: `BEGIN`, `f`, `COMMIT` (or `ROLLBACK` on error).
+pub(crate) fn tpcc_run_in_transaction(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    f: impl FnOnce(&SqlEngineState, &mut SessionContext) -> Result<u64, EngineError>,
+) -> Result<EngineOutput, EngineError> {
+    begin_transaction(state, ctx)?;
+    match f(state, ctx) {
+        Ok(rows) => {
+            commit_transaction(state, ctx)?;
+            Ok(EngineOutput::ExecutionOk {
+                rows_affected: rows,
+            })
+        }
+        Err(e) => {
+            let _ = rollback_transaction(state, ctx);
+            Err(e)
+        }
+    }
+}
+
+pub(crate) fn int_column_value(n: i32) -> ColumnValue {
+    ColumnValue::new(DataType::Integer(n))
+}
+
+pub(crate) fn tuple_i32_field(tuple: &Tuple, col: &str) -> Result<i32, EngineError> {
+    let cv = tuple.values.get(col).ok_or_else(|| {
+        EngineError::new(engine_error_code::INTERNAL, format!("missing column {col}"))
+    })?;
+    match &cv.data_type {
+        DataType::Integer(v) => Ok(*v),
+        DataType::BigInt(v) => i32::try_from(*v).map_err(|_| {
+            EngineError::new(
+                engine_error_code::INTERNAL,
+                format!("{col} out of i32 range"),
+            )
+        }),
+        other => Err(EngineError::new(
+            engine_error_code::INTERNAL,
+            format!("{col} is not integer: {other:?}"),
+        )),
+    }
+}
+
+pub(crate) fn equalities_map_i32(pairs: &[(&str, i32)]) -> HashMap<String, String> {
+    pairs
+        .iter()
+        .map(|(c, v)| (c.to_string(), v.to_string()))
+        .collect()
+}
+
+/// Synthetic row-lock key from primary-key column values (not a heap [`RecordId`]).
+fn pk_row_lock_rid(table: &str, pk_values: &[String]) -> RecordId {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    table.hash(&mut h);
+    for v in pk_values {
+        v.hash(&mut h);
+    }
+    h.finish() | (1u64 << 63)
+}
+
+fn table_has_primary_key(state: &SqlEngineState, table: &str) -> bool {
+    state
+        .catalog
+        .lock()
+        .ok()
+        .and_then(|cat| cat.schema(table).map(|s| s.primary_key.is_some()))
+        .unwrap_or(false)
+}
+
+fn pk_row_lock_rid_for_tuple(
+    state: &SqlEngineState,
+    table: &str,
+    tuple: &Tuple,
+) -> Option<RecordId> {
+    let cat = state.catalog.lock().ok()?;
+    let schema = cat.schema(table)?.clone();
+    let (_, cols) = schema.primary_key.as_ref()?;
+    let key = sql_constraints::composite_key_from_tuple_with_schema(tuple, cols, &schema).ok()?;
+    Some(pk_row_lock_rid(table, &[key]))
+}
+
+fn insert_row_with_optional_pk_lock<R>(
+    state: &SqlEngineState,
+    table: &str,
+    tuple: &Tuple,
+    f: impl FnOnce() -> Result<R, EngineError>,
+) -> Result<R, EngineError> {
+    if let Some(rid) = pk_row_lock_rid_for_tuple(state, table, tuple) {
+        state.row_locks.with_write_locks(table, vec![rid], f)
+    } else {
+        f()
+    }
+}
+
+/// Inserts one heap row (page latch only). Registers constraints/indexes and WAL/undo when in a txn.
+pub(crate) fn insert_row_tuple(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuple: Tuple,
+) -> Result<(), EngineError> {
+    let pk_lock = pk_row_lock_rid_for_tuple(state, table, &tuple);
+    if let Some(rid) = pk_lock {
+        state.row_locks.with_write_locks(table, vec![rid], || {
+            insert_row_tuple_inner(state, ctx, table, tuple)
+        })
+    } else {
+        insert_row_tuple_inner(state, ctx, table, tuple)
+    }
+}
+
+fn insert_row_tuple_inner(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuple: Tuple,
+) -> Result<(), EngineError> {
+    record_touched_table(ctx, table);
+    let bytes = tuple.to_bytes().map_err(map_db_err)?;
+    let pm_for_table = table_page_manager(state, table)?;
+    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    let ins = pm.insert(&bytes).map_err(map_db_err)?;
+    maybe_simulate_dml_crash("insert_row");
+    if let Some(tx) = ctx.transaction.as_mut() {
+        if let Some(ref wal) = state.wal {
+            let page_id = (ins.record_id >> 32) as u64;
+            let off = (ins.record_id & 0xffff_ffff) as u32;
+            let record_offset: u16 = off.try_into().map_err(|_| {
+                EngineError::new(
+                    engine_error_code::INTERNAL,
+                    "record offset too large for WAL",
+                )
+            })?;
+            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+        }
+    }
+    if let Err(e) = register_row_for_insert(state, table, ins.record_id, &tuple) {
+        if let Some(tx) = ctx.transaction.as_mut() {
+            if let Some(ref wal) = state.wal {
+                let page_id = (ins.record_id >> 32) as u64;
+                let off = (ins.record_id & 0xffff_ffff) as u32;
+                let record_offset: u16 = off.try_into().map_err(|_| {
+                    EngineError::new(
+                        engine_error_code::INTERNAL,
+                        "record offset too large for WAL",
+                    )
+                })?;
+                wal.log_data_delete(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+            }
+        }
+        pm.delete(ins.record_id).map_err(map_db_err)?;
+        pm.flush_dirty_pages().map_err(map_db_err)?;
+        return Err(e);
+    }
+    push_undo(
+        ctx,
+        UndoEntry::Insert {
+            table: table.to_string(),
+            rid: ins.record_id,
+            payload: bytes,
+        },
+    );
+    Ok(())
+}
+
+fn insert_heap_row_in_execute_insert(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuple: &Tuple,
+    pm_for_table: &Arc<Mutex<PageManager>>,
+) -> Result<u64, EngineError> {
+    insert_row_with_optional_pk_lock(state, table, tuple, || {
+        let bytes = tuple.to_bytes().map_err(map_db_err)?;
+        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let ins = pm.insert(&bytes).map_err(map_db_err)?;
+        maybe_simulate_dml_crash("insert_row");
+        if let Some(tx) = ctx.transaction.as_mut() {
+            if let Some(ref wal) = state.wal {
+                let page_id = (ins.record_id >> 32) as u64;
+                let off = (ins.record_id & 0xffff_ffff) as u32;
+                let record_offset: u16 = off.try_into().map_err(|_| {
+                    EngineError::new(
+                        engine_error_code::INTERNAL,
+                        "record offset too large for WAL",
+                    )
+                })?;
+                wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+            }
+        }
+        if let Err(e) = register_row_for_insert(state, table, ins.record_id, tuple) {
+            if let Some(tx) = ctx.transaction.as_mut() {
+                if let Some(ref wal) = state.wal {
+                    let page_id = (ins.record_id >> 32) as u64;
+                    let off = (ins.record_id & 0xffff_ffff) as u32;
+                    let record_offset: u16 = off.try_into().map_err(|_| {
+                        EngineError::new(
+                            engine_error_code::INTERNAL,
+                            "record offset too large for WAL",
+                        )
+                    })?;
+                    wal.log_data_delete(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+                }
+            }
+            pm.delete(ins.record_id).map_err(map_db_err)?;
+            pm.flush_dirty_pages().map_err(map_db_err)?;
+            return Err(e);
+        }
+        push_undo(
+            ctx,
+            UndoEntry::Insert {
+                table: table.to_string(),
+                rid: ins.record_id,
+                payload: bytes,
+            },
+        );
+        Ok(1u64)
+    })
+}
+
+/// Index-backed UPDATE with per-row write locks when the predicate is an exact index key.
+pub(crate) fn update_rows_by_equalities<F>(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    equalities: &HashMap<String, String>,
+    mut update_fn: F,
+) -> Result<u64, EngineError>
+where
+    F: FnMut(&mut Tuple) -> Result<(), EngineError>,
+{
+    record_touched_table(ctx, table);
+    let pm_for_table = table_page_manager(state, table)?;
+    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    let (rows, exact_key) = {
+        let ir = state
+            .index_registry
+            .read()
+            .map_err(|_| lock_poisoned_engine())?;
+        let Some((rids, exact_key)) = ir
+            .lookup_record_ids_by_equalities(table, equalities)
+            .map_err(|e| {
+                EngineError::new(engine_error_code::INTERNAL, format!("index lookup: {e}"))
+            })?
+        else {
+            return Err(EngineError::new(
+                engine_error_code::INTERNAL,
+                format!("no index for UPDATE on {table}"),
+            ));
+        };
+        let mut rows = Vec::with_capacity(rids.len());
+        for rid in rids {
+            if let Some(data) = pm.get_record(rid).map_err(map_db_err)? {
+                rows.push((rid, data));
+            }
+        }
+        (rows, exact_key)
+    };
+    drop(pm);
+
+    let single_rid = if exact_key && rows.len() == 1 {
+        Some(rows[0].0)
+    } else {
+        None
+    };
+    let apply = move || -> Result<u64, EngineError> {
+        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let mut rows_affected = 0u64;
+        for (rid, data) in rows {
+            let mut tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
+            let old_tuple = tuple.clone();
+            let cat_snapshot = {
+                let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+                cat.clone()
+            };
+            let schema = cat_snapshot.schema(table).cloned();
+            if let Some(ref sch) = schema {
+                let mut rt = state
+                    .constraint_runtime
+                    .lock()
+                    .map_err(|_| lock_poisoned_engine())?;
+                sql_constraints::unregister_row(
+                    &mut rt,
+                    table,
+                    rid,
+                    &old_tuple,
+                    sch,
+                    &cat_snapshot,
+                )?;
+            }
+            update_fn(&mut tuple)?;
+            apply_defaults_and_validate(state, table, &mut tuple)?;
+            if let Some(ref sch) = schema {
+                let mut rt = state
+                    .constraint_runtime
+                    .lock()
+                    .map_err(|_| lock_poisoned_engine())?;
+                sql_constraints::register_row(&mut rt, table, rid, &tuple, sch, &cat_snapshot)?;
+            }
+            let new_bytes = tuple.to_bytes().map_err(map_db_err)?;
+            if let Some(tx) = ctx.transaction.as_mut() {
+                if let Some(ref wal) = state.wal {
+                    let page_id = (rid >> 32) as u64;
+                    let off = (rid & 0xffff_ffff) as u32;
+                    let record_offset: u16 = off.try_into().map_err(|_| {
+                        EngineError::new(
+                            engine_error_code::INTERNAL,
+                            "record offset too large for WAL",
+                        )
+                    })?;
+                    wal.log_data_update(
+                        tx,
+                        pm.file_id(),
+                        page_id,
+                        record_offset,
+                        data.clone(),
+                        new_bytes.clone(),
+                    )?;
+                }
+            }
+            pm.update(rid, &new_bytes).map_err(map_db_err)?;
+            sync_index_after_update(state, table, rid, &old_tuple, &tuple)?;
+            push_undo(
+                ctx,
+                UndoEntry::Update {
+                    table: table.to_string(),
+                    rid,
+                    old_payload: data,
+                },
+            );
+            rows_affected += 1;
+        }
+        flush_heap_after_dml_success(state, ctx, &mut pm)?;
+        Ok(rows_affected)
+    };
+
+    if let Some(rid) = single_rid {
+        state.row_locks.with_write_locks(table, vec![rid], apply)
+    } else {
+        let lock = table_storage_lock_arc(state, table)?;
+        let _guard = acquire_table_storage_write_lock(&lock, table)?;
+        apply()
+    }
+}
+
+/// Index-backed DELETE; uses row locks on exact single-key lookups.
+pub(crate) fn delete_rows_by_equalities(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    equalities: &HashMap<String, String>,
+) -> Result<u64, EngineError> {
+    record_touched_table(ctx, table);
+    let pm_for_table = table_page_manager(state, table)?;
+    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    let (rows, exact_key) = {
+        let ir = state
+            .index_registry
+            .read()
+            .map_err(|_| lock_poisoned_engine())?;
+        let Some((rids, exact_key)) = ir
+            .lookup_record_ids_by_equalities(table, equalities)
+            .map_err(|e| {
+                EngineError::new(engine_error_code::INTERNAL, format!("index lookup: {e}"))
+            })?
+        else {
+            return Err(EngineError::new(
+                engine_error_code::INTERNAL,
+                format!("no index for DELETE on {table}"),
+            ));
+        };
+        let mut rows = Vec::with_capacity(rids.len());
+        for rid in rids {
+            if let Some(data) = pm.get_record(rid).map_err(map_db_err)? {
+                rows.push((rid, data));
+            }
+        }
+        (rows, exact_key)
+    };
+    drop(pm);
+
+    let single_rid = if exact_key && rows.len() == 1 {
+        Some(rows[0].0)
+    } else {
+        None
+    };
+    let apply = move || -> Result<u64, EngineError> {
+        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let mut rows_affected = 0u64;
+        for (rid, data) in rows {
+            let tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
+            let cat_snapshot = {
+                let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+                cat.clone()
+            };
+            if let Some(sch) = cat_snapshot.schema(table) {
+                let mut rt = state
+                    .constraint_runtime
+                    .lock()
+                    .map_err(|_| lock_poisoned_engine())?;
+                sql_constraints::unregister_row(&mut rt, table, rid, &tuple, sch, &cat_snapshot)?;
+            }
+            if let Some(tx) = ctx.transaction.as_mut() {
+                if let Some(ref wal) = state.wal {
+                    let page_id = (rid >> 32) as u64;
+                    let off = (rid & 0xffff_ffff) as u32;
+                    let record_offset: u16 = off.try_into().map_err(|_| {
+                        EngineError::new(
+                            engine_error_code::INTERNAL,
+                            "record offset too large for WAL",
+                        )
+                    })?;
+                    wal.log_data_delete(tx, pm.file_id(), page_id, record_offset, data.clone())?;
+                }
+            }
+            pm.delete(rid).map_err(map_db_err)?;
+            sync_index_after_delete(state, table, rid, &tuple)?;
+            push_undo(
+                ctx,
+                UndoEntry::Delete {
+                    table: table.to_string(),
+                    rid,
+                    payload: data,
+                },
+            );
+            rows_affected += 1;
+        }
+        flush_heap_after_dml_success(state, ctx, &mut pm)?;
+        Ok(rows_affected)
+    };
+
+    if let Some(rid) = single_rid {
+        state.row_locks.with_write_locks(table, vec![rid], apply)
+    } else {
+        let lock = table_storage_lock_arc(state, table)?;
+        let _guard = acquire_table_storage_write_lock(&lock, table)?;
+        apply()
+    }
+}
+
+/// Order-status read via exact index key (no table storage read lock).
+pub(crate) fn tpcc_order_status_row_count(
+    state: &SqlEngineState,
+    w_id: i32,
+    d_id: i32,
+    c_id: i32,
+) -> Result<u64, EngineError> {
+    let equalities = equalities_map_i32(&[("o_w_id", w_id), ("o_d_id", d_id), ("o_c_id", c_id)]);
+    let ir = state
+        .index_registry
+        .read()
+        .map_err(|_| lock_poisoned_engine())?;
+    let Some((rids, _)) = ir
+        .lookup_record_ids_by_equalities("oorder", &equalities)
+        .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index lookup: {e}")))?
+    else {
+        return Ok(0);
+    };
+    drop(ir);
+    let pm = table_page_manager(state, "oorder")?;
+    let mut pm = pm.lock().map_err(|_| lock_poisoned_engine())?;
+    let mut count = 0u64;
+    for rid in rids {
+        if pm.get_record(rid).map_err(map_db_err)?.is_some() {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Stock-level read: index prefix on `s_w_id`, filter `s_qty < threshold` on heap (no table read lock).
+pub(crate) fn tpcc_stock_level_row_count(
+    state: &SqlEngineState,
+    w_id: i32,
+    threshold: i32,
+) -> Result<u64, EngineError> {
+    let equalities = equalities_map_i32(&[("s_w_id", w_id)]);
+    let ir = state
+        .index_registry
+        .read()
+        .map_err(|_| lock_poisoned_engine())?;
+    let Some((rids, _)) = ir
+        .lookup_record_ids_by_equalities("stock", &equalities)
+        .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index lookup: {e}")))?
+    else {
+        return Ok(0);
+    };
+    drop(ir);
+    let pm = table_page_manager(state, "stock")?;
+    let mut pm = pm.lock().map_err(|_| lock_poisoned_engine())?;
+    let mut count = 0u64;
+    for rid in rids {
+        let Some(data) = pm.get_record(rid).map_err(map_db_err)? else {
+            continue;
+        };
+        let tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
+        if tuple_i32_field(&tuple, "s_qty")? < threshold {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
 fn register_row_for_insert(
     state: &SqlEngineState,
     table: &str,
@@ -2952,6 +3397,46 @@ mod tests {
             }
             _ => panic!("expected result set"),
         }
+    }
+
+    #[test]
+    fn order_status_skips_oorder_table_read_lock() {
+        use crate::parser::{SqlParser, SqlStatement};
+
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql(
+            "CREATE TABLE oorder (o_id INTEGER, o_d_id INTEGER, o_w_id INTEGER, o_c_id INTEGER, o_ol_cnt INTEGER)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "CREATE INDEX idx_oorder_wdc ON oorder (o_w_id, o_d_id, o_c_id)",
+            &mut ctx,
+        )
+        .unwrap();
+
+        let sql = "SELECT * FROM oorder WHERE o_w_id = 1 AND o_d_id = 2 AND o_c_id = 3";
+        let mut parser = SqlParser::new(sql).unwrap();
+        let stmt = parser.parse_multiple().unwrap().remove(0);
+        let SqlStatement::Select(sel) = stmt else {
+            panic!("expected SELECT");
+        };
+        let state = eng.state_for_test();
+        let table_names = collect_physical_tables_for_read_stmt(&SqlStatement::Select(sel.clone()));
+        let plan = state
+            .planner
+            .create_plan(&SqlStatement::Select(sel))
+            .unwrap();
+        let optimized = state.optimizer.lock().unwrap().optimize(plan).unwrap();
+        let skip =
+            select_skip_table_read_lock_tables(state, &table_names, &optimized.optimized_plan.root);
+        assert!(
+            skip.contains("oorder"),
+            "expected oorder in skip-read set, tables={table_names:?} plan={:?}",
+            optimized.optimized_plan.root
+        );
     }
 
     #[test]
@@ -3440,6 +3925,54 @@ mod tests {
         }
     }
 
+    #[test]
+    fn district_update_exact_index_enables_row_lock_path() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql(
+            "CREATE TABLE district (d_w_id INTEGER, d_id INTEGER, d_ytd INTEGER)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "CREATE INDEX idx_district_wd ON district (d_w_id, d_id)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "INSERT INTO district (d_w_id, d_id, d_ytd) VALUES (1, 1, 0)",
+            &mut ctx,
+        )
+        .unwrap();
+        let upd = eng
+            .execute_sql(
+                "UPDATE district SET d_ytd = 1 WHERE d_w_id = 1 AND d_id = 1",
+                &mut ctx,
+            )
+            .unwrap();
+        assert_eq!(upd, EngineOutput::ExecutionOk { rows_affected: 1 });
+        let mut eq = HashMap::new();
+        eq.insert("d_w_id".to_string(), "1".to_string());
+        eq.insert("d_id".to_string(), "1".to_string());
+        let indexed = eng
+            .state_for_test()
+            .index_registry
+            .read()
+            .expect("index registry read")
+            .lookup_record_ids_by_equalities("district", &eq)
+            .expect("lookup")
+            .expect("idx_district_wd must cover d_w_id + d_id");
+        assert!(
+            indexed.1,
+            "composite equality on idx_district_wd must be index_exact for row locks"
+        );
+        assert_eq!(indexed.0.len(), 1);
+    }
+
+    /// Concurrent district updates use per-row locks when `idx_district_wd` matches
+    /// `WHERE d_w_id = ? AND d_id = ?` (full index key); otherwise DML falls back to
+    /// `table_storage_lock` and phase logs show `sql.dml.lock_path=table`.
     #[test]
     fn concurrent_update_district_row_locks() {
         use std::sync::{Arc, Barrier};

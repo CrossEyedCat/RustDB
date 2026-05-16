@@ -506,22 +506,21 @@ impl PageManager {
     }
 
     /// Number of heap pages dirty in memory (not yet flushed).
-    #[cfg(test)]
-    pub fn dirty_page_count(&self) -> usize {
+    pub(crate) fn dirty_page_count(&self) -> usize {
         self.dirty_pages.len()
     }
 
-    /// Flushes all dirty pages to disk. Call after commit when using write-ahead.
-    /// When `use_async_flush` is true and running in tokio context, disk I/O runs in
-    /// `block_in_place` to avoid blocking the async runtime.
-    pub fn flush_dirty_pages(&mut self) -> Result<usize> {
+    /// Writes all dirty heap pages without calling `sync_file`.
+    ///
+    /// Callers that flush multiple page managers (e.g. `COMMIT` over several tables) should
+    /// invoke this per manager, then [`Self::sync_heap_file`] once per distinct `file_id`.
+    pub fn flush_dirty_pages_no_sync(&mut self) -> Result<usize> {
         let batch_size = self.config.batch_flush_size.max(1);
         let mut flushed = 0;
 
         while !self.dirty_pages.is_empty() {
             let page_ids: Vec<PageId> = self.dirty_pages.keys().take(batch_size).copied().collect();
 
-            // Collect serialized pages and update cache (no disk I/O yet)
             let to_flush: Vec<(PageId, Vec<u8>)> = {
                 let mut batch = Vec::with_capacity(page_ids.len());
                 for page_id in page_ids {
@@ -546,7 +545,6 @@ impl PageManager {
                 for (page_id, data) in pages {
                     pm.file_manager.write_page(file_id, *page_id, data)?;
                 }
-                pm.file_manager.sync_file(file_id)?;
                 Ok(pages.len())
             };
 
@@ -562,6 +560,22 @@ impl PageManager {
             self.file_manager.invalidate_pages(file_id, &page_ids);
         }
 
+        Ok(flushed)
+    }
+
+    /// Fsyncs the heap file for this page manager.
+    pub fn sync_heap_file(&mut self) -> Result<()> {
+        self.file_manager.sync_file(self.file_id)
+    }
+
+    /// Flushes all dirty pages to disk. Call after commit when using write-ahead.
+    /// When `use_async_flush` is true and running in tokio context, disk I/O runs in
+    /// `block_in_place` to avoid blocking the async runtime.
+    pub fn flush_dirty_pages(&mut self) -> Result<usize> {
+        let flushed = self.flush_dirty_pages_no_sync()?;
+        if flushed > 0 {
+            self.sync_heap_file()?;
+        }
         Ok(flushed)
     }
 

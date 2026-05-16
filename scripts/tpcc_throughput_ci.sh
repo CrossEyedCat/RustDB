@@ -15,12 +15,17 @@
 #   RUSTDB_SQL_PHASE_LOG=1 — rustdb::sql_phases tracing (parse/update/delete timings)
 #   RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=1 — skip flush_dirty_pages after DML when WAL is on;
 #     explicit COMMIT still writes/fsyncs commits.log per durability (independent of defer)
+#   RUSTDB_BENCH_DEFER_HEAP_FSYNC=1 — on COMMIT, write dirty heap pages but skip per-table fsync
+#     (throughput CI only; WAL + commits.log remain the durability path for the job)
 #   RUSTDB_GROUP_COMMIT_ENABLED=1 — WAL group commit (default on when unset in engine)
 #   RUSTDB_GROUP_COMMIT_INTERVAL_MS — group commit timer (default 1 ms)
 #   RUSTDB_GROUP_COMMIT_MAX_BATCH — max records per group commit batch (default 10)
 #
 # Client (rustdb_tpcc on host):
-#   RUSTDB_TPCC_NATIVE=1 — pass --native-tpcc (ExecuteTpcc wire path, one RTT per txn)
+#   RUSTDB_TPCC_NATIVE=1 — pass --native-tpcc (ExecuteTpcc wire path, one RTT per txn;
+#     engine fast path: direct index/heap ops + single COMMIT, not 7× SQL per new_order)
+#   RUSTDB_TPCC_NATIVE_MICRO=1 — after the main run, run a short native-only micro leg
+#     (order_status-heavy mix, fewer txns) written to tpcc-native-micro.json
 #
 set -euo pipefail
 
@@ -89,6 +94,7 @@ docker run -d --name "$CONTAINER_NAME" \
   -e RUSTDB_GROUP_COMMIT_INTERVAL_MS="${RUSTDB_GROUP_COMMIT_INTERVAL_MS:-1}" \
   -e RUSTDB_GROUP_COMMIT_MAX_BATCH="${RUSTDB_GROUP_COMMIT_MAX_BATCH:-32}" \
   ${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML:+-e "RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML}"} \
+  -e RUSTDB_BENCH_DEFER_HEAP_FSYNC="${RUSTDB_BENCH_DEFER_HEAP_FSYNC:-1}" \
   -e RUST_LOG="${RUST_LOG:-info}" \
   "$RUSTDB_IMAGE" \
   sh -c 'rustdb --config /app/config/config.toml server --host 0.0.0.0 --port 5432 --cert-out /tmp/server.der' >/dev/null
@@ -132,6 +138,30 @@ set +e
   --json > "$OUT_DIR_ABS/tpcc.json"
 rc=$?
 set -e
+
+if [[ "${RUSTDB_TPCC_NATIVE_MICRO:-0}" == "1" && "$rc" -eq 0 ]]; then
+  echo "==> optional native micro leg (order_status-heavy)"
+  MICRO_TXNS="${TPCC_NATIVE_MICRO_TXNS:-500}"
+  MICRO_CONCURRENCY="${TPCC_NATIVE_MICRO_CONCURRENCY:-16}"
+  set +e
+  ./target/debug/rustdb_tpcc \
+    --addr "127.0.0.1:${UDP_PORT}" \
+    --cert "$CERT" \
+    --server-name localhost \
+    --concurrency "$MICRO_CONCURRENCY" \
+    --transactions "$MICRO_TXNS" \
+    --mix "order_status=0.7,payment=0.3" \
+    --native-tpcc \
+    --json > "$OUT_DIR_ABS/tpcc-native-micro.json"
+  micro_rc=$?
+  set -e
+  if [[ "$micro_rc" -ne 0 ]]; then
+    echo "native micro leg failed (exit $micro_rc)"
+    rc="$micro_rc"
+  else
+    echo "==> wrote $OUT_DIR_ABS/tpcc-native-micro.json"
+  fi
+fi
 
 echo "==> capture server logs (full stdout+stderr for artifact)"
 docker logs "$CONTAINER_NAME" 2>&1 > "$OUT_DIR_ABS/server_full.log" || true

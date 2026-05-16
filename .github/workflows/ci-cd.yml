@@ -473,8 +473,10 @@ jobs:
       packages: read
     # Throughput: defer per-DML heap flush when WAL is on (scripts/tpcc_throughput_ci.sh → docker).
     # Explicit COMMIT still appends/fsyncs commits.log per durability (orthogonal to defer).
+    # COMMIT heap flush writes pages but skips per-table fsync (WAL + commits.log for the job).
     env:
       RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML: "1"
+      RUSTDB_BENCH_DEFER_HEAP_FSYNC: "1"
 
     steps:
       - name: Checkout code
@@ -616,7 +618,7 @@ jobs:
             echo '```'
             if [[ -s "tpcc-out/server_full.log" ]]; then
               echo "--- SQL phase summary (parse / locks / commit / execute_script) ---"
-              python3 scripts/summarize_sql_phase_log.py --warn-lock-p99-ms 50 tpcc-out/server_full.log || echo "(summarize_sql_phase_log.py failed or no matching lines)"
+              python3 scripts/summarize_sql_phase_log.py --warn-lock-p99-ms 50 --warn-flush-p99-ms 100 tpcc-out/server_full.log || echo "(summarize_sql_phase_log.py failed or no matching lines)"
               echo ""
               echo "--- COMMIT samples (flush_us / wal_us) ---"
               grep -E 'rustdb::sql_phases: sql\.commit.*flush_us=' tpcc-out/server_full.log 2>/dev/null | tail -n 5 \

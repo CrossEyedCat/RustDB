@@ -4,7 +4,8 @@ Aggregate rustdb::sql_phases / sql_parse lines from a server stderr log (tracing
 
 Looks for:
   - message `sql_parse` and field parse_us=...
-  - message `table_storage_lock` with lock_wait_us=..., table=..., mode=...
+  - message `table_storage_lock` / `row_storage_lock` with lock_wait_us=..., table=..., mode=...
+  - message `sql.dml.lock_path` with lock_path=row|table|skip
   - message `sql.commit` with flush_us=..., wal_us=..., flush_tables_count=...
   - message `update` with scan_us=..., row_loop_us=...
   - message `delete` with same fields
@@ -33,15 +34,23 @@ def extract_parse_us(line: str) -> int | None:
     return None
 
 
-def extract_lock_wait(line: str) -> tuple[str, str, int] | None:
-    if "table_storage_lock" not in line:
+def extract_storage_lock_wait(line: str, message: str) -> tuple[str, str, int] | None:
+    if message not in line:
         return None
     m_wait = re.search(r"lock_wait_us=(\d+)", line)
-    m_table = re.search(r"table=(\S+)", line)
-    m_mode = re.search(r'mode="?(\w+)"?', line)
+    m_table = re.search(r"table=([^\s}]+)", line)
+    m_mode = re.search(r'mode="?([\w_]+)"?', line)
     if m_wait and m_table and m_mode:
         return m_table.group(1), m_mode.group(1), int(m_wait.group(1))
     return None
+
+
+def extract_lock_wait(line: str) -> tuple[str, str, int] | None:
+    return extract_storage_lock_wait(line, "table_storage_lock")
+
+
+def extract_row_lock_wait(line: str) -> tuple[str, str, int] | None:
+    return extract_storage_lock_wait(line, "row_storage_lock")
 
 
 def extract_commit_metrics(line: str) -> tuple[int, int, int] | None:
@@ -114,6 +123,13 @@ def main() -> int:
         metavar="MS",
         help="emit GitHub ::warning:: when table_storage_lock aggregate p99 exceeds MS (0=off)",
     )
+    ap.add_argument(
+        "--warn-flush-p99-ms",
+        type=float,
+        default=0.0,
+        metavar="MS",
+        help="emit GitHub ::warning:: when sql.commit flush_us aggregate p99 exceeds MS (0=off)",
+    )
     ap.add_argument("path", type=Path)
     args = ap.parse_args()
     p = args.path
@@ -124,6 +140,8 @@ def main() -> int:
     parse_us: list[float] = []
     lock_wait_us: list[float] = []
     lock_by_table_mode: dict[tuple[str, str], list[float]] = defaultdict(list)
+    row_lock_wait_us: list[float] = []
+    row_lock_by_table_mode: dict[tuple[str, str], list[float]] = defaultdict(list)
     commit_flush_us: list[float] = []
     commit_wal_us: list[float] = []
     commit_flush_tables_count: list[float] = []
@@ -143,6 +161,12 @@ def main() -> int:
                 table, mode, wait = lk
                 lock_wait_us.append(float(wait))
                 lock_by_table_mode[(table, mode)].append(float(wait))
+                phase_lines += 1
+            rlk = extract_row_lock_wait(line)
+            if rlk is not None:
+                table, mode, wait = rlk
+                row_lock_wait_us.append(float(wait))
+                row_lock_by_table_mode[(table, mode)].append(float(wait))
                 phase_lines += 1
             cm = extract_commit_metrics(line)
             if cm is not None:
@@ -194,6 +218,21 @@ def main() -> int:
                 )
     else:
         print("table_storage_lock: (no matches)")
+    if row_lock_wait_us:
+        print_us_stats("row_storage_lock lock_wait_us (all)", row_lock_wait_us)
+        print("row_storage_lock by table+mode:")
+        for (table, mode), xs in sorted(
+            row_lock_by_table_mode.items(),
+            key=lambda kv: quantile(kv[1], 0.99),
+            reverse=True,
+        ):
+            print(
+                f"  {table} mode={mode}: n={len(xs)} "
+                f"p50={quantile(xs, 0.5) / 1000:.3f}ms p95={quantile(xs, 0.95) / 1000:.3f}ms "
+                f"p99={quantile(xs, 0.99) / 1000:.3f}ms mean={statistics.fmean(xs) / 1000:.3f}ms"
+            )
+    else:
+        print("row_storage_lock: (no matches)")
     if commit_flush_us:
         print_us_stats("sql.commit flush_us", commit_flush_us)
         print_us_stats("sql.commit wal_us", commit_wal_us)
@@ -202,6 +241,14 @@ def main() -> int:
             f"sql.commit flush_tables_count: n={len(commit_flush_tables_count)} "
             f"mean={mean_tables:.2f} p50={quantile(commit_flush_tables_count, 0.5):.0f}"
         )
+        if args.warn_flush_p99_ms > 0:
+            p99_ms = quantile(commit_flush_us, 0.99) / 1000.0
+            if p99_ms > args.warn_flush_p99_ms:
+                print(
+                    f"::warning::sql.commit flush_us aggregate p99 {p99_ms:.3f}ms "
+                    f"exceeds {args.warn_flush_p99_ms:.0f}ms soft threshold",
+                    flush=True,
+                )
     else:
         print("sql.commit: (no matches — COMMIT path with RUSTDB_SQL_PHASE_LOG=1)")
     if execute_script_wall_us:
