@@ -45,6 +45,16 @@ def extract_storage_lock_wait(line: str, message: str) -> tuple[str, str, int] |
     return None
 
 
+def extract_lock_path(line: str) -> tuple[str, str] | None:
+    if "rustdb::sql_phases" not in line or "sql.dml.lock_path" not in line:
+        return None
+    m_table = re.search(r"table=([^\s}]+)", line)
+    m_path = re.search(r"lock_path=([^\s}]+)", line)
+    if m_table and m_path:
+        return m_table.group(1), m_path.group(1)
+    return None
+
+
 def extract_lock_wait(line: str) -> tuple[str, str, int] | None:
     return extract_storage_lock_wait(line, "table_storage_lock")
 
@@ -64,23 +74,15 @@ def extract_commit_metrics(line: str) -> tuple[int, int, int] | None:
     return None
 
 
-def extract_execute_script_wall_us(line: str) -> int | None:
-    if "wall_us=" not in line:
+def extract_execute_script_wall_us(line: str) -> tuple[int, int] | None:
+    if "wall_us=" not in line or "sql.execute_script" not in line:
         return None
-    # Explicit rustdb::sql_phases event (Phase 14+).
-    if "rustdb::sql_phases" in line and "sql.execute_script" in line:
-        m = re.search(r"wall_us=(\d+)", line)
-        if m:
-            return int(m.group(1))
-    # Span close / inline span fields (tracing fmt with FmtSpan::CLOSE).
-    if "sql.execute_script" in line:
-        m = re.search(r"sql\.execute_script\{[^}]*wall_us=(\d+)", line)
-        if m:
-            return int(m.group(1))
-        m = re.search(r"wall_us=(\d+)", line)
-        if m:
-            return int(m.group(1))
-    return None
+    m_wall = re.search(r"wall_us=(\d+)", line)
+    if not m_wall:
+        return None
+    m_count = re.search(r"statement_count=(\d+)", line)
+    stmt_count = int(m_count.group(1)) if m_count else 0
+    return int(m_wall.group(1)), stmt_count
 
 
 def extract_update_pair(line: str) -> tuple[int, int] | None:
@@ -130,6 +132,13 @@ def main() -> int:
         metavar="MS",
         help="emit GitHub ::warning:: when sql.commit flush_us aggregate p99 exceeds MS (0=off)",
     )
+    ap.add_argument(
+        "--warn-district-row-lock-pct",
+        type=float,
+        default=90.0,
+        metavar="PCT",
+        help="emit ::warning:: when district sql.dml.lock_path=row is below PCT (0=off)",
+    )
     ap.add_argument("path", type=Path)
     args = ap.parse_args()
     p = args.path
@@ -146,48 +155,63 @@ def main() -> int:
     commit_wal_us: list[float] = []
     commit_flush_tables_count: list[float] = []
     execute_script_wall_us: list[float] = []
+    execute_script_by_stmt_count: dict[int, list[float]] = defaultdict(list)
+    lock_path_counts: dict[str, int] = defaultdict(int)
+    lock_path_by_table: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     scan_us: list[float] = []
     row_loop_us: list[float] = []
     phase_lines = 0
 
     for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
-        if "rustdb::sql_phases" in line:
-            pu = extract_parse_us(line)
-            if pu is not None:
-                parse_us.append(float(pu))
-                phase_lines += 1
-            lk = extract_lock_wait(line)
-            if lk is not None:
-                table, mode, wait = lk
-                lock_wait_us.append(float(wait))
-                lock_by_table_mode[(table, mode)].append(float(wait))
-                phase_lines += 1
-            rlk = extract_row_lock_wait(line)
-            if rlk is not None:
-                table, mode, wait = rlk
-                row_lock_wait_us.append(float(wait))
-                row_lock_by_table_mode[(table, mode)].append(float(wait))
-                phase_lines += 1
-            cm = extract_commit_metrics(line)
-            if cm is not None:
-                commit_flush_us.append(float(cm[0]))
-                commit_wal_us.append(float(cm[1]))
-                commit_flush_tables_count.append(float(cm[2]))
-                phase_lines += 1
+        if "rustdb::sql_phases" not in line:
             ew = extract_execute_script_wall_us(line)
             if ew is not None:
-                execute_script_wall_us.append(float(ew))
-                phase_lines += 1
-            up = extract_update_pair(line)
-            if up is not None:
-                scan_us.append(float(up[0]))
-                row_loop_us.append(float(up[1]))
-                phase_lines += 1
-        else:
-            ew = extract_execute_script_wall_us(line)
-            if ew is not None:
-                execute_script_wall_us.append(float(ew))
-                phase_lines += 1
+                wall_us, stmt_count = ew
+                execute_script_wall_us.append(float(wall_us))
+                if stmt_count > 0:
+                    execute_script_by_stmt_count[stmt_count].append(float(wall_us))
+            continue
+
+        pu = extract_parse_us(line)
+        if pu is not None:
+            parse_us.append(float(pu))
+            phase_lines += 1
+        lk = extract_lock_wait(line)
+        if lk is not None:
+            table, mode, wait = lk
+            lock_wait_us.append(float(wait))
+            lock_by_table_mode[(table, mode)].append(float(wait))
+            phase_lines += 1
+        rlk = extract_row_lock_wait(line)
+        if rlk is not None:
+            table, mode, wait = rlk
+            row_lock_wait_us.append(float(wait))
+            row_lock_by_table_mode[(table, mode)].append(float(wait))
+            phase_lines += 1
+        cm = extract_commit_metrics(line)
+        if cm is not None:
+            commit_flush_us.append(float(cm[0]))
+            commit_wal_us.append(float(cm[1]))
+            commit_flush_tables_count.append(float(cm[2]))
+            phase_lines += 1
+        ew = extract_execute_script_wall_us(line)
+        if ew is not None:
+            wall_us, stmt_count = ew
+            execute_script_wall_us.append(float(wall_us))
+            if stmt_count > 0:
+                execute_script_by_stmt_count[stmt_count].append(float(wall_us))
+            phase_lines += 1
+        lp = extract_lock_path(line)
+        if lp is not None:
+            table, path = lp
+            lock_path_counts[path] += 1
+            lock_path_by_table[table][path] += 1
+            phase_lines += 1
+        up = extract_update_pair(line)
+        if up is not None:
+            scan_us.append(float(up[0]))
+            row_loop_us.append(float(up[1]))
+            phase_lines += 1
 
     print(f"file: {p}")
     print(f"matched_lines: {phase_lines}")
@@ -233,6 +257,34 @@ def main() -> int:
             )
     else:
         print("row_storage_lock: (no matches)")
+    if lock_path_counts:
+        total_lp = sum(lock_path_counts.values())
+        print("sql.dml.lock_path (all tables):")
+        for path in ("row", "table", "skip"):
+            n = lock_path_counts.get(path, 0)
+            pct = 100.0 * n / total_lp if total_lp else 0.0
+            print(f"  {path}: n={n} ({pct:.1f}%)")
+        district = lock_path_by_table.get("district", {})
+        if district:
+            d_total = sum(district.values())
+            d_row = district.get("row", 0)
+            d_pct = 100.0 * d_row / d_total if d_total else 0.0
+            print(
+                f"sql.dml.lock_path district: row={d_row} table={district.get('table', 0)} "
+                f"skip={district.get('skip', 0)} row_pct={d_pct:.1f}%"
+            )
+            if (
+                args.warn_district_row_lock_pct > 0
+                and d_total > 0
+                and d_pct < args.warn_district_row_lock_pct
+            ):
+                print(
+                    f"::warning::district row lock_path {d_pct:.1f}% is below "
+                    f"{args.warn_district_row_lock_pct:.0f}% soft threshold",
+                    flush=True,
+                )
+    else:
+        print("sql.dml.lock_path: (no matches)")
     if commit_flush_us:
         print_us_stats("sql.commit flush_us", commit_flush_us)
         print_us_stats("sql.commit wal_us", commit_wal_us)
@@ -253,6 +305,15 @@ def main() -> int:
         print("sql.commit: (no matches — COMMIT path with RUSTDB_SQL_PHASE_LOG=1)")
     if execute_script_wall_us:
         print_us_stats("sql.execute_script wall_us", execute_script_wall_us)
+        if execute_script_by_stmt_count:
+            print("sql.execute_script wall_us by statement_count:")
+            for sc in sorted(execute_script_by_stmt_count.keys()):
+                xs = execute_script_by_stmt_count[sc]
+                print(
+                    f"  stmt_count={sc}: n={len(xs)} "
+                    f"p50={quantile(xs, 0.5) / 1000:.3f}ms "
+                    f"p99={quantile(xs, 0.99) / 1000:.3f}ms"
+                )
     else:
         print(
             "sql.execute_script: (no matches — set RUSTDB_SQL_PHASE_LOG=1; "

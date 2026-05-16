@@ -396,6 +396,7 @@ mod tests {
             unique_constraints: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            secondary_indexes: vec![],
         }
     }
 
@@ -417,6 +418,7 @@ mod tests {
             unique_constraints: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            secondary_indexes: vec![],
         };
         let mut t = Tuple::new(1);
         t.set_value("col1", ColumnValue::new(DataType::Integer(99)));
@@ -439,6 +441,7 @@ mod tests {
             unique_constraints: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            secondary_indexes: vec![],
         };
         let mut t = Tuple::new(1);
         t.set_value("ID", ColumnValue::new(DataType::Integer(7)));
@@ -495,6 +498,7 @@ mod tests {
             unique_constraints: vec![],
             foreign_keys: vec![],
             check_constraints: vec![],
+            secondary_indexes: vec![],
         });
         let fk = ForeignKeyConstraintDef {
             name: "fk".to_string(),
@@ -523,6 +527,7 @@ mod tests {
                 referenced_columns: vec![],
             }],
             check_constraints: vec![],
+            secondary_indexes: vec![],
         };
         cat.register_schema(child.clone());
 
@@ -577,6 +582,7 @@ mod tests {
                 referenced_columns: vec![],
             }],
             check_constraints: vec![],
+            secondary_indexes: vec![],
         };
         cat.register_schema(child.clone());
 

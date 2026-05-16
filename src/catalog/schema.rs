@@ -28,6 +28,13 @@ pub struct ForeignKeyConstraintDef {
     pub referenced_columns: Vec<String>,
 }
 
+/// Secondary B+tree index registered via `CREATE INDEX` (persisted in catalog for reopen).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecondaryIndexDef {
+    pub name: String,
+    pub columns: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableSchema {
     pub table_name: String,
@@ -37,6 +44,9 @@ pub struct TableSchema {
     pub unique_constraints: Vec<UniqueConstraintDef>,
     pub foreign_keys: Vec<ForeignKeyConstraintDef>,
     pub check_constraints: Vec<CheckConstraint>,
+    /// Non-primary secondary indexes; rebuilt into [`crate::storage::index_registry::IndexRegistry`] on engine open.
+    #[serde(default)]
+    pub secondary_indexes: Vec<SecondaryIndexDef>,
 }
 
 /// Registered table names and simple ordinal ids (for tests and tooling).

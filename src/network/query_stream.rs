@@ -336,8 +336,13 @@ fn dispatch_execute_tpcc(
 }
 
 fn connection_sql_worker_count() -> usize {
+    if let Ok(s) = std::env::var("RUSTDB_SQL_WORKER_COUNT") {
+        if let Ok(n) = s.parse::<usize>() {
+            return n.clamp(1, 32);
+        }
+    }
     std::thread::available_parallelism()
-        .map(|n| n.get().clamp(1, 8))
+        .map(|n| n.get().clamp(1, 16))
         .unwrap_or(1)
 }
 

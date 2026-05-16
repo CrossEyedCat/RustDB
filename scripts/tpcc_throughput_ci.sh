@@ -95,6 +95,7 @@ docker run -d --name "$CONTAINER_NAME" \
   -e RUSTDB_GROUP_COMMIT_MAX_BATCH="${RUSTDB_GROUP_COMMIT_MAX_BATCH:-32}" \
   ${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML:+-e "RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML}"} \
   -e RUSTDB_BENCH_DEFER_HEAP_FSYNC="${RUSTDB_BENCH_DEFER_HEAP_FSYNC:-1}" \
+  ${RUSTDB_SQL_WORKER_COUNT:+-e "RUSTDB_SQL_WORKER_COUNT=${RUSTDB_SQL_WORKER_COUNT}"} \
   -e RUST_LOG="${RUST_LOG:-info}" \
   "$RUSTDB_IMAGE" \
   sh -c 'rustdb --config /app/config/config.toml server --host 0.0.0.0 --port 5432 --cert-out /tmp/server.der' >/dev/null

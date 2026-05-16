@@ -531,6 +531,9 @@ jobs:
           CONCURRENCY: 64
           DURATION_SECS: 300
           MIX: new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04
+          RUSTDB_TPCC_NATIVE: "1"
+          RUSTDB_TPCC_NATIVE_MICRO: "1"
+          RUSTDB_SQL_WORKER_COUNT: "16"
         run: |
           set -euo pipefail
           chmod +x scripts/tpcc_throughput_ci.sh
@@ -618,7 +621,7 @@ jobs:
             echo '```'
             if [[ -s "tpcc-out/server_full.log" ]]; then
               echo "--- SQL phase summary (parse / locks / commit / execute_script) ---"
-              python3 scripts/summarize_sql_phase_log.py --warn-lock-p99-ms 50 --warn-flush-p99-ms 100 tpcc-out/server_full.log || echo "(summarize_sql_phase_log.py failed or no matching lines)"
+              python3 scripts/summarize_sql_phase_log.py --warn-lock-p99-ms 50 --warn-flush-p99-ms 100 --warn-district-row-lock-pct 90 tpcc-out/server_full.log || echo "(summarize_sql_phase_log.py failed or no matching lines)"
               echo ""
               echo "--- COMMIT samples (flush_us / wal_us) ---"
               grep -E 'rustdb::sql_phases: sql\.commit.*flush_us=' tpcc-out/server_full.log 2>/dev/null | tail -n 5 \
@@ -658,18 +661,45 @@ jobs:
             echo ""
             echo "### Throughput thresholds (informational)"
             echo ""
-            echo "- Full mix rustdb/postgres: **${ratio}%** (soft floor: 40%)"
-            echo "- order_status micro rustdb/postgres: **${micro_ratio}%** (soft floor: 70%)"
+            echo "- Full mix rustdb/postgres: **${ratio}%** (soft floor: 45%)"
+            echo "- order_status micro rustdb/postgres: **${micro_ratio}%** (soft floor: 65%)"
           } >> "$GITHUB_STEP_SUMMARY"
-          if python3 -c "exit(0 if float('${ratio}') >= 40.0 else 1)"; then
+          if python3 -c "exit(0 if float('${ratio}') >= 45.0 else 1)"; then
             :
           else
-            echo "::warning::Full mix RustDB/PostgreSQL TPS ratio ${ratio}% is below the 40% soft threshold"
+            echo "::warning::Full mix RustDB/PostgreSQL TPS ratio ${ratio}% is below the 45% soft threshold"
           fi
-          if python3 -c "exit(0 if float('${micro_ratio}') >= 70.0 else 1)"; then
+          if python3 -c "exit(0 if float('${micro_ratio}') >= 65.0 else 1)"; then
             :
           else
-            echo "::warning::order_status micro RustDB/PostgreSQL TPS ratio ${micro_ratio}% is below the 70% soft threshold"
+            echo "::warning::order_status micro RustDB/PostgreSQL TPS ratio ${micro_ratio}% is below the 65% soft threshold"
+          fi
+          mix_os_p50="$(python3 -c "
+import csv, statistics
+from pathlib import Path
+p = Path('tpcc-out/tpcc_txn.log')
+if not p.is_file():
+    print('0')
+    raise SystemExit(0)
+rows = [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='order_status']
+us = [int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]
+print(f'{statistics.median(us)/1000:.3f}' if us else '0')
+" 2>/dev/null || echo 0)"
+          micro_os_p50="$(python3 -c "
+import csv, statistics
+from pathlib import Path
+p = Path('tpcc-out/order_status_micro/tpcc_txn.log')
+if not p.is_file():
+    print('0')
+    raise SystemExit(0)
+rows = [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='order_status']
+us = [int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]
+print(f'{statistics.median(us)/1000:.3f}' if us else '0')
+" 2>/dev/null || echo 0)"
+          if python3 -c "mix=float('${mix_os_p50}'); micro=float('${micro_os_p50}'); exit(0 if mix<=0 or micro<=0 or (mix/micro)<=3.0 else 1)"; then
+            :
+          else
+            echo "::warning::order_status full-mix p50 ${mix_os_p50}ms is more than 3× micro p50 ${micro_os_p50}ms (queue tail)"
           fi
 
       - name: Upload TPC-C artifacts

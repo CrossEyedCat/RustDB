@@ -177,7 +177,7 @@ pub(crate) struct SqlEngineState {
     planner: QueryPlanner,
     optimizer: Mutex<QueryOptimizer>,
     executor: QueryExecutor,
-    /// Secondary indexes maintained for `CREATE INDEX` (not persisted across bare-metal restarts).
+    /// Secondary indexes (definitions persisted in catalog; btree rebuilt on open).
     index_registry: Arc<RwLock<IndexRegistry>>,
     /// Cache for deterministic `SELECT` queries without `FROM` (literal projections only).
     ///
@@ -274,6 +274,9 @@ impl SqlEngine {
         }
         rebuild_all_constraint_runtime(state.as_ref()).map_err(|e| {
             DbError::database(format!("catalog/constraint rebuild on open: {}", e.message))
+        })?;
+        rebuild_secondary_indexes_from_catalog(state.as_ref()).map_err(|e| {
+            DbError::database(format!("secondary index rebuild on open: {}", e.message))
         })?;
         Ok(Self { state })
     }
@@ -767,6 +770,42 @@ fn resolve_dml_row_lock_rids(
     Ok(Some((rids, index_exact)))
 }
 
+fn log_dml_lock_path(table: &str, lock_path: &'static str, reason: Option<&str>, row_count: Option<usize>) {
+    if !sql_phase_log_enabled() {
+        return;
+    }
+    match (reason, row_count) {
+        (Some(reason), Some(n)) => info!(
+            target: "rustdb::sql_phases",
+            table = %table,
+            lock_path,
+            reason,
+            row_count = n,
+            "sql.dml.lock_path"
+        ),
+        (Some(reason), None) => info!(
+            target: "rustdb::sql_phases",
+            table = %table,
+            lock_path,
+            reason,
+            "sql.dml.lock_path"
+        ),
+        (None, Some(n)) => info!(
+            target: "rustdb::sql_phases",
+            table = %table,
+            lock_path,
+            row_count = n,
+            "sql.dml.lock_path"
+        ),
+        (None, None) => info!(
+            target: "rustdb::sql_phases",
+            table = %table,
+            lock_path,
+            "sql.dml.lock_path"
+        ),
+    }
+}
+
 fn with_dml_write_lock<T>(
     state: &SqlEngineState,
     table: &str,
@@ -775,38 +814,35 @@ fn with_dml_write_lock<T>(
     f: impl FnOnce() -> Result<T, EngineError>,
 ) -> Result<T, EngineError> {
     if skip_storage_lock {
-        if sql_phase_log_enabled() {
-            info!(
-                target: "rustdb::sql_phases",
-                table = %table,
-                lock_path = "skip",
-                "sql.dml.lock_path"
-            );
-        }
+        log_dml_lock_path(table, "skip", Some("skip_dml_storage_lock"), None);
         return f();
     }
     if let Some(expr) = where_clause {
         if let Some((rids, index_exact)) = resolve_dml_row_lock_rids(state, table, expr)? {
-            if index_exact && rids.len() == 1 {
-                if sql_phase_log_enabled() {
-                    info!(
-                        target: "rustdb::sql_phases",
-                        table = %table,
-                        lock_path = "row",
-                        "sql.dml.lock_path"
-                    );
+            if index_exact {
+                if rids.is_empty() {
+                    log_dml_lock_path(table, "skip", Some("index_exact_no_rows"), None);
+                    return f();
                 }
+                log_dml_lock_path(table, "row", None, Some(rids.len()));
                 return state.row_locks.with_write_locks(table, rids, f);
             }
+            log_dml_lock_path(
+                table,
+                "table",
+                Some("index_prefix_not_exact"),
+                Some(rids.len()),
+            );
+        } else {
+            let reason = if extract_dml_where_equalities(expr).is_empty() {
+                "where_not_literal_equalities"
+            } else {
+                "no_matching_index"
+            };
+            log_dml_lock_path(table, "table", Some(reason), None);
         }
-    }
-    if sql_phase_log_enabled() {
-        info!(
-            target: "rustdb::sql_phases",
-            table = %table,
-            lock_path = "table",
-            "sql.dml.lock_path"
-        );
+    } else {
+        log_dml_lock_path(table, "table", Some("no_where_clause"), None);
     }
     let lock = table_storage_lock_arc(state, table)?;
     let _guard = acquire_table_storage_write_lock(&lock, table)?;
@@ -1008,11 +1044,11 @@ fn commit_transaction(
             "no active transaction",
         )
     })?;
-    let flush_tables_count = tx.touched_tables.len();
+    let touched_table_count = tx.touched_tables.len();
     let commit_log_fsync = state.durability.fsync_on_commit();
     let span = info_span!(
         "sql.commit",
-        flush_tables_count,
+        flush_tables_count = tracing::field::Empty,
         flush_us = tracing::field::Empty,
         wal_us = tracing::field::Empty,
         commit_log_fsync,
@@ -1026,7 +1062,12 @@ fn commit_transaction(
     if let Some(us) = wal_us {
         span.record("wal_us", us);
     }
-    let touched = std::mem::take(&mut tx.touched_tables);
+    let touched: HashSet<String> = std::mem::take(&mut tx.touched_tables)
+        .into_iter()
+        .filter(|t| table_has_dirty_heap_pages(state, t))
+        .collect();
+    let flush_tables_count = touched.len();
+    span.record("flush_tables_count", flush_tables_count);
     let flush_clock = Instant::now();
     crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &touched)
         .map_err(map_db_err)?;
@@ -1038,6 +1079,7 @@ fn commit_transaction(
             flush_us,
             wal_us = wal_us.unwrap_or(0),
             flush_tables_count,
+            touched_table_count,
             commit_log_fsync,
             "sql.commit"
         );
@@ -1194,6 +1236,16 @@ fn apply_undo(state: &SqlEngineState, op: UndoEntry) -> Result<(), EngineError> 
         }
     }
     Ok(())
+}
+
+pub(crate) fn table_has_dirty_heap_pages(state: &SqlEngineState, table: &str) -> bool {
+    let Ok(pm) = table_page_manager(state, table) else {
+        return false;
+    };
+    let Ok(guard) = pm.lock() else {
+        return false;
+    };
+    guard.dirty_page_count() > 0
 }
 
 pub(crate) fn table_page_manager(
@@ -1800,8 +1852,69 @@ fn execute_create_index(
             })?;
     }
     backfill_index_from_heap(state, table, &ci.index_name)?;
+    {
+        use crate::catalog::schema::SecondaryIndexDef;
+        let mut cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+        let Some(sch) = cat.schema_mut(table) else {
+            return Err(EngineError::new(
+                engine_error_code::CONSTRAINT_VIOLATION,
+                format!("table {table} does not exist"),
+            ));
+        };
+        if !sch
+            .secondary_indexes
+            .iter()
+            .any(|i| i.name == ci.index_name)
+        {
+            sch.secondary_indexes.push(SecondaryIndexDef {
+                name: ci.index_name.clone(),
+                columns: ci.columns.clone(),
+            });
+        }
+    }
+    persist_catalog(state)?;
     rebuild_optimizer_with_indexes(state)?;
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
+}
+
+/// Rebuilds in-memory secondary indexes from catalog metadata after reopen (CI seed path).
+fn rebuild_secondary_indexes_from_catalog(state: &SqlEngineState) -> Result<(), EngineError> {
+    let index_defs: Vec<(String, String, Vec<String>)> = {
+        let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+        let mut out = Vec::new();
+        for table in cat.table_names() {
+            let Some(sch) = cat.schema(&table) else {
+                continue;
+            };
+            for idx in &sch.secondary_indexes {
+                out.push((table.clone(), idx.name.clone(), idx.columns.clone()));
+            }
+        }
+        out
+    };
+    if index_defs.is_empty() {
+        return Ok(());
+    }
+    {
+        let mut reg = state
+            .index_registry
+            .write()
+            .map_err(|_| lock_poisoned_engine())?;
+        for (table, index_name, columns) in &index_defs {
+            if reg.get_index_entry(table, index_name).is_some() {
+                continue;
+            }
+            reg.create_index(table, index_name, columns.clone())
+                .map_err(|e| {
+                    EngineError::new(engine_error_code::INTERNAL, format!("index rebuild: {e}"))
+                })?;
+        }
+    }
+    for (table, index_name, _) in index_defs {
+        backfill_index_from_heap(state, &table, &index_name)?;
+    }
+    rebuild_optimizer_with_indexes(state)?;
+    Ok(())
 }
 
 fn backfill_index_from_heap(
@@ -2415,6 +2528,7 @@ fn table_schema_from_create_table(ct: &CreateTableStatement) -> Result<TableSche
         unique_constraints,
         foreign_keys,
         check_constraints: checks,
+        secondary_indexes: Vec::new(),
     })
 }
 
@@ -3011,11 +3125,15 @@ where
     };
     drop(pm);
 
-    let single_rid = if exact_key && rows.len() == 1 {
-        Some(rows[0].0)
+    if exact_key && rows.is_empty() {
+        return Ok(0);
+    }
+    let row_lock_rids: Vec<RecordId> = if exact_key {
+        rows.iter().map(|(rid, _)| *rid).collect()
     } else {
-        None
+        Vec::new()
     };
+
     let apply = move || -> Result<u64, EngineError> {
         let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
         let mut rows_affected = 0u64;
@@ -3087,13 +3205,12 @@ where
         Ok(rows_affected)
     };
 
-    if let Some(rid) = single_rid {
-        state.row_locks.with_write_locks(table, vec![rid], apply)
-    } else {
-        let lock = table_storage_lock_arc(state, table)?;
-        let _guard = acquire_table_storage_write_lock(&lock, table)?;
-        apply()
+    if exact_key {
+        return state.row_locks.with_write_locks(table, row_lock_rids, apply);
     }
+    let lock = table_storage_lock_arc(state, table)?;
+    let _guard = acquire_table_storage_write_lock(&lock, table)?;
+    apply()
 }
 
 /// Index-backed DELETE; uses row locks on exact single-key lookups.
@@ -4078,6 +4195,52 @@ mod tests {
             "composite equality on idx_district_wd must be index_exact for row locks"
         );
         assert_eq!(indexed.0.len(), 1);
+    }
+
+    /// CI seeds via CLI then starts the server in a new process; secondary indexes must reload from catalog.
+    #[test]
+    fn reopen_restores_secondary_indexes_for_district_row_lock() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().to_path_buf();
+        {
+            let eng = SqlEngine::open(path.clone()).unwrap();
+            let mut ctx = SessionContext::default();
+            eng.execute_sql(
+                "CREATE TABLE district (d_w_id INTEGER, d_id INTEGER, d_ytd INTEGER)",
+                &mut ctx,
+            )
+            .unwrap();
+            eng.execute_sql(
+                "CREATE INDEX idx_district_wd ON district (d_w_id, d_id)",
+                &mut ctx,
+            )
+            .unwrap();
+            eng.execute_sql(
+                "INSERT INTO district (d_w_id, d_id, d_ytd) VALUES (1, 1, 0)",
+                &mut ctx,
+            )
+            .unwrap();
+        }
+        let eng = SqlEngine::open(path).unwrap();
+        let mut ctx = SessionContext::default();
+        let mut eq = HashMap::new();
+        eq.insert("d_w_id".to_string(), "1".to_string());
+        eq.insert("d_id".to_string(), "1".to_string());
+        let indexed = eng
+            .state_for_test()
+            .index_registry
+            .read()
+            .expect("index registry read")
+            .lookup_record_ids_by_equalities("district", &eq)
+            .expect("lookup")
+            .expect("indexes must be rebuilt from catalog on open");
+        assert!(indexed.1, "expected exact index key after reopen");
+        assert_eq!(indexed.0.len(), 1);
+        eng.execute_sql(
+            "UPDATE district SET d_ytd = 5 WHERE d_w_id = 1 AND d_id = 1",
+            &mut ctx,
+        )
+        .expect("update after reopen");
     }
 
     /// Concurrent district updates use per-row locks when `idx_district_wd` matches
