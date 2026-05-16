@@ -181,6 +181,93 @@ fn parent_key_for_fk(
     Ok((fk.referenced_table.clone(), parent_key))
 }
 
+/// Validates PK/UNIQUE/FK for a **new** heap insert (no `rid` yet).
+pub fn validate_new_row_for_insert(
+    runtime: &ConstraintRuntime,
+    table: &str,
+    tuple: &Tuple,
+    schema: &TableSchema,
+    cat: &SchemaManager,
+) -> Result<(), EngineError> {
+    if let Some((pk_name, cols)) = &schema.primary_key {
+        let key = composite_key_from_tuple_with_schema(tuple, cols, schema)?;
+        if runtime.pk.get(table).and_then(|m| m.get(&key)).is_some() {
+            return Err(EngineError::new(
+                engine_error_code::CONSTRAINT_VIOLATION,
+                format!("PRIMARY KEY constraint {pk_name} violated"),
+            ));
+        }
+    }
+
+    for uq in &schema.unique_constraints {
+        let key = composite_key_from_tuple_with_schema(tuple, &uq.columns, schema)?;
+        if runtime
+            .unique
+            .get(&(table.to_string(), uq.name.clone()))
+            .and_then(|m| m.get(&key))
+            .is_some()
+        {
+            return Err(EngineError::new(
+                engine_error_code::CONSTRAINT_VIOLATION,
+                format!("UNIQUE constraint {} violated", uq.name),
+            ));
+        }
+    }
+
+    for fk in &schema.foreign_keys {
+        let (parent_table, parent_key) = parent_key_for_fk(fk, tuple, cat, schema)?;
+        let parent_has_row = runtime
+            .pk
+            .get(&parent_table)
+            .map(|m| m.contains_key(&parent_key))
+            .unwrap_or(false);
+        if !parent_has_row {
+            return Err(EngineError::new(
+                engine_error_code::CONSTRAINT_VIOLATION,
+                format!("foreign key {}: missing parent row", fk.name),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Commits PK/UNIQUE/FK maps after a successful heap insert.
+pub fn commit_row_for_insert(
+    runtime: &mut ConstraintRuntime,
+    table: &str,
+    rid: RecordId,
+    tuple: &Tuple,
+    schema: &TableSchema,
+    cat: &SchemaManager,
+) -> Result<(), EngineError> {
+    if let Some((_, cols)) = &schema.primary_key {
+        let key = composite_key_from_tuple_with_schema(tuple, cols, schema)?;
+        runtime
+            .pk
+            .entry(table.to_string())
+            .or_default()
+            .insert(key, rid);
+    }
+
+    for uq in &schema.unique_constraints {
+        let key = composite_key_from_tuple_with_schema(tuple, &uq.columns, schema)?;
+        runtime
+            .unique
+            .entry((table.to_string(), uq.name.clone()))
+            .or_default()
+            .insert(key, rid);
+    }
+
+    for fk in &schema.foreign_keys {
+        let (parent_table, parent_key) = parent_key_for_fk(fk, tuple, cat, schema)?;
+        let fk_key = (parent_table, parent_key);
+        *runtime.fk_refcount.entry(fk_key).or_insert(0) += 1;
+    }
+
+    Ok(())
+}
+
 pub fn register_row(
     runtime: &mut ConstraintRuntime,
     table: &str,
@@ -233,32 +320,7 @@ pub fn register_row(
         }
     }
 
-    // Commit
-    if let Some((_, cols)) = &schema.primary_key {
-        let key = composite_key_from_tuple_with_schema(tuple, cols, schema)?;
-        runtime
-            .pk
-            .entry(table.to_string())
-            .or_default()
-            .insert(key, rid);
-    }
-
-    for uq in &schema.unique_constraints {
-        let key = composite_key_from_tuple_with_schema(tuple, &uq.columns, schema)?;
-        runtime
-            .unique
-            .entry((table.to_string(), uq.name.clone()))
-            .or_default()
-            .insert(key, rid);
-    }
-
-    for fk in &schema.foreign_keys {
-        let (parent_table, parent_key) = parent_key_for_fk(fk, tuple, cat, schema)?;
-        let fk_key = (parent_table, parent_key);
-        *runtime.fk_refcount.entry(fk_key).or_insert(0) += 1;
-    }
-
-    Ok(())
+    commit_row_for_insert(runtime, table, rid, tuple, schema, cat)
 }
 
 pub fn unregister_row(

@@ -1075,10 +1075,16 @@ fn rollback_transaction(
     for op in undo.iter() {
         flush_tables.insert(undo_entry_table(op));
     }
+    let had_undo = !undo.is_empty();
     for op in undo.into_iter().rev() {
         apply_undo(state, op)?;
     }
-    rebuild_all_constraint_runtime(state)?;
+    // Rebuilding from heap is expensive and races with concurrent DML that already
+    // updated the in-memory maps (e.g. another thread's committed INSERT). Only rescan
+    // after we applied undo entries that may have left maps inconsistent with the heap.
+    if had_undo {
+        rebuild_all_constraint_runtime(state)?;
+    }
     // Persist rollback: otherwise the next process sees heap pages from disk that still contain
     // undone inserts (WAL replay does not redo aborted txs, so durability must match).
     crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &flush_tables)
@@ -2742,6 +2748,12 @@ pub(crate) fn insert_row_tuple(
     table: &str,
     tuple: Tuple,
 ) -> Result<(), EngineError> {
+    record_touched_table(ctx, table);
+    let pm_for_table = table_page_manager(state, table)?;
+    if table_has_primary_key(state, table) {
+        insert_heap_row_pk_serialized(state, ctx, table, &tuple, &pm_for_table)?;
+        return Ok(());
+    }
     let pk_lock = pk_row_lock_rid_for_tuple(state, table, &tuple);
     if let Some(rid) = pk_lock {
         state.row_locks.with_write_locks(table, vec![rid], || {
@@ -2806,18 +2818,30 @@ fn insert_row_tuple_inner(
     Ok(())
 }
 
-fn insert_heap_row_in_execute_insert(
+fn insert_heap_row_after_bytes(
     state: &SqlEngineState,
     ctx: &mut SessionContext,
     table: &str,
     tuple: &Tuple,
-    pm_for_table: &Arc<Mutex<PageManager>>,
-) -> Result<u64, EngineError> {
-    insert_row_with_optional_pk_lock(state, table, tuple, || {
-        let bytes = tuple.to_bytes().map_err(map_db_err)?;
-        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-        let ins = pm.insert(&bytes).map_err(map_db_err)?;
-        maybe_simulate_dml_crash("insert_row");
+    pm: &mut PageManager,
+    bytes: Vec<u8>,
+    ins: crate::storage::page_manager::InsertResult,
+) -> Result<(), EngineError> {
+    maybe_simulate_dml_crash("insert_row");
+    if let Some(tx) = ctx.transaction.as_mut() {
+        if let Some(ref wal) = state.wal {
+            let page_id = (ins.record_id >> 32) as u64;
+            let off = (ins.record_id & 0xffff_ffff) as u32;
+            let record_offset: u16 = off.try_into().map_err(|_| {
+                EngineError::new(
+                    engine_error_code::INTERNAL,
+                    "record offset too large for WAL",
+                )
+            })?;
+            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+        }
+    }
+    if let Err(e) = register_row_for_insert(state, table, ins.record_id, tuple) {
         if let Some(tx) = ctx.transaction.as_mut() {
             if let Some(ref wal) = state.wal {
                 let page_id = (ins.record_id >> 32) as u64;
@@ -2828,35 +2852,121 @@ fn insert_heap_row_in_execute_insert(
                         "record offset too large for WAL",
                     )
                 })?;
-                wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+                wal.log_data_delete(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
             }
         }
-        if let Err(e) = register_row_for_insert(state, table, ins.record_id, tuple) {
-            if let Some(tx) = ctx.transaction.as_mut() {
-                if let Some(ref wal) = state.wal {
-                    let page_id = (ins.record_id >> 32) as u64;
-                    let off = (ins.record_id & 0xffff_ffff) as u32;
-                    let record_offset: u16 = off.try_into().map_err(|_| {
-                        EngineError::new(
-                            engine_error_code::INTERNAL,
-                            "record offset too large for WAL",
-                        )
-                    })?;
-                    wal.log_data_delete(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
-                }
-            }
-            pm.delete(ins.record_id).map_err(map_db_err)?;
-            pm.flush_dirty_pages().map_err(map_db_err)?;
-            return Err(e);
+        pm.delete(ins.record_id).map_err(map_db_err)?;
+        pm.flush_dirty_pages().map_err(map_db_err)?;
+        return Err(e);
+    }
+    push_undo(
+        ctx,
+        UndoEntry::Insert {
+            table: table.to_string(),
+            rid: ins.record_id,
+            payload: bytes,
+        },
+    );
+    Ok(())
+}
+
+/// PK/UNIQUE tables: hold `constraint_runtime` across validate → heap insert → map commit.
+fn insert_heap_row_pk_serialized(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuple: &Tuple,
+    pm_for_table: &Arc<Mutex<PageManager>>,
+) -> Result<u64, EngineError> {
+    let mut rt = state
+        .constraint_runtime
+        .lock()
+        .map_err(|_| lock_poisoned_engine())?;
+    let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+    let Some(schema) = cat.schema(table).cloned() else {
+        drop(cat);
+        drop(rt);
+        let bytes = tuple.to_bytes().map_err(map_db_err)?;
+        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let ins = pm.insert(&bytes).map_err(map_db_err)?;
+        insert_heap_row_after_bytes(state, ctx, table, tuple, &mut pm, bytes, ins)?;
+        return Ok(1);
+    };
+    let snapshot = cat.clone();
+    drop(cat);
+
+    sql_constraints::validate_new_row_for_insert(&rt, table, tuple, &schema, &snapshot)?;
+
+    let bytes = tuple.to_bytes().map_err(map_db_err)?;
+    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    let ins = pm.insert(&bytes).map_err(map_db_err)?;
+    maybe_simulate_dml_crash("insert_row");
+    if let Some(tx) = ctx.transaction.as_mut() {
+        if let Some(ref wal) = state.wal {
+            let page_id = (ins.record_id >> 32) as u64;
+            let off = (ins.record_id & 0xffff_ffff) as u32;
+            let record_offset: u16 = off.try_into().map_err(|_| {
+                EngineError::new(
+                    engine_error_code::INTERNAL,
+                    "record offset too large for WAL",
+                )
+            })?;
+            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
         }
-        push_undo(
-            ctx,
-            UndoEntry::Insert {
-                table: table.to_string(),
-                rid: ins.record_id,
-                payload: bytes,
-            },
-        );
+    }
+    if let Err(e) = sql_constraints::commit_row_for_insert(
+        &mut rt,
+        table,
+        ins.record_id,
+        tuple,
+        &schema,
+        &snapshot,
+    ) {
+        if let Some(tx) = ctx.transaction.as_mut() {
+            if let Some(ref wal) = state.wal {
+                let page_id = (ins.record_id >> 32) as u64;
+                let off = (ins.record_id & 0xffff_ffff) as u32;
+                let record_offset: u16 = off.try_into().map_err(|_| {
+                    EngineError::new(
+                        engine_error_code::INTERNAL,
+                        "record offset too large for WAL",
+                    )
+                })?;
+                wal.log_data_delete(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+            }
+        }
+        pm.delete(ins.record_id).map_err(map_db_err)?;
+        pm.flush_dirty_pages().map_err(map_db_err)?;
+        return Err(e);
+    }
+    drop(rt);
+    sync_index_after_insert(state, table, ins.record_id, tuple)?;
+    push_undo(
+        ctx,
+        UndoEntry::Insert {
+            table: table.to_string(),
+            rid: ins.record_id,
+            payload: bytes,
+        },
+    );
+    Ok(1)
+}
+
+fn insert_heap_row_in_execute_insert(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuple: &Tuple,
+    pm_for_table: &Arc<Mutex<PageManager>>,
+) -> Result<u64, EngineError> {
+    if table_has_primary_key(state, table) {
+        return insert_heap_row_pk_serialized(state, ctx, table, tuple, pm_for_table);
+    }
+    insert_row_with_optional_pk_lock(state, table, tuple, || {
+        let bytes = tuple.to_bytes().map_err(map_db_err)?;
+        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let ins = pm.insert(&bytes).map_err(map_db_err)?;
+        insert_heap_row_after_bytes(state, ctx, table, tuple, &mut pm, bytes, ins)?;
         Ok(1u64)
     })
 }
