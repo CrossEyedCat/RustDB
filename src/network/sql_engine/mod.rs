@@ -3713,10 +3713,7 @@ pub(crate) fn delete_rows_by_equalities(
             if let Some(ref mut ir) = batch_ir {
                 let m = tuple_to_index_column_map(&tuple);
                 ir.delete_from_indexes(table, rid, &m).map_err(|e| {
-                    EngineError::new(
-                        engine_error_code::INTERNAL,
-                        format!("index delete: {e}"),
-                    )
+                    EngineError::new(engine_error_code::INTERNAL, format!("index delete: {e}"))
                 })?;
             } else {
                 sync_index_after_delete(state, table, rid, &tuple)?;
