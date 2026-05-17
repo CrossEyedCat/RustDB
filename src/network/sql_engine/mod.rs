@@ -3654,17 +3654,30 @@ pub(crate) fn delete_rows_by_equalities(
         Vec::new()
     };
 
+    let batch_index = !exact_key && rows.len() > 1;
     let apply = move || -> Result<u64, EngineError> {
         let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let cat_snapshot = {
+            let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+            cat.clone()
+        };
+        let schema = cat_snapshot.schema(table).cloned();
+        let tracks = schema.as_ref().is_some_and(table_tracks_constraints);
         let mut rows_affected = 0u64;
+        let mut batch_ir = if batch_index {
+            Some(
+                state
+                    .index_registry
+                    .write()
+                    .map_err(|_| lock_poisoned_engine())?,
+            )
+        } else {
+            None
+        };
         for (rid, data) in rows {
             let tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
-            let cat_snapshot = {
-                let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
-                cat.clone()
-            };
-            if let Some(sch) = cat_snapshot.schema(table) {
-                if table_tracks_constraints(sch) {
+            if tracks {
+                if let Some(ref sch) = schema {
                     let mut rt = state
                         .constraint_runtime
                         .lock()
@@ -3697,7 +3710,17 @@ pub(crate) fn delete_rows_by_equalities(
                 Err(e) if db_err_is_record_not_found(&e) => continue,
                 Err(e) => return Err(map_db_err(e)),
             }
-            sync_index_after_delete(state, table, rid, &tuple)?;
+            if let Some(ref mut ir) = batch_ir {
+                let m = tuple_to_index_column_map(&tuple);
+                ir.delete_from_indexes(table, rid, &m).map_err(|e| {
+                    EngineError::new(
+                        engine_error_code::INTERNAL,
+                        format!("index delete: {e}"),
+                    )
+                })?;
+            } else {
+                sync_index_after_delete(state, table, rid, &tuple)?;
+            }
             push_undo(
                 ctx,
                 UndoEntry::Delete {
@@ -3708,6 +3731,7 @@ pub(crate) fn delete_rows_by_equalities(
             );
             rows_affected += 1;
         }
+        drop(batch_ir);
         flush_heap_after_dml_success(state, ctx, &mut pm)?;
         Ok(rows_affected)
     };

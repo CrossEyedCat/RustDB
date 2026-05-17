@@ -460,6 +460,8 @@ jobs:
 
   # Final throughput benchmark: TPC-C-ish (transactional write-heavy mix) for RustDB over QUIC.
   # Runs on main pushes and on workflow_dispatch.
+  # Run 20 policy: keep full-mix soft floor at 58% until two consecutive CI runs reach ≥56%;
+  # do not raise the floor early. order_status micro stays at 70%; new_order latency warnings unchanged.
   bench_tpcc_throughput:
     name: Benchmark TPC-C throughput (RustDB) + postgres_tpcc baseline (PostgreSQL)
     runs-on: ubuntu-latest
@@ -533,7 +535,8 @@ jobs:
           MIX: new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04
           RUSTDB_TPCC_NATIVE: "1"
           RUSTDB_TPCC_NATIVE_MICRO: "1"
-          # Default 16 workers; workflow_dispatch A/B: try RUSTDB_SQL_WORKER_COUNT=32 on 4+ vCPU runners.
+          # Default 24 workers on push; workflow_dispatch A/B: override RUSTDB_SQL_WORKER_COUNT=32
+          # on 4+ vCPU runners (edit env below or set in the manual run inputs).
           RUSTDB_SQL_WORKER_COUNT: "24"
         run: |
           set -euo pipefail
@@ -662,13 +665,18 @@ jobs:
             echo ""
             echo "### Throughput thresholds (informational)"
             echo ""
-            echo "- Full mix rustdb/postgres: **${ratio}%** (soft floor: 58%)"
+            echo "- Full mix rustdb/postgres: **${ratio}%** (soft floor: 58%; target ≥56% before raising floor)"
             echo "- order_status micro rustdb/postgres: **${micro_ratio}%** (soft floor: 70%)"
           } >> "$GITHUB_STEP_SUMMARY"
           if python3 -c "exit(0 if float('${ratio}') >= 58.0 else 1)"; then
             :
           else
             echo "::warning::Full mix RustDB/PostgreSQL TPS ratio ${ratio}% is below the 58% soft threshold"
+          fi
+          if python3 -c "exit(0 if float('${ratio}') >= 56.0 else 1)"; then
+            :
+          else
+            echo "::warning::Full mix RustDB/PostgreSQL TPS ratio ${ratio}% is below the 56% run-20 stabilization target"
           fi
           if python3 -c "exit(0 if float('${micro_ratio}') >= 70.0 else 1)"; then
             :
