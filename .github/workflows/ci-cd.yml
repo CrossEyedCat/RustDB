@@ -458,8 +458,9 @@ jobs:
   # Final throughput benchmark: TPC-C-ish (transactional write-heavy mix) for RustDB over QUIC.
   # Runs on: main push, workflow_dispatch, and pull_request when head branch is tpcc* (perf PRs).
   # Other PRs: use Actions → workflow_dispatch on the PR branch, or merge to main.
-  # Run 20 policy: keep full-mix soft floor at 58% until two consecutive CI runs reach ≥56%;
-  # do not raise the floor early. order_status micro stays at 70%; new_order latency warnings unchanged.
+  # Run 20/22 policy: keep full-mix soft floor at 58% until two consecutive CI runs reach ≥56%;
+  # do not raise the floor early. order_status micro stays at 70%.
+  # Run 22 stretch (informational): new_order commit_us p50 <70ms, commit_flush_us p50 <55ms on two main runs.
   bench_tpcc_throughput:
     name: Benchmark TPC-C throughput (RustDB) + postgres_tpcc baseline (PostgreSQL)
     runs-on: ubuntu-latest
@@ -692,6 +693,17 @@ jobs:
             :
           else
             echo "::warning::new_order server commit_us p50 ${new_order_commit_p50}ms exceeds 50ms informational threshold"
+          fi
+          if python3 -c "exit(0 if float('${new_order_commit_p50}') <= 70.0 or float('${new_order_commit_p50}') <= 0 else 1)"; then
+            :
+          else
+            echo "::warning::new_order server commit_us p50 ${new_order_commit_p50}ms exceeds 70ms run-22 stretch target"
+          fi
+          new_order_commit_flush_p50="$(python3 -c "import re,statistics; from pathlib import Path; p=Path('tpcc-out/server_full.log'); us=[]; [us.append(int(m.group(1))) for line in (p.read_text(encoding='utf-8',errors='replace').splitlines() if p.is_file() else []) if 'sql.commit' in line and 'tpcc_kind=0' in line for m in [re.search(r'commit_flush_us=(\d+)', line)] if m]; print(f'{statistics.median(us)/1000:.3f}' if us else '0')" 2>/dev/null || echo 0)"
+          if python3 -c "exit(0 if float('${new_order_commit_flush_p50}') <= 55.0 or float('${new_order_commit_flush_p50}') <= 0 else 1)"; then
+            :
+          else
+            echo "::warning::new_order sql.commit commit_flush_us p50 ${new_order_commit_flush_p50}ms exceeds 55ms run-22 stretch target"
           fi
           mix_os_p50="$(python3 -c "import csv,statistics; from pathlib import Path; p=Path('tpcc-out/tpcc_txn.log'); rows=[] if not p.is_file() else [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='order_status']; us=[int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]; print(f'{statistics.median(us)/1000:.3f}' if us else '0')" 2>/dev/null || echo 0)"
           micro_os_p50="$(python3 -c "import csv,statistics; from pathlib import Path; p=Path('tpcc-out/order_status_micro/tpcc_txn.log'); rows=[] if not p.is_file() else [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='order_status']; us=[int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]; print(f'{statistics.median(us)/1000:.3f}' if us else '0')" 2>/dev/null || echo 0)"
