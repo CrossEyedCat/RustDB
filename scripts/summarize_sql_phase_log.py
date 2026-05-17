@@ -132,7 +132,7 @@ def extract_execute_tpcc_new_order_phases(line: str) -> dict[str, int] | None:
     return out if out else None
 
 
-def extract_execute_tpcc_commit_us(line: str) -> tuple[int, int] | None:
+def extract_execute_tpcc_commit_us(line: str) -> tuple[int, int, dict[str, int]] | None:
     if "sql.execute_tpcc.commit" not in line:
         return None
     m = re.search(r"commit_us=(\d+)", line)
@@ -140,7 +140,17 @@ def extract_execute_tpcc_commit_us(line: str) -> tuple[int, int] | None:
         return None
     m_kind = re.search(r"tpcc_kind=(\d+)", line)
     kind = int(m_kind.group(1)) if m_kind else -1
-    return int(m.group(1)), kind
+    extra: dict[str, int] = {}
+    for name in (
+        "commit_transaction_wall_us",
+        "commit_gap_us",
+        "commit_pm_lock_wait_us",
+        "commit_heap_fsync_us",
+    ):
+        m_extra = re.search(rf"{name}=(\d+)", line)
+        if m_extra:
+            extra[name] = int(m_extra.group(1))
+    return int(m.group(1)), kind, extra
 
 
 def extract_sql_commit_by_kind(line: str) -> tuple[int, dict[str, int]] | None:
@@ -163,6 +173,7 @@ def extract_sql_commit_by_kind(line: str) -> tuple[int, dict[str, int]] | None:
 
 NEW_ORDER_PHASES = (
     "district_us",
+    "district_update_us",
     "insert_oorder_us",
     "insert_new_order_us",
     "insert_order_line_us",
@@ -275,6 +286,7 @@ def main() -> int:
     execute_tpcc_new_order_phases: dict[str, list[float]] = defaultdict(list)
     execute_tpcc_commit_us: list[float] = []
     execute_tpcc_commit_by_kind: dict[int, list[float]] = defaultdict(list)
+    execute_tpcc_commit_gap_by_kind: dict[int, list[float]] = defaultdict(list)
     execute_tpcc_queue_wait_by_kind: dict[int, list[float]] = defaultdict(list)
     sql_commit_sub_by_kind: dict[int, dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
@@ -354,10 +366,12 @@ def main() -> int:
             phase_lines += 1
         cu = extract_execute_tpcc_commit_us(line)
         if cu is not None:
-            commit_us, kind = cu
+            commit_us, kind, extra = cu
             execute_tpcc_commit_us.append(float(commit_us))
             if kind >= 0:
                 execute_tpcc_commit_by_kind[kind].append(float(commit_us))
+                if "commit_gap_us" in extra:
+                    execute_tpcc_commit_gap_by_kind[kind].append(float(extra["commit_gap_us"]))
             phase_lines += 1
         sc = extract_sql_commit_by_kind(line)
         if sc is not None:
@@ -568,6 +582,7 @@ def main() -> int:
         wall_p50 = quantile(execute_tpcc_by_kind[0], 0.5)
         commit_p50 = quantile(execute_tpcc_commit_by_kind.get(0, []), 0.5)
         pre_p50 = quantile(new_order_pre_commit_us, 0.5) if new_order_pre_commit_us else 0.0
+        commit_gap_p50 = quantile(execute_tpcc_commit_gap_by_kind.get(0, []), 0.5)
         gap = wall_p50 - phase_sum_p50 - commit_p50 - pre_p50
         print(
             "new_order server accounting (p50 us): "
@@ -575,7 +590,8 @@ def main() -> int:
             f"phases_sum={phase_sum_p50 / 1000:.3f}ms "
             f"pre_commit={pre_p50 / 1000:.3f}ms "
             f"commit_us={commit_p50 / 1000:.3f}ms "
-            f"gap={gap / 1000:.3f}ms"
+            f"commit_gap_us={commit_gap_p50 / 1000:.3f}ms "
+            f"unaccounted_gap={gap / 1000:.3f}ms"
         )
     if scan_us:
         print_us_stats("update/delete scan_us", scan_us)
