@@ -62,6 +62,7 @@ fn run_new_order_native(
 ) -> Result<u64, EngineError> {
     let profile = sql_phase_log_enabled();
     let mut district_us = 0u64;
+    let mut district_update_us = 0u64;
     let mut insert_oorder_us = 0u64;
     let mut insert_new_order_us = 0u64;
     let mut insert_order_line_us = 0u64;
@@ -70,7 +71,7 @@ fn run_new_order_native(
     let mut index_sync_us = 0u64;
 
     let mut rows = 0u64;
-    let t0 = profile.then(Instant::now);
+    let mut district_phases = super::RowUpdatePhaseUs::default();
     rows += update_rows_by_equalities(
         state,
         ctx,
@@ -81,9 +82,15 @@ fn run_new_order_native(
             tuple.set_value("d_next_o_id", int_column_value(next));
             Ok(())
         },
+        if profile {
+            Some(&mut district_phases)
+        } else {
+            None
+        },
     )?;
-    if let Some(t0) = t0 {
-        district_us = phase_elapsed_us(t0);
+    if profile {
+        district_us = district_phases.lock_us;
+        district_update_us = district_phases.update_us;
     }
 
     let t0 = profile.then(Instant::now);
@@ -151,6 +158,7 @@ fn run_new_order_native(
             tuple.set_value("s_order_cnt", int_column_value(s_order_cnt));
             Ok(())
         },
+        None,
     )?;
     if let Some(t0) = t0 {
         stock_us = phase_elapsed_us(t0);
@@ -190,6 +198,7 @@ fn run_new_order_native(
         info!(
             target: "rustdb::sql_phases",
             district_us,
+            district_update_us,
             insert_oorder_us,
             insert_new_order_us,
             insert_order_line_us,
@@ -220,6 +229,7 @@ fn run_payment(
             tuple.set_value("w_ytd", int_column_value(ytd));
             Ok(())
         },
+        None,
     )?;
     rows += update_rows_by_equalities(
         state,
@@ -231,6 +241,7 @@ fn run_payment(
             tuple.set_value("d_ytd", int_column_value(ytd));
             Ok(())
         },
+        None,
     )?;
     rows += update_rows_by_equalities(
         state,
@@ -242,6 +253,7 @@ fn run_payment(
             tuple.set_value("c_balance", int_column_value(bal));
             Ok(())
         },
+        None,
     )?;
     Ok(rows)
 }
