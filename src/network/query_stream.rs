@@ -21,9 +21,11 @@ use crate::network::engine::{
     engine_error_code, EngineError, EngineHandle, EngineOutput, SessionContext,
 };
 use crate::network::framing::{
-    decode_client_frame_v1, encode_server_message_v1, encode_server_message_write, ClientMessage,
-    ExecuteScriptPayload, ExecuteTpccPayload, ExecutionOkPayload, FrameHeader, ProtocolError,
-    QueryPayload, ServerMessage, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_BYTES, PROTOCOL_VERSION_V1,
+    cached_execution_ok_frame_v1, decode_client_frame_v1, encode_execution_ok_frame_write,
+    encode_server_message_v1, encode_server_message_write, ClientMessage, ExecuteScriptPayload,
+    ExecuteTpccPayload, ExecutionOkPayload, FrameHeader, ProtocolError, QueryPayload,
+    ServerMessage, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_BYTES, PROTOCOL_VERSION_V1,
+    TPCC_WIRE_KIND_ORDER_STATUS,
 };
 use crate::network::metrics::{QueryHandledOutcome, QuicMetrics};
 
@@ -315,8 +317,12 @@ fn dispatch_execute_tpcc(
         wall_us = tracing::field::Empty,
     );
     let _g = span.enter();
+    let order_status = tpcc.kind == TPCC_WIRE_KIND_ORDER_STATUS;
     let out = (|| -> Result<Arc<[u8]>, DispatchError> {
         let out = engine.execute_tpcc(tpcc.kind, tpcc.seed, tpcc.global_txn_id, session_ctx)?;
+        if order_status {
+            return encode_tpcc_order_status_execution_ok(out);
+        }
         let out = enforce_max_result_rows(out, policy.max_result_rows)?;
         let server = out.into_server_message();
         TL_ENCODE_BUF.with(|b| {
@@ -343,6 +349,31 @@ fn dispatch_execute_tpcc(
         );
     }
     out
+}
+
+/// Read-only `order_status` returns [`EngineOutput::ExecutionOk`] only — skip ResultSet checks and use a slim wire encode.
+fn encode_tpcc_order_status_execution_ok(out: EngineOutput) -> Result<Arc<[u8]>, DispatchError> {
+    let EngineOutput::ExecutionOk { rows_affected } = out else {
+        return Err(EngineError::new(
+            engine_error_code::INTERNAL,
+            "order_status native path must return ExecutionOk",
+        )
+        .into());
+    };
+    if let Some(bytes) = cached_execution_ok_frame_v1(rows_affected) {
+        return Ok(bytes);
+    }
+    TL_ENCODE_BUF.with(|b| {
+        let mut buf = b.borrow_mut();
+        buf.clear();
+        let cap = buf.capacity();
+        if cap < 64 {
+            buf.reserve(64 - cap);
+        }
+        encode_execution_ok_frame_write(PROTOCOL_VERSION_V1, rows_affected, &mut *buf)?;
+        let owned = std::mem::take(&mut *buf);
+        Ok(Arc::from(owned.into_boxed_slice()))
+    })
 }
 
 fn connection_sql_worker_count() -> usize {

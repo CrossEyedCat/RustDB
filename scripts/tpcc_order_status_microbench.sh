@@ -30,6 +30,9 @@ echo "    OUT_DIR=$OUT_DIR"
 
 export OUT_DIR CONCURRENCY DURATION_SECS MIX POSTGRES_HOST_PORT
 export POSTGRES_CONTAINER_NAME
+# Native ExecuteTpcc + slim client/server wire path for order_status micro leg.
+export RUSTDB_TPCC_NATIVE=1
+export RUSTDB_TPCC_NATIVE_MICRO=1
 
 chmod +x scripts/bench_postgres_tpcc.sh scripts/tpcc_throughput_ci.sh
 

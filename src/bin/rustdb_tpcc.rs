@@ -13,8 +13,9 @@ use rustdb::network::client::{
 };
 use rustdb::network::engine::engine_error_code;
 use rustdb::network::framing::{
-    decode_server_frame_v1, encode_client_message_v1, ClientMessage, ExecuteScriptPayload,
-    ExecuteTpccPayload, QueryPayload, ServerMessage,
+    classify_server_frame_v1, decode_server_frame_v1, encode_client_message_v1,
+    encode_execute_tpcc_frame_write, ClientMessage, ExecuteScriptPayload, ExecuteTpccPayload,
+    ExecutionOkPayload, QueryPayload, ServerFrameClass, ServerMessage, PROTOCOL_VERSION_V1,
 };
 use rustdb::network::query_stream::read_application_frame_into;
 use rustdb::tpcc_workload::{run_tpcc, txn_kind_as_u8, Mix, TpccExec, TpccRunConfig, TxnKind};
@@ -90,11 +91,18 @@ struct Args {
     connections: Option<usize>,
 }
 
+fn tpcc_native_micro_hot() -> bool {
+    std::env::var("RUSTDB_TPCC_NATIVE_MICRO")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+}
+
 /// One worker's long-lived bidirectional QUIC stream (reused across transactions).
 struct WorkerBiStream {
     send: SendStream,
     recv: RecvStream,
     recv_buf: Vec<u8>,
+    send_buf: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -103,6 +111,7 @@ struct QuicExec {
     stream: Arc<Mutex<Option<WorkerBiStream>>>,
     execute_script: Arc<AtomicBool>,
     native_tpcc: Arc<AtomicBool>,
+    micro_hot: bool,
 }
 
 impl QuicExec {
@@ -114,6 +123,7 @@ impl QuicExec {
             send,
             recv,
             recv_buf: Vec::new(),
+            send_buf: Vec::with_capacity(64),
         })
     }
 
@@ -166,15 +176,36 @@ impl QuicExec {
         kind: u8,
         seed: u64,
         global_txn_id: u64,
+        micro_hot: bool,
     ) -> Result<ServerMessage, Box<dyn std::error::Error + Send + Sync>> {
-        let frame = encode_client_message_v1(&ClientMessage::ExecuteTpcc(ExecuteTpccPayload {
-            kind,
-            seed,
-            global_txn_id,
-        }))?;
-        bi.send.write_all(&frame).await?;
+        bi.send_buf.clear();
+        encode_execute_tpcc_frame_write(
+            PROTOCOL_VERSION_V1,
+            &ExecuteTpccPayload {
+                kind,
+                seed,
+                global_txn_id,
+            },
+            &mut bi.send_buf,
+        )?;
+        bi.send.write_all(&bi.send_buf).await?;
         read_application_frame_into(&mut bi.recv, 64 * 1024 * 1024, &mut bi.recv_buf).await?;
+        if micro_hot {
+            return Self::classify_tpcc_response(&bi.recv_buf);
+        }
         Ok(decode_server_frame_v1(&bi.recv_buf)?)
+    }
+
+    fn classify_tpcc_response(
+        frame: &[u8],
+    ) -> Result<ServerMessage, Box<dyn std::error::Error + Send + Sync>> {
+        match classify_server_frame_v1(frame)? {
+            ServerFrameClass::ExecutionOk => Ok(ServerMessage::ExecutionOk(ExecutionOkPayload {
+                rows_affected: 0,
+            })),
+            ServerFrameClass::Error(p) => Ok(ServerMessage::Error(p)),
+            ServerFrameClass::Other(msg) => Ok(msg),
+        }
     }
 
     async fn run_batch_on_stream(
@@ -218,7 +249,15 @@ impl TpccExec for QuicExec {
                 *guard = Some(Self::open_stream(&self.conn).await?);
             }
             let bi = guard.as_mut().expect("stream just opened");
-            match Self::run_execute_tpcc_on_stream(bi, wire_kind, seed, global_txn_id).await {
+            match Self::run_execute_tpcc_on_stream(
+                bi,
+                wire_kind,
+                seed,
+                global_txn_id,
+                self.micro_hot,
+            )
+            .await
+            {
                 Ok(ServerMessage::Error(p)) => {
                     return Err(format!("server error: {}: {}", p.code, p.message).into());
                 }
@@ -281,6 +320,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if args.shared_connection && args.connections.is_some() {
         return Err("--connections cannot be used with --shared-connection".into());
     }
+    let micro_hot = args.native_tpcc && tpcc_native_micro_hot();
     let workers: Vec<Arc<QuicExec>> = if args.shared_connection {
         let conn = connect(&endpoint, addr, &args.server_name).await?;
         (0..concurrency)
@@ -290,6 +330,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     stream: Arc::new(Mutex::new(None)),
                     execute_script: Arc::new(AtomicBool::new(true)),
                     native_tpcc: Arc::new(AtomicBool::new(args.native_tpcc)),
+                    micro_hot,
                 })
             })
             .collect()
@@ -306,6 +347,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     stream: Arc::new(Mutex::new(None)),
                     execute_script: Arc::new(AtomicBool::new(true)),
                     native_tpcc: Arc::new(AtomicBool::new(args.native_tpcc)),
+                    micro_hot,
                 })
             })
             .collect()

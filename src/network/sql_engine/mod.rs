@@ -59,8 +59,8 @@ use crate::executor::operators::{
 };
 use crate::executor::QueryExecutor;
 use crate::network::engine::{
-    engine_error_code, EngineError, EngineHandle, EngineOutput, SessionContext, SqlIsolationLevel,
-    SqlTransaction, UndoEntry,
+    engine_error_code, EngineError, EngineHandle, EngineOutput, PendingIndexInsert, SessionContext,
+    SqlIsolationLevel, SqlTransaction, UndoEntry,
 };
 use crate::network::sql_commit_log;
 use crate::network::sql_constraints::{self, ConstraintRuntime};
@@ -629,6 +629,21 @@ fn heap_delete_idempotent(pm: &mut PageManager, rid: RecordId) -> Result<bool, E
     }
 }
 
+/// Microseconds spent in WAL `log_data_insert` for a TPC-C heap insert.
+pub(crate) struct TpccInsertTimings {
+    pub wal_us: u64,
+    pub index_us: u64,
+}
+
+/// When true (default), native TPC-C heap inserts defer secondary-index sync until `COMMIT`.
+pub(crate) fn tpcc_defer_index_sync_enabled() -> bool {
+    match std::env::var("RUSTDB_TPCC_DEFER_INDEX_SYNC") {
+        Ok(s) if s == "0" || s.eq_ignore_ascii_case("false") => false,
+        Ok(_) => true,
+        Err(_) => true,
+    }
+}
+
 /// TPC-C heap insert without constraint-runtime work (seed tables have no PK/FK).
 pub(crate) fn insert_row_tuple_tpcc(
     state: &SqlEngineState,
@@ -639,12 +654,86 @@ pub(crate) fn insert_row_tuple_tpcc(
     if table_has_primary_key(state, table) {
         return insert_row_tuple(state, ctx, table, tuple);
     }
+    if tpcc_defer_index_sync_enabled() {
+        let _ = insert_row_tuple_tpcc_deferred(state, ctx, table, tuple)?;
+        return Ok(());
+    }
+    let timings = insert_row_tuple_tpcc_immediate(state, ctx, table, tuple)?;
+    let _ = timings;
+    Ok(())
+}
+
+/// Heap + WAL + undo; secondary indexes applied at `COMMIT` (see [`apply_pending_index_inserts`]).
+pub(crate) fn insert_row_tuple_tpcc_deferred(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuple: Tuple,
+) -> Result<TpccInsertTimings, EngineError> {
+    if table_has_primary_key(state, table) {
+        insert_row_tuple(state, ctx, table, tuple)?;
+        return Ok(TpccInsertTimings {
+            wal_us: 0,
+            index_us: 0,
+        });
+    }
     record_touched_table(ctx, table);
     let bytes = tuple.to_bytes().map_err(map_db_err)?;
     let pm_for_table = table_page_manager(state, table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let ins = pm.insert(&bytes).map_err(map_db_err)?;
     maybe_simulate_dml_crash("insert_row");
+    let wal_clock = state.wal.is_some().then(Instant::now);
+    if let Some(tx) = ctx.transaction.as_mut() {
+        if let Some(ref wal) = state.wal {
+            let page_id = (ins.record_id >> 32) as u64;
+            let off = (ins.record_id & 0xffff_ffff) as u32;
+            let record_offset: u16 = off.try_into().map_err(|_| {
+                EngineError::new(
+                    engine_error_code::INTERNAL,
+                    "record offset too large for WAL",
+                )
+            })?;
+            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+        }
+        tx.pending_index_inserts.push(PendingIndexInsert {
+            table: table.to_string(),
+            rid: ins.record_id,
+            column_map: tuple_to_index_column_map(&tuple),
+        });
+    } else {
+        sync_index_after_insert(state, table, ins.record_id, &tuple)?;
+    }
+    let wal_us = wal_clock
+        .map(|t0| t0.elapsed().as_micros() as u64)
+        .unwrap_or(0);
+    push_undo(
+        ctx,
+        UndoEntry::Insert {
+            table: table.to_string(),
+            rid: ins.record_id,
+            payload: bytes,
+        },
+    );
+    Ok(TpccInsertTimings {
+        wal_us,
+        index_us: 0,
+    })
+}
+
+fn insert_row_tuple_tpcc_immediate(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuple: Tuple,
+) -> Result<TpccInsertTimings, EngineError> {
+    record_touched_table(ctx, table);
+    let bytes = tuple.to_bytes().map_err(map_db_err)?;
+    let pm_for_table = table_page_manager(state, table)?;
+    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    let ins = pm.insert(&bytes).map_err(map_db_err)?;
+    maybe_simulate_dml_crash("insert_row");
+    let wal_clock = state.wal.is_some().then(Instant::now);
     if let Some(tx) = ctx.transaction.as_mut() {
         if let Some(ref wal) = state.wal {
             let page_id = (ins.record_id >> 32) as u64;
@@ -658,7 +747,12 @@ pub(crate) fn insert_row_tuple_tpcc(
             wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
         }
     }
+    let wal_us = wal_clock
+        .map(|t0| t0.elapsed().as_micros() as u64)
+        .unwrap_or(0);
+    let idx_clock = Instant::now();
     sync_index_after_insert(state, table, ins.record_id, &tuple)?;
+    let index_us = idx_clock.elapsed().as_micros() as u64;
     push_undo(
         ctx,
         UndoEntry::Insert {
@@ -667,6 +761,27 @@ pub(crate) fn insert_row_tuple_tpcc(
             payload: bytes,
         },
     );
+    Ok(TpccInsertTimings { wal_us, index_us })
+}
+
+fn apply_pending_index_inserts(
+    state: &SqlEngineState,
+    pending: &mut Vec<PendingIndexInsert>,
+) -> Result<(), EngineError> {
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let ops = std::mem::take(pending);
+    let mut ir = state
+        .index_registry
+        .write()
+        .map_err(|_| lock_poisoned_engine())?;
+    for op in &ops {
+        ir.insert_into_indexes(&op.table, op.rid, &op.column_map)
+            .map_err(|e| {
+                EngineError::new(engine_error_code::INTERNAL, format!("index insert: {e}"))
+            })?;
+    }
     Ok(())
 }
 
@@ -1116,23 +1231,37 @@ fn commit_transaction(
         )
     })?;
     let touched_table_count = tx.touched_tables.len();
+    let pending_index_count = tx.pending_index_inserts.len();
     let commit_log_fsync = state.durability.fsync_on_commit();
     let span = info_span!(
         "sql.commit",
         flush_tables_count = tracing::field::Empty,
         flush_us = tracing::field::Empty,
         wal_us = tracing::field::Empty,
+        commit_wal_us = tracing::field::Empty,
+        commit_flush_us = tracing::field::Empty,
+        commit_index_batch_us = tracing::field::Empty,
+        commit_log_append_us = tracing::field::Empty,
+        pending_index_count,
         commit_log_fsync,
     );
     let _g = span.enter();
-    let wal_clock = state.wal.is_some().then(Instant::now);
+    let mut commit_wal_us = 0u64;
     if let Some(ref wal) = state.wal {
+        let t0 = Instant::now();
         wal.log_commit(&mut tx)?;
+        commit_wal_us = t0.elapsed().as_micros() as u64;
     }
-    let wal_us = wal_clock.map(|t0| t0.elapsed().as_micros() as u64);
-    if let Some(us) = wal_us {
-        span.record("wal_us", us);
-    }
+    span.record("wal_us", commit_wal_us);
+    span.record("commit_wal_us", commit_wal_us);
+
+    let index_batch_clock = (!tx.pending_index_inserts.is_empty()).then(Instant::now);
+    apply_pending_index_inserts(state, &mut tx.pending_index_inserts)?;
+    let commit_index_batch_us = index_batch_clock
+        .map(|t0| t0.elapsed().as_micros() as u64)
+        .unwrap_or(0);
+    span.record("commit_index_batch_us", commit_index_batch_us);
+
     let touched: HashSet<String> = std::mem::take(&mut tx.touched_tables)
         .into_iter()
         .filter(|t| table_has_dirty_heap_pages(state, t))
@@ -1142,21 +1271,32 @@ fn commit_transaction(
     let flush_clock = Instant::now();
     crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &touched)
         .map_err(map_db_err)?;
-    let flush_us = flush_clock.elapsed().as_micros() as u64;
-    span.record("flush_us", flush_us);
+    let commit_flush_us = flush_clock.elapsed().as_micros() as u64;
+    span.record("flush_us", commit_flush_us);
+    span.record("commit_flush_us", commit_flush_us);
+
+    let log_clock = Instant::now();
+    sql_commit_log::append_commit_log_line(&state.data_dir, commit_log_fsync)
+        .map_err(map_db_err)?;
+    let commit_log_append_us = log_clock.elapsed().as_micros() as u64;
+    span.record("commit_log_append_us", commit_log_append_us);
+
     if sql_phase_log_enabled() {
         info!(
             target: "rustdb::sql_phases",
-            flush_us,
-            wal_us = wal_us.unwrap_or(0),
+            flush_us = commit_flush_us,
+            wal_us = commit_wal_us,
+            commit_wal_us,
+            commit_flush_us,
+            commit_index_batch_us,
+            commit_log_append_us,
             flush_tables_count,
             touched_table_count,
+            pending_index_count,
             commit_log_fsync,
             "sql.commit"
         );
     }
-    sql_commit_log::append_commit_log_line(&state.data_dir, commit_log_fsync)
-        .map_err(map_db_err)?;
     drop(tx);
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
@@ -1183,6 +1323,7 @@ fn rollback_transaction(
             "no active transaction",
         )
     })?;
+    let _pending_index = std::mem::take(&mut tx.pending_index_inserts);
     let mut flush_tables = std::mem::take(&mut tx.touched_tables);
     let undo = std::mem::take(&mut tx.undo);
     for op in undo.iter() {
@@ -3996,6 +4137,80 @@ mod tests {
                 assert!(rows[0][0].contains("150"));
             }
             _ => panic!("expected result set"),
+        }
+    }
+
+    fn index_lookup_count(state: &SqlEngineState, table: &str, col: &str, val: &str) -> usize {
+        let mut eq = HashMap::new();
+        eq.insert(col.to_string(), val.to_string());
+        state
+            .index_registry
+            .read()
+            .expect("index read")
+            .lookup_record_ids_by_equalities(table, &eq)
+            .expect("lookup")
+            .map(|(rids, _)| rids.len())
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn tpcc_deferred_index_visible_after_commit() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let state = eng.state_for_test();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE bench_row (k INTEGER, v INTEGER)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("CREATE INDEX idx_bench_k ON bench_row (k)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+        insert_row_tuple_tpcc_deferred(state, &mut ctx, "bench_row", {
+            let mut t = Tuple::new(1);
+            t.set_value("k", int_column_value(10));
+            t.set_value("v", int_column_value(1));
+            t
+        })
+        .unwrap();
+        insert_row_tuple_tpcc_deferred(state, &mut ctx, "bench_row", {
+            let mut t = Tuple::new(2);
+            t.set_value("k", int_column_value(20));
+            t.set_value("v", int_column_value(2));
+            t
+        })
+        .unwrap();
+        assert_eq!(index_lookup_count(state, "bench_row", "k", "10"), 0);
+        assert_eq!(index_lookup_count(state, "bench_row", "k", "20"), 0);
+        eng.execute_sql("COMMIT", &mut ctx).unwrap();
+        assert_eq!(index_lookup_count(state, "bench_row", "k", "10"), 1);
+        assert_eq!(index_lookup_count(state, "bench_row", "k", "20"), 1);
+    }
+
+    #[test]
+    fn tpcc_deferred_index_discarded_on_rollback() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let state = eng.state_for_test();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE bench_row (k INTEGER, v INTEGER)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("CREATE INDEX idx_bench_k ON bench_row (k)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+        insert_row_tuple_tpcc_deferred(state, &mut ctx, "bench_row", {
+            let mut t = Tuple::new(1);
+            t.set_value("k", int_column_value(99));
+            t.set_value("v", int_column_value(1));
+            t
+        })
+        .unwrap();
+        eng.execute_sql("ROLLBACK", &mut ctx).unwrap();
+        assert_eq!(index_lookup_count(state, "bench_row", "k", "99"), 0);
+        let left = eng
+            .execute_sql("SELECT k FROM bench_row", &mut ctx)
+            .unwrap();
+        match left {
+            EngineOutput::ResultSet { rows, .. } => assert!(rows.is_empty()),
+            _ => panic!("expected empty result set"),
         }
     }
 

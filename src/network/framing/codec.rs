@@ -11,6 +11,22 @@ use super::messages::{
 };
 use super::{EncodeError, ProtocolError};
 
+/// Wire discriminant for native TPC-C `order_status` ([`crate::tpcc_workload::TxnKind::OrderStatus`]).
+pub const TPCC_WIRE_KIND_ORDER_STATUS: u8 = 2;
+
+/// Cached server frames for `ExecutionOk { rows_affected: n }` when `n <= 8` (hot microbench path).
+static EXECUTION_OK_WIRE_CACHE_LE8: std::sync::LazyLock<
+    std::sync::RwLock<[Option<std::sync::Arc<[u8]>>; 9]>,
+> = std::sync::LazyLock::new(|| {
+    let mut slots = std::array::from_fn(|_| None);
+    for n in 0u64..=8 {
+        if let Ok(bytes) = encode_execution_ok_frame(PROTOCOL_VERSION_V1, n) {
+            slots[n as usize] = Some(std::sync::Arc::from(bytes.into_boxed_slice()));
+        }
+    }
+    std::sync::RwLock::new(slots)
+});
+
 fn check_payload_len(len: usize) -> Result<(), EncodeError> {
     let max = MAX_FRAME_PAYLOAD_BYTES as usize;
     if len > max {
@@ -254,4 +270,104 @@ pub fn decode_client_frame_v1(frame: &[u8]) -> Result<ClientMessage, ProtocolErr
 
 pub fn decode_server_frame_v1(frame: &[u8]) -> Result<ServerMessage, ProtocolError> {
     decode_server_frame(PROTOCOL_VERSION_V1, frame)
+}
+
+/// Read the server [`MessageKind`] from a full frame without deserializing the payload.
+pub fn server_frame_message_kind(frame: &[u8]) -> Result<MessageKind, ProtocolError> {
+    let header = FrameHeader::decode(frame)?;
+    MessageKind::try_from(header.message_kind)
+        .map_err(|_| ProtocolError::UnknownMessageKind(header.message_kind))
+}
+
+/// Classify a server frame for the TPC-C client fast path (skips `ExecutionOk` body decode).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerFrameClass {
+    ExecutionOk,
+    Error(ErrorPayload),
+    Other(ServerMessage),
+}
+
+pub fn classify_server_frame_v1(frame: &[u8]) -> Result<ServerFrameClass, ProtocolError> {
+    let header = FrameHeader::decode(frame)?;
+    let kind = MessageKind::try_from(header.message_kind)
+        .map_err(|_| ProtocolError::UnknownMessageKind(header.message_kind))?;
+    match kind {
+        MessageKind::ExecutionOk => Ok(ServerFrameClass::ExecutionOk),
+        MessageKind::Error => {
+            let body = payload_slice(frame, &header)?;
+            let p: ErrorPayload = postcard::from_bytes(body)
+                .map_err(|e| ProtocolError::PostcardDecode(format!("{e:?}")))?;
+            Ok(ServerFrameClass::Error(p))
+        }
+        _ => Ok(ServerFrameClass::Other(decode_server_frame_v1(frame)?)),
+    }
+}
+
+/// Encode `ExecuteTpcc` into a single frame buffer (no intermediate payload `Vec`).
+pub fn encode_execute_tpcc_frame_write<W: Write>(
+    protocol_version: u16,
+    p: &ExecuteTpccPayload,
+    w: &mut W,
+) -> Result<(), EncodeError> {
+    let payload_bytes = postcard::to_allocvec(p).map_err(EncodeError::Postcard)?;
+    check_payload_len(payload_bytes.len())?;
+    let header = FrameHeader {
+        protocol_version,
+        message_kind: MessageKind::ExecuteTpcc.as_u16(),
+        payload_len: payload_bytes.len() as u32,
+    };
+    let mut hdr = [0u8; FRAME_HEADER_LEN];
+    header.encode_into(&mut hdr);
+    w.write_all(&hdr)?;
+    w.write_all(&payload_bytes)?;
+    Ok(())
+}
+
+pub fn encode_execute_tpcc_frame_v1(p: &ExecuteTpccPayload) -> Result<Vec<u8>, EncodeError> {
+    let mut v = Vec::new();
+    encode_execute_tpcc_frame_write(PROTOCOL_VERSION_V1, p, &mut v)?;
+    Ok(v)
+}
+
+/// Encode `ExecutionOk { rows_affected }` as a full wire frame.
+pub fn encode_execution_ok_frame(
+    protocol_version: u16,
+    rows_affected: u64,
+) -> Result<Vec<u8>, EncodeError> {
+    let mut v = Vec::new();
+    encode_execution_ok_frame_write(protocol_version, rows_affected, &mut v)?;
+    Ok(v)
+}
+
+/// Write `ExecutionOk { rows_affected }` as a full wire frame into `w`.
+pub fn encode_execution_ok_frame_write<W: Write>(
+    protocol_version: u16,
+    rows_affected: u64,
+    w: &mut W,
+) -> Result<(), EncodeError> {
+    let payload_bytes = postcard::to_allocvec(&ExecutionOkPayload { rows_affected })
+        .map_err(EncodeError::Postcard)?;
+    check_payload_len(payload_bytes.len())?;
+    let header = FrameHeader {
+        protocol_version,
+        message_kind: MessageKind::ExecutionOk.as_u16(),
+        payload_len: payload_bytes.len() as u32,
+    };
+    let mut hdr = [0u8; FRAME_HEADER_LEN];
+    header.encode_into(&mut hdr);
+    w.write_all(&hdr)?;
+    w.write_all(&payload_bytes)?;
+    Ok(())
+}
+
+/// Pre-encoded `ExecutionOk` for small `rows_affected` values (order_status microbench).
+pub fn cached_execution_ok_frame_v1(rows_affected: u64) -> Option<std::sync::Arc<[u8]>> {
+    if rows_affected > 8 {
+        return None;
+    }
+    let cache = EXECUTION_OK_WIRE_CACHE_LE8.read().ok()?;
+    cache
+        .get(rows_affected as usize)?
+        .as_ref()
+        .map(std::sync::Arc::clone)
 }

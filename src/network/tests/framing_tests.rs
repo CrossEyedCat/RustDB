@@ -3,11 +3,13 @@
 use std::io::Write;
 
 use crate::network::framing::{
-    decode_client_frame_v1, decode_server_frame_v1, encode_client_message_v1,
-    encode_client_message_write, encode_server_message_v1, ClientHelloPayload, ClientMessage,
-    EncodeError, ErrorPayload, ExecuteScriptPayload, ExecuteTpccPayload, ExecutionOkPayload,
-    FrameDirection, FrameHeader, MessageKind, ProtocolError, QueryPayload, ResultSetPayload,
-    ServerMessage, ServerReadyPayload, FRAME_HEADER_LEN, FRAME_MAGIC, MAX_FRAME_PAYLOAD_BYTES,
+    cached_execution_ok_frame_v1, classify_server_frame_v1, decode_client_frame_v1,
+    decode_server_frame_v1, encode_client_message_v1, encode_client_message_write,
+    encode_execute_tpcc_frame_v1, encode_execution_ok_frame, encode_server_message_v1,
+    server_frame_message_kind, ClientHelloPayload, ClientMessage, EncodeError, ErrorPayload,
+    ExecuteScriptPayload, ExecuteTpccPayload, ExecutionOkPayload, FrameDirection, FrameHeader,
+    MessageKind, ProtocolError, QueryPayload, ResultSetPayload, ServerFrameClass, ServerMessage,
+    ServerReadyPayload, FRAME_HEADER_LEN, FRAME_MAGIC, MAX_FRAME_PAYLOAD_BYTES,
     PROTOCOL_VERSION_V1,
 };
 
@@ -29,6 +31,44 @@ fn roundtrip_client_execute_script() {
     let wire = encode_client_message_v1(&msg).unwrap();
     let out = decode_client_frame_v1(&wire).unwrap();
     assert_eq!(out, msg);
+}
+
+#[test]
+fn execute_tpcc_frame_matches_client_message_encode() {
+    let p = ExecuteTpccPayload {
+        kind: 2,
+        seed: 0xC0FFEE,
+        global_txn_id: 99,
+    };
+    let via_write = encode_execute_tpcc_frame_v1(&p).unwrap();
+    let via_enum = encode_client_message_v1(&ClientMessage::ExecuteTpcc(p.clone())).unwrap();
+    assert_eq!(via_write, via_enum);
+    assert_eq!(
+        decode_client_frame_v1(&via_write).unwrap(),
+        ClientMessage::ExecuteTpcc(p)
+    );
+}
+
+#[test]
+fn execution_ok_wire_cache_and_classify() {
+    for n in 0u64..=8 {
+        let cached = cached_execution_ok_frame_v1(n).expect("prewarmed cache slot");
+        let fresh = encode_execution_ok_frame(PROTOCOL_VERSION_V1, n).unwrap();
+        assert_eq!(&*cached, &fresh[..]);
+        assert_eq!(
+            classify_server_frame_v1(&fresh).unwrap(),
+            ServerFrameClass::ExecutionOk
+        );
+        assert_eq!(
+            server_frame_message_kind(&fresh).unwrap(),
+            MessageKind::ExecutionOk
+        );
+        let decoded = decode_server_frame_v1(&fresh).unwrap();
+        assert_eq!(
+            decoded,
+            ServerMessage::ExecutionOk(ExecutionOkPayload { rows_affected: n })
+        );
+    }
 }
 
 #[test]

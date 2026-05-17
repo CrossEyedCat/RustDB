@@ -3,8 +3,8 @@
 //! Bypasses per-statement SQL parse/plan/execute; uses index-backed row locks and page latches.
 
 use super::{
-    delete_rows_by_equalities, equalities_map_i32, insert_row_tuple_tpcc, int_column_value,
-    sql_phase_log_enabled, tpcc_order_status_row_count, tpcc_run_in_transaction,
+    delete_rows_by_equalities, equalities_map_i32, insert_row_tuple_tpcc_deferred,
+    int_column_value, sql_phase_log_enabled, tpcc_order_status_row_count, tpcc_run_in_transaction,
     tpcc_stock_level_row_count, tuple_i32_field, update_rows_by_equalities, SqlEngineState,
 };
 use crate::network::engine::{EngineError, EngineOutput, SessionContext};
@@ -66,6 +66,8 @@ fn run_new_order(
     let mut insert_new_order_us = 0u64;
     let mut insert_order_line_us = 0u64;
     let mut stock_us = 0u64;
+    let mut wal_insert_us = 0u64;
+    let mut index_sync_us = 0u64;
 
     let mut rows = 0u64;
     let t0 = profile.then(Instant::now);
@@ -88,7 +90,7 @@ fn run_new_order(
     let id = state
         .next_tuple_id
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    insert_row_tuple_tpcc(
+    let ins = insert_row_tuple_tpcc_deferred(
         state,
         ctx,
         "oorder",
@@ -103,6 +105,8 @@ fn run_new_order(
             ],
         ),
     )?;
+    wal_insert_us += ins.wal_us;
+    index_sync_us += ins.index_us;
     rows += 1;
     if let Some(t0) = t0 {
         insert_oorder_us = phase_elapsed_us(t0);
@@ -112,7 +116,7 @@ fn run_new_order(
     let id = state
         .next_tuple_id
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    insert_row_tuple_tpcc(
+    let ins = insert_row_tuple_tpcc_deferred(
         state,
         ctx,
         "new_order",
@@ -125,6 +129,8 @@ fn run_new_order(
             ],
         ),
     )?;
+    wal_insert_us += ins.wal_us;
+    index_sync_us += ins.index_us;
     rows += 1;
     if let Some(t0) = t0 {
         insert_new_order_us = phase_elapsed_us(t0);
@@ -154,7 +160,7 @@ fn run_new_order(
     let id = state
         .next_tuple_id
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    insert_row_tuple_tpcc(
+    let ins = insert_row_tuple_tpcc_deferred(
         state,
         ctx,
         "order_line",
@@ -171,6 +177,8 @@ fn run_new_order(
             ],
         ),
     )?;
+    wal_insert_us += ins.wal_us;
+    index_sync_us += ins.index_us;
     rows += 1;
     if let Some(t0) = t0 {
         insert_order_line_us = phase_elapsed_us(t0);
@@ -184,6 +192,8 @@ fn run_new_order(
             insert_new_order_us,
             insert_order_line_us,
             stock_us,
+            wal_insert_us,
+            index_sync_us,
             "sql.execute_tpcc.new_order"
         );
     }

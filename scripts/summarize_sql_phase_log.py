@@ -6,7 +6,7 @@ Looks for:
   - message `sql_parse` and field parse_us=...
   - message `table_storage_lock` / `row_storage_lock` with lock_wait_us=..., table=..., mode=...
   - message `sql.dml.lock_path` with lock_path=row|table|skip
-  - message `sql.commit` with flush_us=..., wal_us=..., flush_tables_count=...
+  - message `sql.commit` with flush_us=..., wal_us=..., commit_*_us sub-phases, flush_tables_count=...
   - message `update` with scan_us=..., row_loop_us=...
   - message `delete` with same fields
   - message `sql.execute_script` with wall_us=...
@@ -77,6 +77,24 @@ def extract_commit_metrics(line: str) -> tuple[int, int, int] | None:
     return None
 
 
+def extract_commit_subphase_us(line: str, name: str) -> int | None:
+    if "rustdb::sql_phases" not in line or "sql.commit" not in line:
+        return None
+    m = re.search(rf"{name}=(\d+)", line)
+    return int(m.group(1)) if m else None
+
+
+def extract_commit_sub_phases(line: str) -> dict[str, int] | None:
+    if "rustdb::sql_phases" not in line or "sql.commit" not in line:
+        return None
+    out: dict[str, int] = {}
+    for phase in COMMIT_SUB_PHASES:
+        m = re.search(rf"{phase}=(\d+)", line)
+        if m:
+            out[phase] = int(m.group(1))
+    return out if out else None
+
+
 def extract_execute_script_wall_us(line: str) -> tuple[int, int] | None:
     if "wall_us=" not in line or "sql.execute_script" not in line:
         return None
@@ -104,15 +122,8 @@ def extract_execute_tpcc_wall_us(line: str) -> tuple[int, int] | None:
 def extract_execute_tpcc_new_order_phases(line: str) -> dict[str, int] | None:
     if "sql.execute_tpcc.new_order" not in line:
         return None
-    fields = (
-        "district_us",
-        "insert_oorder_us",
-        "insert_new_order_us",
-        "insert_order_line_us",
-        "stock_us",
-    )
     out: dict[str, int] = {}
-    for name in fields:
+    for name in NEW_ORDER_PHASES:
         m = re.search(rf"{name}=(\d+)", line)
         if m:
             out[name] = int(m.group(1))
@@ -132,18 +143,16 @@ NEW_ORDER_PHASES = (
     "insert_new_order_us",
     "insert_order_line_us",
     "stock_us",
+    "wal_insert_us",
+    "index_sync_us",
 )
 
-
-def extract_new_order_phase(line: str) -> dict[str, int] | None:
-    if "rustdb::sql_phases" not in line or "sql.execute_tpcc.new_order" not in line:
-        return None
-    out: dict[str, int] = {}
-    for phase in NEW_ORDER_PHASES:
-        m = re.search(rf"{phase}=(\d+)", line)
-        if m:
-            out[phase] = int(m.group(1))
-    return out if out else None
+COMMIT_SUB_PHASES = (
+    "commit_wal_us",
+    "commit_flush_us",
+    "commit_index_batch_us",
+    "commit_log_append_us",
+)
 
 
 def extract_update_pair(line: str) -> tuple[int, int] | None:
@@ -214,6 +223,7 @@ def main() -> int:
     row_lock_by_table_mode: dict[tuple[str, str], list[float]] = defaultdict(list)
     commit_flush_us: list[float] = []
     commit_wal_us: list[float] = []
+    commit_sub_phases: dict[str, list[float]] = defaultdict(list)
     commit_flush_tables_count: list[float] = []
     execute_script_wall_us: list[float] = []
     execute_script_by_stmt_count: dict[int, list[float]] = defaultdict(list)
@@ -225,7 +235,6 @@ def main() -> int:
     lock_path_by_table: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     scan_us: list[float] = []
     row_loop_us: list[float] = []
-    new_order_phases: dict[str, list[float]] = defaultdict(list)
     phase_lines = 0
 
     for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -266,6 +275,11 @@ def main() -> int:
             commit_wal_us.append(float(cm[1]))
             commit_flush_tables_count.append(float(cm[2]))
             phase_lines += 1
+        csp = extract_commit_sub_phases(line)
+        if csp is not None:
+            for name, us in csp.items():
+                commit_sub_phases[name].append(float(us))
+            phase_lines += 1
         ew = extract_execute_script_wall_us(line)
         if ew is not None:
             wall_us, stmt_count = ew
@@ -300,12 +314,6 @@ def main() -> int:
             scan_us.append(float(up[0]))
             row_loop_us.append(float(up[1]))
             phase_lines += 1
-        nop = extract_new_order_phase(line)
-        if nop is not None:
-            for phase, us in nop.items():
-                new_order_phases[phase].append(float(us))
-            phase_lines += 1
-
     print(f"file: {p}")
     print(f"matched_lines: {phase_lines}")
     if parse_us:
@@ -394,6 +402,12 @@ def main() -> int:
                     f"exceeds {args.warn_flush_p99_ms:.0f}ms soft threshold",
                     flush=True,
                 )
+        if commit_sub_phases:
+            print("sql.commit sub-phase breakdown:")
+            for phase in COMMIT_SUB_PHASES:
+                xs = commit_sub_phases.get(phase, [])
+                if xs:
+                    print_us_stats(f"  {phase}", xs)
     else:
         print("sql.commit: (no matches — COMMIT path with RUSTDB_SQL_PHASE_LOG=1)")
     if execute_script_wall_us:
@@ -435,32 +449,18 @@ def main() -> int:
         print("sql.execute_tpcc: (no matches)")
     if execute_tpcc_new_order_phases:
         print("sql.execute_tpcc.new_order phase breakdown:")
-        for name in (
-            "district_us",
-            "insert_oorder_us",
-            "insert_new_order_us",
-            "insert_order_line_us",
-            "stock_us",
-        ):
+        for name in NEW_ORDER_PHASES:
             xs = execute_tpcc_new_order_phases.get(name, [])
             if xs:
                 print_us_stats(f"  {name}", xs)
     else:
-        print("sql.execute_tpcc.new_order: (no matches)")
+        print(
+            "sql.execute_tpcc.new_order: (no matches — native new_order with RUSTDB_SQL_PHASE_LOG=1)"
+        )
     if execute_tpcc_commit_us:
         print_us_stats("sql.execute_tpcc.commit commit_us", execute_tpcc_commit_us)
     else:
         print("sql.execute_tpcc.commit: (no matches)")
-    if new_order_phases:
-        print("sql.execute_tpcc.new_order phase breakdown:")
-        for phase in NEW_ORDER_PHASES:
-            xs = new_order_phases.get(phase, [])
-            if xs:
-                print_us_stats(f"  {phase}", xs)
-    else:
-        print(
-            "sql.execute_tpcc.new_order: (no matches — native new_order with RUSTDB_SQL_PHASE_LOG=1)"
-        )
     if scan_us:
         print_us_stats("update/delete scan_us", scan_us)
         print_us_stats("update/delete row_loop_us", row_loop_us)

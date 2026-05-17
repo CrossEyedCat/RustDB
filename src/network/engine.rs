@@ -31,7 +31,7 @@ pub mod engine_error_code {
 }
 
 use crate::common::types::RecordId;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Isolation level for the SQL engine session transaction (`BEGIN` … `COMMIT`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -69,6 +69,14 @@ pub enum UndoEntry {
     },
 }
 
+/// Secondary-index insert deferred until `COMMIT` (batched under one `index_registry` write lock).
+#[derive(Debug, Clone)]
+pub(crate) struct PendingIndexInsert {
+    pub table: String,
+    pub rid: RecordId,
+    pub column_map: HashMap<String, String>,
+}
+
 /// Open user transaction state (per [`SessionContext`]).
 pub struct SqlTransaction {
     pub isolation: SqlIsolationLevel,
@@ -85,6 +93,8 @@ pub struct SqlTransaction {
     pub wal_last_lsn: Option<crate::logging::log_record::LogSequenceNumber>,
     /// Physical heap tables modified by DML in this transaction (for selective flush on COMMIT/ROLLBACK).
     pub(crate) touched_tables: HashSet<String>,
+    /// Heap inserts whose secondary indexes are applied at `COMMIT` (native TPC-C fast path).
+    pub(crate) pending_index_inserts: Vec<PendingIndexInsert>,
 }
 
 impl std::fmt::Debug for SqlTransaction {
@@ -96,6 +106,7 @@ impl std::fmt::Debug for SqlTransaction {
             .field("wal_tx_id", &self.wal_tx_id)
             .field("wal_last_lsn", &self.wal_last_lsn)
             .field("touched_tables", &self.touched_tables.len())
+            .field("pending_index_inserts", &self.pending_index_inserts.len())
             .field("strong_iso_held", &self.strong_iso.is_some())
             .finish()
     }
@@ -115,6 +126,7 @@ impl SqlTransaction {
             wal_begin_lsn: None,
             wal_last_lsn: None,
             touched_tables: HashSet::new(),
+            pending_index_inserts: Vec::new(),
         }
     }
 }
