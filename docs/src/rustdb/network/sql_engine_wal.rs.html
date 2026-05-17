@@ -429,259 +429,321 @@
 <a href=#429 id=429 data-nosnippet>429</a>    ))
 <a href=#430 id=430 data-nosnippet>430</a>}
 <a href=#431 id=431 data-nosnippet>431</a>
-<a href=#432 id=432 data-nosnippet>432</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>flush_all_page_managers(
-<a href=#433 id=433 data-nosnippet>433</a>    state: <span class="kw-2">&amp;</span><span class="kw">crate</span>::network::sql_engine::SqlEngineState,
-<a href=#434 id=434 data-nosnippet>434</a>) -&gt; DbResult&lt;usize&gt; {
-<a href=#435 id=435 data-nosnippet>435</a>    <span class="kw">let </span><span class="kw-2">mut </span>pms: Vec&lt;Arc&lt;Mutex&lt;PageManager&gt;&gt;&gt; = Vec::new();
-<a href=#436 id=436 data-nosnippet>436</a>    pms.push(state.default_page_manager.clone());
-<a href=#437 id=437 data-nosnippet>437</a>    <span class="kw">let </span>map = state
-<a href=#438 id=438 data-nosnippet>438</a>        .table_page_managers
-<a href=#439 id=439 data-nosnippet>439</a>        .lock()
-<a href=#440 id=440 data-nosnippet>440</a>        .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"table pm map lock poisoned"</span>))<span class="question-mark">?</span>;
-<a href=#441 id=441 data-nosnippet>441</a>    <span class="kw">for </span>pm <span class="kw">in </span>map.values() {
-<a href=#442 id=442 data-nosnippet>442</a>        pms.push(pm.clone());
-<a href=#443 id=443 data-nosnippet>443</a>    }
-<a href=#444 id=444 data-nosnippet>444</a>    drop(map);
-<a href=#445 id=445 data-nosnippet>445</a>    <span class="kw">let </span>(n, <span class="kw">_</span>, <span class="kw">_</span>) = coalesced_flush_page_managers(pms)<span class="question-mark">?</span>;
-<a href=#446 id=446 data-nosnippet>446</a>    <span class="prelude-val">Ok</span>(n)
-<a href=#447 id=447 data-nosnippet>447</a>}
-<a href=#448 id=448 data-nosnippet>448</a>
-<a href=#449 id=449 data-nosnippet>449</a><span class="kw">pub fn </span>replay_wal_into_engine(
-<a href=#450 id=450 data-nosnippet>450</a>    state: <span class="kw-2">&amp;</span><span class="kw">crate</span>::network::sql_engine::SqlEngineState,
-<a href=#451 id=451 data-nosnippet>451</a>    wal_dir: <span class="kw-2">&amp;</span>Path,
-<a href=#452 id=452 data-nosnippet>452</a>    wal: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>SqlEngineWal&gt;,
-<a href=#453 id=453 data-nosnippet>453</a>) -&gt; DbResult&lt;()&gt; {
-<a href=#454 id=454 data-nosnippet>454</a>    <span class="kw">use </span><span class="kw">crate</span>::logging::log_record::LogRecordType;
-<a href=#455 id=455 data-nosnippet>455</a>    <span class="kw">use </span>std::collections::HashMap;
-<a href=#456 id=456 data-nosnippet>456</a>
-<a href=#457 id=457 data-nosnippet>457</a>    <span class="kw">let </span>(redo, undo_per_tx) = analyze_wal_for_replay(wal_dir)<span class="question-mark">?</span>;
-<a href=#458 id=458 data-nosnippet>458</a>
-<a href=#459 id=459 data-nosnippet>459</a>    <span class="comment">// Ensure table page managers exist for all catalog tables so WAL file_ids can match.
-<a href=#460 id=460 data-nosnippet>460</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>table_names = {
-<a href=#461 id=461 data-nosnippet>461</a>        <span class="kw">let </span>cat = state
-<a href=#462 id=462 data-nosnippet>462</a>            .catalog
-<a href=#463 id=463 data-nosnippet>463</a>            .lock()
-<a href=#464 id=464 data-nosnippet>464</a>            .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"catalog lock poisoned"</span>))<span class="question-mark">?</span>;
-<a href=#465 id=465 data-nosnippet>465</a>        cat.table_names()
-<a href=#466 id=466 data-nosnippet>466</a>    };
-<a href=#467 id=467 data-nosnippet>467</a>    <span class="comment">// Ensure deterministic file_id allocation across opens (important for WAL replay), regardless of
-<a href=#468 id=468 data-nosnippet>468</a>    // underlying map iteration order.
-<a href=#469 id=469 data-nosnippet>469</a>    </span>table_names.sort();
-<a href=#470 id=470 data-nosnippet>470</a>    <span class="kw">for </span>t <span class="kw">in </span>table_names {
-<a href=#471 id=471 data-nosnippet>471</a>        <span class="kw">let _ </span>= <span class="kw">crate</span>::network::sql_engine::table_page_manager(state, <span class="kw-2">&amp;</span>t)
-<a href=#472 id=472 data-nosnippet>472</a>            .map_err(|e| DbError::database(e.message))<span class="question-mark">?</span>;
-<a href=#473 id=473 data-nosnippet>473</a>    }
-<a href=#474 id=474 data-nosnippet>474</a>
-<a href=#475 id=475 data-nosnippet>475</a>    <span class="comment">// Build a file_id -&gt; page manager map so each record is applied exactly once.
-<a href=#476 id=476 data-nosnippet>476</a>    // Applying every record to every page manager relies on filtering inside PageManager and
-<a href=#477 id=477 data-nosnippet>477</a>    // becomes incorrect if multiple managers reference the same file_id (which can happen during
-<a href=#478 id=478 data-nosnippet>478</a>    // open + catalog/table PM wiring).
-<a href=#479 id=479 data-nosnippet>479</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>pm_by_file_id: HashMap&lt;u32, Arc&lt;Mutex&lt;PageManager&gt;&gt;&gt; = HashMap::new();
-<a href=#480 id=480 data-nosnippet>480</a>    {
-<a href=#481 id=481 data-nosnippet>481</a>        <span class="kw">let </span>default = state.default_page_manager.clone();
-<a href=#482 id=482 data-nosnippet>482</a>        <span class="kw">let </span>fid = default
-<a href=#483 id=483 data-nosnippet>483</a>            .lock()
-<a href=#484 id=484 data-nosnippet>484</a>            .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"page manager lock poisoned"</span>))<span class="question-mark">?
-<a href=#485 id=485 data-nosnippet>485</a>            </span>.file_id();
-<a href=#486 id=486 data-nosnippet>486</a>        pm_by_file_id.insert(fid, default);
-<a href=#487 id=487 data-nosnippet>487</a>    }
-<a href=#488 id=488 data-nosnippet>488</a>    {
-<a href=#489 id=489 data-nosnippet>489</a>        <span class="kw">let </span>map = state
-<a href=#490 id=490 data-nosnippet>490</a>            .table_page_managers
-<a href=#491 id=491 data-nosnippet>491</a>            .lock()
-<a href=#492 id=492 data-nosnippet>492</a>            .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"table pm map lock poisoned"</span>))<span class="question-mark">?</span>;
-<a href=#493 id=493 data-nosnippet>493</a>        <span class="kw">for </span>(_name, pm) <span class="kw">in </span>map.iter() {
-<a href=#494 id=494 data-nosnippet>494</a>            <span class="kw">let </span>fid = pm
-<a href=#495 id=495 data-nosnippet>495</a>                .lock()
-<a href=#496 id=496 data-nosnippet>496</a>                .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"table page manager lock poisoned"</span>))<span class="question-mark">?
-<a href=#497 id=497 data-nosnippet>497</a>                </span>.file_id();
-<a href=#498 id=498 data-nosnippet>498</a>            pm_by_file_id.entry(fid).or_insert_with(|| pm.clone());
-<a href=#499 id=499 data-nosnippet>499</a>        }
-<a href=#500 id=500 data-nosnippet>500</a>    }
-<a href=#501 id=501 data-nosnippet>501</a>
-<a href=#502 id=502 data-nosnippet>502</a>    <span class="kw">let </span>record_file_id = |r: <span class="kw-2">&amp;</span>LogRecord| -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
-<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">match </span><span class="kw-2">&amp;</span>r.operation_data {
-<a href=#504 id=504 data-nosnippet>504</a>            LogOperationData::Record(op) =&gt; <span class="prelude-val">Some</span>(op.file_id),
-<a href=#505 id=505 data-nosnippet>505</a>            LogOperationData::File(op) =&gt; <span class="prelude-val">Some</span>(op.file_id),
-<a href=#506 id=506 data-nosnippet>506</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#507 id=507 data-nosnippet>507</a>        }
-<a href=#508 id=508 data-nosnippet>508</a>    };
-<a href=#509 id=509 data-nosnippet>509</a>
-<a href=#510 id=510 data-nosnippet>510</a>    <span class="comment">// Apply REDO.
-<a href=#511 id=511 data-nosnippet>511</a>    </span>{
-<a href=#512 id=512 data-nosnippet>512</a>        <span class="kw">for </span>r <span class="kw">in </span><span class="kw-2">&amp;</span>redo {
-<a href=#513 id=513 data-nosnippet>513</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(fid) = record_file_id(r) {
-<a href=#514 id=514 data-nosnippet>514</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(pm) = pm_by_file_id.get(<span class="kw-2">&amp;</span>fid) {
-<a href=#515 id=515 data-nosnippet>515</a>                    <span class="kw">let </span><span class="kw-2">mut </span>g = pm
-<a href=#516 id=516 data-nosnippet>516</a>                        .lock()
-<a href=#517 id=517 data-nosnippet>517</a>                        .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"page manager lock poisoned"</span>))<span class="question-mark">?</span>;
-<a href=#518 id=518 data-nosnippet>518</a>                    <span class="kw">let _ </span>= g.apply_log_record_recovery(r, <span class="bool-val">true</span>);
-<a href=#519 id=519 data-nosnippet>519</a>                }
-<a href=#520 id=520 data-nosnippet>520</a>            }
-<a href=#521 id=521 data-nosnippet>521</a>        }
-<a href=#522 id=522 data-nosnippet>522</a>    }
-<a href=#523 id=523 data-nosnippet>523</a>
-<a href=#524 id=524 data-nosnippet>524</a>    <span class="comment">// Apply UNDO for active txs (reverse order per tx).
-<a href=#525 id=525 data-nosnippet>525</a>    </span><span class="kw">for </span>tx_ops <span class="kw">in </span>undo_per_tx {
-<a href=#526 id=526 data-nosnippet>526</a>        <span class="kw">let </span>tx_id = tx_ops.first().and_then(|r| r.transaction_id);
-<a href=#527 id=527 data-nosnippet>527</a>        <span class="kw">let </span>last_lsn = tx_ops.first().map(|r| r.lsn);
-<a href=#528 id=528 data-nosnippet>528</a>        <span class="kw">for </span>r <span class="kw">in </span><span class="kw-2">&amp;</span>tx_ops {
-<a href=#529 id=529 data-nosnippet>529</a>            <span class="kw">if </span>!<span class="macro">matches!</span>(
-<a href=#530 id=530 data-nosnippet>530</a>                r.record_type,
-<a href=#531 id=531 data-nosnippet>531</a>                LogRecordType::DataInsert | LogRecordType::DataUpdate | LogRecordType::DataDelete
-<a href=#532 id=532 data-nosnippet>532</a>            ) {
-<a href=#533 id=533 data-nosnippet>533</a>                <span class="kw">continue</span>;
-<a href=#534 id=534 data-nosnippet>534</a>            }
-<a href=#535 id=535 data-nosnippet>535</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(fid) = record_file_id(r) {
-<a href=#536 id=536 data-nosnippet>536</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(pm) = pm_by_file_id.get(<span class="kw-2">&amp;</span>fid) {
-<a href=#537 id=537 data-nosnippet>537</a>                    <span class="kw">let </span><span class="kw-2">mut </span>g = pm
-<a href=#538 id=538 data-nosnippet>538</a>                        .lock()
-<a href=#539 id=539 data-nosnippet>539</a>                        .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"page manager lock poisoned"</span>))<span class="question-mark">?</span>;
-<a href=#540 id=540 data-nosnippet>540</a>                    <span class="kw">let _ </span>= g.apply_log_record_recovery(r, <span class="bool-val">false</span>);
-<a href=#541 id=541 data-nosnippet>541</a>                }
-<a href=#542 id=542 data-nosnippet>542</a>            }
-<a href=#543 id=543 data-nosnippet>543</a>        }
-<a href=#544 id=544 data-nosnippet>544</a>
-<a href=#545 id=545 data-nosnippet>545</a>        <span class="comment">// Critical for idempotence: persist the UNDO'ed heap state before marking the transaction
-<a href=#546 id=546 data-nosnippet>546</a>        // as aborted in the WAL. Otherwise, an ABORT marker could cause future reopens to skip UNDO
-<a href=#547 id=547 data-nosnippet>547</a>        // while uncommitted heap changes still linger on disk.
-<a href=#548 id=548 data-nosnippet>548</a>        </span>flush_all_page_managers(state)<span class="question-mark">?</span>;
-<a href=#549 id=549 data-nosnippet>549</a>
-<a href=#550 id=550 data-nosnippet>550</a>        <span class="comment">// Make recovery idempotent: once we've undone an "active" transaction, append an ABORT
-<a href=#551 id=551 data-nosnippet>551</a>        // marker so subsequent opens don't keep applying UNDO (which could delete reused slots).
-<a href=#552 id=552 data-nosnippet>552</a>        </span><span class="kw">if let </span>(<span class="prelude-val">Some</span>(tid), <span class="prelude-val">Some</span>(wal)) = (tx_id, wal) {
-<a href=#553 id=553 data-nosnippet>553</a>            wal.log_abort_by_id(tid, last_lsn).map_err(|e| {
-<a href=#554 id=554 data-nosnippet>554</a>                DbError::database(<span class="macro">format!</span>(<span class="string">"append recovery abort marker: {}"</span>, e.message))
-<a href=#555 id=555 data-nosnippet>555</a>            })<span class="question-mark">?</span>;
-<a href=#556 id=556 data-nosnippet>556</a>        }
-<a href=#557 id=557 data-nosnippet>557</a>    }
-<a href=#558 id=558 data-nosnippet>558</a>
-<a href=#559 id=559 data-nosnippet>559</a>    <span class="prelude-val">Ok</span>(())
-<a href=#560 id=560 data-nosnippet>560</a>}
-<a href=#561 id=561 data-nosnippet>561</a>
-<a href=#562 id=562 data-nosnippet>562</a><span class="doccomment">/// Returns `(redo_records_in_lsn_order, undo_records_per_active_tx_in_reverse_lsn_order)`.
-<a href=#563 id=563 data-nosnippet>563</a></span><span class="kw">pub fn </span>analyze_wal_for_replay(wal_dir: <span class="kw-2">&amp;</span>Path) -&gt; DbResult&lt;(Vec&lt;LogRecord&gt;, Vec&lt;Vec&lt;LogRecord&gt;&gt;)&gt; {
-<a href=#564 id=564 data-nosnippet>564</a>    <span class="kw">let </span>recs = LogRecord::read_log_records_from_directory(wal_dir)<span class="question-mark">?</span>;
-<a href=#565 id=565 data-nosnippet>565</a>
-<a href=#566 id=566 data-nosnippet>566</a>    <span class="attr">#[derive(Default)]
-<a href=#567 id=567 data-nosnippet>567</a>    </span><span class="kw">struct </span>TxBuf {
-<a href=#568 id=568 data-nosnippet>568</a>        committed: bool,
-<a href=#569 id=569 data-nosnippet>569</a>        aborted: bool,
-<a href=#570 id=570 data-nosnippet>570</a>        ops: Vec&lt;LogRecord&gt;,
-<a href=#571 id=571 data-nosnippet>571</a>    }
-<a href=#572 id=572 data-nosnippet>572</a>    <span class="kw">use </span>std::collections::HashMap;
-<a href=#573 id=573 data-nosnippet>573</a>    <span class="kw">let </span><span class="kw-2">mut </span>txs: HashMap&lt;TransactionId, TxBuf&gt; = HashMap::new();
-<a href=#574 id=574 data-nosnippet>574</a>
-<a href=#575 id=575 data-nosnippet>575</a>    <span class="kw">for </span>r <span class="kw">in </span>recs {
-<a href=#576 id=576 data-nosnippet>576</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(tid) = r.transaction_id <span class="kw">else </span>{
-<a href=#577 id=577 data-nosnippet>577</a>            <span class="kw">continue</span>;
-<a href=#578 id=578 data-nosnippet>578</a>        };
-<a href=#579 id=579 data-nosnippet>579</a>        <span class="kw">let </span>entry = txs.entry(tid).or_default();
-<a href=#580 id=580 data-nosnippet>580</a>        <span class="kw">match </span>r.record_type {
-<a href=#581 id=581 data-nosnippet>581</a>            LogRecordType::TransactionCommit =&gt; entry.committed = <span class="bool-val">true</span>,
-<a href=#582 id=582 data-nosnippet>582</a>            LogRecordType::TransactionAbort =&gt; entry.aborted = <span class="bool-val">true</span>,
-<a href=#583 id=583 data-nosnippet>583</a>            <span class="kw">_ </span>=&gt; {}
-<a href=#584 id=584 data-nosnippet>584</a>        }
-<a href=#585 id=585 data-nosnippet>585</a>        <span class="kw">if </span><span class="macro">matches!</span>(
-<a href=#586 id=586 data-nosnippet>586</a>            r.record_type,
-<a href=#587 id=587 data-nosnippet>587</a>            LogRecordType::DataInsert | LogRecordType::DataUpdate | LogRecordType::DataDelete
-<a href=#588 id=588 data-nosnippet>588</a>        ) {
-<a href=#589 id=589 data-nosnippet>589</a>            entry.ops.push(r);
-<a href=#590 id=590 data-nosnippet>590</a>        }
-<a href=#591 id=591 data-nosnippet>591</a>    }
+<a href=#432 id=432 data-nosnippet>432</a><span class="doccomment">/// Flushes dirty pages for the given page managers without acquiring `table_page_managers`.
+<a href=#433 id=433 data-nosnippet>433</a>///
+<a href=#434 id=434 data-nosnippet>434</a>/// Skips managers with no dirty pages. `CommitFlushPhaseUs::table_map_lock_us` is always zero.
+<a href=#435 id=435 data-nosnippet>435</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>flush_page_managers_cached(
+<a href=#436 id=436 data-nosnippet>436</a>    pms: <span class="kw-2">&amp;</span>[Arc&lt;Mutex&lt;PageManager&gt;&gt;],
+<a href=#437 id=437 data-nosnippet>437</a>) -&gt; DbResult&lt;(usize, CommitFlushPhaseUs)&gt; {
+<a href=#438 id=438 data-nosnippet>438</a>    <span class="kw">if </span>pms.is_empty() {
+<a href=#439 id=439 data-nosnippet>439</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((<span class="number">0</span>, CommitFlushPhaseUs::default()));
+<a href=#440 id=440 data-nosnippet>440</a>    }
+<a href=#441 id=441 data-nosnippet>441</a>    <span class="kw">let </span><span class="kw-2">mut </span>dirty_pms: Vec&lt;Arc&lt;Mutex&lt;PageManager&gt;&gt;&gt; = Vec::new();
+<a href=#442 id=442 data-nosnippet>442</a>    <span class="kw">let </span><span class="kw-2">mut </span>pm_lock_wait_us = <span class="number">0u64</span>;
+<a href=#443 id=443 data-nosnippet>443</a>    <span class="kw">for </span>pm <span class="kw">in </span>pms {
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="kw">let </span>lock_t0 = Instant::now();
+<a href=#445 id=445 data-nosnippet>445</a>        <span class="kw">let </span>dirty = pm.lock().map(|g| g.dirty_page_count() &gt; <span class="number">0</span>).unwrap_or(<span class="bool-val">false</span>);
+<a href=#446 id=446 data-nosnippet>446</a>        pm_lock_wait_us += lock_t0.elapsed().as_micros() <span class="kw">as </span>u64;
+<a href=#447 id=447 data-nosnippet>447</a>        <span class="kw">if </span>dirty {
+<a href=#448 id=448 data-nosnippet>448</a>            dirty_pms.push(pm.clone());
+<a href=#449 id=449 data-nosnippet>449</a>        }
+<a href=#450 id=450 data-nosnippet>450</a>    }
+<a href=#451 id=451 data-nosnippet>451</a>    dirty_pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
+<a href=#452 id=452 data-nosnippet>452</a>    <span class="kw">let </span>(flushed, flush_pm_wait, heap_fsync_us) = coalesced_flush_page_managers(dirty_pms)<span class="question-mark">?</span>;
+<a href=#453 id=453 data-nosnippet>453</a>    <span class="prelude-val">Ok</span>((
+<a href=#454 id=454 data-nosnippet>454</a>        flushed,
+<a href=#455 id=455 data-nosnippet>455</a>        CommitFlushPhaseUs {
+<a href=#456 id=456 data-nosnippet>456</a>            table_map_lock_us: <span class="number">0</span>,
+<a href=#457 id=457 data-nosnippet>457</a>            pm_lock_wait_us: pm_lock_wait_us.saturating_add(flush_pm_wait),
+<a href=#458 id=458 data-nosnippet>458</a>            heap_fsync_us,
+<a href=#459 id=459 data-nosnippet>459</a>        },
+<a href=#460 id=460 data-nosnippet>460</a>    ))
+<a href=#461 id=461 data-nosnippet>461</a>}
+<a href=#462 id=462 data-nosnippet>462</a>
+<a href=#463 id=463 data-nosnippet>463</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>flush_all_page_managers(
+<a href=#464 id=464 data-nosnippet>464</a>    state: <span class="kw-2">&amp;</span><span class="kw">crate</span>::network::sql_engine::SqlEngineState,
+<a href=#465 id=465 data-nosnippet>465</a>) -&gt; DbResult&lt;usize&gt; {
+<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">let </span><span class="kw-2">mut </span>pms: Vec&lt;Arc&lt;Mutex&lt;PageManager&gt;&gt;&gt; = Vec::new();
+<a href=#467 id=467 data-nosnippet>467</a>    pms.push(state.default_page_manager.clone());
+<a href=#468 id=468 data-nosnippet>468</a>    <span class="kw">let </span>map = state
+<a href=#469 id=469 data-nosnippet>469</a>        .table_page_managers
+<a href=#470 id=470 data-nosnippet>470</a>        .lock()
+<a href=#471 id=471 data-nosnippet>471</a>        .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"table pm map lock poisoned"</span>))<span class="question-mark">?</span>;
+<a href=#472 id=472 data-nosnippet>472</a>    <span class="kw">for </span>pm <span class="kw">in </span>map.values() {
+<a href=#473 id=473 data-nosnippet>473</a>        pms.push(pm.clone());
+<a href=#474 id=474 data-nosnippet>474</a>    }
+<a href=#475 id=475 data-nosnippet>475</a>    drop(map);
+<a href=#476 id=476 data-nosnippet>476</a>    <span class="kw">let </span>(n, <span class="kw">_</span>, <span class="kw">_</span>) = coalesced_flush_page_managers(pms)<span class="question-mark">?</span>;
+<a href=#477 id=477 data-nosnippet>477</a>    <span class="prelude-val">Ok</span>(n)
+<a href=#478 id=478 data-nosnippet>478</a>}
+<a href=#479 id=479 data-nosnippet>479</a>
+<a href=#480 id=480 data-nosnippet>480</a><span class="kw">pub fn </span>replay_wal_into_engine(
+<a href=#481 id=481 data-nosnippet>481</a>    state: <span class="kw-2">&amp;</span><span class="kw">crate</span>::network::sql_engine::SqlEngineState,
+<a href=#482 id=482 data-nosnippet>482</a>    wal_dir: <span class="kw-2">&amp;</span>Path,
+<a href=#483 id=483 data-nosnippet>483</a>    wal: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>SqlEngineWal&gt;,
+<a href=#484 id=484 data-nosnippet>484</a>) -&gt; DbResult&lt;()&gt; {
+<a href=#485 id=485 data-nosnippet>485</a>    <span class="kw">use </span><span class="kw">crate</span>::logging::log_record::LogRecordType;
+<a href=#486 id=486 data-nosnippet>486</a>    <span class="kw">use </span>std::collections::HashMap;
+<a href=#487 id=487 data-nosnippet>487</a>
+<a href=#488 id=488 data-nosnippet>488</a>    <span class="kw">let </span>(redo, undo_per_tx) = analyze_wal_for_replay(wal_dir)<span class="question-mark">?</span>;
+<a href=#489 id=489 data-nosnippet>489</a>
+<a href=#490 id=490 data-nosnippet>490</a>    <span class="comment">// Ensure table page managers exist for all catalog tables so WAL file_ids can match.
+<a href=#491 id=491 data-nosnippet>491</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>table_names = {
+<a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">let </span>cat = state
+<a href=#493 id=493 data-nosnippet>493</a>            .catalog
+<a href=#494 id=494 data-nosnippet>494</a>            .lock()
+<a href=#495 id=495 data-nosnippet>495</a>            .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"catalog lock poisoned"</span>))<span class="question-mark">?</span>;
+<a href=#496 id=496 data-nosnippet>496</a>        cat.table_names()
+<a href=#497 id=497 data-nosnippet>497</a>    };
+<a href=#498 id=498 data-nosnippet>498</a>    <span class="comment">// Ensure deterministic file_id allocation across opens (important for WAL replay), regardless of
+<a href=#499 id=499 data-nosnippet>499</a>    // underlying map iteration order.
+<a href=#500 id=500 data-nosnippet>500</a>    </span>table_names.sort();
+<a href=#501 id=501 data-nosnippet>501</a>    <span class="kw">for </span>t <span class="kw">in </span>table_names {
+<a href=#502 id=502 data-nosnippet>502</a>        <span class="kw">let _ </span>= <span class="kw">crate</span>::network::sql_engine::table_page_manager(state, <span class="kw-2">&amp;</span>t)
+<a href=#503 id=503 data-nosnippet>503</a>            .map_err(|e| DbError::database(e.message))<span class="question-mark">?</span>;
+<a href=#504 id=504 data-nosnippet>504</a>    }
+<a href=#505 id=505 data-nosnippet>505</a>
+<a href=#506 id=506 data-nosnippet>506</a>    <span class="comment">// Build a file_id -&gt; page manager map so each record is applied exactly once.
+<a href=#507 id=507 data-nosnippet>507</a>    // Applying every record to every page manager relies on filtering inside PageManager and
+<a href=#508 id=508 data-nosnippet>508</a>    // becomes incorrect if multiple managers reference the same file_id (which can happen during
+<a href=#509 id=509 data-nosnippet>509</a>    // open + catalog/table PM wiring).
+<a href=#510 id=510 data-nosnippet>510</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>pm_by_file_id: HashMap&lt;u32, Arc&lt;Mutex&lt;PageManager&gt;&gt;&gt; = HashMap::new();
+<a href=#511 id=511 data-nosnippet>511</a>    {
+<a href=#512 id=512 data-nosnippet>512</a>        <span class="kw">let </span>default = state.default_page_manager.clone();
+<a href=#513 id=513 data-nosnippet>513</a>        <span class="kw">let </span>fid = default
+<a href=#514 id=514 data-nosnippet>514</a>            .lock()
+<a href=#515 id=515 data-nosnippet>515</a>            .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"page manager lock poisoned"</span>))<span class="question-mark">?
+<a href=#516 id=516 data-nosnippet>516</a>            </span>.file_id();
+<a href=#517 id=517 data-nosnippet>517</a>        pm_by_file_id.insert(fid, default);
+<a href=#518 id=518 data-nosnippet>518</a>    }
+<a href=#519 id=519 data-nosnippet>519</a>    {
+<a href=#520 id=520 data-nosnippet>520</a>        <span class="kw">let </span>map = state
+<a href=#521 id=521 data-nosnippet>521</a>            .table_page_managers
+<a href=#522 id=522 data-nosnippet>522</a>            .lock()
+<a href=#523 id=523 data-nosnippet>523</a>            .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"table pm map lock poisoned"</span>))<span class="question-mark">?</span>;
+<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw">for </span>(_name, pm) <span class="kw">in </span>map.iter() {
+<a href=#525 id=525 data-nosnippet>525</a>            <span class="kw">let </span>fid = pm
+<a href=#526 id=526 data-nosnippet>526</a>                .lock()
+<a href=#527 id=527 data-nosnippet>527</a>                .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"table page manager lock poisoned"</span>))<span class="question-mark">?
+<a href=#528 id=528 data-nosnippet>528</a>                </span>.file_id();
+<a href=#529 id=529 data-nosnippet>529</a>            pm_by_file_id.entry(fid).or_insert_with(|| pm.clone());
+<a href=#530 id=530 data-nosnippet>530</a>        }
+<a href=#531 id=531 data-nosnippet>531</a>    }
+<a href=#532 id=532 data-nosnippet>532</a>
+<a href=#533 id=533 data-nosnippet>533</a>    <span class="kw">let </span>record_file_id = |r: <span class="kw-2">&amp;</span>LogRecord| -&gt; <span class="prelude-ty">Option</span>&lt;u32&gt; {
+<a href=#534 id=534 data-nosnippet>534</a>        <span class="kw">match </span><span class="kw-2">&amp;</span>r.operation_data {
+<a href=#535 id=535 data-nosnippet>535</a>            LogOperationData::Record(op) =&gt; <span class="prelude-val">Some</span>(op.file_id),
+<a href=#536 id=536 data-nosnippet>536</a>            LogOperationData::File(op) =&gt; <span class="prelude-val">Some</span>(op.file_id),
+<a href=#537 id=537 data-nosnippet>537</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#538 id=538 data-nosnippet>538</a>        }
+<a href=#539 id=539 data-nosnippet>539</a>    };
+<a href=#540 id=540 data-nosnippet>540</a>
+<a href=#541 id=541 data-nosnippet>541</a>    <span class="comment">// Apply REDO.
+<a href=#542 id=542 data-nosnippet>542</a>    </span>{
+<a href=#543 id=543 data-nosnippet>543</a>        <span class="kw">for </span>r <span class="kw">in </span><span class="kw-2">&amp;</span>redo {
+<a href=#544 id=544 data-nosnippet>544</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(fid) = record_file_id(r) {
+<a href=#545 id=545 data-nosnippet>545</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(pm) = pm_by_file_id.get(<span class="kw-2">&amp;</span>fid) {
+<a href=#546 id=546 data-nosnippet>546</a>                    <span class="kw">let </span><span class="kw-2">mut </span>g = pm
+<a href=#547 id=547 data-nosnippet>547</a>                        .lock()
+<a href=#548 id=548 data-nosnippet>548</a>                        .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"page manager lock poisoned"</span>))<span class="question-mark">?</span>;
+<a href=#549 id=549 data-nosnippet>549</a>                    <span class="kw">let _ </span>= g.apply_log_record_recovery(r, <span class="bool-val">true</span>);
+<a href=#550 id=550 data-nosnippet>550</a>                }
+<a href=#551 id=551 data-nosnippet>551</a>            }
+<a href=#552 id=552 data-nosnippet>552</a>        }
+<a href=#553 id=553 data-nosnippet>553</a>    }
+<a href=#554 id=554 data-nosnippet>554</a>
+<a href=#555 id=555 data-nosnippet>555</a>    <span class="comment">// Apply UNDO for active txs (reverse order per tx).
+<a href=#556 id=556 data-nosnippet>556</a>    </span><span class="kw">for </span>tx_ops <span class="kw">in </span>undo_per_tx {
+<a href=#557 id=557 data-nosnippet>557</a>        <span class="kw">let </span>tx_id = tx_ops.first().and_then(|r| r.transaction_id);
+<a href=#558 id=558 data-nosnippet>558</a>        <span class="kw">let </span>last_lsn = tx_ops.first().map(|r| r.lsn);
+<a href=#559 id=559 data-nosnippet>559</a>        <span class="kw">for </span>r <span class="kw">in </span><span class="kw-2">&amp;</span>tx_ops {
+<a href=#560 id=560 data-nosnippet>560</a>            <span class="kw">if </span>!<span class="macro">matches!</span>(
+<a href=#561 id=561 data-nosnippet>561</a>                r.record_type,
+<a href=#562 id=562 data-nosnippet>562</a>                LogRecordType::DataInsert | LogRecordType::DataUpdate | LogRecordType::DataDelete
+<a href=#563 id=563 data-nosnippet>563</a>            ) {
+<a href=#564 id=564 data-nosnippet>564</a>                <span class="kw">continue</span>;
+<a href=#565 id=565 data-nosnippet>565</a>            }
+<a href=#566 id=566 data-nosnippet>566</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(fid) = record_file_id(r) {
+<a href=#567 id=567 data-nosnippet>567</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(pm) = pm_by_file_id.get(<span class="kw-2">&amp;</span>fid) {
+<a href=#568 id=568 data-nosnippet>568</a>                    <span class="kw">let </span><span class="kw-2">mut </span>g = pm
+<a href=#569 id=569 data-nosnippet>569</a>                        .lock()
+<a href=#570 id=570 data-nosnippet>570</a>                        .map_err(|<span class="kw">_</span>| DbError::database(<span class="string">"page manager lock poisoned"</span>))<span class="question-mark">?</span>;
+<a href=#571 id=571 data-nosnippet>571</a>                    <span class="kw">let _ </span>= g.apply_log_record_recovery(r, <span class="bool-val">false</span>);
+<a href=#572 id=572 data-nosnippet>572</a>                }
+<a href=#573 id=573 data-nosnippet>573</a>            }
+<a href=#574 id=574 data-nosnippet>574</a>        }
+<a href=#575 id=575 data-nosnippet>575</a>
+<a href=#576 id=576 data-nosnippet>576</a>        <span class="comment">// Critical for idempotence: persist the UNDO'ed heap state before marking the transaction
+<a href=#577 id=577 data-nosnippet>577</a>        // as aborted in the WAL. Otherwise, an ABORT marker could cause future reopens to skip UNDO
+<a href=#578 id=578 data-nosnippet>578</a>        // while uncommitted heap changes still linger on disk.
+<a href=#579 id=579 data-nosnippet>579</a>        </span>flush_all_page_managers(state)<span class="question-mark">?</span>;
+<a href=#580 id=580 data-nosnippet>580</a>
+<a href=#581 id=581 data-nosnippet>581</a>        <span class="comment">// Make recovery idempotent: once we've undone an "active" transaction, append an ABORT
+<a href=#582 id=582 data-nosnippet>582</a>        // marker so subsequent opens don't keep applying UNDO (which could delete reused slots).
+<a href=#583 id=583 data-nosnippet>583</a>        </span><span class="kw">if let </span>(<span class="prelude-val">Some</span>(tid), <span class="prelude-val">Some</span>(wal)) = (tx_id, wal) {
+<a href=#584 id=584 data-nosnippet>584</a>            wal.log_abort_by_id(tid, last_lsn).map_err(|e| {
+<a href=#585 id=585 data-nosnippet>585</a>                DbError::database(<span class="macro">format!</span>(<span class="string">"append recovery abort marker: {}"</span>, e.message))
+<a href=#586 id=586 data-nosnippet>586</a>            })<span class="question-mark">?</span>;
+<a href=#587 id=587 data-nosnippet>587</a>        }
+<a href=#588 id=588 data-nosnippet>588</a>    }
+<a href=#589 id=589 data-nosnippet>589</a>
+<a href=#590 id=590 data-nosnippet>590</a>    <span class="prelude-val">Ok</span>(())
+<a href=#591 id=591 data-nosnippet>591</a>}
 <a href=#592 id=592 data-nosnippet>592</a>
-<a href=#593 id=593 data-nosnippet>593</a>    <span class="kw">let </span><span class="kw-2">mut </span>redo: Vec&lt;LogRecord&gt; = Vec::new();
-<a href=#594 id=594 data-nosnippet>594</a>    <span class="kw">let </span><span class="kw-2">mut </span>undo: Vec&lt;Vec&lt;LogRecord&gt;&gt; = Vec::new();
-<a href=#595 id=595 data-nosnippet>595</a>
-<a href=#596 id=596 data-nosnippet>596</a>    <span class="kw">for </span>(_tid, buf) <span class="kw">in </span>txs {
-<a href=#597 id=597 data-nosnippet>597</a>        <span class="kw">if </span>buf.committed &amp;&amp; !buf.aborted {
-<a href=#598 id=598 data-nosnippet>598</a>            redo.extend(buf.ops);
-<a href=#599 id=599 data-nosnippet>599</a>        } <span class="kw">else if </span>!buf.committed &amp;&amp; !buf.aborted &amp;&amp; !buf.ops.is_empty() {
-<a href=#600 id=600 data-nosnippet>600</a>            <span class="kw">let </span><span class="kw-2">mut </span>ops = buf.ops;
-<a href=#601 id=601 data-nosnippet>601</a>            ops.sort_by_key(|r| r.lsn);
-<a href=#602 id=602 data-nosnippet>602</a>            ops.reverse();
-<a href=#603 id=603 data-nosnippet>603</a>            undo.push(ops);
-<a href=#604 id=604 data-nosnippet>604</a>        }
-<a href=#605 id=605 data-nosnippet>605</a>    }
-<a href=#606 id=606 data-nosnippet>606</a>
-<a href=#607 id=607 data-nosnippet>607</a>    redo.sort_by_key(|r| r.lsn);
-<a href=#608 id=608 data-nosnippet>608</a>    <span class="prelude-val">Ok</span>((redo, undo))
-<a href=#609 id=609 data-nosnippet>609</a>}
-<a href=#610 id=610 data-nosnippet>610</a>
-<a href=#611 id=611 data-nosnippet>611</a><span class="kw">pub fn </span>log_record_operation_parts(
-<a href=#612 id=612 data-nosnippet>612</a>    record: <span class="kw-2">&amp;</span>LogRecord,
-<a href=#613 id=613 data-nosnippet>613</a>) -&gt; <span class="prelude-ty">Option</span>&lt;(LogRecordType, <span class="kw-2">&amp;</span><span class="kw">crate</span>::logging::log_record::RecordOperation)&gt; {
-<a href=#614 id=614 data-nosnippet>614</a>    <span class="kw">let </span>op = <span class="kw">match </span><span class="kw-2">&amp;</span>record.operation_data {
-<a href=#615 id=615 data-nosnippet>615</a>        LogOperationData::Record(op) =&gt; op,
-<a href=#616 id=616 data-nosnippet>616</a>        <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">None</span>,
-<a href=#617 id=617 data-nosnippet>617</a>    };
-<a href=#618 id=618 data-nosnippet>618</a>    <span class="prelude-val">Some</span>((record.record_type.clone(), op))
-<a href=#619 id=619 data-nosnippet>619</a>}
-<a href=#620 id=620 data-nosnippet>620</a>
-<a href=#621 id=621 data-nosnippet>621</a><span class="kw">fn </span>map_sql_isolation_to_log(iso: SqlIsolationLevel) -&gt; LogIsolationLevel {
-<a href=#622 id=622 data-nosnippet>622</a>    <span class="kw">match </span>iso {
-<a href=#623 id=623 data-nosnippet>623</a>        SqlIsolationLevel::ReadCommitted =&gt; LogIsolationLevel::ReadCommitted,
-<a href=#624 id=624 data-nosnippet>624</a>        SqlIsolationLevel::RepeatableRead =&gt; LogIsolationLevel::RepeatableRead,
-<a href=#625 id=625 data-nosnippet>625</a>        SqlIsolationLevel::Serializable =&gt; LogIsolationLevel::Serializable,
-<a href=#626 id=626 data-nosnippet>626</a>    }
-<a href=#627 id=627 data-nosnippet>627</a>}
-<a href=#628 id=628 data-nosnippet>628</a>
-<a href=#629 id=629 data-nosnippet>629</a><span class="attr">#[cfg(test)]
-<a href=#630 id=630 data-nosnippet>630</a></span><span class="kw">mod </span>tests {
-<a href=#631 id=631 data-nosnippet>631</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#632 id=632 data-nosnippet>632</a>    <span class="kw">use </span><span class="kw">crate</span>::network::engine::{EngineHandle, SessionContext};
-<a href=#633 id=633 data-nosnippet>633</a>    <span class="kw">use </span><span class="kw">crate</span>::network::sql_engine::{table_page_manager, SqlEngine};
-<a href=#634 id=634 data-nosnippet>634</a>    <span class="kw">use </span>std::collections::HashSet;
-<a href=#635 id=635 data-nosnippet>635</a>    <span class="kw">use </span>tempfile::TempDir;
-<a href=#636 id=636 data-nosnippet>636</a>
-<a href=#637 id=637 data-nosnippet>637</a>    <span class="attr">#[test]
-<a href=#638 id=638 data-nosnippet>638</a>    </span><span class="kw">fn </span>bench_defer_heap_fsync_respects_env() {
-<a href=#639 id=639 data-nosnippet>639</a>        std::env::remove_var(<span class="string">"RUSTDB_BENCH_DEFER_HEAP_FSYNC"</span>);
-<a href=#640 id=640 data-nosnippet>640</a>        <span class="macro">assert!</span>(!bench_defer_heap_fsync_enabled());
-<a href=#641 id=641 data-nosnippet>641</a>        std::env::set_var(<span class="string">"RUSTDB_BENCH_DEFER_HEAP_FSYNC"</span>, <span class="string">"1"</span>);
-<a href=#642 id=642 data-nosnippet>642</a>        <span class="macro">assert!</span>(bench_defer_heap_fsync_enabled());
-<a href=#643 id=643 data-nosnippet>643</a>        std::env::set_var(<span class="string">"RUSTDB_BENCH_DEFER_HEAP_FSYNC"</span>, <span class="string">"0"</span>);
-<a href=#644 id=644 data-nosnippet>644</a>        <span class="macro">assert!</span>(!bench_defer_heap_fsync_enabled());
-<a href=#645 id=645 data-nosnippet>645</a>        std::env::remove_var(<span class="string">"RUSTDB_BENCH_DEFER_HEAP_FSYNC"</span>);
-<a href=#646 id=646 data-nosnippet>646</a>    }
-<a href=#647 id=647 data-nosnippet>647</a>
-<a href=#648 id=648 data-nosnippet>648</a>    <span class="attr">#[test]
-<a href=#649 id=649 data-nosnippet>649</a>    </span><span class="kw">fn </span>flush_page_managers_skips_clean_and_coalesces_sync() {
-<a href=#650 id=650 data-nosnippet>650</a>        <span class="kw">let </span>dir = TempDir::new().unwrap();
-<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
-<a href=#652 id=652 data-nosnippet>652</a>        <span class="kw">let </span>state = eng.state_for_test();
-<a href=#653 id=653 data-nosnippet>653</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
-<a href=#654 id=654 data-nosnippet>654</a>        eng.execute_sql(<span class="string">"CREATE TABLE t_clean (k INT PRIMARY KEY)"</span>, <span class="kw-2">&amp;mut </span>ctx)
-<a href=#655 id=655 data-nosnippet>655</a>            .unwrap();
-<a href=#656 id=656 data-nosnippet>656</a>        eng.execute_sql(<span class="string">"CREATE TABLE t_dirty (k INT PRIMARY KEY)"</span>, <span class="kw-2">&amp;mut </span>ctx)
-<a href=#657 id=657 data-nosnippet>657</a>            .unwrap();
-<a href=#658 id=658 data-nosnippet>658</a>        eng.execute_sql(<span class="string">"INSERT INTO t_clean (k) VALUES (0)"</span>, <span class="kw-2">&amp;mut </span>ctx)
-<a href=#659 id=659 data-nosnippet>659</a>            .unwrap();
-<a href=#660 id=660 data-nosnippet>660</a>        eng.execute_sql(<span class="string">"BEGIN TRANSACTION"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
-<a href=#661 id=661 data-nosnippet>661</a>        eng.execute_sql(<span class="string">"INSERT INTO t_dirty (k) VALUES (1)"</span>, <span class="kw-2">&amp;mut </span>ctx)
-<a href=#662 id=662 data-nosnippet>662</a>            .unwrap();
-<a href=#663 id=663 data-nosnippet>663</a>
-<a href=#664 id=664 data-nosnippet>664</a>        <span class="kw">let </span>pm_clean = table_page_manager(state, <span class="string">"t_clean"</span>).unwrap();
-<a href=#665 id=665 data-nosnippet>665</a>        <span class="kw">let </span>pm_dirty = table_page_manager(state, <span class="string">"t_dirty"</span>).unwrap();
-<a href=#666 id=666 data-nosnippet>666</a>        <span class="macro">assert_eq!</span>(pm_clean.lock().unwrap().dirty_page_count(), <span class="number">0</span>);
-<a href=#667 id=667 data-nosnippet>667</a>        <span class="macro">assert!</span>(pm_dirty.lock().unwrap().dirty_page_count() &gt; <span class="number">0</span>);
-<a href=#668 id=668 data-nosnippet>668</a>
-<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">let </span><span class="kw-2">mut </span>tables = HashSet::new();
-<a href=#670 id=670 data-nosnippet>670</a>        tables.insert(<span class="string">"t_clean"</span>.to_string());
-<a href=#671 id=671 data-nosnippet>671</a>        tables.insert(<span class="string">"t_dirty"</span>.to_string());
-<a href=#672 id=672 data-nosnippet>672</a>        <span class="kw">let </span>(flushed, _metrics) = flush_page_managers_for_tables(state, <span class="kw-2">&amp;</span>tables).unwrap();
-<a href=#673 id=673 data-nosnippet>673</a>        <span class="macro">assert!</span>(flushed &gt; <span class="number">0</span>);
-<a href=#674 id=674 data-nosnippet>674</a>        <span class="macro">assert_eq!</span>(pm_clean.lock().unwrap().dirty_page_count(), <span class="number">0</span>);
-<a href=#675 id=675 data-nosnippet>675</a>        <span class="macro">assert_eq!</span>(pm_dirty.lock().unwrap().dirty_page_count(), <span class="number">0</span>);
-<a href=#676 id=676 data-nosnippet>676</a>
-<a href=#677 id=677 data-nosnippet>677</a>        eng.execute_sql(<span class="string">"COMMIT"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
-<a href=#678 id=678 data-nosnippet>678</a>    }
-<a href=#679 id=679 data-nosnippet>679</a>
-<a href=#680 id=680 data-nosnippet>680</a>    <span class="attr">#[test]
-<a href=#681 id=681 data-nosnippet>681</a>    </span><span class="kw">fn </span>flush_page_managers_empty_tables_is_noop() {
-<a href=#682 id=682 data-nosnippet>682</a>        <span class="kw">let </span>dir = TempDir::new().unwrap();
-<a href=#683 id=683 data-nosnippet>683</a>        <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
-<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span>(n, <span class="kw">_</span>) = flush_page_managers_for_tables(eng.state_for_test(), <span class="kw-2">&amp;</span>HashSet::new()).unwrap();
-<a href=#685 id=685 data-nosnippet>685</a>        <span class="macro">assert_eq!</span>(n, <span class="number">0</span>);
-<a href=#686 id=686 data-nosnippet>686</a>    }
-<a href=#687 id=687 data-nosnippet>687</a>}</code></pre></div></section></main></body></html>
+<a href=#593 id=593 data-nosnippet>593</a><span class="doccomment">/// Returns `(redo_records_in_lsn_order, undo_records_per_active_tx_in_reverse_lsn_order)`.
+<a href=#594 id=594 data-nosnippet>594</a></span><span class="kw">pub fn </span>analyze_wal_for_replay(wal_dir: <span class="kw-2">&amp;</span>Path) -&gt; DbResult&lt;(Vec&lt;LogRecord&gt;, Vec&lt;Vec&lt;LogRecord&gt;&gt;)&gt; {
+<a href=#595 id=595 data-nosnippet>595</a>    <span class="kw">let </span>recs = LogRecord::read_log_records_from_directory(wal_dir)<span class="question-mark">?</span>;
+<a href=#596 id=596 data-nosnippet>596</a>
+<a href=#597 id=597 data-nosnippet>597</a>    <span class="attr">#[derive(Default)]
+<a href=#598 id=598 data-nosnippet>598</a>    </span><span class="kw">struct </span>TxBuf {
+<a href=#599 id=599 data-nosnippet>599</a>        committed: bool,
+<a href=#600 id=600 data-nosnippet>600</a>        aborted: bool,
+<a href=#601 id=601 data-nosnippet>601</a>        ops: Vec&lt;LogRecord&gt;,
+<a href=#602 id=602 data-nosnippet>602</a>    }
+<a href=#603 id=603 data-nosnippet>603</a>    <span class="kw">use </span>std::collections::HashMap;
+<a href=#604 id=604 data-nosnippet>604</a>    <span class="kw">let </span><span class="kw-2">mut </span>txs: HashMap&lt;TransactionId, TxBuf&gt; = HashMap::new();
+<a href=#605 id=605 data-nosnippet>605</a>
+<a href=#606 id=606 data-nosnippet>606</a>    <span class="kw">for </span>r <span class="kw">in </span>recs {
+<a href=#607 id=607 data-nosnippet>607</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(tid) = r.transaction_id <span class="kw">else </span>{
+<a href=#608 id=608 data-nosnippet>608</a>            <span class="kw">continue</span>;
+<a href=#609 id=609 data-nosnippet>609</a>        };
+<a href=#610 id=610 data-nosnippet>610</a>        <span class="kw">let </span>entry = txs.entry(tid).or_default();
+<a href=#611 id=611 data-nosnippet>611</a>        <span class="kw">match </span>r.record_type {
+<a href=#612 id=612 data-nosnippet>612</a>            LogRecordType::TransactionCommit =&gt; entry.committed = <span class="bool-val">true</span>,
+<a href=#613 id=613 data-nosnippet>613</a>            LogRecordType::TransactionAbort =&gt; entry.aborted = <span class="bool-val">true</span>,
+<a href=#614 id=614 data-nosnippet>614</a>            <span class="kw">_ </span>=&gt; {}
+<a href=#615 id=615 data-nosnippet>615</a>        }
+<a href=#616 id=616 data-nosnippet>616</a>        <span class="kw">if </span><span class="macro">matches!</span>(
+<a href=#617 id=617 data-nosnippet>617</a>            r.record_type,
+<a href=#618 id=618 data-nosnippet>618</a>            LogRecordType::DataInsert | LogRecordType::DataUpdate | LogRecordType::DataDelete
+<a href=#619 id=619 data-nosnippet>619</a>        ) {
+<a href=#620 id=620 data-nosnippet>620</a>            entry.ops.push(r);
+<a href=#621 id=621 data-nosnippet>621</a>        }
+<a href=#622 id=622 data-nosnippet>622</a>    }
+<a href=#623 id=623 data-nosnippet>623</a>
+<a href=#624 id=624 data-nosnippet>624</a>    <span class="kw">let </span><span class="kw-2">mut </span>redo: Vec&lt;LogRecord&gt; = Vec::new();
+<a href=#625 id=625 data-nosnippet>625</a>    <span class="kw">let </span><span class="kw-2">mut </span>undo: Vec&lt;Vec&lt;LogRecord&gt;&gt; = Vec::new();
+<a href=#626 id=626 data-nosnippet>626</a>
+<a href=#627 id=627 data-nosnippet>627</a>    <span class="kw">for </span>(_tid, buf) <span class="kw">in </span>txs {
+<a href=#628 id=628 data-nosnippet>628</a>        <span class="kw">if </span>buf.committed &amp;&amp; !buf.aborted {
+<a href=#629 id=629 data-nosnippet>629</a>            redo.extend(buf.ops);
+<a href=#630 id=630 data-nosnippet>630</a>        } <span class="kw">else if </span>!buf.committed &amp;&amp; !buf.aborted &amp;&amp; !buf.ops.is_empty() {
+<a href=#631 id=631 data-nosnippet>631</a>            <span class="kw">let </span><span class="kw-2">mut </span>ops = buf.ops;
+<a href=#632 id=632 data-nosnippet>632</a>            ops.sort_by_key(|r| r.lsn);
+<a href=#633 id=633 data-nosnippet>633</a>            ops.reverse();
+<a href=#634 id=634 data-nosnippet>634</a>            undo.push(ops);
+<a href=#635 id=635 data-nosnippet>635</a>        }
+<a href=#636 id=636 data-nosnippet>636</a>    }
+<a href=#637 id=637 data-nosnippet>637</a>
+<a href=#638 id=638 data-nosnippet>638</a>    redo.sort_by_key(|r| r.lsn);
+<a href=#639 id=639 data-nosnippet>639</a>    <span class="prelude-val">Ok</span>((redo, undo))
+<a href=#640 id=640 data-nosnippet>640</a>}
+<a href=#641 id=641 data-nosnippet>641</a>
+<a href=#642 id=642 data-nosnippet>642</a><span class="kw">pub fn </span>log_record_operation_parts(
+<a href=#643 id=643 data-nosnippet>643</a>    record: <span class="kw-2">&amp;</span>LogRecord,
+<a href=#644 id=644 data-nosnippet>644</a>) -&gt; <span class="prelude-ty">Option</span>&lt;(LogRecordType, <span class="kw-2">&amp;</span><span class="kw">crate</span>::logging::log_record::RecordOperation)&gt; {
+<a href=#645 id=645 data-nosnippet>645</a>    <span class="kw">let </span>op = <span class="kw">match </span><span class="kw-2">&amp;</span>record.operation_data {
+<a href=#646 id=646 data-nosnippet>646</a>        LogOperationData::Record(op) =&gt; op,
+<a href=#647 id=647 data-nosnippet>647</a>        <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">None</span>,
+<a href=#648 id=648 data-nosnippet>648</a>    };
+<a href=#649 id=649 data-nosnippet>649</a>    <span class="prelude-val">Some</span>((record.record_type.clone(), op))
+<a href=#650 id=650 data-nosnippet>650</a>}
+<a href=#651 id=651 data-nosnippet>651</a>
+<a href=#652 id=652 data-nosnippet>652</a><span class="kw">fn </span>map_sql_isolation_to_log(iso: SqlIsolationLevel) -&gt; LogIsolationLevel {
+<a href=#653 id=653 data-nosnippet>653</a>    <span class="kw">match </span>iso {
+<a href=#654 id=654 data-nosnippet>654</a>        SqlIsolationLevel::ReadCommitted =&gt; LogIsolationLevel::ReadCommitted,
+<a href=#655 id=655 data-nosnippet>655</a>        SqlIsolationLevel::RepeatableRead =&gt; LogIsolationLevel::RepeatableRead,
+<a href=#656 id=656 data-nosnippet>656</a>        SqlIsolationLevel::Serializable =&gt; LogIsolationLevel::Serializable,
+<a href=#657 id=657 data-nosnippet>657</a>    }
+<a href=#658 id=658 data-nosnippet>658</a>}
+<a href=#659 id=659 data-nosnippet>659</a>
+<a href=#660 id=660 data-nosnippet>660</a><span class="attr">#[cfg(test)]
+<a href=#661 id=661 data-nosnippet>661</a></span><span class="kw">mod </span>tests {
+<a href=#662 id=662 data-nosnippet>662</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#663 id=663 data-nosnippet>663</a>    <span class="kw">use </span><span class="kw">crate</span>::network::engine::{EngineHandle, SessionContext};
+<a href=#664 id=664 data-nosnippet>664</a>    <span class="kw">use </span><span class="kw">crate</span>::network::sql_engine::{table_page_manager, SqlEngine};
+<a href=#665 id=665 data-nosnippet>665</a>    <span class="kw">use </span>std::collections::HashSet;
+<a href=#666 id=666 data-nosnippet>666</a>    <span class="kw">use </span>tempfile::TempDir;
+<a href=#667 id=667 data-nosnippet>667</a>
+<a href=#668 id=668 data-nosnippet>668</a>    <span class="attr">#[test]
+<a href=#669 id=669 data-nosnippet>669</a>    </span><span class="kw">fn </span>bench_defer_heap_fsync_respects_env() {
+<a href=#670 id=670 data-nosnippet>670</a>        std::env::remove_var(<span class="string">"RUSTDB_BENCH_DEFER_HEAP_FSYNC"</span>);
+<a href=#671 id=671 data-nosnippet>671</a>        <span class="macro">assert!</span>(!bench_defer_heap_fsync_enabled());
+<a href=#672 id=672 data-nosnippet>672</a>        std::env::set_var(<span class="string">"RUSTDB_BENCH_DEFER_HEAP_FSYNC"</span>, <span class="string">"1"</span>);
+<a href=#673 id=673 data-nosnippet>673</a>        <span class="macro">assert!</span>(bench_defer_heap_fsync_enabled());
+<a href=#674 id=674 data-nosnippet>674</a>        std::env::set_var(<span class="string">"RUSTDB_BENCH_DEFER_HEAP_FSYNC"</span>, <span class="string">"0"</span>);
+<a href=#675 id=675 data-nosnippet>675</a>        <span class="macro">assert!</span>(!bench_defer_heap_fsync_enabled());
+<a href=#676 id=676 data-nosnippet>676</a>        std::env::remove_var(<span class="string">"RUSTDB_BENCH_DEFER_HEAP_FSYNC"</span>);
+<a href=#677 id=677 data-nosnippet>677</a>    }
+<a href=#678 id=678 data-nosnippet>678</a>
+<a href=#679 id=679 data-nosnippet>679</a>    <span class="attr">#[test]
+<a href=#680 id=680 data-nosnippet>680</a>    </span><span class="kw">fn </span>flush_page_managers_skips_clean_and_coalesces_sync() {
+<a href=#681 id=681 data-nosnippet>681</a>        <span class="kw">let </span>dir = TempDir::new().unwrap();
+<a href=#682 id=682 data-nosnippet>682</a>        <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+<a href=#683 id=683 data-nosnippet>683</a>        <span class="kw">let </span>state = eng.state_for_test();
+<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
+<a href=#685 id=685 data-nosnippet>685</a>        eng.execute_sql(<span class="string">"CREATE TABLE t_clean (k INT PRIMARY KEY)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#686 id=686 data-nosnippet>686</a>            .unwrap();
+<a href=#687 id=687 data-nosnippet>687</a>        eng.execute_sql(<span class="string">"CREATE TABLE t_dirty (k INT PRIMARY KEY)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#688 id=688 data-nosnippet>688</a>            .unwrap();
+<a href=#689 id=689 data-nosnippet>689</a>        eng.execute_sql(<span class="string">"INSERT INTO t_clean (k) VALUES (0)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#690 id=690 data-nosnippet>690</a>            .unwrap();
+<a href=#691 id=691 data-nosnippet>691</a>        eng.execute_sql(<span class="string">"BEGIN TRANSACTION"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#692 id=692 data-nosnippet>692</a>        eng.execute_sql(<span class="string">"INSERT INTO t_dirty (k) VALUES (1)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#693 id=693 data-nosnippet>693</a>            .unwrap();
+<a href=#694 id=694 data-nosnippet>694</a>
+<a href=#695 id=695 data-nosnippet>695</a>        <span class="kw">let </span>pm_clean = table_page_manager(state, <span class="string">"t_clean"</span>).unwrap();
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="kw">let </span>pm_dirty = table_page_manager(state, <span class="string">"t_dirty"</span>).unwrap();
+<a href=#697 id=697 data-nosnippet>697</a>        <span class="macro">assert_eq!</span>(pm_clean.lock().unwrap().dirty_page_count(), <span class="number">0</span>);
+<a href=#698 id=698 data-nosnippet>698</a>        <span class="macro">assert!</span>(pm_dirty.lock().unwrap().dirty_page_count() &gt; <span class="number">0</span>);
+<a href=#699 id=699 data-nosnippet>699</a>
+<a href=#700 id=700 data-nosnippet>700</a>        <span class="kw">let </span><span class="kw-2">mut </span>tables = HashSet::new();
+<a href=#701 id=701 data-nosnippet>701</a>        tables.insert(<span class="string">"t_clean"</span>.to_string());
+<a href=#702 id=702 data-nosnippet>702</a>        tables.insert(<span class="string">"t_dirty"</span>.to_string());
+<a href=#703 id=703 data-nosnippet>703</a>        <span class="kw">let </span>(flushed, _metrics) = flush_page_managers_for_tables(state, <span class="kw-2">&amp;</span>tables).unwrap();
+<a href=#704 id=704 data-nosnippet>704</a>        <span class="macro">assert!</span>(flushed &gt; <span class="number">0</span>);
+<a href=#705 id=705 data-nosnippet>705</a>        <span class="macro">assert_eq!</span>(pm_clean.lock().unwrap().dirty_page_count(), <span class="number">0</span>);
+<a href=#706 id=706 data-nosnippet>706</a>        <span class="macro">assert_eq!</span>(pm_dirty.lock().unwrap().dirty_page_count(), <span class="number">0</span>);
+<a href=#707 id=707 data-nosnippet>707</a>
+<a href=#708 id=708 data-nosnippet>708</a>        eng.execute_sql(<span class="string">"COMMIT"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#709 id=709 data-nosnippet>709</a>    }
+<a href=#710 id=710 data-nosnippet>710</a>
+<a href=#711 id=711 data-nosnippet>711</a>    <span class="attr">#[test]
+<a href=#712 id=712 data-nosnippet>712</a>    </span><span class="kw">fn </span>flush_page_managers_empty_tables_is_noop() {
+<a href=#713 id=713 data-nosnippet>713</a>        <span class="kw">let </span>dir = TempDir::new().unwrap();
+<a href=#714 id=714 data-nosnippet>714</a>        <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+<a href=#715 id=715 data-nosnippet>715</a>        <span class="kw">let </span>(n, <span class="kw">_</span>) = flush_page_managers_for_tables(eng.state_for_test(), <span class="kw-2">&amp;</span>HashSet::new()).unwrap();
+<a href=#716 id=716 data-nosnippet>716</a>        <span class="macro">assert_eq!</span>(n, <span class="number">0</span>);
+<a href=#717 id=717 data-nosnippet>717</a>    }
+<a href=#718 id=718 data-nosnippet>718</a>
+<a href=#719 id=719 data-nosnippet>719</a>    <span class="attr">#[test]
+<a href=#720 id=720 data-nosnippet>720</a>    </span><span class="kw">fn </span>flush_page_managers_cached_skips_clean_and_avoids_map_lock() {
+<a href=#721 id=721 data-nosnippet>721</a>        <span class="kw">let </span>dir = TempDir::new().unwrap();
+<a href=#722 id=722 data-nosnippet>722</a>        <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">let </span>state = eng.state_for_test();
+<a href=#724 id=724 data-nosnippet>724</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
+<a href=#725 id=725 data-nosnippet>725</a>        eng.execute_sql(<span class="string">"CREATE TABLE t_clean (k INT PRIMARY KEY)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#726 id=726 data-nosnippet>726</a>            .unwrap();
+<a href=#727 id=727 data-nosnippet>727</a>        eng.execute_sql(<span class="string">"CREATE TABLE t_dirty (k INT PRIMARY KEY)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#728 id=728 data-nosnippet>728</a>            .unwrap();
+<a href=#729 id=729 data-nosnippet>729</a>        eng.execute_sql(<span class="string">"INSERT INTO t_clean (k) VALUES (0)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#730 id=730 data-nosnippet>730</a>            .unwrap();
+<a href=#731 id=731 data-nosnippet>731</a>        eng.execute_sql(<span class="string">"BEGIN TRANSACTION"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#732 id=732 data-nosnippet>732</a>        eng.execute_sql(<span class="string">"INSERT INTO t_dirty (k) VALUES (1)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#733 id=733 data-nosnippet>733</a>            .unwrap();
+<a href=#734 id=734 data-nosnippet>734</a>
+<a href=#735 id=735 data-nosnippet>735</a>        <span class="kw">let </span>pm_clean = table_page_manager(state, <span class="string">"t_clean"</span>).unwrap();
+<a href=#736 id=736 data-nosnippet>736</a>        <span class="kw">let </span>pm_dirty = table_page_manager(state, <span class="string">"t_dirty"</span>).unwrap();
+<a href=#737 id=737 data-nosnippet>737</a>        <span class="macro">assert_eq!</span>(pm_clean.lock().unwrap().dirty_page_count(), <span class="number">0</span>);
+<a href=#738 id=738 data-nosnippet>738</a>        <span class="macro">assert!</span>(pm_dirty.lock().unwrap().dirty_page_count() &gt; <span class="number">0</span>);
+<a href=#739 id=739 data-nosnippet>739</a>
+<a href=#740 id=740 data-nosnippet>740</a>        <span class="kw">let </span>pms = <span class="macro">vec!</span>[pm_clean.clone(), pm_dirty.clone()];
+<a href=#741 id=741 data-nosnippet>741</a>        <span class="kw">let </span>(flushed, phases) = flush_page_managers_cached(<span class="kw-2">&amp;</span>pms).unwrap();
+<a href=#742 id=742 data-nosnippet>742</a>        <span class="macro">assert!</span>(flushed &gt; <span class="number">0</span>);
+<a href=#743 id=743 data-nosnippet>743</a>        <span class="macro">assert_eq!</span>(phases.table_map_lock_us, <span class="number">0</span>);
+<a href=#744 id=744 data-nosnippet>744</a>        <span class="macro">assert_eq!</span>(pm_clean.lock().unwrap().dirty_page_count(), <span class="number">0</span>);
+<a href=#745 id=745 data-nosnippet>745</a>        <span class="macro">assert_eq!</span>(pm_dirty.lock().unwrap().dirty_page_count(), <span class="number">0</span>);
+<a href=#746 id=746 data-nosnippet>746</a>
+<a href=#747 id=747 data-nosnippet>747</a>        eng.execute_sql(<span class="string">"COMMIT"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#748 id=748 data-nosnippet>748</a>    }
+<a href=#749 id=749 data-nosnippet>749</a>}</code></pre></div></section></main></body></html>

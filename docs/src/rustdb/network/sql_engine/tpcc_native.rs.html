@@ -50,7 +50,7 @@
 <a href=#50 id=50 data-nosnippet>50</a>    t0.elapsed().as_micros() <span class="kw">as </span>u64
 <a href=#51 id=51 data-nosnippet>51</a>}
 <a href=#52 id=52 data-nosnippet>52</a>
-<a href=#53 id=53 data-nosnippet>53</a><span class="kw">fn </span>run_new_order(
+<a href=#53 id=53 data-nosnippet>53</a><span class="kw">fn </span>run_new_order_native(
 <a href=#54 id=54 data-nosnippet>54</a>    state: <span class="kw-2">&amp;</span>SqlEngineState,
 <a href=#55 id=55 data-nosnippet>55</a>    ctx: <span class="kw-2">&amp;mut </span>SessionContext,
 <a href=#56 id=56 data-nosnippet>56</a>    w_id: i32,
@@ -271,12 +271,14 @@
 <a href=#271 id=271 data-nosnippet>271</a>    <span class="kw">let </span>(_st, w_id, d_id, c_id, i_id, qty, o_id) = tpcc_params(seed, global_txn_id);
 <a href=#272 id=272 data-nosnippet>272</a>    tpcc_run_in_transaction(state, ctx, kind, |state, ctx| {
 <a href=#273 id=273 data-nosnippet>273</a>        <span class="kw">let </span>rows = <span class="kw">match </span>txn_kind {
-<a href=#274 id=274 data-nosnippet>274</a>            TxnKind::NewOrder =&gt; run_new_order(state, ctx, w_id, d_id, c_id, i_id, qty, o_id)<span class="question-mark">?</span>,
-<a href=#275 id=275 data-nosnippet>275</a>            TxnKind::Payment =&gt; run_payment(state, ctx, w_id, d_id, c_id)<span class="question-mark">?</span>,
-<a href=#276 id=276 data-nosnippet>276</a>            TxnKind::OrderStatus =&gt; tpcc_order_status_row_count(state, w_id, d_id, c_id)<span class="question-mark">?</span>,
-<a href=#277 id=277 data-nosnippet>277</a>            TxnKind::Delivery =&gt; run_delivery(state, ctx, w_id, d_id)<span class="question-mark">?</span>,
-<a href=#278 id=278 data-nosnippet>278</a>            TxnKind::StockLevel =&gt; tpcc_stock_level_row_count(state, w_id, <span class="number">20</span>)<span class="question-mark">?</span>,
-<a href=#279 id=279 data-nosnippet>279</a>        };
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="prelude-val">Ok</span>(rows)
-<a href=#281 id=281 data-nosnippet>281</a>    })
-<a href=#282 id=282 data-nosnippet>282</a>}</code></pre></div></section></main></body></html>
+<a href=#274 id=274 data-nosnippet>274</a>            TxnKind::NewOrder =&gt; {
+<a href=#275 id=275 data-nosnippet>275</a>                run_new_order_native(state, ctx, w_id, d_id, c_id, i_id, qty, o_id)<span class="question-mark">?
+<a href=#276 id=276 data-nosnippet>276</a>            </span>}
+<a href=#277 id=277 data-nosnippet>277</a>            TxnKind::Payment =&gt; run_payment(state, ctx, w_id, d_id, c_id)<span class="question-mark">?</span>,
+<a href=#278 id=278 data-nosnippet>278</a>            TxnKind::OrderStatus =&gt; tpcc_order_status_row_count(state, w_id, d_id, c_id)<span class="question-mark">?</span>,
+<a href=#279 id=279 data-nosnippet>279</a>            TxnKind::Delivery =&gt; run_delivery(state, ctx, w_id, d_id)<span class="question-mark">?</span>,
+<a href=#280 id=280 data-nosnippet>280</a>            TxnKind::StockLevel =&gt; tpcc_stock_level_row_count(state, w_id, <span class="number">20</span>)<span class="question-mark">?</span>,
+<a href=#281 id=281 data-nosnippet>281</a>        };
+<a href=#282 id=282 data-nosnippet>282</a>        <span class="prelude-val">Ok</span>(rows)
+<a href=#283 id=283 data-nosnippet>283</a>    })
+<a href=#284 id=284 data-nosnippet>284</a>}</code></pre></div></section></main></body></html>
