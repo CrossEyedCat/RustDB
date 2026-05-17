@@ -144,8 +144,17 @@ def extract_execute_tpcc_commit_us(line: str) -> tuple[int, int, dict[str, int]]
     for name in (
         "commit_transaction_wall_us",
         "commit_gap_us",
+        "commit_engine_gap_us",
+        "commit_wal_us",
+        "commit_index_batch_us",
+        "commit_log_append_us",
+        "commit_flush_us",
         "commit_pm_lock_wait_us",
+        "commit_pm_lock_scan_us",
+        "commit_pm_lock_flush_us",
         "commit_heap_fsync_us",
+        "flush_pm_count",
+        "dirty_pages_flushed",
     ):
         m_extra = re.search(rf"{name}=(\d+)", line)
         if m_extra:
@@ -189,12 +198,18 @@ COMMIT_SUB_PHASES = (
     "commit_log_append_us",
     "commit_log_commit_wait_us",
     "commit_table_map_lock_us",
+    "commit_pm_lock_scan_us",
+    "commit_pm_lock_flush_us",
     "commit_pm_lock_wait_us",
     "commit_heap_fsync_us",
+    "flush_pm_count",
+    "dirty_pages_flushed",
 )
 
 COMMIT_KIND_REPORT_PHASES = (
     "commit_table_map_lock_us",
+    "commit_pm_lock_scan_us",
+    "commit_pm_lock_flush_us",
     "commit_pm_lock_wait_us",
     "commit_wal_us",
     "commit_flush_us",
@@ -370,8 +385,13 @@ def main() -> int:
             execute_tpcc_commit_us.append(float(commit_us))
             if kind >= 0:
                 execute_tpcc_commit_by_kind[kind].append(float(commit_us))
-                if "commit_gap_us" in extra:
-                    execute_tpcc_commit_gap_by_kind[kind].append(float(extra["commit_gap_us"]))
+                gap_key = (
+                    "commit_engine_gap_us"
+                    if "commit_engine_gap_us" in extra
+                    else "commit_gap_us"
+                )
+                if gap_key in extra:
+                    execute_tpcc_commit_gap_by_kind[kind].append(float(extra[gap_key]))
             phase_lines += 1
         sc = extract_sql_commit_by_kind(line)
         if sc is not None:
@@ -590,7 +610,7 @@ def main() -> int:
             f"phases_sum={phase_sum_p50 / 1000:.3f}ms "
             f"pre_commit={pre_p50 / 1000:.3f}ms "
             f"commit_us={commit_p50 / 1000:.3f}ms "
-            f"commit_gap_us={commit_gap_p50 / 1000:.3f}ms "
+            f"commit_engine_gap_us={commit_gap_p50 / 1000:.3f}ms "
             f"unaccounted_gap={gap / 1000:.3f}ms"
         )
     if scan_us:
