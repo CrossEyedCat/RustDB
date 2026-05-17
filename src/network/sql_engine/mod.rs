@@ -1209,6 +1209,8 @@ fn begin_transaction(
 ) -> Result<EngineOutput, EngineError> {
     ctx.txn_pm_cache.clear();
     ctx.tpcc_index_column_map_buf.clear();
+    ctx.last_commit_flush_phases = None;
+    ctx.last_commit_engine_phases = None;
     if ctx.transaction.is_some() {
         return Err(EngineError::new(
             engine_error_code::ALREADY_IN_TRANSACTION,
@@ -1283,9 +1285,24 @@ fn commit_transaction(
     span.record("flush_tables_count", flush_tables_count);
     let flush_clock = Instant::now();
     let (_flushed_pages, flush_phases) = if !ctx.txn_pm_cache.is_empty() {
-        let mut pms: Vec<Arc<Mutex<PageManager>>> = ctx.txn_pm_cache.values().cloned().collect();
-        pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
-        crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map_err(map_db_err)?
+        let (dirty_pms, _dirty_pages, pm_lock_scan_us) =
+            crate::network::sql_engine_wal::collect_dirty_txn_page_managers(&ctx.txn_pm_cache);
+        if dirty_pms.is_empty() {
+            (
+                0,
+                crate::network::sql_engine_wal::CommitFlushPhaseUs {
+                    pm_lock_scan_us,
+                    pm_lock_wait_us: pm_lock_scan_us,
+                    ..Default::default()
+                },
+            )
+        } else {
+            crate::network::sql_engine_wal::flush_dirty_page_managers_sorted(
+                dirty_pms,
+                pm_lock_scan_us,
+            )
+            .map_err(map_db_err)?
+        }
     } else if touched.is_empty() {
         (
             0,
@@ -1318,8 +1335,12 @@ fn commit_transaction(
             commit_log_append_us,
             commit_log_commit_wait_us,
             commit_table_map_lock_us = flush_phases.table_map_lock_us,
+            commit_pm_lock_scan_us = flush_phases.pm_lock_scan_us,
+            commit_pm_lock_flush_us = flush_phases.pm_lock_flush_us,
             commit_pm_lock_wait_us = flush_phases.pm_lock_wait_us,
             commit_heap_fsync_us = flush_phases.heap_fsync_us,
+            flush_pm_count = flush_phases.flush_pm_count,
+            dirty_pages_flushed = flush_phases.dirty_pages_flushed,
             flush_tables_count,
             touched_table_count,
             pending_index_count,
@@ -1328,6 +1349,12 @@ fn commit_transaction(
         );
     }
     ctx.last_commit_flush_phases = Some(flush_phases);
+    ctx.last_commit_engine_phases = Some(crate::network::sql_engine_wal::CommitEnginePhaseUs {
+        commit_wal_us,
+        commit_index_batch_us,
+        commit_log_append_us,
+        commit_flush_us,
+    });
     ctx.txn_pm_cache.clear();
     drop(tx);
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
@@ -1374,12 +1401,17 @@ fn rollback_transaction(
     // Persist rollback: otherwise the next process sees heap pages from disk that still contain
     // undone inserts (WAL replay does not redo aborted txs, so durability must match).
     let _ = if !ctx.txn_pm_cache.is_empty() && !flush_tables.is_empty() {
-        let mut pms: Vec<Arc<Mutex<PageManager>>> = flush_tables
-            .iter()
-            .filter_map(|t| ctx.txn_pm_cache.get(t).cloned())
-            .collect();
-        pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
-        crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map(|(n, _)| n)
+        let (dirty_pms, _, pm_lock_scan_us) =
+            crate::network::sql_engine_wal::collect_dirty_txn_page_managers(&ctx.txn_pm_cache);
+        if dirty_pms.is_empty() {
+            Ok(0)
+        } else {
+            crate::network::sql_engine_wal::flush_dirty_page_managers_sorted(
+                dirty_pms,
+                pm_lock_scan_us,
+            )
+            .map(|(n, _)| n)
+        }
     } else {
         crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &flush_tables)
             .map(|(n, _)| n)
@@ -3115,10 +3147,11 @@ pub(crate) fn tpcc_run_in_transaction(
 ) -> Result<EngineOutput, EngineError> {
     ctx.tpcc_kind = Some(kind);
     ctx.tpcc_dml_done_at = None;
-    ctx.last_commit_flush_phases = None;
     ctx.tpcc_row_bytes_buf.clear();
     ctx.txn_pm_cache.clear();
     ctx.tpcc_index_column_map_buf.clear();
+    ctx.last_commit_flush_phases = None;
+    ctx.last_commit_engine_phases = None;
     begin_transaction(state, ctx)?;
     match f(state, ctx) {
         Ok(rows) => {
@@ -3131,18 +3164,45 @@ pub(crate) fn tpcc_run_in_transaction(
                 commit_transaction(state, ctx)?;
                 let commit_transaction_wall_us = t0.elapsed().as_micros() as u64;
                 let flush_phases = ctx.last_commit_flush_phases.take();
-                if let Some(p) = flush_phases {
-                    let accounted_flush_us = p.pm_lock_wait_us.saturating_add(p.heap_fsync_us);
+                let engine_phases = ctx.last_commit_engine_phases.take();
+                if let Some(eng) = engine_phases {
+                    let accounted_us = eng
+                        .commit_wal_us
+                        .saturating_add(eng.commit_index_batch_us)
+                        .saturating_add(eng.commit_log_append_us)
+                        .saturating_add(eng.commit_flush_us);
+                    let commit_engine_gap_us =
+                        commit_transaction_wall_us.saturating_sub(accounted_us);
+                    let (
+                        flush_pm_count,
+                        dirty_pages_flushed,
+                        commit_pm_lock_scan_us,
+                        commit_pm_lock_flush_us,
+                    ) = flush_phases
+                        .map(|p| {
+                            (
+                                p.flush_pm_count,
+                                p.dirty_pages_flushed,
+                                p.pm_lock_scan_us,
+                                p.pm_lock_flush_us,
+                            )
+                        })
+                        .unwrap_or((0, 0, 0, 0));
                     info!(
                         target: "rustdb::sql_phases",
                         tpcc_kind = kind,
                         commit_us = commit_transaction_wall_us,
                         commit_transaction_wall_us,
                         pre_commit_us,
-                        commit_pm_lock_wait_us = p.pm_lock_wait_us,
-                        commit_heap_fsync_us = p.heap_fsync_us,
-                        commit_gap_us = commit_transaction_wall_us
-                            .saturating_sub(accounted_flush_us),
+                        commit_wal_us = eng.commit_wal_us,
+                        commit_index_batch_us = eng.commit_index_batch_us,
+                        commit_log_append_us = eng.commit_log_append_us,
+                        commit_flush_us = eng.commit_flush_us,
+                        commit_engine_gap_us,
+                        flush_pm_count,
+                        dirty_pages_flushed,
+                        commit_pm_lock_scan_us,
+                        commit_pm_lock_flush_us,
                         "sql.execute_tpcc.commit"
                     );
                 } else {
@@ -3152,7 +3212,6 @@ pub(crate) fn tpcc_run_in_transaction(
                         commit_us = commit_transaction_wall_us,
                         commit_transaction_wall_us,
                         pre_commit_us,
-                        commit_gap_us = commit_transaction_wall_us,
                         "sql.execute_tpcc.commit"
                     );
                 }

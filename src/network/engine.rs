@@ -153,6 +153,9 @@ pub struct SessionContext {
     pub(crate) tpcc_index_column_map_buf: HashMap<String, String>,
     /// Last `COMMIT` flush breakdown (native TPC-C gap accounting).
     pub(crate) last_commit_flush_phases: Option<crate::network::sql_engine_wal::CommitFlushPhaseUs>,
+    /// Last `COMMIT` engine sub-phases (WAL / index / log / flush wall).
+    pub(crate) last_commit_engine_phases:
+        Option<crate::network::sql_engine_wal::CommitEnginePhaseUs>,
 }
 
 impl std::fmt::Debug for SessionContext {
@@ -185,6 +188,7 @@ impl Default for SessionContext {
             txn_pm_cache: HashMap::new(),
             tpcc_index_column_map_buf: HashMap::new(),
             last_commit_flush_phases: None,
+            last_commit_engine_phases: None,
         }
     }
 }
