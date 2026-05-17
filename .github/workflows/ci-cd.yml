@@ -675,44 +675,14 @@ jobs:
           else
             echo "::warning::order_status micro RustDB/PostgreSQL TPS ratio ${micro_ratio}% is below the 70% soft threshold"
           fi
-          new_order_p50="$(python3 -c "
-import csv, statistics
-from pathlib import Path
-p = Path('tpcc-out/tpcc_txn.log')
-if not p.is_file():
-    print('0')
-    raise SystemExit(0)
-rows = [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='new_order']
-us = [int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]
-print(f'{statistics.median(us)/1000:.3f}' if us else '0')
-" 2>/dev/null || echo 0)"
+          new_order_p50="$(python3 -c "import csv,statistics; from pathlib import Path; p=Path('tpcc-out/tpcc_txn.log'); rows=[] if not p.is_file() else [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='new_order']; us=[int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]; print(f'{statistics.median(us)/1000:.3f}' if us else '0')" 2>/dev/null || echo 0)"
           if python3 -c "exit(0 if float('${new_order_p50}') <= 100.0 or float('${new_order_p50}') <= 0 else 1)"; then
             :
           else
             echo "::warning::new_order full-mix p50 ${new_order_p50}ms exceeds 100ms soft threshold"
           fi
-          mix_os_p50="$(python3 -c "
-import csv, statistics
-from pathlib import Path
-p = Path('tpcc-out/tpcc_txn.log')
-if not p.is_file():
-    print('0')
-    raise SystemExit(0)
-rows = [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='order_status']
-us = [int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]
-print(f'{statistics.median(us)/1000:.3f}' if us else '0')
-" 2>/dev/null || echo 0)"
-          micro_os_p50="$(python3 -c "
-import csv, statistics
-from pathlib import Path
-p = Path('tpcc-out/order_status_micro/tpcc_txn.log')
-if not p.is_file():
-    print('0')
-    raise SystemExit(0)
-rows = [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='order_status']
-us = [int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]
-print(f'{statistics.median(us)/1000:.3f}' if us else '0')
-" 2>/dev/null || echo 0)"
+          mix_os_p50="$(python3 -c "import csv,statistics; from pathlib import Path; p=Path('tpcc-out/tpcc_txn.log'); rows=[] if not p.is_file() else [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='order_status']; us=[int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]; print(f'{statistics.median(us)/1000:.3f}' if us else '0')" 2>/dev/null || echo 0)"
+          micro_os_p50="$(python3 -c "import csv,statistics; from pathlib import Path; p=Path('tpcc-out/order_status_micro/tpcc_txn.log'); rows=[] if not p.is_file() else [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='order_status']; us=[int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]; print(f'{statistics.median(us)/1000:.3f}' if us else '0')" 2>/dev/null || echo 0)"
           if python3 -c "mix=float('${mix_os_p50}'); micro=float('${micro_os_p50}'); exit(0 if mix<=0 or micro<=0 or (mix/micro)<=3.0 else 1)"; then
             :
           else
