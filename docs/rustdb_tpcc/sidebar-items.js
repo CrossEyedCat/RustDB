@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["main"],"struct":["Args","QuicExec","WorkerBiStream"]};
+window.SIDEBAR_ITEMS = {"fn":["main","tpcc_native_micro_hot"],"struct":["Args","QuicExec","WorkerBiStream"]};
