@@ -1572,11 +1572,13 @@ pub(crate) fn table_page_manager_cached(
     ctx: &mut SessionContext,
     table: &str,
 ) -> Result<Arc<Mutex<PageManager>>, EngineError> {
-    if let Some(pm) = ctx.txn_pm_cache.get(table) {
+    if let Some((_, pm)) = ctx.txn_pm_cache.get(table) {
         return Ok(pm.clone());
     }
     let pm = table_page_manager(state, table)?;
-    ctx.txn_pm_cache.insert(table.to_string(), pm.clone());
+    let file_id = pm.lock().map_err(|_| lock_poisoned_engine())?.file_id();
+    ctx.txn_pm_cache
+        .insert(table.to_string(), (file_id, pm.clone()));
     Ok(pm)
 }
 

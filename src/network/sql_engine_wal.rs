@@ -326,6 +326,9 @@ pub(crate) struct CommitFlushPhaseUs {
     pub dirty_pages_flushed: usize,
 }
 
+/// Minimum dirty PM count before rayon parallel flush (avoids overhead on small txns).
+const COALESCED_FLUSH_PARALLEL_MIN: usize = 5;
+
 /// WAL / index / log-append breakdown for the last `COMMIT` (native TPC-C accounting).
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct CommitEnginePhaseUs {
@@ -337,44 +340,55 @@ pub(crate) struct CommitEnginePhaseUs {
 
 /// Collects page managers with dirty heap pages from a txn cache (one lock pass per PM).
 pub(crate) fn collect_dirty_txn_page_managers(
-    cache: &std::collections::HashMap<String, Arc<Mutex<PageManager>>>,
+    cache: &std::collections::HashMap<String, (u32, Arc<Mutex<PageManager>>)>,
 ) -> (Vec<Arc<Mutex<PageManager>>>, usize, u64) {
-    let mut dirty_pms = Vec::new();
+    let mut dirty_entries: Vec<(u32, Arc<Mutex<PageManager>>)> = Vec::new();
     let mut dirty_pages = 0usize;
     let mut pm_lock_scan_us = 0u64;
-    for pm in cache.values() {
+    for (file_id, pm) in cache.values() {
         let lock_t0 = Instant::now();
         let count = pm.lock().map(|g| g.dirty_page_count()).unwrap_or(0);
         pm_lock_scan_us += lock_t0.elapsed().as_micros() as u64;
         if count > 0 {
             dirty_pages += count;
-            dirty_pms.push(pm.clone());
+            dirty_entries.push((*file_id, pm.clone()));
         }
     }
-    dirty_pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
+    dirty_entries.sort_by_key(|(file_id, _)| *file_id);
+    let dirty_pms = dirty_entries
+        .into_iter()
+        .map(|(_, pm)| pm)
+        .collect::<Vec<_>>();
     (dirty_pms, dirty_pages, pm_lock_scan_us)
 }
 
 fn collect_dirty_page_managers(
     pms: &[Arc<Mutex<PageManager>>],
 ) -> (Vec<Arc<Mutex<PageManager>>>, usize, u64) {
-    let mut dirty_pms = Vec::new();
+    let mut dirty_entries: Vec<(u32, Arc<Mutex<PageManager>>)> = Vec::new();
     let mut dirty_pages = 0usize;
     let mut pm_lock_scan_us = 0u64;
     for pm in pms {
         let lock_t0 = Instant::now();
-        let count = pm.lock().map(|g| g.dirty_page_count()).unwrap_or(0);
+        let (count, file_id) = pm
+            .lock()
+            .map(|g| (g.dirty_page_count(), g.file_id()))
+            .unwrap_or((0, u32::MAX));
         pm_lock_scan_us += lock_t0.elapsed().as_micros() as u64;
         if count > 0 {
             dirty_pages += count;
-            dirty_pms.push(pm.clone());
+            dirty_entries.push((file_id, pm.clone()));
         }
     }
-    dirty_pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
+    dirty_entries.sort_by_key(|(file_id, _)| *file_id);
+    let dirty_pms = dirty_entries
+        .into_iter()
+        .map(|(_, pm)| pm)
+        .collect::<Vec<_>>();
     (dirty_pms, dirty_pages, pm_lock_scan_us)
 }
 
-/// Flushes pre-filtered dirty PMs (parallel when `len > 1`; keeps main coalesced behavior).
+/// Flushes pre-filtered dirty PMs (parallel when `len >= COALESCED_FLUSH_PARALLEL_MIN`).
 pub(crate) fn flush_dirty_page_managers_sorted(
     dirty_pms: Vec<Arc<Mutex<PageManager>>>,
     pm_lock_scan_us: u64,
@@ -452,7 +466,7 @@ fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<
     let mut sync_targets = Vec::new();
     let mut pm_lock_wait_us = 0u64;
 
-    if pms.len() <= 1 {
+    if pms.len() < COALESCED_FLUSH_PARALLEL_MIN {
         for pm in pms {
             let (n, file_id, wait) = flush_pm_writes_only(&pm)?;
             pm_lock_wait_us += wait;
@@ -498,21 +512,25 @@ pub(crate) fn flush_page_managers_for_tables(
         .lock()
         .map_err(|_| DbError::database("table pm map lock poisoned"))?;
     let table_map_lock_us = map_t0.elapsed().as_micros() as u64;
-    let mut pms: Vec<Arc<Mutex<PageManager>>> = Vec::with_capacity(sorted.len());
+    let mut dirty_entries: Vec<(u32, Arc<Mutex<PageManager>>)> = Vec::with_capacity(sorted.len());
     let mut pm_lock_scan_us = 0u64;
     for name in &sorted {
         let Some(pm) = map.get(name) else {
             continue;
         };
         let lock_t0 = Instant::now();
-        let dirty = pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false);
+        let (dirty, file_id) = pm
+            .lock()
+            .map(|g| (g.dirty_page_count() > 0, g.file_id()))
+            .unwrap_or((false, u32::MAX));
         pm_lock_scan_us += lock_t0.elapsed().as_micros() as u64;
         if dirty {
-            pms.push(pm.clone());
+            dirty_entries.push((file_id, pm.clone()));
         }
     }
     drop(map);
-    pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
+    dirty_entries.sort_by_key(|(file_id, _)| *file_id);
+    let pms: Vec<Arc<Mutex<PageManager>>> = dirty_entries.into_iter().map(|(_, pm)| pm).collect();
     let (flushed, mut phases) = flush_dirty_page_managers_sorted(pms, pm_lock_scan_us)?;
     phases.table_map_lock_us = table_map_lock_us;
     Ok((flushed, phases))
