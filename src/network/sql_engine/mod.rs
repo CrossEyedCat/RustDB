@@ -701,13 +701,7 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
                     "record offset too large for WAL",
                 )
             })?;
-            wal.log_data_insert(
-                tx,
-                pm.file_id(),
-                page_id,
-                record_offset,
-                &payload,
-            )?;
+            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, &payload)?;
         }
     }
     let column_map = tpcc_pending_index_column_map(state, ctx, table, &tuple)?;
@@ -3138,8 +3132,7 @@ pub(crate) fn tpcc_run_in_transaction(
                 let commit_transaction_wall_us = t0.elapsed().as_micros() as u64;
                 let flush_phases = ctx.last_commit_flush_phases.take();
                 if let Some(p) = flush_phases {
-                    let accounted_flush_us =
-                        p.pm_lock_wait_us.saturating_add(p.heap_fsync_us);
+                    let accounted_flush_us = p.pm_lock_wait_us.saturating_add(p.heap_fsync_us);
                     info!(
                         target: "rustdb::sql_phases",
                         tpcc_kind = kind,
