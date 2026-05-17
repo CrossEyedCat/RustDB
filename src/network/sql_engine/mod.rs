@@ -1295,20 +1295,14 @@ fn commit_transaction(
         let mut pm_lock_scan_us = 0u64;
         for pm in ctx.txn_pm_cache.values() {
             let lock_t0 = Instant::now();
-            let dirty = pm
-                .lock()
-                .map(|g| g.dirty_page_count() > 0)
-                .unwrap_or(false);
+            let dirty = pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false);
             pm_lock_scan_us += lock_t0.elapsed().as_micros() as u64;
             if dirty {
                 dirty_pms.push(pm.clone());
             }
         }
-        crate::network::sql_engine_wal::flush_dirty_page_managers_sorted(
-            dirty_pms,
-            pm_lock_scan_us,
-        )
-        .map_err(map_db_err)?
+        crate::network::sql_engine_wal::flush_dirty_page_managers_sorted(dirty_pms, pm_lock_scan_us)
+            .map_err(map_db_err)?
     } else if touched.is_empty() {
         (
             0,
