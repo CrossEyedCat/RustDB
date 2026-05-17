@@ -31,7 +31,9 @@ pub mod engine_error_code {
 }
 
 use crate::common::types::RecordId;
+use crate::storage::page_manager::PageManager;
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 /// Isolation level for the SQL engine session transaction (`BEGIN` … `COMMIT`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -132,7 +134,6 @@ impl SqlTransaction {
 }
 
 /// Session-scoped state for a single logical client connection.
-#[derive(Debug)]
 pub struct SessionContext {
     /// Opaque session identifier when the server assigns one.
     pub session_id: Option<u64>,
@@ -146,6 +147,28 @@ pub struct SessionContext {
     pub(crate) tpcc_dml_done_at: Option<std::time::Instant>,
     /// Reused row serialization buffer for native TPC-C inserts in a transaction.
     pub(crate) tpcc_row_bytes_buf: Vec<u8>,
+    /// Per-transaction page managers (avoids `table_page_managers` map lock on hot DML/COMMIT).
+    pub(crate) txn_pm_cache: HashMap<String, Arc<Mutex<PageManager>>>,
+    /// Reused buffer for deferred index column maps (native TPC-C inserts).
+    pub(crate) tpcc_index_column_map_buf: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for SessionContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionContext")
+            .field("session_id", &self.session_id)
+            .field("transaction", &self.transaction)
+            .field("skip_dml_storage_lock", &self.skip_dml_storage_lock)
+            .field("tpcc_kind", &self.tpcc_kind)
+            .field("tpcc_dml_done_at", &self.tpcc_dml_done_at)
+            .field("tpcc_row_bytes_buf_len", &self.tpcc_row_bytes_buf.len())
+            .field("txn_pm_cache_len", &self.txn_pm_cache.len())
+            .field(
+                "tpcc_index_column_map_buf_len",
+                &self.tpcc_index_column_map_buf.len(),
+            )
+            .finish()
+    }
 }
 
 impl Default for SessionContext {
@@ -157,6 +180,8 @@ impl Default for SessionContext {
             tpcc_kind: None,
             tpcc_dml_done_at: None,
             tpcc_row_bytes_buf: Vec::new(),
+            txn_pm_cache: HashMap::new(),
+            tpcc_index_column_map_buf: HashMap::new(),
         }
     }
 }

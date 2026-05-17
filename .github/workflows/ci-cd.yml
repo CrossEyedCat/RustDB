@@ -533,7 +533,7 @@ jobs:
           MIX: new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04
           RUSTDB_TPCC_NATIVE: "1"
           RUSTDB_TPCC_NATIVE_MICRO: "1"
-          # Default 16 workers; workflow_dispatch A/B: set RUSTDB_SQL_WORKER_COUNT=24 on 4+ vCPU runners.
+          # Default 16 workers; workflow_dispatch A/B: try RUSTDB_SQL_WORKER_COUNT=32 on 4+ vCPU runners.
           RUSTDB_SQL_WORKER_COUNT: "24"
         run: |
           set -euo pipefail
@@ -680,6 +680,12 @@ jobs:
             :
           else
             echo "::warning::new_order full-mix p50 ${new_order_p50}ms exceeds 110ms soft threshold"
+          fi
+          new_order_commit_p50="$(python3 -c "import re,statistics; from pathlib import Path; p=Path('tpcc-out/server_full.log'); us=[]; [us.append(int(m.group(1))) for line in (p.read_text(encoding='utf-8',errors='replace').splitlines() if p.is_file() else []) if 'sql.execute_tpcc.commit' in line and 'tpcc_kind=0' in line for m in [re.search(r'commit_us=(\d+)', line)] if m]; print(f'{statistics.median(us)/1000:.3f}' if us else '0')" 2>/dev/null || echo 0)"
+          if python3 -c "exit(0 if float('${new_order_commit_p50}') <= 50.0 or float('${new_order_commit_p50}') <= 0 else 1)"; then
+            :
+          else
+            echo "::warning::new_order server commit_us p50 ${new_order_commit_p50}ms exceeds 50ms informational threshold"
           fi
           mix_os_p50="$(python3 -c "import csv,statistics; from pathlib import Path; p=Path('tpcc-out/tpcc_txn.log'); rows=[] if not p.is_file() else [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='order_status']; us=[int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]; print(f'{statistics.median(us)/1000:.3f}' if us else '0')" 2>/dev/null || echo 0)"
           micro_os_p50="$(python3 -c "import csv,statistics; from pathlib import Path; p=Path('tpcc-out/order_status_micro/tpcc_txn.log'); rows=[] if not p.is_file() else [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='order_status']; us=[int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]; print(f'{statistics.median(us)/1000:.3f}' if us else '0')" 2>/dev/null || echo 0)"

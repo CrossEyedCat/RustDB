@@ -50,7 +50,7 @@ fn phase_elapsed_us(t0: Instant) -> u64 {
     t0.elapsed().as_micros() as u64
 }
 
-fn run_new_order(
+fn run_new_order_native(
     state: &SqlEngineState,
     ctx: &mut SessionContext,
     w_id: i32,
@@ -271,7 +271,9 @@ pub(crate) fn execute_tpcc(
     let (_st, w_id, d_id, c_id, i_id, qty, o_id) = tpcc_params(seed, global_txn_id);
     tpcc_run_in_transaction(state, ctx, kind, |state, ctx| {
         let rows = match txn_kind {
-            TxnKind::NewOrder => run_new_order(state, ctx, w_id, d_id, c_id, i_id, qty, o_id)?,
+            TxnKind::NewOrder => {
+                run_new_order_native(state, ctx, w_id, d_id, c_id, i_id, qty, o_id)?
+            }
             TxnKind::Payment => run_payment(state, ctx, w_id, d_id, c_id)?,
             TxnKind::OrderStatus => tpcc_order_status_row_count(state, w_id, d_id, c_id)?,
             TxnKind::Delivery => run_delivery(state, ctx, w_id, d_id)?,

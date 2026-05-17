@@ -106,7 +106,7 @@ def extract_execute_script_wall_us(line: str) -> tuple[int, int] | None:
     return int(m_wall.group(1)), stmt_count
 
 
-def extract_execute_tpcc_wall_us(line: str) -> tuple[int, int] | None:
+def extract_execute_tpcc_wall_us(line: str) -> tuple[int, int, int] | None:
     if "wall_us=" not in line or "sql.execute_tpcc" not in line:
         return None
     if "sql.execute_tpcc.new_order" in line or "sql.execute_tpcc.commit" in line:
@@ -116,7 +116,9 @@ def extract_execute_tpcc_wall_us(line: str) -> tuple[int, int] | None:
         return None
     m_kind = re.search(r"kind=(\d+)", line)
     kind = int(m_kind.group(1)) if m_kind else -1
-    return int(m_wall.group(1)), kind
+    m_q = re.search(r"queue_wait_us=(\d+)", line)
+    queue_wait_us = int(m_q.group(1)) if m_q else 0
+    return int(m_wall.group(1)), kind, queue_wait_us
 
 
 def extract_execute_tpcc_new_order_phases(line: str) -> dict[str, int] | None:
@@ -174,9 +176,17 @@ COMMIT_SUB_PHASES = (
     "commit_flush_us",
     "commit_index_batch_us",
     "commit_log_append_us",
+    "commit_log_commit_wait_us",
     "commit_table_map_lock_us",
     "commit_pm_lock_wait_us",
     "commit_heap_fsync_us",
+)
+
+COMMIT_KIND_REPORT_PHASES = (
+    "commit_table_map_lock_us",
+    "commit_pm_lock_wait_us",
+    "commit_wal_us",
+    "commit_flush_us",
 )
 
 TPCC_KIND_NAMES = {
@@ -265,6 +275,7 @@ def main() -> int:
     execute_tpcc_new_order_phases: dict[str, list[float]] = defaultdict(list)
     execute_tpcc_commit_us: list[float] = []
     execute_tpcc_commit_by_kind: dict[int, list[float]] = defaultdict(list)
+    execute_tpcc_queue_wait_by_kind: dict[int, list[float]] = defaultdict(list)
     sql_commit_sub_by_kind: dict[int, dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
@@ -285,10 +296,12 @@ def main() -> int:
                     execute_script_by_stmt_count[stmt_count].append(float(wall_us))
             et = extract_execute_tpcc_wall_us(line)
             if et is not None:
-                wall_us, kind = et
+                wall_us, kind, queue_wait_us = et
                 execute_tpcc_wall_us.append(float(wall_us))
                 if kind >= 0:
                     execute_tpcc_by_kind[kind].append(float(wall_us))
+                    if queue_wait_us > 0:
+                        execute_tpcc_queue_wait_by_kind[kind].append(float(queue_wait_us))
             continue
 
         pu = extract_parse_us(line)
@@ -327,10 +340,12 @@ def main() -> int:
             phase_lines += 1
         et = extract_execute_tpcc_wall_us(line)
         if et is not None:
-            wall_us, kind = et
+            wall_us, kind, queue_wait_us = et
             execute_tpcc_wall_us.append(float(wall_us))
             if kind >= 0:
                 execute_tpcc_by_kind[kind].append(float(wall_us))
+                if queue_wait_us > 0:
+                    execute_tpcc_queue_wait_by_kind[kind].append(float(queue_wait_us))
             phase_lines += 1
         no_phases = extract_execute_tpcc_new_order_phases(line)
         if no_phases is not None:
@@ -523,16 +538,27 @@ def main() -> int:
                 f"p50={quantile(xs, 0.5) / 1000:.3f}ms "
                 f"p99={quantile(xs, 0.99) / 1000:.3f}ms"
             )
-    if sql_commit_sub_by_kind:
-        print("sql.commit sub-phases by tpcc_kind (commit_flush_us p50):")
-        for kind in sorted(sql_commit_sub_by_kind.keys()):
-            xs = sql_commit_sub_by_kind[kind].get("commit_flush_us", [])
+    if execute_tpcc_queue_wait_by_kind:
+        print("sql.execute_tpcc queue_wait_us by kind:")
+        for kind in sorted(execute_tpcc_queue_wait_by_kind.keys()):
+            xs = execute_tpcc_queue_wait_by_kind[kind]
             label = TPCC_KIND_NAMES.get(kind, f"kind_{kind}")
-            if xs:
-                print(
-                    f"  {label}: n={len(xs)} "
-                    f"commit_flush_us p50={quantile(xs, 0.5) / 1000:.3f}ms"
-                )
+            print(
+                f"  {label}: n={len(xs)} "
+                f"p50={quantile(xs, 0.5) / 1000:.3f}ms "
+                f"p95={quantile(xs, 0.95) / 1000:.3f}ms"
+            )
+    if sql_commit_sub_by_kind:
+        print("sql.commit sub-phases by tpcc_kind (p50 ms):")
+        for kind in sorted(sql_commit_sub_by_kind.keys()):
+            label = TPCC_KIND_NAMES.get(kind, f"kind_{kind}")
+            parts = []
+            for phase in COMMIT_KIND_REPORT_PHASES:
+                xs = sql_commit_sub_by_kind[kind].get(phase, [])
+                if xs:
+                    parts.append(f"{phase}={quantile(xs, 0.5) / 1000:.3f}")
+            if parts:
+                print(f"  {label}: {' '.join(parts)}")
     if execute_tpcc_new_order_phases and execute_tpcc_by_kind.get(0):
         phase_sum_p50 = sum(
             quantile(execute_tpcc_new_order_phases.get(name, []), 0.5)

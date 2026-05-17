@@ -195,6 +195,8 @@ pub(crate) struct SqlEngineState {
     row_locks: RowLockManager,
     /// Structured WAL (`src/logging`); disabled when `RUSTDB_DISABLE_WAL` is set.
     wal: Option<crate::network::sql_engine_wal::SqlEngineWal>,
+    /// Secondary-index column names per table (refreshed on `CREATE INDEX` / open).
+    index_columns_by_table: Mutex<HashMap<String, Arc<Vec<String>>>>,
 }
 
 impl SqlEngine {
@@ -257,6 +259,7 @@ impl SqlEngine {
             table_storage_locks: Mutex::new(HashMap::new()),
             row_locks: RowLockManager::new(),
             wal,
+            index_columns_by_table: Mutex::new(HashMap::new()),
         });
         if state.wal.is_some() && wal_dir.is_dir() {
             crate::network::sql_engine_wal::replay_wal_into_engine(
@@ -277,6 +280,9 @@ impl SqlEngine {
         })?;
         rebuild_secondary_indexes_from_catalog(state.as_ref()).map_err(|e| {
             DbError::database(format!("secondary index rebuild on open: {}", e.message))
+        })?;
+        rebuild_index_columns_cache(state.as_ref()).map_err(|e| {
+            DbError::database(format!("index columns cache on open: {}", e.message))
         })?;
         Ok(Self { state })
     }
@@ -681,7 +687,7 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
     ctx.tpcc_row_bytes_buf.clear();
     let bytes = tuple.to_bytes().map_err(map_db_err)?;
     ctx.tpcc_row_bytes_buf.extend_from_slice(&bytes);
-    let pm_for_table = table_page_manager(state, table)?;
+    let pm_for_table = table_page_manager_cached(state, ctx, table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let ins = pm.insert(&ctx.tpcc_row_bytes_buf).map_err(map_db_err)?;
     maybe_simulate_dml_crash("insert_row");
@@ -704,10 +710,13 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
                 ctx.tpcc_row_bytes_buf.clone(),
             )?;
         }
+    }
+    let column_map = tpcc_pending_index_column_map(state, ctx, table, &tuple)?;
+    if let Some(tx) = ctx.transaction.as_mut() {
         tx.pending_index_inserts.push(PendingIndexInsert {
             table: table.to_string(),
             rid: ins.record_id,
-            column_map: tuple_to_index_column_map_for_table(state, table, &tuple)?,
+            column_map,
         });
     } else {
         sync_index_after_insert(state, table, ins.record_id, &tuple)?;
@@ -1206,6 +1215,8 @@ fn begin_transaction(
     state: &SqlEngineState,
     ctx: &mut SessionContext,
 ) -> Result<EngineOutput, EngineError> {
+    ctx.txn_pm_cache.clear();
+    ctx.tpcc_index_column_map_buf.clear();
     if ctx.transaction.is_some() {
         return Err(EngineError::new(
             engine_error_code::ALREADY_IN_TRANSACTION,
@@ -1251,18 +1262,22 @@ fn commit_transaction(
         commit_flush_us = tracing::field::Empty,
         commit_index_batch_us = tracing::field::Empty,
         commit_log_append_us = tracing::field::Empty,
+        commit_log_commit_wait_us = tracing::field::Empty,
         pending_index_count,
         commit_log_fsync,
     );
     let _g = span.enter();
     let mut commit_wal_us = 0u64;
+    let mut commit_log_commit_wait_us = 0u64;
     if let Some(ref wal) = state.wal {
         let t0 = Instant::now();
         wal.log_commit(&mut tx)?;
-        commit_wal_us = t0.elapsed().as_micros() as u64;
+        commit_log_commit_wait_us = t0.elapsed().as_micros() as u64;
+        commit_wal_us = commit_log_commit_wait_us;
     }
     span.record("wal_us", commit_wal_us);
     span.record("commit_wal_us", commit_wal_us);
+    span.record("commit_log_commit_wait_us", commit_log_commit_wait_us);
 
     let index_batch_clock = (!tx.pending_index_inserts.is_empty()).then(Instant::now);
     apply_pending_index_inserts(state, &mut tx.pending_index_inserts)?;
@@ -1271,16 +1286,23 @@ fn commit_transaction(
         .unwrap_or(0);
     span.record("commit_index_batch_us", commit_index_batch_us);
 
-    let touched: HashSet<String> = std::mem::take(&mut tx.touched_tables)
-        .into_iter()
-        .filter(|t| table_has_dirty_heap_pages(state, t))
-        .collect();
+    let touched: HashSet<String> = std::mem::take(&mut tx.touched_tables);
     let flush_tables_count = touched.len();
     span.record("flush_tables_count", flush_tables_count);
     let flush_clock = Instant::now();
-    let (_flushed_pages, flush_phases) =
+    let (_flushed_pages, flush_phases) = if !ctx.txn_pm_cache.is_empty() {
+        let mut pms: Vec<Arc<Mutex<PageManager>>> = ctx.txn_pm_cache.values().cloned().collect();
+        pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
+        crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map_err(map_db_err)?
+    } else if touched.is_empty() {
+        (
+            0,
+            crate::network::sql_engine_wal::CommitFlushPhaseUs::default(),
+        )
+    } else {
         crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &touched)
-            .map_err(map_db_err)?;
+            .map_err(map_db_err)?
+    };
     let commit_flush_us = flush_clock.elapsed().as_micros() as u64;
     span.record("flush_us", commit_flush_us);
     span.record("commit_flush_us", commit_flush_us);
@@ -1302,6 +1324,7 @@ fn commit_transaction(
             commit_flush_us,
             commit_index_batch_us,
             commit_log_append_us,
+            commit_log_commit_wait_us,
             commit_table_map_lock_us = flush_phases.table_map_lock_us,
             commit_pm_lock_wait_us = flush_phases.pm_lock_wait_us,
             commit_heap_fsync_us = flush_phases.heap_fsync_us,
@@ -1312,6 +1335,7 @@ fn commit_transaction(
             "sql.commit"
         );
     }
+    ctx.txn_pm_cache.clear();
     drop(tx);
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
@@ -1356,8 +1380,18 @@ fn rollback_transaction(
     }
     // Persist rollback: otherwise the next process sees heap pages from disk that still contain
     // undone inserts (WAL replay does not redo aborted txs, so durability must match).
-    let _ = crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &flush_tables)
-        .map_err(map_db_err)?;
+    let _ = if !ctx.txn_pm_cache.is_empty() && !flush_tables.is_empty() {
+        let mut pms: Vec<Arc<Mutex<PageManager>>> = flush_tables
+            .iter()
+            .filter_map(|t| ctx.txn_pm_cache.get(t).cloned())
+            .collect();
+        pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
+        crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map(|(n, _)| n)
+    } else {
+        crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &flush_tables)
+            .map(|(n, _)| n)
+    }
+    .map_err(map_db_err)?;
     // Only append an ABORT marker after the UNDO is applied *and* persisted.
     //
     // If we mark the transaction as aborted in WAL first and then crash before the UNDO is flushed,
@@ -1365,6 +1399,7 @@ fn rollback_transaction(
     if let Some(ref wal) = state.wal {
         wal.log_abort(&mut tx)?;
     }
+    ctx.txn_pm_cache.clear();
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
@@ -1502,6 +1537,79 @@ pub(crate) fn table_page_manager(
         g.insert(table.to_string(), pm.clone());
     }
     Ok(pm)
+}
+
+/// Returns the page manager for `table`, caching in [`SessionContext::txn_pm_cache`] for the txn.
+pub(crate) fn table_page_manager_cached(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+) -> Result<Arc<Mutex<PageManager>>, EngineError> {
+    if let Some(pm) = ctx.txn_pm_cache.get(table) {
+        return Ok(pm.clone());
+    }
+    let pm = table_page_manager(state, table)?;
+    ctx.txn_pm_cache.insert(table.to_string(), pm.clone());
+    Ok(pm)
+}
+
+fn index_columns_for_table(state: &SqlEngineState, table: &str) -> Arc<Vec<String>> {
+    if let Ok(cache) = state.index_columns_by_table.lock() {
+        if let Some(cols) = cache.get(table) {
+            return Arc::clone(cols);
+        }
+    }
+    refresh_index_columns_cache_for_table(state, table);
+    state
+        .index_columns_by_table
+        .lock()
+        .ok()
+        .and_then(|c| c.get(table).cloned())
+        .unwrap_or_else(|| Arc::new(Vec::new()))
+}
+
+fn refresh_index_columns_cache_for_table(state: &SqlEngineState, table: &str) {
+    let mut cols: Vec<String> = Vec::new();
+    if let Ok(ir) = state.index_registry.read() {
+        for (_idx_name, col_list) in ir.list_indexes_for_table(table) {
+            for c in col_list {
+                if !cols.iter().any(|x| x == &c) {
+                    cols.push(c.clone());
+                }
+            }
+        }
+    }
+    if let Ok(mut cache) = state.index_columns_by_table.lock() {
+        cache.insert(table.to_string(), Arc::new(cols));
+    }
+}
+
+fn rebuild_index_columns_cache(state: &SqlEngineState) -> Result<(), EngineError> {
+    let tables: Vec<String> = {
+        let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
+        cat.table_names()
+    };
+    for table in tables {
+        refresh_index_columns_cache_for_table(state, &table);
+    }
+    Ok(())
+}
+
+fn tpcc_pending_index_column_map(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuple: &Tuple,
+) -> Result<HashMap<String, String>, EngineError> {
+    let cols = index_columns_for_table(state, table);
+    let mut column_map = std::mem::take(&mut ctx.tpcc_index_column_map_buf);
+    column_map.clear();
+    for c in cols.iter() {
+        if let Some(cv) = tuple.values.get(c) {
+            column_map.insert(c.clone(), column_value_to_index_string(cv));
+        }
+    }
+    Ok(column_map)
 }
 
 fn execute_create_table(
@@ -1741,25 +1849,14 @@ fn tuple_to_index_column_map_for_table(
     table: &str,
     tuple: &Tuple,
 ) -> Result<HashMap<String, String>, EngineError> {
-    let ir = state
-        .index_registry
-        .read()
-        .map_err(|_| lock_poisoned_engine())?;
-    let indexes = ir.list_indexes_for_table(table);
-    drop(ir);
-    let mut cols = HashSet::new();
-    for (_idx_name, col_list) in indexes {
-        for c in col_list {
-            cols.insert(c.clone());
-        }
-    }
+    let cols = index_columns_for_table(state, table);
     if cols.is_empty() {
         return Ok(HashMap::new());
     }
     let mut m = HashMap::with_capacity(cols.len());
-    for c in cols {
-        if let Some(cv) = tuple.values.get(&c) {
-            m.insert(c, column_value_to_index_string(cv));
+    for c in cols.iter() {
+        if let Some(cv) = tuple.values.get(c) {
+            m.insert(c.clone(), column_value_to_index_string(cv));
         }
     }
     Ok(m)
@@ -2131,6 +2228,7 @@ fn execute_create_index(
     }
     persist_catalog(state)?;
     rebuild_optimizer_with_indexes(state)?;
+    refresh_index_columns_cache_for_table(state, table);
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
 }
 
@@ -3025,6 +3123,8 @@ pub(crate) fn tpcc_run_in_transaction(
     ctx.tpcc_kind = Some(kind);
     ctx.tpcc_dml_done_at = None;
     ctx.tpcc_row_bytes_buf.clear();
+    ctx.txn_pm_cache.clear();
+    ctx.tpcc_index_column_map_buf.clear();
     begin_transaction(state, ctx)?;
     match f(state, ctx) {
         Ok(rows) => {
@@ -3035,11 +3135,12 @@ pub(crate) fn tpcc_run_in_transaction(
             if sql_phase_log_enabled() {
                 let t0 = Instant::now();
                 commit_transaction(state, ctx)?;
-                let commit_us = t0.elapsed().as_micros() as u64;
+                let commit_transaction_wall_us = t0.elapsed().as_micros() as u64;
                 info!(
                     target: "rustdb::sql_phases",
                     tpcc_kind = kind,
-                    commit_us,
+                    commit_us = commit_transaction_wall_us,
+                    commit_transaction_wall_us,
                     pre_commit_us,
                     "sql.execute_tpcc.commit"
                 );
@@ -3385,7 +3486,7 @@ where
     F: FnMut(&mut Tuple) -> Result<(), EngineError>,
 {
     record_touched_table(ctx, table);
-    let pm_for_table = table_page_manager(state, table)?;
+    let pm_for_table = table_page_manager_cached(state, ctx, table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let (rows, exact_key) = {
         let ir = state
@@ -3516,7 +3617,7 @@ pub(crate) fn delete_rows_by_equalities(
     equalities: &HashMap<String, String>,
 ) -> Result<u64, EngineError> {
     record_touched_table(ctx, table);
-    let pm_for_table = table_page_manager(state, table)?;
+    let pm_for_table = table_page_manager_cached(state, ctx, table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let (rows, exact_key) = {
         let ir = state
@@ -4796,6 +4897,23 @@ mod tests {
             dirty_after_commit, 0,
             "COMMIT should flush dirty heap pages"
         );
+    }
+
+    #[test]
+    fn table_page_manager_cached_reuses_arc_in_transaction() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let state = eng.state_for_test();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE pm_cache (k INT)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+        let pm1 = table_page_manager_cached(state, &mut ctx, "pm_cache").unwrap();
+        let pm2 = table_page_manager_cached(state, &mut ctx, "pm_cache").unwrap();
+        assert!(Arc::ptr_eq(&pm1, &pm2));
+        assert_eq!(ctx.txn_pm_cache.len(), 1);
+        eng.execute_sql("COMMIT", &mut ctx).unwrap();
+        assert!(ctx.txn_pm_cache.is_empty());
     }
 
     #[test]

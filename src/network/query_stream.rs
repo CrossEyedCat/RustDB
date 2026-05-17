@@ -166,7 +166,7 @@ pub fn dispatch_client_message(
     policy: &StreamPolicy,
 ) -> Result<Arc<[u8]>, DispatchError> {
     let mut ctx = SessionContext::default();
-    dispatch_client_message_with_ctx(msg, engine, policy, &mut ctx)
+    dispatch_client_message_with_ctx(msg, engine, policy, &mut ctx, None)
 }
 
 /// Same as [`dispatch_client_message`], but uses `session_ctx` so `BEGIN` / `COMMIT` persist across
@@ -176,6 +176,7 @@ pub fn dispatch_client_message_with_ctx(
     engine: &dyn EngineHandle,
     policy: &StreamPolicy,
     session_ctx: &mut SessionContext,
+    queue_wait_us: Option<u64>,
 ) -> Result<Arc<[u8]>, DispatchError> {
     match msg {
         ClientMessage::Query(q) => {
@@ -235,7 +236,7 @@ pub fn dispatch_client_message_with_ctx(
             dispatch_execute_script(script, engine, policy, session_ctx)
         }
         ClientMessage::ExecuteTpcc(tpcc) => {
-            dispatch_execute_tpcc(tpcc, engine, policy, session_ctx)
+            dispatch_execute_tpcc(tpcc, engine, policy, session_ctx, queue_wait_us)
         }
         ClientMessage::ClientHello(_) => Err(EngineError::new(
             engine_error_code::PROTOCOL,
@@ -308,6 +309,7 @@ fn dispatch_execute_tpcc(
     engine: &dyn EngineHandle,
     policy: &StreamPolicy,
     session_ctx: &mut SessionContext,
+    queue_wait_us: Option<u64>,
 ) -> Result<Arc<[u8]>, DispatchError> {
     let wall_clock = Instant::now();
     let span = info_span!(
@@ -345,6 +347,7 @@ fn dispatch_execute_tpcc(
             wall_us,
             kind = tpcc.kind,
             global_txn_id = tpcc.global_txn_id,
+            queue_wait_us = queue_wait_us.unwrap_or(0),
             "sql.execute_tpcc"
         );
     }
@@ -507,15 +510,24 @@ impl ConnectionSqlSessions {
                                 let queue_wait_us =
                                     queued_at.elapsed().as_micros().min(u128::from(u64::MAX))
                                         as u64;
-                                let _queue_wait =
-                                    info_span!("network.queue_wait", queue_wait_us, stream_id)
-                                        .entered();
+                                let tpcc_kind = match &msg {
+                                    ClientMessage::ExecuteTpcc(p) => Some(p.kind),
+                                    _ => None,
+                                };
+                                let _queue_wait = info_span!(
+                                    "network.queue_wait",
+                                    queue_wait_us,
+                                    stream_id,
+                                    tpcc_kind = ?tpcc_kind,
+                                )
+                                .entered();
                                 let ctx = sessions.entry(stream_id).or_default();
                                 let r = dispatch_client_message_with_ctx(
                                     msg,
                                     engine_worker.as_ref(),
                                     &policy_worker,
                                     ctx,
+                                    Some(queue_wait_us),
                                 );
                                 let _ = reply_tx.send(r);
                             }
@@ -596,6 +608,7 @@ fn rollback_stream_if_needed(
             engine,
             policy,
             &mut ctx,
+            None,
         );
     }
 }
