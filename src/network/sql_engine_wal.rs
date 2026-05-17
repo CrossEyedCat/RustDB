@@ -308,8 +308,15 @@ pub(crate) fn bench_defer_heap_fsync_enabled() -> bool {
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct CommitFlushPhaseUs {
     pub table_map_lock_us: u64,
+    /// PM mutex wait while scanning for dirty pages (pre-flush).
+    pub pm_lock_scan_us: u64,
+    /// PM mutex wait during `flush_dirty_pages_no_sync` / coalesced fsync.
+    pub pm_lock_flush_us: u64,
+    /// `pm_lock_scan_us` + `pm_lock_flush_us` (kept for dashboards that expect one field).
     pub pm_lock_wait_us: u64,
     pub heap_fsync_us: u64,
+    pub flush_pm_count: usize,
+    pub dirty_pages_flushed: usize,
 }
 
 fn flush_pm_writes_only(pm: &Arc<Mutex<PageManager>>) -> DbResult<(usize, Option<u32>, u64)> {
@@ -350,18 +357,22 @@ fn sync_heap_files_after_coalesced_flush(
     Ok(fsync_t0.elapsed().as_micros() as u64)
 }
 
+/// Parallel heap flush only when many PMs are dirty; small multi-PM commits (e.g. new_order)
+/// stay sequential to reduce storage lock contention.
+const COALESCED_FLUSH_PARALLEL_MIN: usize = 5;
+
 fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<(usize, u64, u64)> {
     if pms.is_empty() {
         return Ok((0, 0, 0));
     }
     let mut total = 0usize;
     let mut sync_targets = Vec::new();
-    let mut pm_lock_wait_us = 0u64;
+    let mut pm_lock_flush_us = 0u64;
 
-    if pms.len() <= 1 {
+    if pms.len() < COALESCED_FLUSH_PARALLEL_MIN {
         for pm in pms {
             let (n, file_id, wait) = flush_pm_writes_only(&pm)?;
-            pm_lock_wait_us += wait;
+            pm_lock_flush_us += wait;
             total += n;
             if let Some(file_id) = file_id {
                 sync_targets.push((file_id, pm));
@@ -373,7 +384,7 @@ fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<
             .map(flush_pm_writes_only)
             .collect::<DbResult<Vec<_>>>()?;
         for (pm, (n, file_id, wait)) in pms.into_iter().zip(results) {
-            pm_lock_wait_us += wait;
+            pm_lock_flush_us += wait;
             total += n;
             if let Some(file_id) = file_id {
                 sync_targets.push((file_id, pm));
@@ -382,7 +393,7 @@ fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<
     }
 
     let heap_fsync_us = sync_heap_files_after_coalesced_flush(sync_targets)?;
-    Ok((total, pm_lock_wait_us, heap_fsync_us))
+    Ok((total, pm_lock_flush_us, heap_fsync_us))
 }
 
 /// Flushes dirty pages for the given physical table heaps only.
@@ -405,26 +416,32 @@ pub(crate) fn flush_page_managers_for_tables(
         .map_err(|_| DbError::database("table pm map lock poisoned"))?;
     let table_map_lock_us = map_t0.elapsed().as_micros() as u64;
     let mut pms: Vec<Arc<Mutex<PageManager>>> = Vec::with_capacity(sorted.len());
-    let mut pm_lock_wait_us = 0u64;
+    let mut pm_lock_scan_us = 0u64;
     for name in &sorted {
         let Some(pm) = map.get(name) else {
             continue;
         };
         let lock_t0 = Instant::now();
         let dirty = pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false);
-        pm_lock_wait_us += lock_t0.elapsed().as_micros() as u64;
+        pm_lock_scan_us += lock_t0.elapsed().as_micros() as u64;
         if dirty {
             pms.push(pm.clone());
         }
     }
     drop(map);
+    let flush_pm_count = pms.len();
     let (flushed, flush_pm_wait, heap_fsync_us) = coalesced_flush_page_managers(pms)?;
+    let pm_lock_flush_us = flush_pm_wait;
     Ok((
         flushed,
         CommitFlushPhaseUs {
             table_map_lock_us,
-            pm_lock_wait_us: pm_lock_wait_us.saturating_add(flush_pm_wait),
+            pm_lock_scan_us,
+            pm_lock_flush_us,
+            pm_lock_wait_us: pm_lock_scan_us.saturating_add(pm_lock_flush_us),
             heap_fsync_us,
+            flush_pm_count,
+            dirty_pages_flushed: flushed,
         },
     ))
 }
@@ -435,27 +452,48 @@ pub(crate) fn flush_page_managers_for_tables(
 pub(crate) fn flush_page_managers_cached(
     pms: &[Arc<Mutex<PageManager>>],
 ) -> DbResult<(usize, CommitFlushPhaseUs)> {
-    if pms.is_empty() {
-        return Ok((0, CommitFlushPhaseUs::default()));
-    }
+    let (dirty_pms, pm_lock_scan_us) = collect_dirty_page_managers(pms);
+    flush_dirty_page_managers_sorted(dirty_pms, pm_lock_scan_us)
+}
+
+/// Returns PMs with `dirty_page_count > 0` and scan-phase lock wait.
+pub(crate) fn collect_dirty_page_managers(
+    pms: &[Arc<Mutex<PageManager>>],
+) -> (Vec<Arc<Mutex<PageManager>>>, u64) {
     let mut dirty_pms: Vec<Arc<Mutex<PageManager>>> = Vec::new();
-    let mut pm_lock_wait_us = 0u64;
+    let mut pm_lock_scan_us = 0u64;
     for pm in pms {
         let lock_t0 = Instant::now();
         let dirty = pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false);
-        pm_lock_wait_us += lock_t0.elapsed().as_micros() as u64;
+        pm_lock_scan_us += lock_t0.elapsed().as_micros() as u64;
         if dirty {
             dirty_pms.push(pm.clone());
         }
     }
+    (dirty_pms, pm_lock_scan_us)
+}
+
+/// Flushes pre-filtered dirty PMs (caller already scanned for dirtiness).
+pub(crate) fn flush_dirty_page_managers_sorted(
+    mut dirty_pms: Vec<Arc<Mutex<PageManager>>>,
+    pm_lock_scan_us: u64,
+) -> DbResult<(usize, CommitFlushPhaseUs)> {
+    if dirty_pms.is_empty() {
+        return Ok((0, CommitFlushPhaseUs::default()));
+    }
     dirty_pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
-    let (flushed, flush_pm_wait, heap_fsync_us) = coalesced_flush_page_managers(dirty_pms)?;
+    let flush_pm_count = dirty_pms.len();
+    let (flushed, pm_lock_flush_us, heap_fsync_us) = coalesced_flush_page_managers(dirty_pms)?;
     Ok((
         flushed,
         CommitFlushPhaseUs {
             table_map_lock_us: 0,
-            pm_lock_wait_us: pm_lock_wait_us.saturating_add(flush_pm_wait),
+            pm_lock_scan_us,
+            pm_lock_flush_us,
+            pm_lock_wait_us: pm_lock_scan_us.saturating_add(pm_lock_flush_us),
             heap_fsync_us,
+            flush_pm_count,
+            dirty_pages_flushed: flushed,
         },
     ))
 }

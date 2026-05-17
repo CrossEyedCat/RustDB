@@ -1291,9 +1291,24 @@ fn commit_transaction(
     span.record("flush_tables_count", flush_tables_count);
     let flush_clock = Instant::now();
     let (_flushed_pages, flush_phases) = if !ctx.txn_pm_cache.is_empty() {
-        let mut pms: Vec<Arc<Mutex<PageManager>>> = ctx.txn_pm_cache.values().cloned().collect();
-        pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
-        crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map_err(map_db_err)?
+        let mut dirty_pms: Vec<Arc<Mutex<PageManager>>> = Vec::new();
+        let mut pm_lock_scan_us = 0u64;
+        for pm in ctx.txn_pm_cache.values() {
+            let lock_t0 = Instant::now();
+            let dirty = pm
+                .lock()
+                .map(|g| g.dirty_page_count() > 0)
+                .unwrap_or(false);
+            pm_lock_scan_us += lock_t0.elapsed().as_micros() as u64;
+            if dirty {
+                dirty_pms.push(pm.clone());
+            }
+        }
+        crate::network::sql_engine_wal::flush_dirty_page_managers_sorted(
+            dirty_pms,
+            pm_lock_scan_us,
+        )
+        .map_err(map_db_err)?
     } else if touched.is_empty() {
         (
             0,
@@ -1327,7 +1342,11 @@ fn commit_transaction(
             commit_log_commit_wait_us,
             commit_table_map_lock_us = flush_phases.table_map_lock_us,
             commit_pm_lock_wait_us = flush_phases.pm_lock_wait_us,
+            commit_pm_lock_scan_us = flush_phases.pm_lock_scan_us,
+            commit_pm_lock_flush_us = flush_phases.pm_lock_flush_us,
             commit_heap_fsync_us = flush_phases.heap_fsync_us,
+            flush_pm_count = flush_phases.flush_pm_count,
+            dirty_pages_flushed = flush_phases.dirty_pages_flushed,
             flush_tables_count,
             touched_table_count,
             pending_index_count,

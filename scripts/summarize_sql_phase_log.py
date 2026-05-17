@@ -158,6 +158,10 @@ def extract_sql_commit_by_kind(line: str) -> tuple[int, dict[str, int]] | None:
     m_flush = re.search(r"commit_flush_us=(\d+)", line)
     if m_flush:
         out["commit_flush_us"] = int(m_flush.group(1))
+    for name in COMMIT_FLUSH_METRICS:
+        m = re.search(rf"{name}=(\d+)", line)
+        if m:
+            out[name] = int(m.group(1))
     return kind, out if out else None
 
 
@@ -179,14 +183,25 @@ COMMIT_SUB_PHASES = (
     "commit_log_commit_wait_us",
     "commit_table_map_lock_us",
     "commit_pm_lock_wait_us",
+    "commit_pm_lock_scan_us",
+    "commit_pm_lock_flush_us",
     "commit_heap_fsync_us",
+)
+
+COMMIT_FLUSH_METRICS = (
+    "flush_pm_count",
+    "dirty_pages_flushed",
 )
 
 COMMIT_KIND_REPORT_PHASES = (
     "commit_table_map_lock_us",
     "commit_pm_lock_wait_us",
+    "commit_pm_lock_scan_us",
+    "commit_pm_lock_flush_us",
     "commit_wal_us",
     "commit_flush_us",
+    "flush_pm_count",
+    "dirty_pages_flushed",
 )
 
 TPCC_KIND_NAMES = {
@@ -559,6 +574,30 @@ def main() -> int:
                     parts.append(f"{phase}={quantile(xs, 0.5) / 1000:.3f}")
             if parts:
                 print(f"  {label}: {' '.join(parts)}")
+        new_order_commit = sql_commit_sub_by_kind.get(0, {})
+        if new_order_commit:
+            print("sql.commit flush metrics by tpcc_kind=new_order (p50/p95):")
+            for phase in (
+                "commit_flush_us",
+                "commit_pm_lock_scan_us",
+                "commit_pm_lock_flush_us",
+                "commit_pm_lock_wait_us",
+            ):
+                xs = new_order_commit.get(phase, [])
+                if xs:
+                    print(
+                        f"  {phase}: n={len(xs)} "
+                        f"p50={quantile(xs, 0.5) / 1000:.3f}ms "
+                        f"p95={quantile(xs, 0.95) / 1000:.3f}ms"
+                    )
+            for phase in ("flush_pm_count", "dirty_pages_flushed"):
+                xs = new_order_commit.get(phase, [])
+                if xs:
+                    print(
+                        f"  {phase}: n={len(xs)} "
+                        f"p50={quantile(xs, 0.5):.1f} "
+                        f"p95={quantile(xs, 0.95):.1f}"
+                    )
     if execute_tpcc_new_order_phases and execute_tpcc_by_kind.get(0):
         phase_sum_p50 = sum(
             quantile(execute_tpcc_new_order_phases.get(name, []), 0.5)
