@@ -191,7 +191,7 @@ impl SqlEngineWal {
         file_id: u32,
         page_id: u64,
         record_offset: u16,
-        new_data: Vec<u8>,
+        new_data: &[u8],
     ) -> std::result::Result<(), EngineError> {
         let tid = tx.wal_tx_id.ok_or_else(|| {
             EngineError::new(
@@ -200,8 +200,15 @@ impl SqlEngineWal {
             )
         })?;
         let prev = tx.wal_last_lsn.or(tx.wal_begin_lsn);
-        let record =
-            LogRecord::new_data_insert(0, tid, file_id, page_id, record_offset, new_data, prev);
+        let record = LogRecord::new_data_insert(
+            0,
+            tid,
+            file_id,
+            page_id,
+            record_offset,
+            new_data.to_vec(),
+            prev,
+        );
         let lsn = self
             .runtime
             // Flush to the log file so crash recovery can reliably UNDO uncommitted writes,

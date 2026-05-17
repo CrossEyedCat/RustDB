@@ -151,6 +151,8 @@ pub struct SessionContext {
     pub(crate) txn_pm_cache: HashMap<String, Arc<Mutex<PageManager>>>,
     /// Reused buffer for deferred index column maps (native TPC-C inserts).
     pub(crate) tpcc_index_column_map_buf: HashMap<String, String>,
+    /// Last `COMMIT` flush breakdown (native TPC-C gap accounting).
+    pub(crate) last_commit_flush_phases: Option<crate::network::sql_engine_wal::CommitFlushPhaseUs>,
 }
 
 impl std::fmt::Debug for SessionContext {
@@ -182,6 +184,7 @@ impl Default for SessionContext {
             tpcc_row_bytes_buf: Vec::new(),
             txn_pm_cache: HashMap::new(),
             tpcc_index_column_map_buf: HashMap::new(),
+            last_commit_flush_phases: None,
         }
     }
 }

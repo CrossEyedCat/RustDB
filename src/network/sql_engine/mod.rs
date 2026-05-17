@@ -684,13 +684,12 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
         });
     }
     record_touched_table(ctx, table);
-    ctx.tpcc_row_bytes_buf.clear();
-    let bytes = tuple.to_bytes().map_err(map_db_err)?;
-    ctx.tpcc_row_bytes_buf.extend_from_slice(&bytes);
+    ctx.tpcc_row_bytes_buf = tuple.to_bytes().map_err(map_db_err)?;
     let pm_for_table = table_page_manager_cached(state, ctx, table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let ins = pm.insert(&ctx.tpcc_row_bytes_buf).map_err(map_db_err)?;
     maybe_simulate_dml_crash("insert_row");
+    let mut payload = std::mem::take(&mut ctx.tpcc_row_bytes_buf);
     let wal_clock = state.wal.is_some().then(Instant::now);
     if let Some(tx) = ctx.transaction.as_mut() {
         if let Some(ref wal) = state.wal {
@@ -702,13 +701,7 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
                     "record offset too large for WAL",
                 )
             })?;
-            wal.log_data_insert(
-                tx,
-                pm.file_id(),
-                page_id,
-                record_offset,
-                ctx.tpcc_row_bytes_buf.clone(),
-            )?;
+            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, &payload)?;
         }
     }
     let column_map = tpcc_pending_index_column_map(state, ctx, table, &tuple)?;
@@ -724,7 +717,6 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
     let wal_us = wal_clock
         .map(|t0| t0.elapsed().as_micros() as u64)
         .unwrap_or(0);
-    let payload = std::mem::take(&mut ctx.tpcc_row_bytes_buf);
     push_undo(
         ctx,
         UndoEntry::Insert {
@@ -762,7 +754,7 @@ fn insert_row_tuple_tpcc_immediate(
                     "record offset too large for WAL",
                 )
             })?;
-            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, &bytes)?;
         }
     }
     let wal_us = wal_clock
@@ -1335,6 +1327,7 @@ fn commit_transaction(
             "sql.commit"
         );
     }
+    ctx.last_commit_flush_phases = Some(flush_phases);
     ctx.txn_pm_cache.clear();
     drop(tx);
     Ok(EngineOutput::ExecutionOk { rows_affected: 0 })
@@ -3122,6 +3115,7 @@ pub(crate) fn tpcc_run_in_transaction(
 ) -> Result<EngineOutput, EngineError> {
     ctx.tpcc_kind = Some(kind);
     ctx.tpcc_dml_done_at = None;
+    ctx.last_commit_flush_phases = None;
     ctx.tpcc_row_bytes_buf.clear();
     ctx.txn_pm_cache.clear();
     ctx.tpcc_index_column_map_buf.clear();
@@ -3136,14 +3130,32 @@ pub(crate) fn tpcc_run_in_transaction(
                 let t0 = Instant::now();
                 commit_transaction(state, ctx)?;
                 let commit_transaction_wall_us = t0.elapsed().as_micros() as u64;
-                info!(
-                    target: "rustdb::sql_phases",
-                    tpcc_kind = kind,
-                    commit_us = commit_transaction_wall_us,
-                    commit_transaction_wall_us,
-                    pre_commit_us,
-                    "sql.execute_tpcc.commit"
-                );
+                let flush_phases = ctx.last_commit_flush_phases.take();
+                if let Some(p) = flush_phases {
+                    let accounted_flush_us = p.pm_lock_wait_us.saturating_add(p.heap_fsync_us);
+                    info!(
+                        target: "rustdb::sql_phases",
+                        tpcc_kind = kind,
+                        commit_us = commit_transaction_wall_us,
+                        commit_transaction_wall_us,
+                        pre_commit_us,
+                        commit_pm_lock_wait_us = p.pm_lock_wait_us,
+                        commit_heap_fsync_us = p.heap_fsync_us,
+                        commit_gap_us = commit_transaction_wall_us
+                            .saturating_sub(accounted_flush_us),
+                        "sql.execute_tpcc.commit"
+                    );
+                } else {
+                    info!(
+                        target: "rustdb::sql_phases",
+                        tpcc_kind = kind,
+                        commit_us = commit_transaction_wall_us,
+                        commit_transaction_wall_us,
+                        pre_commit_us,
+                        commit_gap_us = commit_transaction_wall_us,
+                        "sql.execute_tpcc.commit"
+                    );
+                }
                 if kind == 0 && pre_commit_us > 0 {
                     info!(
                         target: "rustdb::sql_phases",
@@ -3289,7 +3301,7 @@ fn insert_row_tuple_inner(
                     "record offset too large for WAL",
                 )
             })?;
-            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, &bytes)?;
         }
     }
     if let Err(e) = register_row_for_insert(state, table, ins.record_id, &tuple) {
@@ -3341,7 +3353,7 @@ fn insert_heap_row_after_bytes(
                     "record offset too large for WAL",
                 )
             })?;
-            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, &bytes)?;
         }
     }
     if let Err(e) = register_row_for_insert(state, table, ins.record_id, tuple) {
@@ -3414,7 +3426,7 @@ fn insert_heap_row_pk_serialized(
                     "record offset too large for WAL",
                 )
             })?;
-            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, &bytes)?;
         }
     }
     if let Err(e) = sql_constraints::commit_row_for_insert(
@@ -3474,6 +3486,13 @@ fn insert_heap_row_in_execute_insert(
     })
 }
 
+/// Optional lock vs row-update timing for native TPC-C phase logs.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct RowUpdatePhaseUs {
+    pub lock_us: u64,
+    pub update_us: u64,
+}
+
 /// Index-backed UPDATE with per-row write locks when the predicate is an exact index key.
 pub(crate) fn update_rows_by_equalities<F>(
     state: &SqlEngineState,
@@ -3481,6 +3500,7 @@ pub(crate) fn update_rows_by_equalities<F>(
     table: &str,
     equalities: &HashMap<String, String>,
     mut update_fn: F,
+    phase_us: Option<&mut RowUpdatePhaseUs>,
 ) -> Result<u64, EngineError>
 where
     F: FnMut(&mut Tuple) -> Result<(), EngineError>,
@@ -3599,14 +3619,43 @@ where
         Ok(rows_affected)
     };
 
+    let profile_phases = phase_us.is_some() && sql_phase_log_enabled();
+    let mut update_us_acc = 0u64;
+    let timed_apply = || {
+        let update_t0 = profile_phases.then(Instant::now);
+        let rows = apply()?;
+        if profile_phases {
+            update_us_acc = update_t0
+                .map(|t0| t0.elapsed().as_micros() as u64)
+                .unwrap_or(0);
+        }
+        Ok(rows)
+    };
+
     if exact_key {
-        return state
+        let lock_t0 = profile_phases.then(Instant::now);
+        let rows = state
             .row_locks
-            .with_write_locks(table, row_lock_rids, apply);
+            .with_write_locks(table, row_lock_rids, timed_apply)?;
+        if let Some(out) = phase_us {
+            out.lock_us = lock_t0
+                .map(|t0| t0.elapsed().as_micros() as u64)
+                .unwrap_or(0);
+            out.update_us = update_us_acc;
+        }
+        return Ok(rows);
     }
+    let lock_t0 = profile_phases.then(Instant::now);
     let lock = table_storage_lock_arc(state, table)?;
     let _guard = acquire_table_storage_write_lock(&lock, table)?;
-    apply()
+    let rows = timed_apply()?;
+    if let Some(out) = phase_us {
+        out.lock_us = lock_t0
+            .map(|t0| t0.elapsed().as_micros() as u64)
+            .unwrap_or(0);
+        out.update_us = update_us_acc;
+    }
+    Ok(rows)
 }
 
 /// Index-backed DELETE; uses row locks on exact single-key lookups.
