@@ -613,8 +613,74 @@ impl EngineHandle for SqlEngine {
     }
 }
 
+fn db_err_is_record_not_found(e: &DbError) -> bool {
+    e.to_string().contains("Record not found")
+}
+
 fn map_db_err(e: DbError) -> EngineError {
     EngineError::new(engine_error_code::INTERNAL, e.to_string())
+}
+
+fn heap_delete_idempotent(pm: &mut PageManager, rid: RecordId) -> Result<bool, EngineError> {
+    match pm.delete(rid) {
+        Ok(_) => Ok(true),
+        Err(e) if db_err_is_record_not_found(&e) => Ok(false),
+        Err(e) => Err(map_db_err(e)),
+    }
+}
+
+/// TPC-C heap insert without constraint-runtime work (seed tables have no PK/FK).
+pub(crate) fn insert_row_tuple_tpcc(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuple: Tuple,
+) -> Result<(), EngineError> {
+    if table_has_primary_key(state, table) {
+        return insert_row_tuple(state, ctx, table, tuple);
+    }
+    record_touched_table(ctx, table);
+    let bytes = tuple.to_bytes().map_err(map_db_err)?;
+    let pm_for_table = table_page_manager(state, table)?;
+    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    let ins = pm.insert(&bytes).map_err(map_db_err)?;
+    maybe_simulate_dml_crash("insert_row");
+    if let Some(tx) = ctx.transaction.as_mut() {
+        if let Some(ref wal) = state.wal {
+            let page_id = (ins.record_id >> 32) as u64;
+            let off = (ins.record_id & 0xffff_ffff) as u32;
+            let record_offset: u16 = off.try_into().map_err(|_| {
+                EngineError::new(
+                    engine_error_code::INTERNAL,
+                    "record offset too large for WAL",
+                )
+            })?;
+            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+        }
+    }
+    sync_index_after_insert(state, table, ins.record_id, &tuple)?;
+    push_undo(
+        ctx,
+        UndoEntry::Insert {
+            table: table.to_string(),
+            rid: ins.record_id,
+            payload: bytes,
+        },
+    );
+    Ok(())
+}
+
+pub(crate) fn log_execute_tpcc_phase(kind: u8, phase: &'static str, elapsed_us: u64) {
+    if !sql_phase_log_enabled() {
+        return;
+    }
+    info!(
+        target: "rustdb::sql_phases",
+        kind,
+        phase,
+        us = elapsed_us,
+        "sql.execute_tpcc_phase"
+    );
 }
 
 fn lock_poisoned_engine() -> EngineError {
@@ -2772,7 +2838,17 @@ pub(crate) fn tpcc_run_in_transaction(
     begin_transaction(state, ctx)?;
     match f(state, ctx) {
         Ok(rows) => {
-            commit_transaction(state, ctx)?;
+            if sql_phase_log_enabled() {
+                let t0 = Instant::now();
+                commit_transaction(state, ctx)?;
+                info!(
+                    target: "rustdb::sql_phases",
+                    commit_us = t0.elapsed().as_micros() as u64,
+                    "sql.execute_tpcc.commit"
+                );
+            } else {
+                commit_transaction(state, ctx)?;
+            }
             Ok(EngineOutput::ExecutionOk {
                 rows_affected: rows,
             })
@@ -3150,28 +3226,33 @@ where
                 cat.clone()
             };
             let schema = cat_snapshot.schema(table).cloned();
-            if let Some(ref sch) = schema {
-                let mut rt = state
-                    .constraint_runtime
-                    .lock()
-                    .map_err(|_| lock_poisoned_engine())?;
-                sql_constraints::unregister_row(
-                    &mut rt,
-                    table,
-                    rid,
-                    &old_tuple,
-                    sch,
-                    &cat_snapshot,
-                )?;
+            let tracks = schema.as_ref().is_some_and(table_tracks_constraints);
+            if tracks {
+                if let Some(ref sch) = schema {
+                    let mut rt = state
+                        .constraint_runtime
+                        .lock()
+                        .map_err(|_| lock_poisoned_engine())?;
+                    sql_constraints::unregister_row(
+                        &mut rt,
+                        table,
+                        rid,
+                        &old_tuple,
+                        sch,
+                        &cat_snapshot,
+                    )?;
+                }
             }
             update_fn(&mut tuple)?;
             apply_defaults_and_validate(state, table, &mut tuple)?;
-            if let Some(ref sch) = schema {
-                let mut rt = state
-                    .constraint_runtime
-                    .lock()
-                    .map_err(|_| lock_poisoned_engine())?;
-                sql_constraints::register_row(&mut rt, table, rid, &tuple, sch, &cat_snapshot)?;
+            if tracks {
+                if let Some(ref sch) = schema {
+                    let mut rt = state
+                        .constraint_runtime
+                        .lock()
+                        .map_err(|_| lock_poisoned_engine())?;
+                    sql_constraints::register_row(&mut rt, table, rid, &tuple, sch, &cat_snapshot)?;
+                }
             }
             let new_bytes = tuple.to_bytes().map_err(map_db_err)?;
             if let Some(tx) = ctx.transaction.as_mut() {
@@ -3256,11 +3337,15 @@ pub(crate) fn delete_rows_by_equalities(
     };
     drop(pm);
 
-    let single_rid = if exact_key && rows.len() == 1 {
-        Some(rows[0].0)
+    if exact_key && rows.is_empty() {
+        return Ok(0);
+    }
+    let row_lock_rids: Vec<RecordId> = if exact_key {
+        rows.iter().map(|(rid, _)| *rid).collect()
     } else {
-        None
+        Vec::new()
     };
+
     let apply = move || -> Result<u64, EngineError> {
         let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
         let mut rows_affected = 0u64;
@@ -3271,11 +3356,20 @@ pub(crate) fn delete_rows_by_equalities(
                 cat.clone()
             };
             if let Some(sch) = cat_snapshot.schema(table) {
-                let mut rt = state
-                    .constraint_runtime
-                    .lock()
-                    .map_err(|_| lock_poisoned_engine())?;
-                sql_constraints::unregister_row(&mut rt, table, rid, &tuple, sch, &cat_snapshot)?;
+                if table_tracks_constraints(sch) {
+                    let mut rt = state
+                        .constraint_runtime
+                        .lock()
+                        .map_err(|_| lock_poisoned_engine())?;
+                    sql_constraints::unregister_row(
+                        &mut rt,
+                        table,
+                        rid,
+                        &tuple,
+                        sch,
+                        &cat_snapshot,
+                    )?;
+                }
             }
             if let Some(tx) = ctx.transaction.as_mut() {
                 if let Some(ref wal) = state.wal {
@@ -3290,7 +3384,11 @@ pub(crate) fn delete_rows_by_equalities(
                     wal.log_data_delete(tx, pm.file_id(), page_id, record_offset, data.clone())?;
                 }
             }
-            pm.delete(rid).map_err(map_db_err)?;
+            match pm.delete(rid) {
+                Ok(_) => {}
+                Err(e) if db_err_is_record_not_found(&e) => continue,
+                Err(e) => return Err(map_db_err(e)),
+            }
             sync_index_after_delete(state, table, rid, &tuple)?;
             push_undo(
                 ctx,
@@ -3306,16 +3404,17 @@ pub(crate) fn delete_rows_by_equalities(
         Ok(rows_affected)
     };
 
-    if let Some(rid) = single_rid {
-        state.row_locks.with_write_locks(table, vec![rid], apply)
-    } else {
-        let lock = table_storage_lock_arc(state, table)?;
-        let _guard = acquire_table_storage_write_lock(&lock, table)?;
-        apply()
+    if exact_key {
+        return state
+            .row_locks
+            .with_write_locks(table, row_lock_rids, apply);
     }
+    let lock = table_storage_lock_arc(state, table)?;
+    let _guard = acquire_table_storage_write_lock(&lock, table)?;
+    apply()
 }
 
-/// Order-status read via exact index key (no table storage read lock).
+/// Order-status read via exact index key (no table storage read lock when index is exact).
 pub(crate) fn tpcc_order_status_row_count(
     state: &SqlEngineState,
     w_id: i32,
@@ -3327,12 +3426,15 @@ pub(crate) fn tpcc_order_status_row_count(
         .index_registry
         .read()
         .map_err(|_| lock_poisoned_engine())?;
-    let Some((rids, _)) = ir
+    let Some((rids, exact_key)) = ir
         .lookup_record_ids_by_equalities("oorder", &equalities)
         .map_err(|e| EngineError::new(engine_error_code::INTERNAL, format!("index lookup: {e}")))?
     else {
         return Ok(0);
     };
+    if exact_key {
+        return Ok(rids.len() as u64);
+    }
     drop(ir);
     let pm = table_page_manager(state, "oorder")?;
     let mut pm = pm.lock().map_err(|_| lock_poisoned_engine())?;
@@ -3378,6 +3480,12 @@ pub(crate) fn tpcc_stock_level_row_count(
     Ok(count)
 }
 
+fn table_tracks_constraints(schema: &TableSchema) -> bool {
+    schema.primary_key.is_some()
+        || !schema.unique_constraints.is_empty()
+        || !schema.foreign_keys.is_empty()
+}
+
 fn register_row_for_insert(
     state: &SqlEngineState,
     table: &str,
@@ -3388,6 +3496,10 @@ fn register_row_for_insert(
     let Some(schema) = cat.schema(table).cloned() else {
         return Ok(());
     };
+    if !table_tracks_constraints(&schema) {
+        drop(cat);
+        return sync_index_after_insert(state, table, rid, tuple);
+    }
     let snapshot = cat.clone();
     drop(cat);
     let mut rt = state
@@ -3885,6 +3997,30 @@ mod tests {
             }
             _ => panic!("expected result set"),
         }
+    }
+
+    #[test]
+    fn native_delivery_empty_new_order_returns_execution_ok() {
+        use crate::network::engine::EngineHandle;
+        use crate::tpcc_workload::{txn_kind_as_u8, TxnKind};
+
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql(
+            "CREATE TABLE new_order (no_o_id INTEGER, no_d_id INTEGER, no_w_id INTEGER)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "CREATE INDEX idx_new_order_wd ON new_order (no_w_id, no_d_id)",
+            &mut ctx,
+        )
+        .unwrap();
+        let out = eng
+            .execute_tpcc(txn_kind_as_u8(TxnKind::Delivery), 42, 1, &mut ctx)
+            .unwrap();
+        assert_eq!(out, EngineOutput::ExecutionOk { rows_affected: 0 });
     }
 
     #[test]

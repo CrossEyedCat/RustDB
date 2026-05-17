@@ -3,13 +3,15 @@
 //! Bypasses per-statement SQL parse/plan/execute; uses index-backed row locks and page latches.
 
 use super::{
-    delete_rows_by_equalities, equalities_map_i32, insert_row_tuple, int_column_value,
-    tpcc_order_status_row_count, tpcc_run_in_transaction, tpcc_stock_level_row_count,
-    tuple_i32_field, update_rows_by_equalities, SqlEngineState,
+    delete_rows_by_equalities, equalities_map_i32, insert_row_tuple_tpcc, int_column_value,
+    sql_phase_log_enabled, tpcc_order_status_row_count, tpcc_run_in_transaction,
+    tpcc_stock_level_row_count, tuple_i32_field, update_rows_by_equalities, SqlEngineState,
 };
 use crate::network::engine::{EngineError, EngineOutput, SessionContext};
 use crate::storage::tuple::Tuple;
 use crate::tpcc_workload::{txn_kind_from_u8, TxnKind};
+use std::time::Instant;
+use tracing::info;
 
 fn txn_kind_from_wire(kind: u8) -> Result<TxnKind, EngineError> {
     txn_kind_from_u8(kind).ok_or_else(|| {
@@ -44,6 +46,10 @@ fn new_tuple_with_columns(id: u64, cols: &[(&str, i32)]) -> Tuple {
     tuple
 }
 
+fn phase_elapsed_us(t0: Instant) -> u64 {
+    t0.elapsed().as_micros() as u64
+}
+
 fn run_new_order(
     state: &SqlEngineState,
     ctx: &mut SessionContext,
@@ -54,7 +60,15 @@ fn run_new_order(
     qty: i32,
     o_id: u64,
 ) -> Result<u64, EngineError> {
+    let profile = sql_phase_log_enabled();
+    let mut district_us = 0u64;
+    let mut insert_oorder_us = 0u64;
+    let mut insert_new_order_us = 0u64;
+    let mut insert_order_line_us = 0u64;
+    let mut stock_us = 0u64;
+
     let mut rows = 0u64;
+    let t0 = profile.then(Instant::now);
     rows += update_rows_by_equalities(
         state,
         ctx,
@@ -66,10 +80,15 @@ fn run_new_order(
             Ok(())
         },
     )?;
+    if let Some(t0) = t0 {
+        district_us = phase_elapsed_us(t0);
+    }
+
+    let t0 = profile.then(Instant::now);
     let id = state
         .next_tuple_id
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    insert_row_tuple(
+    insert_row_tuple_tpcc(
         state,
         ctx,
         "oorder",
@@ -85,10 +104,15 @@ fn run_new_order(
         ),
     )?;
     rows += 1;
+    if let Some(t0) = t0 {
+        insert_oorder_us = phase_elapsed_us(t0);
+    }
+
+    let t0 = profile.then(Instant::now);
     let id = state
         .next_tuple_id
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    insert_row_tuple(
+    insert_row_tuple_tpcc(
         state,
         ctx,
         "new_order",
@@ -102,6 +126,11 @@ fn run_new_order(
         ),
     )?;
     rows += 1;
+    if let Some(t0) = t0 {
+        insert_new_order_us = phase_elapsed_us(t0);
+    }
+
+    let t0 = profile.then(Instant::now);
     rows += update_rows_by_equalities(
         state,
         ctx,
@@ -117,10 +146,15 @@ fn run_new_order(
             Ok(())
         },
     )?;
+    if let Some(t0) = t0 {
+        stock_us = phase_elapsed_us(t0);
+    }
+
+    let t0 = profile.then(Instant::now);
     let id = state
         .next_tuple_id
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    insert_row_tuple(
+    insert_row_tuple_tpcc(
         state,
         ctx,
         "order_line",
@@ -138,6 +172,21 @@ fn run_new_order(
         ),
     )?;
     rows += 1;
+    if let Some(t0) = t0 {
+        insert_order_line_us = phase_elapsed_us(t0);
+    }
+
+    if profile {
+        info!(
+            target: "rustdb::sql_phases",
+            district_us,
+            insert_oorder_us,
+            insert_new_order_us,
+            insert_order_line_us,
+            stock_us,
+            "sql.execute_tpcc.new_order"
+        );
+    }
     Ok(rows)
 }
 

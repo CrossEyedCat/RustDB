@@ -331,7 +331,17 @@ fn dispatch_execute_tpcc(
             Ok(Arc::from(owned.into_boxed_slice()))
         })
     })();
-    span.record("wall_us", wall_clock.elapsed().as_micros());
+    let wall_us = wall_clock.elapsed().as_micros() as u64;
+    span.record("wall_us", wall_us);
+    if crate::network::sql_engine::sql_phase_log_enabled() {
+        tracing::info!(
+            target: "rustdb::sql_phases",
+            wall_us,
+            kind = tpcc.kind,
+            global_txn_id = tpcc.global_txn_id,
+            "sql.execute_tpcc"
+        );
+    }
     out
 }
 
