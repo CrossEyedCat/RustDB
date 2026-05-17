@@ -459,7 +459,8 @@ jobs:
           path: loom-out/loom-tests.log
 
   # Final throughput benchmark: TPC-C-ish (transactional write-heavy mix) for RustDB over QUIC.
-  # Runs on main pushes and on workflow_dispatch.
+  # Runs on: main push, workflow_dispatch, and pull_request when head branch is tpcc* (perf PRs).
+  # Other PRs: use Actions → workflow_dispatch on the PR branch, or merge to main.
   # Run 20 policy: keep full-mix soft floor at 58% until two consecutive CI runs reach ≥56%;
   # do not raise the floor early. order_status micro stays at 70%; new_order latency warnings unchanged.
   bench_tpcc_throughput:
@@ -468,7 +469,8 @@ jobs:
     needs: [docker]
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      github.event_name == 'workflow_dispatch'
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && startsWith(github.head_ref, 'tpcc'))
     timeout-minutes: 45
     permissions:
       contents: read
