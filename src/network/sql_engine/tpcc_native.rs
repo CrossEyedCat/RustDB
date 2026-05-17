@@ -184,6 +184,8 @@ fn run_new_order(
         insert_order_line_us = phase_elapsed_us(t0);
     }
 
+    ctx.tpcc_dml_done_at = Some(Instant::now());
+
     if profile {
         info!(
             target: "rustdb::sql_phases",
@@ -267,7 +269,7 @@ pub(crate) fn execute_tpcc(
 ) -> Result<EngineOutput, EngineError> {
     let txn_kind = txn_kind_from_wire(kind)?;
     let (_st, w_id, d_id, c_id, i_id, qty, o_id) = tpcc_params(seed, global_txn_id);
-    tpcc_run_in_transaction(state, ctx, |state, ctx| {
+    tpcc_run_in_transaction(state, ctx, kind, |state, ctx| {
         let rows = match txn_kind {
             TxnKind::NewOrder => run_new_order(state, ctx, w_id, d_id, c_id, i_id, qty, o_id)?,
             TxnKind::Payment => run_payment(state, ctx, w_id, d_id, c_id)?,

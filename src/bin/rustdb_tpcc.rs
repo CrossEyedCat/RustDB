@@ -310,17 +310,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr: SocketAddr = args.addr.parse()?;
     let der = fs::read(&args.cert)?;
     let cert = CertificateDer::from(der);
+    let micro_hot = args.native_tpcc && tpcc_native_micro_hot();
+    let quic_streams = if micro_hot {
+        args.quic_max_streams.max(2048).max(args.concurrency)
+    } else {
+        args.quic_max_streams.max(args.concurrency)
+    };
+    let quic_idle = if micro_hot {
+        Duration::from_secs(args.quic_idle_secs.max(60))
+    } else {
+        Duration::from_secs(args.quic_idle_secs)
+    };
     let client_cfg = build_quinn_client_config_with_limits(
         std::slice::from_ref(&cert),
-        args.quic_max_streams.max(args.concurrency),
-        Duration::from_secs(args.quic_idle_secs),
+        quic_streams,
+        quic_idle,
     )?;
     let endpoint = make_client_endpoint(client_cfg)?;
     let concurrency = args.concurrency.max(1);
     if args.shared_connection && args.connections.is_some() {
         return Err("--connections cannot be used with --shared-connection".into());
     }
-    let micro_hot = args.native_tpcc && tpcc_native_micro_hot();
     let workers: Vec<Arc<QuicExec>> = if args.shared_connection {
         let conn = connect(&endpoint, addr, &args.server_name).await?;
         (0..concurrency)

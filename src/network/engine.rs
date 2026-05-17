@@ -140,6 +140,12 @@ pub struct SessionContext {
     pub transaction: Option<SqlTransaction>,
     /// When true, per-statement DML skips table/row locks (held by the native TPC-C batch path).
     pub(crate) skip_dml_storage_lock: bool,
+    /// Active native TPC-C kind (`0`…`4`) for commit-phase logging.
+    pub(crate) tpcc_kind: Option<u8>,
+    /// Set when native `new_order` DML finishes (before `COMMIT`) for `pre_commit_us`.
+    pub(crate) tpcc_dml_done_at: Option<std::time::Instant>,
+    /// Reused row serialization buffer for native TPC-C inserts in a transaction.
+    pub(crate) tpcc_row_bytes_buf: Vec<u8>,
 }
 
 impl Default for SessionContext {
@@ -148,6 +154,9 @@ impl Default for SessionContext {
             session_id: None,
             transaction: None,
             skip_dml_storage_lock: false,
+            tpcc_kind: None,
+            tpcc_dml_done_at: None,
+            tpcc_row_bytes_buf: Vec::new(),
         }
     }
 }

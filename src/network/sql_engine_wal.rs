@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
 pub struct SqlEngineWal {
@@ -304,49 +304,64 @@ pub(crate) fn bench_defer_heap_fsync_enabled() -> bool {
     std::env::var_os("RUSTDB_BENCH_DEFER_HEAP_FSYNC").is_some_and(|v| v != "0")
 }
 
-fn flush_pm_writes_only(pm: &Arc<Mutex<PageManager>>) -> DbResult<(usize, Option<u32>)> {
+/// Microsecond breakdown for `COMMIT` heap flush (logged on `rustdb::sql_phases`).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct CommitFlushPhaseUs {
+    pub table_map_lock_us: u64,
+    pub pm_lock_wait_us: u64,
+    pub heap_fsync_us: u64,
+}
+
+fn flush_pm_writes_only(pm: &Arc<Mutex<PageManager>>) -> DbResult<(usize, Option<u32>, u64)> {
+    let lock_t0 = Instant::now();
     let mut guard = pm
         .lock()
         .map_err(|_| DbError::database("table page manager lock poisoned"))?;
+    let pm_lock_wait_us = lock_t0.elapsed().as_micros() as u64;
     if guard.dirty_page_count() == 0 {
-        return Ok((0, None));
+        return Ok((0, None, pm_lock_wait_us));
     }
     let file_id = guard.file_id();
     let n = guard
         .flush_dirty_pages_no_sync()
         .map_err(|e| DbError::database(e.to_string()))?;
-    Ok((n, if n > 0 { Some(file_id) } else { None }))
+    Ok((n, if n > 0 { Some(file_id) } else { None }, pm_lock_wait_us))
 }
 
 fn sync_heap_files_after_coalesced_flush(
     sync_targets: Vec<(u32, Arc<Mutex<PageManager>>)>,
-) -> DbResult<()> {
+) -> DbResult<u64> {
     if bench_defer_heap_fsync_enabled() {
-        return Ok(());
+        return Ok(0);
     }
+    let fsync_t0 = Instant::now();
     let mut synced = HashSet::new();
     for (file_id, pm) in sync_targets {
         if !synced.insert(file_id) {
             continue;
         }
+        let lock_t0 = Instant::now();
         pm.lock()
             .map_err(|_| DbError::database("table page manager lock poisoned"))?
             .sync_heap_file()
             .map_err(|e| DbError::database(e.to_string()))?;
+        let _ = lock_t0;
     }
-    Ok(())
+    Ok(fsync_t0.elapsed().as_micros() as u64)
 }
 
-fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<usize> {
+fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<(usize, u64, u64)> {
     if pms.is_empty() {
-        return Ok(0);
+        return Ok((0, 0, 0));
     }
     let mut total = 0usize;
     let mut sync_targets = Vec::new();
+    let mut pm_lock_wait_us = 0u64;
 
     if pms.len() <= 1 {
         for pm in pms {
-            let (n, file_id) = flush_pm_writes_only(&pm)?;
+            let (n, file_id, wait) = flush_pm_writes_only(&pm)?;
+            pm_lock_wait_us += wait;
             total += n;
             if let Some(file_id) = file_id {
                 sync_targets.push((file_id, pm));
@@ -357,7 +372,8 @@ fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<
             .par_iter()
             .map(flush_pm_writes_only)
             .collect::<DbResult<Vec<_>>>()?;
-        for (pm, (n, file_id)) in pms.into_iter().zip(results) {
+        for (pm, (n, file_id, wait)) in pms.into_iter().zip(results) {
+            pm_lock_wait_us += wait;
             total += n;
             if let Some(file_id) = file_id {
                 sync_targets.push((file_id, pm));
@@ -365,8 +381,8 @@ fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<
         }
     }
 
-    sync_heap_files_after_coalesced_flush(sync_targets)?;
-    Ok(total)
+    let heap_fsync_us = sync_heap_files_after_coalesced_flush(sync_targets)?;
+    Ok((total, pm_lock_wait_us, heap_fsync_us))
 }
 
 /// Flushes dirty pages for the given physical table heaps only.
@@ -376,21 +392,41 @@ fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<
 pub(crate) fn flush_page_managers_for_tables(
     state: &crate::network::sql_engine::SqlEngineState,
     tables: &HashSet<String>,
-) -> DbResult<usize> {
+) -> DbResult<(usize, CommitFlushPhaseUs)> {
     if tables.is_empty() {
-        return Ok(0);
+        return Ok((0, CommitFlushPhaseUs::default()));
     }
+    let mut sorted: Vec<String> = tables.iter().cloned().collect();
+    sorted.sort();
+    let map_t0 = Instant::now();
     let map = state
         .table_page_managers
         .lock()
         .map_err(|_| DbError::database("table pm map lock poisoned"))?;
-    let pms: Vec<Arc<Mutex<PageManager>>> = tables
-        .iter()
-        .filter_map(|name| map.get(name).cloned())
-        .filter(|pm| pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false))
-        .collect();
+    let table_map_lock_us = map_t0.elapsed().as_micros() as u64;
+    let mut pms: Vec<Arc<Mutex<PageManager>>> = Vec::with_capacity(sorted.len());
+    let mut pm_lock_wait_us = 0u64;
+    for name in &sorted {
+        let Some(pm) = map.get(name) else {
+            continue;
+        };
+        let lock_t0 = Instant::now();
+        let dirty = pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false);
+        pm_lock_wait_us += lock_t0.elapsed().as_micros() as u64;
+        if dirty {
+            pms.push(pm.clone());
+        }
+    }
     drop(map);
-    coalesced_flush_page_managers(pms)
+    let (flushed, flush_pm_wait, heap_fsync_us) = coalesced_flush_page_managers(pms)?;
+    Ok((
+        flushed,
+        CommitFlushPhaseUs {
+            table_map_lock_us,
+            pm_lock_wait_us: pm_lock_wait_us.saturating_add(flush_pm_wait),
+            heap_fsync_us,
+        },
+    ))
 }
 
 pub(crate) fn flush_all_page_managers(
@@ -406,7 +442,8 @@ pub(crate) fn flush_all_page_managers(
         pms.push(pm.clone());
     }
     drop(map);
-    coalesced_flush_page_managers(pms)
+    let (n, _, _) = coalesced_flush_page_managers(pms)?;
+    Ok(n)
 }
 
 pub fn replay_wal_into_engine(
@@ -632,7 +669,7 @@ mod tests {
         let mut tables = HashSet::new();
         tables.insert("t_clean".to_string());
         tables.insert("t_dirty".to_string());
-        let flushed = flush_page_managers_for_tables(state, &tables).unwrap();
+        let (flushed, _metrics) = flush_page_managers_for_tables(state, &tables).unwrap();
         assert!(flushed > 0);
         assert_eq!(pm_clean.lock().unwrap().dirty_page_count(), 0);
         assert_eq!(pm_dirty.lock().unwrap().dirty_page_count(), 0);
@@ -644,7 +681,7 @@ mod tests {
     fn flush_page_managers_empty_tables_is_noop() {
         let dir = TempDir::new().unwrap();
         let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
-        let n = flush_page_managers_for_tables(eng.state_for_test(), &HashSet::new()).unwrap();
+        let (n, _) = flush_page_managers_for_tables(eng.state_for_test(), &HashSet::new()).unwrap();
         assert_eq!(n, 0);
     }
 }

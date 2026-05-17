@@ -678,10 +678,12 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
         });
     }
     record_touched_table(ctx, table);
+    ctx.tpcc_row_bytes_buf.clear();
     let bytes = tuple.to_bytes().map_err(map_db_err)?;
+    ctx.tpcc_row_bytes_buf.extend_from_slice(&bytes);
     let pm_for_table = table_page_manager(state, table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-    let ins = pm.insert(&bytes).map_err(map_db_err)?;
+    let ins = pm.insert(&ctx.tpcc_row_bytes_buf).map_err(map_db_err)?;
     maybe_simulate_dml_crash("insert_row");
     let wal_clock = state.wal.is_some().then(Instant::now);
     if let Some(tx) = ctx.transaction.as_mut() {
@@ -694,12 +696,18 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
                     "record offset too large for WAL",
                 )
             })?;
-            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, bytes.clone())?;
+            wal.log_data_insert(
+                tx,
+                pm.file_id(),
+                page_id,
+                record_offset,
+                ctx.tpcc_row_bytes_buf.clone(),
+            )?;
         }
         tx.pending_index_inserts.push(PendingIndexInsert {
             table: table.to_string(),
             rid: ins.record_id,
-            column_map: tuple_to_index_column_map(&tuple),
+            column_map: tuple_to_index_column_map_for_table(state, table, &tuple)?,
         });
     } else {
         sync_index_after_insert(state, table, ins.record_id, &tuple)?;
@@ -707,12 +715,13 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
     let wal_us = wal_clock
         .map(|t0| t0.elapsed().as_micros() as u64)
         .unwrap_or(0);
+    let payload = std::mem::take(&mut ctx.tpcc_row_bytes_buf);
     push_undo(
         ctx,
         UndoEntry::Insert {
             table: table.to_string(),
             rid: ins.record_id,
-            payload: bytes,
+            payload,
         },
     );
     Ok(TpccInsertTimings {
@@ -1269,8 +1278,9 @@ fn commit_transaction(
     let flush_tables_count = touched.len();
     span.record("flush_tables_count", flush_tables_count);
     let flush_clock = Instant::now();
-    crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &touched)
-        .map_err(map_db_err)?;
+    let (_flushed_pages, flush_phases) =
+        crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &touched)
+            .map_err(map_db_err)?;
     let commit_flush_us = flush_clock.elapsed().as_micros() as u64;
     span.record("flush_us", commit_flush_us);
     span.record("commit_flush_us", commit_flush_us);
@@ -1281,15 +1291,20 @@ fn commit_transaction(
     let commit_log_append_us = log_clock.elapsed().as_micros() as u64;
     span.record("commit_log_append_us", commit_log_append_us);
 
+    let tpcc_kind = ctx.tpcc_kind.unwrap_or(255);
     if sql_phase_log_enabled() {
         info!(
             target: "rustdb::sql_phases",
+            tpcc_kind,
             flush_us = commit_flush_us,
             wal_us = commit_wal_us,
             commit_wal_us,
             commit_flush_us,
             commit_index_batch_us,
             commit_log_append_us,
+            commit_table_map_lock_us = flush_phases.table_map_lock_us,
+            commit_pm_lock_wait_us = flush_phases.pm_lock_wait_us,
+            commit_heap_fsync_us = flush_phases.heap_fsync_us,
             flush_tables_count,
             touched_table_count,
             pending_index_count,
@@ -1341,7 +1356,7 @@ fn rollback_transaction(
     }
     // Persist rollback: otherwise the next process sees heap pages from disk that still contain
     // undone inserts (WAL replay does not redo aborted txs, so durability must match).
-    crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &flush_tables)
+    let _ = crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &flush_tables)
         .map_err(map_db_err)?;
     // Only append an ABORT marker after the UNDO is applied *and* persisted.
     //
@@ -1718,6 +1733,36 @@ fn tuple_to_index_column_map(tuple: &Tuple) -> HashMap<String, String> {
         m.insert(name.clone(), column_value_to_index_string(cv));
     }
     m
+}
+
+/// Index column map for deferred TPC-C inserts (only columns referenced by secondary indexes).
+fn tuple_to_index_column_map_for_table(
+    state: &SqlEngineState,
+    table: &str,
+    tuple: &Tuple,
+) -> Result<HashMap<String, String>, EngineError> {
+    let ir = state
+        .index_registry
+        .read()
+        .map_err(|_| lock_poisoned_engine())?;
+    let indexes = ir.list_indexes_for_table(table);
+    drop(ir);
+    let mut cols = HashSet::new();
+    for (_idx_name, col_list) in indexes {
+        for c in col_list {
+            cols.insert(c.clone());
+        }
+    }
+    if cols.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut m = HashMap::with_capacity(cols.len());
+    for c in cols {
+        if let Some(cv) = tuple.values.get(&c) {
+            m.insert(c, column_value_to_index_string(cv));
+        }
+    }
+    Ok(m)
 }
 
 /// Collects `column = literal` pairs from a DML `WHERE` (`AND` only).
@@ -2974,27 +3019,48 @@ fn rebuild_all_constraint_runtime(state: &SqlEngineState) -> Result<(), EngineEr
 pub(crate) fn tpcc_run_in_transaction(
     state: &SqlEngineState,
     ctx: &mut SessionContext,
+    kind: u8,
     f: impl FnOnce(&SqlEngineState, &mut SessionContext) -> Result<u64, EngineError>,
 ) -> Result<EngineOutput, EngineError> {
+    ctx.tpcc_kind = Some(kind);
+    ctx.tpcc_dml_done_at = None;
+    ctx.tpcc_row_bytes_buf.clear();
     begin_transaction(state, ctx)?;
     match f(state, ctx) {
         Ok(rows) => {
+            let pre_commit_us = ctx
+                .tpcc_dml_done_at
+                .take()
+                .map_or(0, |t0| t0.elapsed().as_micros() as u64);
             if sql_phase_log_enabled() {
                 let t0 = Instant::now();
                 commit_transaction(state, ctx)?;
+                let commit_us = t0.elapsed().as_micros() as u64;
                 info!(
                     target: "rustdb::sql_phases",
-                    commit_us = t0.elapsed().as_micros() as u64,
+                    tpcc_kind = kind,
+                    commit_us,
+                    pre_commit_us,
                     "sql.execute_tpcc.commit"
                 );
+                if kind == 0 && pre_commit_us > 0 {
+                    info!(
+                        target: "rustdb::sql_phases",
+                        pre_commit_us,
+                        "sql.execute_tpcc.new_order_pre_commit"
+                    );
+                }
             } else {
                 commit_transaction(state, ctx)?;
             }
+            ctx.tpcc_kind = None;
             Ok(EngineOutput::ExecutionOk {
                 rows_affected: rows,
             })
         }
         Err(e) => {
+            ctx.tpcc_kind = None;
+            ctx.tpcc_dml_done_at = None;
             let _ = rollback_transaction(state, ctx);
             Err(e)
         }

@@ -130,11 +130,33 @@ def extract_execute_tpcc_new_order_phases(line: str) -> dict[str, int] | None:
     return out if out else None
 
 
-def extract_execute_tpcc_commit_us(line: str) -> int | None:
+def extract_execute_tpcc_commit_us(line: str) -> tuple[int, int] | None:
     if "sql.execute_tpcc.commit" not in line:
         return None
     m = re.search(r"commit_us=(\d+)", line)
-    return int(m.group(1)) if m else None
+    if not m:
+        return None
+    m_kind = re.search(r"tpcc_kind=(\d+)", line)
+    kind = int(m_kind.group(1)) if m_kind else -1
+    return int(m.group(1)), kind
+
+
+def extract_sql_commit_by_kind(line: str) -> tuple[int, dict[str, int]] | None:
+    if "rustdb::sql_phases" not in line or "sql.commit" not in line:
+        return None
+    m_kind = re.search(r"tpcc_kind=(\d+)", line)
+    if not m_kind:
+        return None
+    kind = int(m_kind.group(1))
+    out: dict[str, int] = {}
+    for phase in COMMIT_SUB_PHASES:
+        m = re.search(rf"{phase}=(\d+)", line)
+        if m:
+            out[phase] = int(m.group(1))
+    m_flush = re.search(r"commit_flush_us=(\d+)", line)
+    if m_flush:
+        out["commit_flush_us"] = int(m_flush.group(1))
+    return kind, out if out else None
 
 
 NEW_ORDER_PHASES = (
@@ -152,7 +174,18 @@ COMMIT_SUB_PHASES = (
     "commit_flush_us",
     "commit_index_batch_us",
     "commit_log_append_us",
+    "commit_table_map_lock_us",
+    "commit_pm_lock_wait_us",
+    "commit_heap_fsync_us",
 )
+
+TPCC_KIND_NAMES = {
+    0: "new_order",
+    1: "payment",
+    2: "order_status",
+    3: "delivery",
+    4: "stock_level",
+}
 
 
 def extract_update_pair(line: str) -> tuple[int, int] | None:
@@ -231,6 +264,11 @@ def main() -> int:
     execute_tpcc_by_kind: dict[int, list[float]] = defaultdict(list)
     execute_tpcc_new_order_phases: dict[str, list[float]] = defaultdict(list)
     execute_tpcc_commit_us: list[float] = []
+    execute_tpcc_commit_by_kind: dict[int, list[float]] = defaultdict(list)
+    sql_commit_sub_by_kind: dict[int, dict[str, list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    new_order_pre_commit_us: list[float] = []
     lock_path_counts: dict[str, int] = defaultdict(int)
     lock_path_by_table: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     scan_us: list[float] = []
@@ -301,8 +339,22 @@ def main() -> int:
             phase_lines += 1
         cu = extract_execute_tpcc_commit_us(line)
         if cu is not None:
-            execute_tpcc_commit_us.append(float(cu))
+            commit_us, kind = cu
+            execute_tpcc_commit_us.append(float(commit_us))
+            if kind >= 0:
+                execute_tpcc_commit_by_kind[kind].append(float(commit_us))
             phase_lines += 1
+        sc = extract_sql_commit_by_kind(line)
+        if sc is not None:
+            kind, phases = sc
+            for name, us in phases.items():
+                sql_commit_sub_by_kind[kind][name].append(float(us))
+            phase_lines += 1
+        if "sql.execute_tpcc.new_order_pre_commit" in line:
+            m = re.search(r"pre_commit_us=(\d+)", line)
+            if m:
+                new_order_pre_commit_us.append(float(m.group(1)))
+                phase_lines += 1
         lp = extract_lock_path(line)
         if lp is not None:
             table, path = lp
@@ -458,9 +510,47 @@ def main() -> int:
             "sql.execute_tpcc.new_order: (no matches — native new_order with RUSTDB_SQL_PHASE_LOG=1)"
         )
     if execute_tpcc_commit_us:
-        print_us_stats("sql.execute_tpcc.commit commit_us", execute_tpcc_commit_us)
+        print_us_stats("sql.execute_tpcc.commit commit_us (all kinds)", execute_tpcc_commit_us)
     else:
         print("sql.execute_tpcc.commit: (no matches)")
+    if execute_tpcc_commit_by_kind:
+        print("sql.execute_tpcc.commit commit_us by kind:")
+        for kind in sorted(execute_tpcc_commit_by_kind.keys()):
+            xs = execute_tpcc_commit_by_kind[kind]
+            label = TPCC_KIND_NAMES.get(kind, f"kind_{kind}")
+            print(
+                f"  {label}: n={len(xs)} "
+                f"p50={quantile(xs, 0.5) / 1000:.3f}ms "
+                f"p99={quantile(xs, 0.99) / 1000:.3f}ms"
+            )
+    if sql_commit_sub_by_kind:
+        print("sql.commit sub-phases by tpcc_kind (commit_flush_us p50):")
+        for kind in sorted(sql_commit_sub_by_kind.keys()):
+            xs = sql_commit_sub_by_kind[kind].get("commit_flush_us", [])
+            label = TPCC_KIND_NAMES.get(kind, f"kind_{kind}")
+            if xs:
+                print(
+                    f"  {label}: n={len(xs)} "
+                    f"commit_flush_us p50={quantile(xs, 0.5) / 1000:.3f}ms"
+                )
+    if execute_tpcc_new_order_phases and execute_tpcc_by_kind.get(0):
+        phase_sum_p50 = sum(
+            quantile(execute_tpcc_new_order_phases.get(name, []), 0.5)
+            for name in NEW_ORDER_PHASES
+            if execute_tpcc_new_order_phases.get(name)
+        )
+        wall_p50 = quantile(execute_tpcc_by_kind[0], 0.5)
+        commit_p50 = quantile(execute_tpcc_commit_by_kind.get(0, []), 0.5)
+        pre_p50 = quantile(new_order_pre_commit_us, 0.5) if new_order_pre_commit_us else 0.0
+        gap = wall_p50 - phase_sum_p50 - commit_p50 - pre_p50
+        print(
+            "new_order server accounting (p50 us): "
+            f"wall={wall_p50 / 1000:.3f}ms "
+            f"phases_sum={phase_sum_p50 / 1000:.3f}ms "
+            f"pre_commit={pre_p50 / 1000:.3f}ms "
+            f"commit_us={commit_p50 / 1000:.3f}ms "
+            f"gap={gap / 1000:.3f}ms"
+        )
     if scan_us:
         print_us_stats("update/delete scan_us", scan_us)
         print_us_stats("update/delete row_loop_us", row_loop_us)

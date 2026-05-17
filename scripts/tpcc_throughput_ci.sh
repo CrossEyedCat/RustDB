@@ -20,6 +20,9 @@
 #   RUSTDB_GROUP_COMMIT_ENABLED=1 — WAL group commit (default on when unset in engine)
 #   RUSTDB_GROUP_COMMIT_INTERVAL_MS — group commit timer (default 1 ms)
 #   RUSTDB_GROUP_COMMIT_MAX_BATCH — max records per group commit batch (default 10)
+#   RUSTDB_TPCC_DEFER_INDEX_SYNC=1 — batch secondary-index updates at COMMIT (native TPC-C)
+#   Commit phase log fields (RUSTDB_SQL_PHASE_LOG=1): commit_table_map_lock_us,
+#     commit_pm_lock_wait_us, commit_heap_fsync_us, tpcc_kind on sql.commit / sql.execute_tpcc.commit
 #
 # Client (rustdb_tpcc on host):
 #   RUSTDB_TPCC_NATIVE=1 — pass --native-tpcc (ExecuteTpcc wire path, one RTT per txn;
