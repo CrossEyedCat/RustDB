@@ -326,8 +326,8 @@ pub(crate) struct CommitFlushPhaseUs {
     pub dirty_pages_flushed: usize,
 }
 
-/// Minimum dirty PM count before rayon parallel flush (avoids overhead on small txns).
-const COALESCED_FLUSH_PARALLEL_MIN: usize = 5;
+/// Minimum dirty PM count before rayon parallel flush (2+ matches pre-run23 coalesced flush).
+const COALESCED_FLUSH_PARALLEL_MIN: usize = 2;
 
 /// Collects dirty page managers from a txn cache, optionally limited to `tables`.
 pub(crate) fn collect_dirty_txn_page_managers(
