@@ -18,7 +18,8 @@
 #   RUSTDB_BENCH_DEFER_HEAP_FSYNC=1 — on COMMIT, write dirty heap pages but skip per-table fsync
 #     (throughput CI only; WAL + commits.log remain the durability path for the job)
 #   RUSTDB_GROUP_COMMIT_ENABLED=1 — WAL group commit (default on when unset in engine)
-#   RUSTDB_GROUP_COMMIT_INTERVAL_MS — group commit timer (default 1 ms; try 2 for A/B)
+#   RUSTDB_GROUP_COMMIT_INTERVAL_MS — group commit timer (default 1 ms in container;
+#     run-20 A/B: GROUP_COMMIT_INTERVAL_MS=2 may reduce WAL fsync pressure vs 1 ms)
 #   RUSTDB_GROUP_COMMIT_MAX_BATCH — max records per group commit batch (default 10)
 #   RUSTDB_SQL_WORKER_COUNT — QUIC connection SQL worker threads (default 16; try 32 via workflow_dispatch)
 #   RUSTDB_TPCC_DEFER_INDEX_SYNC=1 — batch secondary-index updates at COMMIT (native TPC-C)
