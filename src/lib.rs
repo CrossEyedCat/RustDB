@@ -46,6 +46,10 @@
 #![allow(unused_comparisons)]
 #![allow(unused_must_use)]
 
+#[cfg(feature = "mimalloc-allocator")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 pub mod analyzer;
 pub mod catalog;
 pub mod cli;

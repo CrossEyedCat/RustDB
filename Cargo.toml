@@ -58,6 +58,7 @@ memmap2 = "0.9"
 crossbeam = "0.8"
 dashmap = "6.1"
 parking_lot = "0.12"
+mimalloc = { version = "0.1", optional = true }
 
 # Data compression
 lz4_flex = "0.13"
@@ -94,6 +95,7 @@ criterion = { version = "0.8", optional = true }
 default = []
 criterion = ["dep:criterion"]
 io-uring = ["dep:io-uring"]
+mimalloc-allocator = ["dep:mimalloc"]
 
 # io_uring is Linux-only (supported platform is Linux).
 [target.'cfg(target_os = "linux")'.dependencies]

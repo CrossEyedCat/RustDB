@@ -26,6 +26,9 @@
 #   Commit phase log fields (RUSTDB_SQL_PHASE_LOG=1): commit_table_map_lock_us,
 #     commit_pm_lock_wait_us, commit_heap_fsync_us, tpcc_kind on sql.commit / sql.execute_tpcc.commit
 #
+# Server image for this branch is built with `--features mimalloc-allocator` (global MiMalloc).
+# Prod/default builds omit it; no runtime env toggle — allocator is compile-time.
+#
 # Client (rustdb_tpcc on host):
 #   RUSTDB_TPCC_NATIVE=1 — pass --native-tpcc (ExecuteTpcc wire path, one RTT per txn;
 #     engine fast path: direct index/heap ops + single COMMIT, not 7× SQL per new_order)

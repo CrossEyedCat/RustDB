@@ -15,7 +15,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY benches ./benches
 
-RUN cargo build --release --bin rustdb
+# mimalloc global allocator A/B (PR5); override with plain build on main if needed.
+RUN cargo build --release --bin rustdb --features mimalloc-allocator
 
 # Profiling image (Linux perf + cargo flamegraph).
 # Usage:
