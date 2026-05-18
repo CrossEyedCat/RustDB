@@ -436,6 +436,37 @@ pub(crate) fn flush_page_managers_for_tables(
     ))
 }
 
+/// Flushes dirty heaps for `(file_id, pm)` entries already sorted by `file_id`.
+///
+/// One PM lock per heap for the dirty check; dirty heaps are flushed via
+/// [`coalesced_flush_page_managers`] (parallel when `len >= 2`).
+pub(crate) fn flush_touched_dirty_presorted(
+    entries: &[(u32, Arc<Mutex<PageManager>>)],
+) -> DbResult<(usize, CommitFlushPhaseUs)> {
+    if entries.is_empty() {
+        return Ok((0, CommitFlushPhaseUs::default()));
+    }
+    let mut dirty_pms: Vec<Arc<Mutex<PageManager>>> = Vec::new();
+    let mut pm_lock_wait_us = 0u64;
+    for (_, pm) in entries {
+        let lock_t0 = Instant::now();
+        let dirty = pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false);
+        pm_lock_wait_us += lock_t0.elapsed().as_micros() as u64;
+        if dirty {
+            dirty_pms.push(pm.clone());
+        }
+    }
+    let (flushed, flush_pm_wait, heap_fsync_us) = coalesced_flush_page_managers(dirty_pms)?;
+    Ok((
+        flushed,
+        CommitFlushPhaseUs {
+            table_map_lock_us: 0,
+            pm_lock_wait_us: pm_lock_wait_us.saturating_add(flush_pm_wait),
+            heap_fsync_us,
+        },
+    ))
+}
+
 /// Flushes dirty pages for the given page managers without acquiring `table_page_managers`.
 ///
 /// Skips managers with no dirty pages. `CommitFlushPhaseUs::table_map_lock_us` is always zero.
@@ -746,6 +777,44 @@ mod tests {
 
         let pms = vec![pm_clean.clone(), pm_dirty.clone()];
         let (flushed, phases) = flush_page_managers_cached(&pms).unwrap();
+        assert!(flushed > 0);
+        assert_eq!(phases.table_map_lock_us, 0);
+        assert_eq!(pm_clean.lock().unwrap().dirty_page_count(), 0);
+        assert_eq!(pm_dirty.lock().unwrap().dirty_page_count(), 0);
+
+        eng.execute_sql("COMMIT", &mut ctx).unwrap();
+    }
+
+    #[test]
+    fn flush_touched_dirty_presorted_skips_clean_and_flushes_dirty() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let state = eng.state_for_test();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE t_clean (k INT PRIMARY KEY)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("CREATE TABLE t_dirty (k INT PRIMARY KEY)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("INSERT INTO t_clean (k) VALUES (0)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+        eng.execute_sql("INSERT INTO t_dirty (k) VALUES (1)", &mut ctx)
+            .unwrap();
+
+        let pm_clean = table_page_manager(state, "t_clean").unwrap();
+        let pm_dirty = table_page_manager(state, "t_dirty").unwrap();
+        assert_eq!(pm_clean.lock().unwrap().dirty_page_count(), 0);
+        assert!(pm_dirty.lock().unwrap().dirty_page_count() > 0);
+
+        let file_clean = pm_clean.lock().unwrap().file_id();
+        let file_dirty = pm_dirty.lock().unwrap().file_id();
+        let mut entries = vec![
+            (file_clean, pm_clean.clone()),
+            (file_dirty, pm_dirty.clone()),
+        ];
+        entries.sort_by_key(|(fid, _)| *fid);
+
+        let (flushed, phases) = flush_touched_dirty_presorted(&entries).unwrap();
         assert!(flushed > 0);
         assert_eq!(phases.table_map_lock_us, 0);
         assert_eq!(pm_clean.lock().unwrap().dirty_page_count(), 0);
