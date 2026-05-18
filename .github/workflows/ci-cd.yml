@@ -15,8 +15,8 @@ on:
       - "LICENSE-*"
       - "architecture.puml"
       - ".editorconfig"
+  # No `branches` filter: stacked PRs (base = feature branch) must still run CI.
   pull_request:
-    branches: [main, develop]
     paths-ignore:
       - "**/*.md"
       - "docs/**"
