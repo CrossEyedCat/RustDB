@@ -3,8 +3,8 @@ name: Security Audit
 on:
   push:
     branches: [ main, develop ]
+  # No `branches` filter: stacked PRs (base = feature branch) must still run security checks.
   pull_request:
-    branches: [ main, develop ]
   schedule:
     # Daily at 02:00 UTC
     - cron: '0 2 * * *'
