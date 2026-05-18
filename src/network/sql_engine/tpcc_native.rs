@@ -46,6 +46,21 @@ fn new_tuple_with_columns(id: u64, cols: &[(&str, i32)]) -> Tuple {
     tuple
 }
 
+fn new_order_line_tuple(id: u64, o_id: i32, d_id: i32, w_id: i32, i_id: i32, qty: i32) -> Tuple {
+    new_tuple_with_columns(
+        id,
+        &[
+            ("ol_o_id", o_id),
+            ("ol_d_id", d_id),
+            ("ol_w_id", w_id),
+            ("ol_number", 1),
+            ("ol_i_id", i_id),
+            ("ol_qty", qty),
+            ("ol_amount", qty * 10),
+        ],
+    )
+}
+
 fn phase_elapsed_us(t0: Instant) -> u64 {
     t0.elapsed().as_micros() as u64
 }
@@ -172,18 +187,7 @@ fn run_new_order_native(
         state,
         ctx,
         "order_line",
-        new_tuple_with_columns(
-            id,
-            &[
-                ("ol_o_id", o_id as i32),
-                ("ol_d_id", d_id),
-                ("ol_w_id", w_id),
-                ("ol_number", 1),
-                ("ol_i_id", i_id),
-                ("ol_qty", qty),
-                ("ol_amount", qty * 10),
-            ],
-        ),
+        new_order_line_tuple(id, o_id as i32, d_id, w_id, i_id, qty),
     )?;
     wal_insert_us += ins.wal_us;
     index_sync_us += ins.index_us;

@@ -684,9 +684,7 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
         });
     }
     record_touched_table(ctx, table);
-    let row_bytes = tuple.to_bytes().map_err(map_db_err)?;
-    ctx.tpcc_row_bytes_buf.clear();
-    ctx.tpcc_row_bytes_buf.extend_from_slice(&row_bytes);
+    ctx.tpcc_row_bytes_buf = tuple.to_bytes().map_err(map_db_err)?;
     let pm_for_table = table_page_manager_cached(state, ctx, table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let ins = pm.insert(&ctx.tpcc_row_bytes_buf).map_err(map_db_err)?;
