@@ -19,7 +19,10 @@ use crate::storage::{
     page::Page,
 };
 use dashmap::DashMap;
-use parking_lot::RwLock;
+use parking_lot::{Mutex as ParkingMutex, RwLock};
+
+/// Hot-path lock for [`PageManager`] in the network SQL engine.
+pub type PageManagerMutex = ParkingMutex<PageManager>;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -1084,7 +1087,7 @@ impl PageManager {
 /// Spawns a background task that flushes dirty pages every `interval_ms` ms.
 /// Use when `defer_data_flush` is true. Returns a handle to abort the task when done.
 pub fn spawn_deferred_flush_task(
-    pm: Arc<Mutex<PageManager>>,
+    pm: Arc<PageManagerMutex>,
     interval_ms: u64,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -1092,9 +1095,8 @@ pub fn spawn_deferred_flush_task(
             tokio::time::interval(tokio::time::Duration::from_millis(interval_ms.max(1)));
         loop {
             interval.tick().await;
-            if let Ok(mut guard) = pm.lock() {
-                let _ = guard.flush_dirty_pages();
-            }
+            let mut guard = pm.lock();
+            let _ = guard.flush_dirty_pages();
         }
     })
 }
