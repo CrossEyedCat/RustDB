@@ -201,6 +201,47 @@ impl IoUringBackend {
             ring: Mutex::new(ring),
         })
     }
+
+    fn write_at_single(&mut self, offset: u64, data: &[u8]) -> Result<()> {
+        let len = data.len();
+        if len == 0 {
+            return Ok(());
+        }
+        let fd = io_uring::types::Fd(self.file.as_raw_fd());
+        let write_e = io_uring::opcode::Write::new(fd, data.as_ptr(), len as u32)
+            .offset(offset)
+            .build()
+            .user_data(0);
+        let mut ring = self
+            .ring
+            .lock()
+            .map_err(|e| Error::database(format!("Lock error: {}", e)))?;
+        unsafe {
+            ring.submission()
+                .push(&write_e)
+                .map_err(|e| Error::database(format!("Failed to push write: {}", e)))?;
+        }
+        ring.submit_and_wait(1)
+            .map_err(|e| Error::database(format!("io_uring submit_and_wait: {}", e)))?;
+        let cqe = ring
+            .completion()
+            .next()
+            .ok_or_else(|| Error::database("io_uring completion queue empty"))?;
+        let res = cqe.result();
+        if res < 0 {
+            return Err(Error::database(format!(
+                "io_uring write failed: {}",
+                std::io::Error::from_raw_os_error(-res)
+            )));
+        }
+        if res as usize != len {
+            return Err(Error::database(format!(
+                "io_uring short write: got {} expected {}",
+                res, len
+            )));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(all(target_os = "linux", feature = "io-uring"))]
@@ -287,7 +328,7 @@ impl BlockIoBackend for IoUringBackend {
             } else {
                 flags |= Flags::IO_DRAIN;
             }
-            entry.set_flags(flags);
+            entry.flags(flags);
             unsafe {
                 submission
                     .push(&entry)
@@ -295,7 +336,7 @@ impl BlockIoBackend for IoUringBackend {
             }
         }
         drop(submission);
-        ring.submit_and_wait(non_empty.len() as u32)
+        ring.submit_and_wait(non_empty.len())
             .map_err(|e| Error::database(format!("io_uring submit_and_wait batch: {}", e)))?;
         let mut completion = ring.completion();
         for _ in 0..non_empty.len() {
@@ -317,47 +358,6 @@ impl BlockIoBackend for IoUringBackend {
                     idx, res, expected
                 )));
             }
-        }
-        Ok(())
-    }
-
-    fn write_at_single(&mut self, offset: u64, data: &[u8]) -> Result<()> {
-        let len = data.len();
-        if len == 0 {
-            return Ok(());
-        }
-        let fd = io_uring::types::Fd(self.file.as_raw_fd());
-        let write_e = io_uring::opcode::Write::new(fd, data.as_ptr(), len as u32)
-            .offset(offset)
-            .build()
-            .user_data(0);
-        let mut ring = self
-            .ring
-            .lock()
-            .map_err(|e| Error::database(format!("Lock error: {}", e)))?;
-        unsafe {
-            ring.submission()
-                .push(&write_e)
-                .map_err(|e| Error::database(format!("Failed to push write: {}", e)))?;
-        }
-        ring.submit_and_wait(1)
-            .map_err(|e| Error::database(format!("io_uring submit_and_wait: {}", e)))?;
-        let cqe = ring
-            .completion()
-            .next()
-            .ok_or_else(|| Error::database("io_uring completion queue empty"))?;
-        let res = cqe.result();
-        if res < 0 {
-            return Err(Error::database(format!(
-                "io_uring write failed: {}",
-                std::io::Error::from_raw_os_error(-res)
-            )));
-        }
-        if res as usize != len {
-            return Err(Error::database(format!(
-                "io_uring short write: got {} expected {}",
-                res, len
-            )));
         }
         Ok(())
     }
