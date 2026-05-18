@@ -11,8 +11,8 @@ use crate::planner::{ExecutionPlan, PlanNode};
 use crate::storage::index::BPlusTree;
 use crate::storage::index::Index;
 use crate::storage::index_registry::IndexRegistry;
-use crate::storage::page_manager::PageManager as StoragePageManager;
 use crate::storage::page_manager::PageManagerConfig;
+use crate::storage::page_manager::{PageManager as StoragePageManager, PageManagerMutex};
 use crate::storage::tuple::Tuple;
 use crate::{RecordId, Row};
 
@@ -323,7 +323,7 @@ impl Operator for GroupByOperator {
 pub struct TableScanOperator {
     #[allow(dead_code)]
     table_name: String,
-    page_manager: Arc<Mutex<StoragePageManager>>,
+    page_manager: Arc<PageManagerMutex>,
     filter_condition: Option<String>,
     pushdown_equality: Option<SimpleEqualityFilter>,
     /// Projection column names from the plan (`*` = all tuple columns).
@@ -340,7 +340,7 @@ impl TableScanOperator {
     /// Create new table scan operator
     pub fn new(
         table_name: String,
-        page_manager: Arc<Mutex<StoragePageManager>>,
+        page_manager: Arc<PageManagerMutex>,
         filter_condition: Option<String>,
         pushdown_equality: Option<SimpleEqualityFilter>,
         schema: Vec<String>,
@@ -368,10 +368,7 @@ impl TableScanOperator {
             table = %self.table_name
         );
         let _g = span.enter();
-        let mut pm = self
-            .page_manager
-            .lock()
-            .map_err(|_| Error::lock("page manager poisoned"))?;
+        let mut pm = self.page_manager.lock();
         let ids = pm.all_page_ids()?;
         self.statistics.io_operations = self.statistics.io_operations.saturating_add(1);
         self.page_ids = Some(ids);
@@ -398,10 +395,7 @@ impl TableScanOperator {
         );
         let _g = span.enter();
 
-        let mut pm = self
-            .page_manager
-            .lock()
-            .map_err(|_| Error::lock("page manager poisoned"))?;
+        let mut pm = self.page_manager.lock();
         self.page_records = pm.records_from_page(page_id)?;
         self.record_pos = 0;
         self.statistics.io_operations = self.statistics.io_operations.saturating_add(1);
@@ -570,7 +564,7 @@ pub struct IndexScanOperator {
     /// Index for scanning: key = column value, value = list of record IDs
     index: Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>,
     /// Page manager
-    page_manager: Arc<Mutex<StoragePageManager>>,
+    page_manager: Arc<PageManagerMutex>,
     /// Search conditions
     search_conditions: Vec<IndexCondition>,
     /// Current position in index result
@@ -612,7 +606,7 @@ impl IndexScanOperator {
         table_name: String,
         index_name: String,
         index: Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>,
-        page_manager: Arc<Mutex<StoragePageManager>>,
+        page_manager: Arc<PageManagerMutex>,
         search_conditions: Vec<IndexCondition>,
         schema: Vec<String>,
     ) -> Result<Self> {
@@ -709,10 +703,7 @@ impl IndexScanOperator {
 
     /// Load record by ID from PageManager
     fn load_record(&mut self, record_id: RecordId) -> Result<Option<Row>> {
-        let mut pm = self
-            .page_manager
-            .lock()
-            .map_err(|_| Error::internal("Lock poisoned"))?;
+        let mut pm = self.page_manager.lock();
         let data = pm.get_record(record_id)?;
         self.statistics.io_operations += 1;
 
@@ -2358,8 +2349,8 @@ impl Operator for OffsetOperator {
 /// Factory for creating scan operators
 pub struct ScanOperatorFactory {
     /// Page manager
-    default_page_manager: Arc<Mutex<StoragePageManager>>,
-    table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<StoragePageManager>>>>>,
+    default_page_manager: Arc<PageManagerMutex>,
+    table_page_managers: Arc<Mutex<HashMap<String, Arc<PageManagerMutex>>>>,
     /// Indexes: (table_name, index_name) -> B+ tree (used when `index_registry` is `None`, e.g. tests)
     indexes: Mutex<HashMap<(String, String), Arc<Mutex<BPlusTree<String, Vec<RecordId>>>>>>,
     /// When set, `CREATE INDEX` / DML maintain this registry and index scans resolve through it.
@@ -2373,7 +2364,7 @@ pub struct ScanOperatorFactory {
 
 impl ScanOperatorFactory {
     /// Create new scan operator factory
-    pub fn new(page_manager: Arc<Mutex<StoragePageManager>>) -> Self {
+    pub fn new(page_manager: Arc<PageManagerMutex>) -> Self {
         Self {
             default_page_manager: page_manager,
             table_page_managers: Arc::new(Mutex::new(HashMap::new())),
@@ -2385,8 +2376,8 @@ impl ScanOperatorFactory {
     }
 
     pub fn with_tables(
-        default_page_manager: Arc<Mutex<StoragePageManager>>,
-        table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<StoragePageManager>>>>>,
+        default_page_manager: Arc<PageManagerMutex>,
+        table_page_managers: Arc<Mutex<HashMap<String, Arc<PageManagerMutex>>>>,
         data_dir: PathBuf,
         index_registry: Option<Arc<RwLock<IndexRegistry>>>,
     ) -> Self {
@@ -2400,7 +2391,7 @@ impl ScanOperatorFactory {
         }
     }
 
-    fn page_manager_for_table(&self, table_name: &str) -> Result<Arc<Mutex<StoragePageManager>>> {
+    fn page_manager_for_table(&self, table_name: &str) -> Result<Arc<PageManagerMutex>> {
         let mut g = self
             .table_page_managers
             .lock()
@@ -2411,8 +2402,8 @@ impl ScanOperatorFactory {
         if let Some(ref dir) = self.data_dir {
             let pm = match StoragePageManager::open(dir.clone(), table_name, self.pm_config.clone())
             {
-                Ok(pm) => Arc::new(Mutex::new(pm)),
-                Err(_) => Arc::new(Mutex::new(StoragePageManager::new(
+                Ok(pm) => Arc::new(PageManagerMutex::new(pm)),
+                Err(_) => Arc::new(PageManagerMutex::new(StoragePageManager::new(
                     dir.clone(),
                     table_name,
                     self.pm_config.clone(),
@@ -2428,7 +2419,7 @@ impl ScanOperatorFactory {
     pub fn register_table_page_manager(
         &self,
         table_name: &str,
-        pm: Arc<Mutex<StoragePageManager>>,
+        pm: Arc<PageManagerMutex>,
     ) -> Result<()> {
         let mut g = self
             .table_page_managers
