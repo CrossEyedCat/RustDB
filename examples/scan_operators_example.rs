@@ -7,7 +7,7 @@ use rustdb::executor::{
 // removed unused imports
 use rustdb::common::Result;
 use rustdb::storage::index::BPlusTree;
-use rustdb::storage::page_manager::{PageManager, PageManagerConfig};
+use rustdb::storage::page_manager::{PageManager, PageManagerConfig, PageManagerMutex};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +15,7 @@ fn main() -> Result<()> {
     println!("=== Example of using scan operators ===\n");
 
     // Creating a page manager
-    let page_manager = Arc::new(Mutex::new(PageManager::new(
+    let page_manager = Arc::new(PageManagerMutex::new(PageManager::new(
         PathBuf::from("./data"),
         "users",
         PageManagerConfig::default(),
