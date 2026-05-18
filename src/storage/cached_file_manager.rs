@@ -86,6 +86,20 @@ impl CachedFileManager {
         Ok(())
     }
 
+    /// Writes multiple pages in one backend batch when io_uring batching is enabled.
+    pub fn write_pages_batch(
+        &mut self,
+        file_id: AdvancedFileId,
+        pages: &[(PageId, &[u8])],
+    ) -> Result<()> {
+        self.inner.write_pages_batch(file_id, pages)?;
+        let mut cache = self.cache.lock().unwrap();
+        for &(page_id, data) in pages {
+            cache.put(file_id, page_id, data.to_vec());
+        }
+        Ok(())
+    }
+
     /// Synchronizes a file to disk
     pub fn sync_file(&mut self, file_id: AdvancedFileId) -> Result<()> {
         self.inner.sync_file(file_id)

@@ -178,6 +178,18 @@ impl AdvancedDatabaseFile {
         Ok(())
     }
 
+    /// Writes multiple pages; may use a single linked io_uring submit when enabled.
+    pub fn write_pages_batch(&mut self, pages: &[(PageId, &[u8])]) -> Result<()> {
+        if pages.is_empty() {
+            return Ok(());
+        }
+        self.base_file.write_blocks_batch(pages)?;
+        self.header.increment_write_count();
+        self.statistics.write_operations += pages.len() as u64;
+        self.header_dirty = true;
+        Ok(())
+    }
+
     /// Checks if file pre-extension is needed
     pub fn check_preextension(&mut self) -> Result<bool> {
         let should_extend = self.extension_manager.should_preextend(
@@ -549,6 +561,22 @@ impl AdvancedFileManager {
             .ok_or_else(|| Error::database(format!("File {} not found", file_id)))?;
 
         file.write_page(page_id, data)?;
+        self.update_global_statistics();
+        Ok(())
+    }
+
+    /// Writes multiple pages to one file (batched backend I/O when configured).
+    pub fn write_pages_batch(
+        &mut self,
+        file_id: AdvancedFileId,
+        pages: &[(PageId, &[u8])],
+    ) -> Result<()> {
+        let file = self
+            .advanced_files
+            .get_mut(&file_id)
+            .ok_or_else(|| Error::database(format!("File {} not found", file_id)))?;
+
+        file.write_pages_batch(pages)?;
         self.update_global_statistics();
         Ok(())
     }

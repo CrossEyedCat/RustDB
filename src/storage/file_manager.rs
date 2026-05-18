@@ -259,6 +259,43 @@ impl DatabaseFile {
         Ok(())
     }
 
+    /// Writes multiple data blocks in one backend batch (io_uring link/drain when enabled).
+    pub fn write_blocks_batch(&mut self, blocks: &[(BlockId, &[u8])]) -> Result<()> {
+        if blocks.is_empty() {
+            return Ok(());
+        }
+        if self.read_only {
+            return Err(Error::database("File is open for reading only".to_string()));
+        }
+        for (_, data) in blocks {
+            if data.len() != BLOCK_SIZE {
+                return Err(Error::database(format!(
+                    "Invalid block size: {} (expected {})",
+                    data.len(),
+                    BLOCK_SIZE
+                )));
+            }
+        }
+        let max_block = blocks.iter().map(|(id, _)| *id).max().unwrap_or(0);
+        if max_block >= self.header.total_blocks as u64 {
+            self.extend_file((max_block + 1) as u32)?;
+        }
+        let writes: Vec<(u64, &[u8])> = blocks
+            .iter()
+            .map(|(block_id, data)| {
+                let offset = BLOCK_SIZE as u64 + (*block_id as u64 * BLOCK_SIZE as u64);
+                (offset, *data)
+            })
+            .collect();
+        self.backend.write_at_batch(&writes)?;
+        if max_block >= self.header.used_blocks as u64 {
+            self.header.used_blocks = (max_block + 1) as u32;
+            self.header.touch();
+            self.header_dirty = true;
+        }
+        Ok(())
+    }
+
     /// Extends the file to the specified number of blocks
     pub fn extend_file(&mut self, new_block_count: u32) -> Result<()> {
         if self.read_only {

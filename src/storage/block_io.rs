@@ -12,6 +12,13 @@ use std::sync::Mutex;
 #[cfg(all(target_os = "linux", feature = "io-uring"))]
 use std::os::unix::io::AsRawFd;
 
+/// When set (non-`0`), dirty-page flush may submit multiple `write_at` ops as one linked
+/// io_uring chain (Linux + `--features io-uring` only). See [`BlockIoBackend::write_at_batch`].
+pub fn io_uring_batch_writes_enabled() -> bool {
+    std::env::var_os("RUSTDB_IO_URING_BATCH")
+        .is_some_and(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+}
+
 /// Block I/O backend trait.
 /// Implementations: StdFileBackend (all platforms), IoUringBackend (Linux).
 pub trait BlockIoBackend: Send + Sync {
@@ -20,6 +27,14 @@ pub trait BlockIoBackend: Send + Sync {
 
     /// Writes `data` at the given offset.
     fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()>;
+
+    /// Writes multiple `(offset, payload)` pairs. Default loops [`Self::write_at`].
+    fn write_at_batch(&mut self, writes: &[(u64, &[u8])]) -> Result<()> {
+        for (offset, data) in writes {
+            self.write_at(*offset, data)?;
+        }
+        Ok(())
+    }
 
     /// Synchronizes all data to disk.
     fn sync(&mut self) -> Result<()>;
@@ -233,6 +248,80 @@ impl BlockIoBackend for IoUringBackend {
     }
 
     fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
+        self.write_at_batch(&[(offset, data)])
+    }
+
+    fn write_at_batch(&mut self, writes: &[(u64, &[u8])]) -> Result<()> {
+        use io_uring::squeue::Flags;
+        let non_empty: Vec<(u64, &[u8])> = writes
+            .iter()
+            .copied()
+            .filter(|(_, data)| !data.is_empty())
+            .collect();
+        if non_empty.is_empty() {
+            return Ok(());
+        }
+        if !io_uring_batch_writes_enabled() || non_empty.len() == 1 {
+            for (offset, data) in non_empty {
+                self.write_at_single(offset, data)?;
+            }
+            return Ok(());
+        }
+
+        let fd = io_uring::types::Fd(self.file.as_raw_fd());
+        let mut ring = self
+            .ring
+            .lock()
+            .map_err(|e| Error::database(format!("Lock error: {}", e)))?;
+        let submission = ring.submission();
+        let last = non_empty.len() - 1;
+        for (i, (offset, data)) in non_empty.iter().enumerate() {
+            let len = data.len() as u32;
+            let mut entry = io_uring::opcode::Write::new(fd, data.as_ptr(), len)
+                .offset(*offset)
+                .build()
+                .user_data(i as u64);
+            let mut flags = Flags::empty();
+            if i < last {
+                flags |= Flags::IO_LINK;
+            } else {
+                flags |= Flags::IO_DRAIN;
+            }
+            entry.set_flags(flags);
+            unsafe {
+                submission
+                    .push(&entry)
+                    .map_err(|e| Error::database(format!("Failed to push batched write: {}", e)))?;
+            }
+        }
+        drop(submission);
+        ring.submit_and_wait(non_empty.len() as u32)
+            .map_err(|e| Error::database(format!("io_uring submit_and_wait batch: {}", e)))?;
+        let mut completion = ring.completion();
+        for _ in 0..non_empty.len() {
+            let cqe = completion
+                .next()
+                .ok_or_else(|| Error::database("io_uring completion queue empty (batch)"))?;
+            let res = cqe.result();
+            if res < 0 {
+                return Err(Error::database(format!(
+                    "io_uring batched write failed: {}",
+                    std::io::Error::from_raw_os_error(-res)
+                )));
+            }
+            let idx = cqe.user_data() as usize;
+            let expected = non_empty[idx].1.len();
+            if res as usize != expected {
+                return Err(Error::database(format!(
+                    "io_uring short write at index {}: got {} expected {}",
+                    idx, res, expected
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn write_at_single(&mut self, offset: u64, data: &[u8]) -> Result<()> {
         let len = data.len();
         if len == 0 {
             return Ok(());

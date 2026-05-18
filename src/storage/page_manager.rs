@@ -542,8 +542,15 @@ impl PageManager {
             let page_ids: Vec<PageId> = to_flush.iter().map(|(id, _)| *id).collect();
 
             let write_batch = |pm: &mut Self, pages: &[(PageId, Vec<u8>)]| -> Result<usize> {
-                for (page_id, data) in pages {
-                    pm.file_manager.write_page(file_id, *page_id, data)?;
+                use crate::storage::block_io::io_uring_batch_writes_enabled;
+                if io_uring_batch_writes_enabled() && pages.len() > 1 {
+                    let refs: Vec<(PageId, &[u8])> =
+                        pages.iter().map(|(id, d)| (*id, d.as_slice())).collect();
+                    pm.file_manager.write_pages_batch(file_id, &refs)?;
+                } else {
+                    for (page_id, data) in pages {
+                        pm.file_manager.write_page(file_id, *page_id, data)?;
+                    }
                 }
                 Ok(pages.len())
             };
