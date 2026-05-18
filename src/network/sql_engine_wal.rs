@@ -436,6 +436,27 @@ pub(crate) fn flush_page_managers_for_tables(
     ))
 }
 
+/// Flushes dirty pages for `pms` already sorted by `file_id` (e.g. COMMIT touched-heaps path).
+///
+/// Skips the extra dirty pre-scan and re-sort in [`flush_page_managers_cached`] — one PM lock
+/// per heap during [`coalesced_flush_page_managers`].
+pub(crate) fn flush_page_managers_presorted(
+    pms: Vec<Arc<Mutex<PageManager>>>,
+) -> DbResult<(usize, CommitFlushPhaseUs)> {
+    if pms.is_empty() {
+        return Ok((0, CommitFlushPhaseUs::default()));
+    }
+    let (flushed, pm_lock_wait_us, heap_fsync_us) = coalesced_flush_page_managers(pms)?;
+    Ok((
+        flushed,
+        CommitFlushPhaseUs {
+            table_map_lock_us: 0,
+            pm_lock_wait_us,
+            heap_fsync_us,
+        },
+    ))
+}
+
 /// Flushes dirty pages for the given page managers without acquiring `table_page_managers`.
 ///
 /// Skips managers with no dirty pages. `CommitFlushPhaseUs::table_map_lock_us` is always zero.
@@ -750,6 +771,29 @@ mod tests {
         assert_eq!(phases.table_map_lock_us, 0);
         assert_eq!(pm_clean.lock().unwrap().dirty_page_count(), 0);
         assert_eq!(pm_dirty.lock().unwrap().dirty_page_count(), 0);
+
+        eng.execute_sql("COMMIT", &mut ctx).unwrap();
+    }
+
+    #[test]
+    fn flush_page_managers_presorted_flushes_dirty_without_prescan() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let state = eng.state_for_test();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE t_dirty (k INT PRIMARY KEY)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+        eng.execute_sql("INSERT INTO t_dirty (k) VALUES (1)", &mut ctx)
+            .unwrap();
+
+        let pm = table_page_manager(state, "t_dirty").unwrap();
+        assert!(pm.lock().unwrap().dirty_page_count() > 0);
+
+        let (flushed, phases) = flush_page_managers_presorted(vec![pm.clone()]).unwrap();
+        assert!(flushed > 0);
+        assert_eq!(phases.table_map_lock_us, 0);
+        assert_eq!(pm.lock().unwrap().dirty_page_count(), 0);
 
         eng.execute_sql("COMMIT", &mut ctx).unwrap();
     }

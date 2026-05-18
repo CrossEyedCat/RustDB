@@ -1255,7 +1255,7 @@ fn flush_touched_page_managers_cached(
         .collect();
     entries.sort_by_key(|(file_id, _)| *file_id);
     let pms: Vec<Arc<Mutex<PageManager>>> = entries.into_iter().map(|(_, pm)| pm).collect();
-    crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map_err(map_db_err)
+    crate::network::sql_engine_wal::flush_page_managers_presorted(pms).map_err(map_db_err)
 }
 
 fn commit_transaction(
