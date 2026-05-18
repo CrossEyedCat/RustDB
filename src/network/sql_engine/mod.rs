@@ -1285,8 +1285,14 @@ fn commit_transaction(
     span.record("flush_tables_count", flush_tables_count);
     let flush_clock = Instant::now();
     let (_flushed_pages, flush_phases) = if !ctx.txn_pm_cache.is_empty() {
-        let mut pms: Vec<Arc<Mutex<PageManager>>> = ctx.txn_pm_cache.values().cloned().collect();
-        pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
+        let pms: Vec<Arc<Mutex<PageManager>>> = if touched.is_empty() {
+            ctx.txn_pm_cache.values().cloned().collect()
+        } else {
+            touched
+                .iter()
+                .filter_map(|t| ctx.txn_pm_cache.get(t).cloned())
+                .collect()
+        };
         crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map_err(map_db_err)?
     } else if touched.is_empty() {
         (

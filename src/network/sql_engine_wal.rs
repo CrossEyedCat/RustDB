@@ -365,7 +365,8 @@ fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<
     let mut sync_targets = Vec::new();
     let mut pm_lock_wait_us = 0u64;
 
-    if pms.len() <= 1 {
+    // Parallel flush when two or more page managers are dirty (TPC-C new_order touches several heaps).
+    if pms.len() < 2 {
         for pm in pms {
             let (n, file_id, wait) = flush_pm_writes_only(&pm)?;
             pm_lock_wait_us += wait;
@@ -412,15 +413,8 @@ pub(crate) fn flush_page_managers_for_tables(
         .map_err(|_| DbError::database("table pm map lock poisoned"))?;
     let table_map_lock_us = map_t0.elapsed().as_micros() as u64;
     let mut pms: Vec<Arc<Mutex<PageManager>>> = Vec::with_capacity(sorted.len());
-    let mut pm_lock_wait_us = 0u64;
     for name in &sorted {
-        let Some(pm) = map.get(name) else {
-            continue;
-        };
-        let lock_t0 = Instant::now();
-        let dirty = pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false);
-        pm_lock_wait_us += lock_t0.elapsed().as_micros() as u64;
-        if dirty {
+        if let Some(pm) = map.get(name) {
             pms.push(pm.clone());
         }
     }
@@ -430,7 +424,7 @@ pub(crate) fn flush_page_managers_for_tables(
         flushed,
         CommitFlushPhaseUs {
             table_map_lock_us,
-            pm_lock_wait_us: pm_lock_wait_us.saturating_add(flush_pm_wait),
+            pm_lock_wait_us: flush_pm_wait,
             heap_fsync_us,
         },
     ))
@@ -445,23 +439,12 @@ pub(crate) fn flush_page_managers_cached(
     if pms.is_empty() {
         return Ok((0, CommitFlushPhaseUs::default()));
     }
-    let mut dirty_pms: Vec<Arc<Mutex<PageManager>>> = Vec::new();
-    let mut pm_lock_wait_us = 0u64;
-    for pm in pms {
-        let lock_t0 = Instant::now();
-        let dirty = pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false);
-        pm_lock_wait_us += lock_t0.elapsed().as_micros() as u64;
-        if dirty {
-            dirty_pms.push(pm.clone());
-        }
-    }
-    dirty_pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
-    let (flushed, flush_pm_wait, heap_fsync_us) = coalesced_flush_page_managers(dirty_pms)?;
+    let (flushed, pm_lock_wait_us, heap_fsync_us) = coalesced_flush_page_managers(pms.to_vec())?;
     Ok((
         flushed,
         CommitFlushPhaseUs {
             table_map_lock_us: 0,
-            pm_lock_wait_us: pm_lock_wait_us.saturating_add(flush_pm_wait),
+            pm_lock_wait_us,
             heap_fsync_us,
         },
     ))
