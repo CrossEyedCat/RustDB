@@ -62,6 +62,8 @@ pub enum SyncLevel {
     Periodic,
     /// Sync after each commit
     OnCommit,
+    /// Group-commit batch: one fsync per interval / max-batch (TPC-C bench preset)
+    Batch,
     /// Sync after every write (slow but safest)
     Always,
 }
@@ -87,6 +89,20 @@ impl LogWriterConfig {
         c.force_flush_immediately = true;
         c.synchronous_commit = true;
         c.group_commit_enabled = false;
+        c.sync_level = SyncLevel::OnCommit;
+        c
+    }
+
+    /// WAL group commit for throughput benchmarks: durable commits batched by interval/count.
+    pub fn batch_group_commit(log_directory: PathBuf) -> Self {
+        let mut c = Self::default();
+        c.log_directory = log_directory;
+        c.sync_level = SyncLevel::Batch;
+        c.force_flush_immediately = false;
+        c.synchronous_commit = true;
+        c.group_commit_enabled = true;
+        c.group_commit_interval_ms = 2;
+        c.group_commit_max_batch = 64;
         c
     }
 }
@@ -724,7 +740,7 @@ impl LogWriter {
             record: record.clone(),
             response_tx: Some(response_tx),
             force_sync: self.config.synchronous_commit,
-            force_flush_immediately: true,
+            force_flush_immediately: self.config.force_flush_immediately,
         };
 
         self.write_tx
