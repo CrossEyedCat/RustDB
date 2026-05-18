@@ -23,6 +23,7 @@
 #   RUSTDB_GROUP_COMMIT_MAX_BATCH — max records per group commit batch (default 10)
 #   RUSTDB_SQL_WORKER_COUNT — QUIC connection SQL worker threads (default 16; try 32 via workflow_dispatch)
 #   RUSTDB_TPCC_DEFER_INDEX_SYNC=1 — batch secondary-index updates at COMMIT (native TPC-C)
+#   RUSTDB_TPCC_BUMP_ARENA=1 — bumpalo arena for native order_line row bytes (PR4 experiment)
 #   Commit phase log fields (RUSTDB_SQL_PHASE_LOG=1): commit_table_map_lock_us,
 #     commit_pm_lock_wait_us, commit_heap_fsync_us, tpcc_kind on sql.commit / sql.execute_tpcc.commit
 #
@@ -99,6 +100,7 @@ docker run -d --name "$CONTAINER_NAME" \
   -e RUSTDB_GROUP_COMMIT_INTERVAL_MS="${RUSTDB_GROUP_COMMIT_INTERVAL_MS:-1}" \
   -e RUSTDB_GROUP_COMMIT_MAX_BATCH="${RUSTDB_GROUP_COMMIT_MAX_BATCH:-32}" \
   -e RUSTDB_TPCC_DEFER_INDEX_SYNC="${RUSTDB_TPCC_DEFER_INDEX_SYNC:-1}" \
+  -e RUSTDB_TPCC_BUMP_ARENA="${RUSTDB_TPCC_BUMP_ARENA:-1}" \
   ${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML:+-e "RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML}"} \
   -e RUSTDB_BENCH_DEFER_HEAP_FSYNC="${RUSTDB_BENCH_DEFER_HEAP_FSYNC:-1}" \
   ${RUSTDB_SQL_WORKER_COUNT:+-e "RUSTDB_SQL_WORKER_COUNT=${RUSTDB_SQL_WORKER_COUNT}"} \
