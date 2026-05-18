@@ -1285,9 +1285,12 @@ fn commit_transaction(
     span.record("flush_tables_count", flush_tables_count);
     let flush_clock = Instant::now();
     let (_flushed_pages, flush_phases) = if !ctx.txn_pm_cache.is_empty() {
-        let mut pms: Vec<Arc<Mutex<PageManager>>> = ctx.txn_pm_cache.values().cloned().collect();
-        pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
-        crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map_err(map_db_err)?
+        let entries: Vec<(u32, Arc<Mutex<PageManager>>)> = ctx
+            .txn_pm_cache
+            .values()
+            .map(|(file_id, pm)| (*file_id, pm.clone()))
+            .collect();
+        crate::network::sql_engine_wal::flush_sorted_page_managers(entries).map_err(map_db_err)?
     } else if touched.is_empty() {
         (
             0,
@@ -1376,12 +1379,15 @@ fn rollback_transaction(
     // Persist rollback: otherwise the next process sees heap pages from disk that still contain
     // undone inserts (WAL replay does not redo aborted txs, so durability must match).
     let _ = if !ctx.txn_pm_cache.is_empty() && !flush_tables.is_empty() {
-        let mut pms: Vec<Arc<Mutex<PageManager>>> = flush_tables
+        let entries: Vec<(u32, Arc<Mutex<PageManager>>)> = flush_tables
             .iter()
-            .filter_map(|t| ctx.txn_pm_cache.get(t).cloned())
+            .filter_map(|t| {
+                ctx.txn_pm_cache
+                    .get(t)
+                    .map(|(file_id, pm)| (*file_id, pm.clone()))
+            })
             .collect();
-        pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
-        crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map(|(n, _)| n)
+        crate::network::sql_engine_wal::flush_sorted_page_managers(entries).map(|(n, _)| n)
     } else {
         crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &flush_tables)
             .map(|(n, _)| n)
@@ -1540,11 +1546,13 @@ pub(crate) fn table_page_manager_cached(
     ctx: &mut SessionContext,
     table: &str,
 ) -> Result<Arc<Mutex<PageManager>>, EngineError> {
-    if let Some(pm) = ctx.txn_pm_cache.get(table) {
+    if let Some((_, pm)) = ctx.txn_pm_cache.get(table) {
         return Ok(pm.clone());
     }
     let pm = table_page_manager(state, table)?;
-    ctx.txn_pm_cache.insert(table.to_string(), pm.clone());
+    let file_id = pm.lock().map_err(|_| lock_poisoned_engine())?.file_id();
+    ctx.txn_pm_cache
+        .insert(table.to_string(), (file_id, pm.clone()));
     Ok(pm)
 }
 

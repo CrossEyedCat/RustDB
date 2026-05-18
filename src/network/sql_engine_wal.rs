@@ -357,6 +357,27 @@ fn sync_heap_files_after_coalesced_flush(
     Ok(fsync_t0.elapsed().as_micros() as u64)
 }
 
+fn coalesced_flush_page_managers_serial(
+    pms: Vec<Arc<Mutex<PageManager>>>,
+) -> DbResult<(usize, u64, u64)> {
+    if pms.is_empty() {
+        return Ok((0, 0, 0));
+    }
+    let mut total = 0usize;
+    let mut sync_targets = Vec::new();
+    let mut pm_lock_wait_us = 0u64;
+    for pm in pms {
+        let (n, file_id, wait) = flush_pm_writes_only(&pm)?;
+        pm_lock_wait_us += wait;
+        total += n;
+        if let Some(file_id) = file_id {
+            sync_targets.push((file_id, pm));
+        }
+    }
+    let heap_fsync_us = sync_heap_files_after_coalesced_flush(sync_targets)?;
+    Ok((total, pm_lock_wait_us, heap_fsync_us))
+}
+
 fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<(usize, u64, u64)> {
     if pms.is_empty() {
         return Ok((0, 0, 0));
@@ -390,6 +411,26 @@ fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<
 
     let heap_fsync_us = sync_heap_files_after_coalesced_flush(sync_targets)?;
     Ok((total, pm_lock_wait_us, heap_fsync_us))
+}
+
+/// Flushes PMs in `file_id` order with one PM lock per heap (dirty check inside flush).
+pub(crate) fn flush_sorted_page_managers(
+    mut entries: Vec<(u32, Arc<Mutex<PageManager>>)>,
+) -> DbResult<(usize, CommitFlushPhaseUs)> {
+    if entries.is_empty() {
+        return Ok((0, CommitFlushPhaseUs::default()));
+    }
+    entries.sort_by_key(|(file_id, _)| *file_id);
+    let pms = entries.into_iter().map(|(_, pm)| pm).collect::<Vec<_>>();
+    let (flushed, pm_lock_wait_us, heap_fsync_us) = coalesced_flush_page_managers_serial(pms)?;
+    Ok((
+        flushed,
+        CommitFlushPhaseUs {
+            table_map_lock_us: 0,
+            pm_lock_wait_us,
+            heap_fsync_us,
+        },
+    ))
 }
 
 /// Flushes dirty pages for the given physical table heaps only.
@@ -438,33 +479,22 @@ pub(crate) fn flush_page_managers_for_tables(
 
 /// Flushes dirty pages for the given page managers without acquiring `table_page_managers`.
 ///
-/// Skips managers with no dirty pages. `CommitFlushPhaseUs::table_map_lock_us` is always zero.
+/// One PM lock per manager (`flush_pm_writes_only` skips clean heaps). Serial flush avoids
+/// commit-path lock convoys under TPC-C concurrency.
 pub(crate) fn flush_page_managers_cached(
     pms: &[Arc<Mutex<PageManager>>],
 ) -> DbResult<(usize, CommitFlushPhaseUs)> {
     if pms.is_empty() {
         return Ok((0, CommitFlushPhaseUs::default()));
     }
-    let mut dirty_pms: Vec<Arc<Mutex<PageManager>>> = Vec::new();
-    let mut pm_lock_wait_us = 0u64;
+    let mut entries: Vec<(u32, Arc<Mutex<PageManager>>)> = Vec::with_capacity(pms.len());
     for pm in pms {
         let lock_t0 = Instant::now();
-        let dirty = pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false);
-        pm_lock_wait_us += lock_t0.elapsed().as_micros() as u64;
-        if dirty {
-            dirty_pms.push(pm.clone());
-        }
+        let file_id = pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX);
+        let _ = lock_t0;
+        entries.push((file_id, pm.clone()));
     }
-    dirty_pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
-    let (flushed, flush_pm_wait, heap_fsync_us) = coalesced_flush_page_managers(dirty_pms)?;
-    Ok((
-        flushed,
-        CommitFlushPhaseUs {
-            table_map_lock_us: 0,
-            pm_lock_wait_us: pm_lock_wait_us.saturating_add(flush_pm_wait),
-            heap_fsync_us,
-        },
-    ))
+    flush_sorted_page_managers(entries)
 }
 
 pub(crate) fn flush_all_page_managers(
