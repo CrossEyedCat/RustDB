@@ -314,11 +314,11 @@ impl BlockIoBackend for IoUringBackend {
             .ring
             .lock()
             .map_err(|e| Error::database(format!("Lock error: {}", e)))?;
-        let submission = ring.submission();
+        let mut submission = ring.submission();
         let last = non_empty.len() - 1;
         for (i, (offset, data)) in non_empty.iter().enumerate() {
             let len = data.len() as u32;
-            let mut entry = io_uring::opcode::Write::new(fd, data.as_ptr(), len)
+            let entry = io_uring::opcode::Write::new(fd, data.as_ptr(), len)
                 .offset(*offset)
                 .build()
                 .user_data(i as u64);
@@ -328,7 +328,7 @@ impl BlockIoBackend for IoUringBackend {
             } else {
                 flags |= Flags::IO_DRAIN;
             }
-            entry.flags(flags);
+            let entry = entry.flags(flags);
             unsafe {
                 submission
                     .push(&entry)
