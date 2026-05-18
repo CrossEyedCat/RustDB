@@ -650,6 +650,18 @@ pub(crate) fn tpcc_defer_index_sync_enabled() -> bool {
     }
 }
 
+/// When set (non-`0`), native TPC-C keeps a [`bumpalo::Bump`] per open transaction for `order_line` row bytes.
+pub(crate) fn tpcc_bump_arena_enabled() -> bool {
+    std::env::var_os("RUSTDB_TPCC_BUMP_ARENA")
+        .is_some_and(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+}
+
+fn ensure_tpcc_bump_arena(ctx: &mut SessionContext) {
+    if tpcc_bump_arena_enabled() && ctx.tpcc_bump.is_none() {
+        ctx.tpcc_bump = Some(bumpalo::Bump::new());
+    }
+}
+
 /// TPC-C heap insert without constraint-runtime work (seed tables have no PK/FK).
 pub(crate) fn insert_row_tuple_tpcc(
     state: &SqlEngineState,
@@ -684,14 +696,26 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
         });
     }
     record_touched_table(ctx, table);
+    if table == "order_line" {
+        ensure_tpcc_bump_arena(ctx);
+    }
     let row_bytes = tuple.to_bytes().map_err(map_db_err)?;
+    let row_slice: &[u8] = if table == "order_line" {
+        if let Some(ref bump) = ctx.tpcc_bump {
+            bump.alloc_slice_copy(&row_bytes)
+        } else {
+            &row_bytes
+        }
+    } else {
+        &row_bytes
+    };
     ctx.tpcc_row_bytes_buf.clear();
-    ctx.tpcc_row_bytes_buf.extend_from_slice(&row_bytes);
+    ctx.tpcc_row_bytes_buf.extend_from_slice(row_slice);
     let pm_for_table = table_page_manager_cached(state, ctx, table)?;
     let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
     let ins = pm.insert(&ctx.tpcc_row_bytes_buf).map_err(map_db_err)?;
     maybe_simulate_dml_crash("insert_row");
-    let mut payload = std::mem::take(&mut ctx.tpcc_row_bytes_buf);
+    let payload = row_bytes;
     let wal_clock = state.wal.is_some().then(Instant::now);
     if let Some(tx) = ctx.transaction.as_mut() {
         if let Some(ref wal) = state.wal {
@@ -3119,6 +3143,7 @@ pub(crate) fn tpcc_run_in_transaction(
     ctx.tpcc_dml_done_at = None;
     ctx.last_commit_flush_phases = None;
     ctx.tpcc_row_bytes_buf.clear();
+    ctx.tpcc_bump = None;
     ctx.txn_pm_cache.clear();
     ctx.tpcc_index_column_map_buf.clear();
     begin_transaction(state, ctx)?;

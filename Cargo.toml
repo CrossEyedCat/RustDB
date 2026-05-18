@@ -58,6 +58,8 @@ memmap2 = "0.9"
 crossbeam = "0.8"
 dashmap = "6.1"
 parking_lot = "0.12"
+bumpalo = "3.19"
+bytes = "1.10"
 
 # Data compression
 lz4_flex = "0.13"
