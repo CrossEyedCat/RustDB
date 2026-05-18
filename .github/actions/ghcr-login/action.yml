@@ -1,0 +1,50 @@
+name: Login to GHCR (with retry)
+description: >-
+  Authenticate to GitHub Container Registry with retries for transient
+  network timeouts (e.g. "context deadline exceeded" on ghcr.io/v2/).
+inputs:
+  registry:
+    description: Registry hostname
+    required: false
+    default: ghcr.io
+  username:
+    description: Registry username
+    required: true
+  password:
+    description: Registry password or token
+    required: true
+  max_attempts:
+    description: Maximum login attempts
+    required: false
+    default: "5"
+  retry_wait_seconds:
+    description: Seconds to wait between attempts
+    required: false
+    default: "15"
+runs:
+  using: composite
+  steps:
+    - name: Login to GHCR
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        USERNAME: ${{ inputs.username }}
+        PASSWORD: ${{ inputs.password }}
+        MAX_ATTEMPTS: ${{ inputs.max_attempts }}
+        RETRY_WAIT_SECONDS: ${{ inputs.retry_wait_seconds }}
+      run: |
+        set -euo pipefail
+        attempt=1
+        while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
+          if echo "$PASSWORD" | docker login "$REGISTRY" -u "$USERNAME" --password-stdin; then
+            echo "Logged in to $REGISTRY"
+            exit 0
+          fi
+          if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+            echo "::warning::GHCR login attempt ${attempt}/${MAX_ATTEMPTS} failed; retrying in ${RETRY_WAIT_SECONDS}s..."
+            sleep "$RETRY_WAIT_SECONDS"
+          fi
+          attempt=$((attempt + 1))
+        done
+        echo "::error::GHCR login failed after ${MAX_ATTEMPTS} attempts"
+        exit 1
