@@ -493,6 +493,37 @@ pub(crate) fn flush_all_page_managers(
     Ok(n)
 }
 
+/// When set (non-`0`), start the engine BgWriter even if heap flush on COMMIT is not deferred.
+pub fn bgwriter_enabled() -> bool {
+    std::env::var_os("RUSTDB_BGWRITER_ENABLED").is_some_and(|v| v != "0")
+}
+
+pub fn bgwriter_interval_ms() -> u64 {
+    std::env::var("RUSTDB_BGWRITER_INTERVAL_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(50)
+        .max(1)
+}
+
+pub fn should_start_heap_bgwriter(wal_on: bool) -> bool {
+    if !wal_on {
+        return false;
+    }
+    bgwriter_enabled()
+        || std::env::var_os("RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT").is_some_and(|v| v != "0")
+}
+
+pub fn start_heap_bgwriter(
+    state: std::sync::Arc<crate::network::sql_engine::SqlEngineState>,
+) -> std::thread::JoinHandle<()> {
+    let interval_ms = bgwriter_interval_ms();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+        let _ = flush_all_page_managers(state.as_ref());
+    })
+}
+
 pub fn replay_wal_into_engine(
     state: &crate::network::sql_engine::SqlEngineState,
     wal_dir: &Path,
