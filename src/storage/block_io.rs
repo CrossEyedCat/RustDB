@@ -7,16 +7,70 @@ use crate::common::{Error, Result};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, Once, OnceLock};
 
 #[cfg(all(target_os = "linux", feature = "io-uring"))]
 use std::os::unix::io::AsRawFd;
 
-/// When set (non-`0`), dirty-page flush may submit multiple `write_at` ops as one linked
-/// io_uring chain (Linux + `--features io-uring` only). See [`BlockIoBackend::write_at_batch`].
+/// When set (non-`0`), dirty-page flush batches multiple page writes via
+/// [`BlockIoBackend::write_at_batch`] (linked io_uring on Linux when available, else sequential).
 pub fn io_uring_batch_writes_enabled() -> bool {
     std::env::var_os("RUSTDB_IO_URING_BATCH")
         .is_some_and(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+}
+
+#[cfg(all(target_os = "linux", feature = "io-uring"))]
+fn io_uring_disabled_by_env() -> bool {
+    std::env::var_os("RUSTDB_USE_IO_URING")
+        .is_some_and(|v| v == "0" || v.eq_ignore_ascii_case("false"))
+}
+
+#[cfg(all(target_os = "linux", feature = "io-uring"))]
+fn io_uring_ring_error_is_fallback(err: &std::io::Error) -> bool {
+    matches!(
+        err.raw_os_error(),
+        Some(1) | Some(13) | Some(38) | Some(95) // EPERM, EACCES, ENOSYS, ENOTSUP
+    ) || matches!(
+        err.kind(),
+        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+    )
+}
+
+#[cfg(all(target_os = "linux", feature = "io-uring"))]
+static IO_URING_PROBE: OnceLock<bool> = OnceLock::new();
+
+#[cfg(all(target_os = "linux", feature = "io-uring"))]
+static IO_URING_FALLBACK_LOG: Once = Once::new();
+
+#[cfg(all(target_os = "linux", feature = "io-uring"))]
+fn io_uring_runtime_available() -> bool {
+    *IO_URING_PROBE.get_or_init(|| {
+        if io_uring_disabled_by_env() {
+            return false;
+        }
+        match io_uring::IoUring::new(IoUringBackend::RING_ENTRIES) {
+            Ok(_) => true,
+            Err(e) if io_uring_ring_error_is_fallback(&e) => {
+                IO_URING_FALLBACK_LOG.call_once(|| {
+                    tracing::warn!(
+                        error = %e,
+                        "io_uring unavailable (e.g. Docker without CAP_SYS_ADMIN); \
+                         using std::fs block I/O — batched flush still uses sequential write_at"
+                    );
+                });
+                false
+            }
+            Err(e) => {
+                IO_URING_FALLBACK_LOG.call_once(|| {
+                    tracing::warn!(
+                        error = %e,
+                        "io_uring probe failed; using std::fs block I/O"
+                    );
+                });
+                false
+            }
+        }
+    })
 }
 
 /// Block I/O backend trait.
@@ -79,8 +133,8 @@ impl StdFileBackend {
 }
 
 /// Creates an appropriate I/O backend for the platform.
-/// On Linux with `io-uring` feature: uses IoUringBackend.
-/// Otherwise: uses StdFileBackend.
+/// On Linux with `io-uring` feature: uses [`IoUringBackend`] when the ring is available,
+/// otherwise [`StdFileBackend`]. Set `RUSTDB_USE_IO_URING=0` to skip io_uring entirely.
 #[allow(clippy::missing_panics_doc)]
 pub fn create_backend_for_file(
     path: &Path,
@@ -89,10 +143,18 @@ pub fn create_backend_for_file(
 ) -> Result<Box<dyn BlockIoBackend>> {
     #[cfg(all(target_os = "linux", feature = "io-uring"))]
     {
+        if io_uring_runtime_available() {
+            return if create {
+                IoUringBackend::create(path).map(|b| Box::new(b) as Box<dyn BlockIoBackend>)
+            } else {
+                IoUringBackend::open(path, read_only)
+                    .map(|b| Box::new(b) as Box<dyn BlockIoBackend>)
+            };
+        }
         if create {
-            Ok(Box::new(IoUringBackend::create(path)?))
+            Ok(Box::new(StdFileBackend::create(path)?))
         } else {
-            Ok(Box::new(IoUringBackend::open(path, read_only)?))
+            Ok(Box::new(StdFileBackend::open(path, read_only)?))
         }
     }
 
@@ -434,6 +496,10 @@ mod io_uring_tests {
 
     #[test]
     fn test_io_uring_read_write() {
+        if !super::io_uring_runtime_available() {
+            eprintln!("skip test_io_uring_read_write: io_uring not available");
+            return;
+        }
         let dir = std::env::temp_dir();
         let path = dir.join("rustdb_io_uring_test");
         let _ = std::fs::remove_file(&path);

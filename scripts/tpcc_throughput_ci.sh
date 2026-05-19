@@ -21,7 +21,8 @@
 #   RUSTDB_GROUP_COMMIT_INTERVAL_MS — group commit timer (default 1 ms in container;
 #     run-20 A/B: GROUP_COMMIT_INTERVAL_MS=2 may reduce WAL fsync pressure vs 1 ms)
 #   RUSTDB_GROUP_COMMIT_MAX_BATCH — max records per group commit batch (default 10)
-#   RUSTDB_IO_URING_BATCH=1 — linked io_uring writes for multi-page dirty flush (Linux + io-uring feature)
+#   RUSTDB_IO_URING_BATCH=1 — batched multi-page dirty flush (linked io_uring when available, else sequential)
+#   RUSTDB_USE_IO_URING=0 — force std::fs I/O (CI Docker often lacks io_uring; auto-fallback otherwise)
 #   RUSTDB_SQL_WORKER_COUNT — QUIC connection SQL worker threads (default 16; try 32 via workflow_dispatch)
 #   RUSTDB_TPCC_DEFER_INDEX_SYNC=1 — batch secondary-index updates at COMMIT (native TPC-C)
 #   Commit phase log fields (RUSTDB_SQL_PHASE_LOG=1): commit_table_map_lock_us,
