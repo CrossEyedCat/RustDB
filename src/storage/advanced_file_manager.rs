@@ -762,6 +762,32 @@ mod tests {
     }
 
     #[test]
+    fn test_write_pages_batch() -> Result<()> {
+        let temp_dir = TempDir::new()
+            .map_err(|e| Error::database(format!("Failed to create temp dir: {}", e)))?;
+        let mut manager = AdvancedFileManager::new(temp_dir.path())?;
+
+        let file_id = manager.create_database_file(
+            "batch.db",
+            DatabaseFileType::Data,
+            1,
+            ExtensionStrategy::Fixed,
+        )?;
+
+        let page_a = 2;
+        let page_b = 4;
+        let data_a = vec![0xAAu8; crate::storage::database_file::BLOCK_SIZE];
+        let data_b = vec![0xBBu8; crate::storage::database_file::BLOCK_SIZE];
+        manager.write_pages_batch(file_id, &[(page_a, &data_a), (page_b, &data_b)])?;
+        manager.sync_file(file_id)?;
+
+        assert_eq!(manager.read_page(file_id, page_a)?, data_a);
+        assert_eq!(manager.read_page(file_id, page_b)?, data_b);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_page_read_write() -> Result<()> {
         use std::thread;
         use std::time::Duration;

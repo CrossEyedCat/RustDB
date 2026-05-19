@@ -628,6 +628,23 @@ mod tests {
     }
 
     #[test]
+    fn test_write_blocks_batch() -> Result<()> {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("batch.db");
+
+        let mut db_file = DatabaseFile::create(1, &file_path)?;
+        let block_a = vec![10u8; BLOCK_SIZE];
+        let block_b = vec![20u8; BLOCK_SIZE];
+        db_file.write_blocks_batch(&[(1, &block_a), (3, &block_b)])?;
+
+        assert_eq!(db_file.read_block(1)?, block_a);
+        assert_eq!(db_file.read_block(3)?, block_b);
+        assert_eq!(db_file.used_blocks(), 4);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_file_extension() -> Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.db");

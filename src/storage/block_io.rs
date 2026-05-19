@@ -133,7 +133,7 @@ impl StdFileBackend {
 }
 
 /// Creates an appropriate I/O backend for the platform.
-/// On Linux with `io-uring` feature: uses [`IoUringBackend`] when the ring is available,
+/// On Linux with `io-uring` feature: uses `IoUringBackend` when the ring is available,
 /// otherwise [`StdFileBackend`]. Set `RUSTDB_USE_IO_URING=0` to skip io_uring entirely.
 #[allow(clippy::missing_panics_doc)]
 pub fn create_backend_for_file(
@@ -489,10 +489,122 @@ impl BlockIoBackend for IoUringBackend {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn io_uring_batch_writes_env_defaults_off() {
+        std::env::remove_var("RUSTDB_IO_URING_BATCH");
+        assert!(!io_uring_batch_writes_enabled());
+        assert!(!io_uring_batch_writes_enabled());
+    }
+
+    #[test]
+    fn io_uring_batch_writes_env_respects_values() {
+        std::env::set_var("RUSTDB_IO_URING_BATCH", "1");
+        assert!(io_uring_batch_writes_enabled());
+        std::env::set_var("RUSTDB_IO_URING_BATCH", "false");
+        assert!(!io_uring_batch_writes_enabled());
+        std::env::remove_var("RUSTDB_IO_URING_BATCH");
+    }
+
+    #[test]
+    fn std_backend_write_at_batch_roundtrip() -> Result<()> {
+        let dir = TempDir::new().map_err(|e| Error::database(e.to_string()))?;
+        let path = dir.path().join("std_batch.bin");
+        let mut backend = StdFileBackend::create(&path)?;
+        let chunk_a = vec![0xAAu8; 32];
+        let chunk_b = vec![0xBBu8; 32];
+        backend.write_at_batch(&[(0, &chunk_a), (64, &chunk_b)])?;
+        backend.sync()?;
+
+        let mut buf = vec![0u8; 32];
+        backend.read_at(0, &mut buf)?;
+        assert_eq!(buf, chunk_a);
+        backend.read_at(64, &mut buf)?;
+        assert_eq!(buf, chunk_b);
+        Ok(())
+    }
+
+    #[test]
+    fn create_backend_write_at_batch_roundtrip() -> Result<()> {
+        let dir = TempDir::new().map_err(|e| Error::database(e.to_string()))?;
+        let path = dir.path().join("backend_batch.bin");
+        let mut backend = create_backend_for_file(&path, true, false)?;
+        backend.write_at_batch(&[(4, b"abcd"), (16, b"efgh")])?;
+        backend.sync()?;
+
+        let mut buf = [0u8; 4];
+        backend.read_at(4, &mut buf)?;
+        assert_eq!(&buf, b"abcd");
+        backend.read_at(16, &mut buf)?;
+        assert_eq!(&buf, b"efgh");
+        Ok(())
+    }
+
+    #[test]
+    fn write_at_batch_skips_empty_payloads() -> Result<()> {
+        let dir = TempDir::new().map_err(|e| Error::database(e.to_string()))?;
+        let path = dir.path().join("empty_skip.bin");
+        let mut backend = StdFileBackend::create(&path)?;
+        backend.write_at_batch(&[(0, b""), (8, b"x")])?;
+        let mut one = [0u8; 1];
+        backend.read_at(8, &mut one)?;
+        assert_eq!(one, [b'x']);
+        Ok(())
+    }
+}
+
 #[cfg(all(target_os = "linux", feature = "io-uring"))]
 #[cfg(test)]
 mod io_uring_tests {
     use super::*;
+    use std::io::{Error as IoError, ErrorKind};
+    use tempfile::TempDir;
+
+    #[test]
+    fn io_uring_ring_error_is_fallback_classifies_os_errors() {
+        assert!(io_uring_ring_error_is_fallback(
+            &IoError::from_raw_os_error(1)
+        ));
+        assert!(io_uring_ring_error_is_fallback(
+            &IoError::from_raw_os_error(13)
+        ));
+        assert!(io_uring_ring_error_is_fallback(
+            &IoError::from_raw_os_error(38)
+        ));
+        assert!(io_uring_ring_error_is_fallback(
+            &IoError::from_raw_os_error(95)
+        ));
+        assert!(io_uring_ring_error_is_fallback(&IoError::new(
+            ErrorKind::PermissionDenied,
+            "denied"
+        )));
+        assert!(io_uring_ring_error_is_fallback(&IoError::new(
+            ErrorKind::Unsupported,
+            "unsupported"
+        )));
+        assert!(!io_uring_ring_error_is_fallback(&IoError::new(
+            ErrorKind::Other,
+            "other"
+        )));
+    }
+
+    #[test]
+    fn create_backend_uses_std_when_io_uring_disabled_by_env() -> Result<()> {
+        std::env::set_var("RUSTDB_USE_IO_URING", "0");
+        let dir = TempDir::new().map_err(|e| Error::database(e.to_string()))?;
+        let path = dir.path().join("std_fallback.bin");
+        let mut backend = create_backend_for_file(&path, true, false)?;
+        backend.write_at_batch(&[(0, b"std")])?;
+        let mut buf = [0u8; 3];
+        backend.read_at(0, &mut buf)?;
+        assert_eq!(&buf, b"std");
+        std::env::remove_var("RUSTDB_USE_IO_URING");
+        Ok(())
+    }
 
     #[test]
     fn test_io_uring_read_write() {
@@ -513,6 +625,35 @@ mod io_uring_tests {
         backend.read_at(0, &mut buf).expect("read");
         assert_eq!(&buf[..], data.as_slice());
 
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_io_uring_write_at_batch_linked() {
+        if !super::io_uring_runtime_available() {
+            eprintln!("skip test_io_uring_write_at_batch_linked: io_uring not available");
+            return;
+        }
+        std::env::set_var("RUSTDB_IO_URING_BATCH", "1");
+        let dir = std::env::temp_dir();
+        let path = dir.join("rustdb_io_uring_batch_test");
+        let _ = std::fs::remove_file(&path);
+
+        let mut backend = IoUringBackend::create(&path).expect("create");
+        let a = vec![1u8; 16];
+        let b = vec![2u8; 16];
+        backend
+            .write_at_batch(&[(0, &a), (32, &b)])
+            .expect("batched write");
+        backend.sync().expect("sync");
+
+        let mut buf = vec![0u8; 16];
+        backend.read_at(0, &mut buf).expect("read a");
+        assert_eq!(buf, a);
+        backend.read_at(32, &mut buf).expect("read b");
+        assert_eq!(buf, b);
+
+        std::env::remove_var("RUSTDB_IO_URING_BATCH");
         let _ = std::fs::remove_file(&path);
     }
 }
