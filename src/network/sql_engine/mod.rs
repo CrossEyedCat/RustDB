@@ -1284,10 +1284,28 @@ fn commit_transaction(
     let flush_tables_count = touched.len();
     span.record("flush_tables_count", flush_tables_count);
     let flush_clock = Instant::now();
-    let (_flushed_pages, flush_phases) = if !ctx.txn_pm_cache.is_empty() {
-        let mut pms: Vec<Arc<Mutex<PageManager>>> = ctx.txn_pm_cache.values().cloned().collect();
-        pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
-        crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map_err(map_db_err)?
+    let (_flushed_pages, flush_phases) = if !ctx.txn_pm_cache.is_empty() && !touched.is_empty() {
+        let (mut flushed, mut flush_phases) =
+            crate::network::sql_engine_wal::flush_touched_txn_page_managers(
+                &ctx.txn_pm_cache,
+                &touched,
+            )
+            .map_err(map_db_err)?;
+        let missing: HashSet<String> = touched
+            .iter()
+            .filter(|t| !ctx.txn_pm_cache.contains_key(*t))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            let (extra, ep) =
+                crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &missing)
+                    .map_err(map_db_err)?;
+            flushed += extra;
+            flush_phases.table_map_lock_us += ep.table_map_lock_us;
+            flush_phases.pm_lock_wait_us += ep.pm_lock_wait_us;
+            flush_phases.heap_fsync_us += ep.heap_fsync_us;
+        }
+        (flushed, flush_phases)
     } else if touched.is_empty() {
         (
             0,
@@ -1376,12 +1394,22 @@ fn rollback_transaction(
     // Persist rollback: otherwise the next process sees heap pages from disk that still contain
     // undone inserts (WAL replay does not redo aborted txs, so durability must match).
     let _ = if !ctx.txn_pm_cache.is_empty() && !flush_tables.is_empty() {
-        let mut pms: Vec<Arc<Mutex<PageManager>>> = flush_tables
+        let (n, _) = crate::network::sql_engine_wal::flush_touched_txn_page_managers(
+            &ctx.txn_pm_cache,
+            &flush_tables,
+        )
+        .map_err(map_db_err)?;
+        let missing: HashSet<String> = flush_tables
             .iter()
-            .filter_map(|t| ctx.txn_pm_cache.get(t).cloned())
+            .filter(|t| !ctx.txn_pm_cache.contains_key(*t))
+            .cloned()
             .collect();
-        pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
-        crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map(|(n, _)| n)
+        if missing.is_empty() {
+            Ok(n)
+        } else {
+            crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &missing)
+                .map(|(e, _)| n + e)
+        }
     } else {
         crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &flush_tables)
             .map(|(n, _)| n)
@@ -1540,11 +1568,13 @@ pub(crate) fn table_page_manager_cached(
     ctx: &mut SessionContext,
     table: &str,
 ) -> Result<Arc<Mutex<PageManager>>, EngineError> {
-    if let Some(pm) = ctx.txn_pm_cache.get(table) {
+    if let Some((_, pm)) = ctx.txn_pm_cache.get(table) {
         return Ok(pm.clone());
     }
     let pm = table_page_manager(state, table)?;
-    ctx.txn_pm_cache.insert(table.to_string(), pm.clone());
+    let file_id = pm.lock().map_err(|_| lock_poisoned_engine())?.file_id();
+    ctx.txn_pm_cache
+        .insert(table.to_string(), (file_id, pm.clone()));
     Ok(pm)
 }
 
@@ -4972,6 +5002,25 @@ mod tests {
     }
 
     #[test]
+    fn commit_flushes_only_touched_tables_from_txn_pm_cache() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let state = eng.state_for_test();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE ta (k INT PRIMARY KEY)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("CREATE TABLE tb (k INT PRIMARY KEY)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("INSERT INTO tb (k) VALUES (0)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+        let _ = table_page_manager_cached(state, &mut ctx, "tb").unwrap();
+        eng.execute_sql("INSERT INTO ta (k) VALUES (1)", &mut ctx)
+            .unwrap();
+        assert_eq!(ctx.txn_pm_cache.len(), 1);
+        eng.execute_sql("COMMIT", &mut ctx).unwrap();
+    }
+
     fn table_page_manager_cached_reuses_arc_in_transaction() {
         let dir = TempDir::new().unwrap();
         let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();

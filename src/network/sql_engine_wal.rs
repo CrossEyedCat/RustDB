@@ -365,7 +365,9 @@ fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<
     let mut sync_targets = Vec::new();
     let mut pm_lock_wait_us = 0u64;
 
-    if pms.len() <= 1 {
+    const COALESCED_FLUSH_PARALLEL_MIN: usize = 2;
+
+    if pms.len() < COALESCED_FLUSH_PARALLEL_MIN {
         for pm in pms {
             let (n, file_id, wait) = flush_pm_writes_only(&pm)?;
             pm_lock_wait_us += wait;
@@ -436,33 +438,50 @@ pub(crate) fn flush_page_managers_for_tables(
     ))
 }
 
-/// Flushes dirty pages for the given page managers without acquiring `table_page_managers`.
-///
-/// Skips managers with no dirty pages. `CommitFlushPhaseUs::table_map_lock_us` is always zero.
+/// Flushes dirty heaps for txn-cached `(file_id, pm)` limited to `touched`.
+pub(crate) fn flush_touched_txn_page_managers(
+    cache: &std::collections::HashMap<String, (u32, Arc<Mutex<PageManager>>)>,
+    touched: &std::collections::HashSet<String>,
+) -> DbResult<(usize, CommitFlushPhaseUs)> {
+    if touched.is_empty() {
+        return Ok((0, CommitFlushPhaseUs::default()));
+    }
+    let mut entries: Vec<(u32, Arc<Mutex<PageManager>>)> = Vec::new();
+    for table in touched {
+        if let Some((file_id, pm)) = cache.get(table) {
+            entries.push((*file_id, pm.clone()));
+        }
+    }
+    if entries.is_empty() {
+        return Ok((0, CommitFlushPhaseUs::default()));
+    }
+    entries.sort_by_key(|(f, _)| *f);
+    let (flushed, w, fsync) =
+        coalesced_flush_page_managers(entries.into_iter().map(|(_, p)| p).collect())?;
+    Ok((
+        flushed,
+        CommitFlushPhaseUs {
+            table_map_lock_us: 0,
+            pm_lock_wait_us: w,
+            heap_fsync_us: fsync,
+        },
+    ))
+}
+
+/// One PM lock per heap via [`flush_pm_writes_only`].
 pub(crate) fn flush_page_managers_cached(
     pms: &[Arc<Mutex<PageManager>>],
 ) -> DbResult<(usize, CommitFlushPhaseUs)> {
     if pms.is_empty() {
         return Ok((0, CommitFlushPhaseUs::default()));
     }
-    let mut dirty_pms: Vec<Arc<Mutex<PageManager>>> = Vec::new();
-    let mut pm_lock_wait_us = 0u64;
-    for pm in pms {
-        let lock_t0 = Instant::now();
-        let dirty = pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false);
-        pm_lock_wait_us += lock_t0.elapsed().as_micros() as u64;
-        if dirty {
-            dirty_pms.push(pm.clone());
-        }
-    }
-    dirty_pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
-    let (flushed, flush_pm_wait, heap_fsync_us) = coalesced_flush_page_managers(dirty_pms)?;
+    let (flushed, w, fsync) = coalesced_flush_page_managers(pms.to_vec())?;
     Ok((
         flushed,
         CommitFlushPhaseUs {
             table_map_lock_us: 0,
-            pm_lock_wait_us: pm_lock_wait_us.saturating_add(flush_pm_wait),
-            heap_fsync_us,
+            pm_lock_wait_us: w,
+            heap_fsync_us: fsync,
         },
     ))
 }
@@ -751,6 +770,40 @@ mod tests {
         assert_eq!(pm_clean.lock().unwrap().dirty_page_count(), 0);
         assert_eq!(pm_dirty.lock().unwrap().dirty_page_count(), 0);
 
+        eng.execute_sql("COMMIT", &mut ctx).unwrap();
+    }
+
+    #[test]
+    fn flush_touched_txn_page_managers_skips_clean_and_flushes_dirty() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let state = eng.state_for_test();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql("CREATE TABLE t_clean (k INT PRIMARY KEY)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("CREATE TABLE t_dirty (k INT PRIMARY KEY)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("INSERT INTO t_clean (k) VALUES (0)", &mut ctx)
+            .unwrap();
+        eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+        eng.execute_sql("INSERT INTO t_dirty (k) VALUES (1)", &mut ctx)
+            .unwrap();
+        let pm_clean = table_page_manager(state, "t_clean").unwrap();
+        let pm_dirty = table_page_manager(state, "t_dirty").unwrap();
+        let mut cache = std::collections::HashMap::new();
+        cache.insert(
+            "t_clean".to_string(),
+            (pm_clean.lock().unwrap().file_id(), pm_clean.clone()),
+        );
+        cache.insert(
+            "t_dirty".to_string(),
+            (pm_dirty.lock().unwrap().file_id(), pm_dirty.clone()),
+        );
+        let mut touched = HashSet::new();
+        touched.insert("t_clean".to_string());
+        touched.insert("t_dirty".to_string());
+        let (flushed, _) = flush_touched_txn_page_managers(&cache, &touched).unwrap();
+        assert!(flushed > 0);
         eng.execute_sql("COMMIT", &mut ctx).unwrap();
     }
 }
