@@ -178,6 +178,18 @@ impl AdvancedDatabaseFile {
         Ok(())
     }
 
+    /// Writes multiple pages; may use a single linked io_uring submit when enabled.
+    pub fn write_pages_batch(&mut self, pages: &[(PageId, &[u8])]) -> Result<()> {
+        if pages.is_empty() {
+            return Ok(());
+        }
+        self.base_file.write_blocks_batch(pages)?;
+        self.header.increment_write_count();
+        self.statistics.write_operations += pages.len() as u64;
+        self.header_dirty = true;
+        Ok(())
+    }
+
     /// Checks if file pre-extension is needed
     pub fn check_preextension(&mut self) -> Result<bool> {
         let should_extend = self.extension_manager.should_preextend(
@@ -553,6 +565,22 @@ impl AdvancedFileManager {
         Ok(())
     }
 
+    /// Writes multiple pages to one file (batched backend I/O when configured).
+    pub fn write_pages_batch(
+        &mut self,
+        file_id: AdvancedFileId,
+        pages: &[(PageId, &[u8])],
+    ) -> Result<()> {
+        let file = self
+            .advanced_files
+            .get_mut(&file_id)
+            .ok_or_else(|| Error::database(format!("File {} not found", file_id)))?;
+
+        file.write_pages_batch(pages)?;
+        self.update_global_statistics();
+        Ok(())
+    }
+
     /// Synchronizes a file
     pub fn sync_file(&mut self, file_id: AdvancedFileId) -> Result<()> {
         let file = self
@@ -729,6 +757,32 @@ mod tests {
         // Check statistics
         let stats = manager.get_global_statistics();
         assert!(stats.total_pages >= 10);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_pages_batch() -> Result<()> {
+        let temp_dir = TempDir::new()
+            .map_err(|e| Error::database(format!("Failed to create temp dir: {}", e)))?;
+        let mut manager = AdvancedFileManager::new(temp_dir.path())?;
+
+        let file_id = manager.create_database_file(
+            "batch.db",
+            DatabaseFileType::Data,
+            1,
+            ExtensionStrategy::Fixed,
+        )?;
+
+        let page_a = 2;
+        let page_b = 4;
+        let data_a = vec![0xAAu8; crate::storage::database_file::BLOCK_SIZE];
+        let data_b = vec![0xBBu8; crate::storage::database_file::BLOCK_SIZE];
+        manager.write_pages_batch(file_id, &[(page_a, &data_a), (page_b, &data_b)])?;
+        manager.sync_file(file_id)?;
+
+        assert_eq!(manager.read_page(file_id, page_a)?, data_a);
+        assert_eq!(manager.read_page(file_id, page_b)?, data_b);
 
         Ok(())
     }

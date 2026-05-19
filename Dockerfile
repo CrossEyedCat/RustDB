@@ -15,7 +15,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY benches ./benches
 
-RUN cargo build --release --bin rustdb
+# io_uring backend (Linux) for TPC-C batched flush experiment (PR1).
+RUN cargo build --release --bin rustdb --features io-uring
 
 # Profiling image (Linux perf + cargo flamegraph).
 # Usage:

@@ -86,6 +86,20 @@ impl CachedFileManager {
         Ok(())
     }
 
+    /// Writes multiple pages in one backend batch when io_uring batching is enabled.
+    pub fn write_pages_batch(
+        &mut self,
+        file_id: AdvancedFileId,
+        pages: &[(PageId, &[u8])],
+    ) -> Result<()> {
+        self.inner.write_pages_batch(file_id, pages)?;
+        let mut cache = self.cache.lock().unwrap();
+        for &(page_id, data) in pages {
+            cache.put(file_id, page_id, data.to_vec());
+        }
+        Ok(())
+    }
+
     /// Synchronizes a file to disk
     pub fn sync_file(&mut self, file_id: AdvancedFileId) -> Result<()> {
         self.inner.sync_file(file_id)
@@ -117,5 +131,36 @@ impl CachedFileManager {
         for &page_id in page_ids {
             cache.remove(file_id, page_id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::database_file::{DatabaseFileType, ExtensionStrategy, BLOCK_SIZE};
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_write_pages_batch_updates_cache() -> crate::common::Result<()> {
+        let temp_dir = TempDir::new().map_err(|e| crate::common::Error::database(e.to_string()))?;
+        let mut manager = CachedFileManager::new(temp_dir.path(), 8)?;
+
+        let file_id = manager.create_database_file(
+            "cached_batch.db",
+            DatabaseFileType::Data,
+            7,
+            ExtensionStrategy::Fixed,
+        )?;
+
+        let page_a = 1;
+        let page_b = 2;
+        let data_a = vec![0x11u8; BLOCK_SIZE];
+        let data_b = vec![0x22u8; BLOCK_SIZE];
+        manager.write_pages_batch(file_id, &[(page_a, &data_a), (page_b, &data_b)])?;
+
+        assert_eq!(manager.read_page(file_id, page_a)?, data_a);
+        assert_eq!(manager.read_page(file_id, page_b)?, data_b);
+
+        Ok(())
     }
 }
