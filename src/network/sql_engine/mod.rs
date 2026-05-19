@@ -268,8 +268,7 @@ impl SqlEngine {
             *state
                 .bgwriter
                 .lock()
-                .map_err(|_| DbError::database("bgwriter handle lock poisoned"))? =
-                Some(handle);
+                .map_err(|_| DbError::database("bgwriter handle lock poisoned"))? = Some(handle);
         }
         if state.wal.is_some() && wal_dir.is_dir() {
             crate::network::sql_engine_wal::replay_wal_into_engine(
