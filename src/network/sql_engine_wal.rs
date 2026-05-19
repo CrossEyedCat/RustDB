@@ -311,6 +311,15 @@ pub(crate) fn bench_defer_heap_fsync_enabled() -> bool {
     std::env::var_os("RUSTDB_BENCH_DEFER_HEAP_FSYNC").is_some_and(|v| v != "0")
 }
 
+/// Whether explicit `COMMIT` / no-op `ROLLBACK` should synchronously flush dirty heap pages.
+///
+/// When **`RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT=1`** (bench/CI only; see `scripts/tpcc_throughput_ci.sh`),
+/// returns `false` so callers skip `flush_page_managers_*` while WAL is enabled. Checkpoint and
+/// `ROLLBACK` with undo still flush regardless of this flag.
+pub(crate) fn heap_flush_on_commit_enabled() -> bool {
+    std::env::var_os("RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT").is_none_or(|v| v == "0")
+}
+
 /// Microsecond breakdown for `COMMIT` heap flush (logged on `rustdb::sql_phases`).
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct CommitFlushPhaseUs {
@@ -681,6 +690,17 @@ mod tests {
         std::env::set_var("RUSTDB_BENCH_DEFER_HEAP_FSYNC", "0");
         assert!(!bench_defer_heap_fsync_enabled());
         std::env::remove_var("RUSTDB_BENCH_DEFER_HEAP_FSYNC");
+    }
+
+    #[test]
+    fn heap_flush_on_commit_respects_env() {
+        std::env::remove_var("RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT");
+        assert!(heap_flush_on_commit_enabled());
+        std::env::set_var("RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT", "1");
+        assert!(!heap_flush_on_commit_enabled());
+        std::env::set_var("RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT", "0");
+        assert!(heap_flush_on_commit_enabled());
+        std::env::remove_var("RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT");
     }
 
     #[test]

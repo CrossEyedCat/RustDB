@@ -27,6 +27,9 @@
 //!   `COMMIT`). Explicit `BEGIN … COMMIT` transactions defer per-statement heap flush and flush only
 //!   heap page managers for tables touched by DML on `COMMIT` / `ROLLBACK` (see
 //!   `SqlTransaction::touched_tables`).
+//! - Bench-only (**`RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT=1`**, WAL on): skip synchronous heap flush on
+//!   explicit `COMMIT` and on `ROLLBACK` without undo (`scripts/tpcc_throughput_ci.sh`). WAL and
+//!   `commits.log` remain the CI durability path; checkpoint and `ROLLBACK` with undo still flush.
 //! - WAL group commit knobs: `RUSTDB_GROUP_COMMIT_ENABLED`, `RUSTDB_GROUP_COMMIT_INTERVAL_MS`,
 //!   `RUSTDB_GROUP_COMMIT_MAX_BATCH`, `RUSTDB_FORCE_FLUSH_IMMEDIATELY` (see `crate::network::sql_engine_wal`).
 //! - Implicit auto-commit DML still flushes after each statement by default so standalone heap files
@@ -1283,8 +1286,16 @@ fn commit_transaction(
     let touched: HashSet<String> = std::mem::take(&mut tx.touched_tables);
     let flush_tables_count = touched.len();
     span.record("flush_tables_count", flush_tables_count);
+    let skip_heap_flush =
+        state.wal.is_some() && !crate::network::sql_engine_wal::heap_flush_on_commit_enabled();
+    let commit_heap_flush_skipped = u8::from(skip_heap_flush);
     let flush_clock = Instant::now();
-    let (_flushed_pages, flush_phases) = if !ctx.txn_pm_cache.is_empty() {
+    let (_flushed_pages, flush_phases) = if skip_heap_flush {
+        (
+            0,
+            crate::network::sql_engine_wal::CommitFlushPhaseUs::default(),
+        )
+    } else if !ctx.txn_pm_cache.is_empty() {
         let mut pms: Vec<Arc<Mutex<PageManager>>> = ctx.txn_pm_cache.values().cloned().collect();
         pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
         crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map_err(map_db_err)?
@@ -1326,6 +1337,7 @@ fn commit_transaction(
             touched_table_count,
             pending_index_count,
             commit_log_fsync,
+            commit_heap_flush_skipped,
             "sql.commit"
         );
     }
@@ -1375,7 +1387,12 @@ fn rollback_transaction(
     }
     // Persist rollback: otherwise the next process sees heap pages from disk that still contain
     // undone inserts (WAL replay does not redo aborted txs, so durability must match).
-    let _ = if !ctx.txn_pm_cache.is_empty() && !flush_tables.is_empty() {
+    let skip_heap_flush = state.wal.is_some()
+        && !crate::network::sql_engine_wal::heap_flush_on_commit_enabled()
+        && !had_undo;
+    let _ = if skip_heap_flush {
+        Ok(0)
+    } else if !ctx.txn_pm_cache.is_empty() && !flush_tables.is_empty() {
         let mut pms: Vec<Arc<Mutex<PageManager>>> = flush_tables
             .iter()
             .filter_map(|t| ctx.txn_pm_cache.get(t).cloned())
@@ -4969,6 +4986,31 @@ mod tests {
             dirty_after_commit, 0,
             "COMMIT should flush dirty heap pages"
         );
+    }
+
+    #[test]
+    fn explicit_transaction_defers_heap_flush_on_commit_when_env_set() {
+        std::env::set_var("RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT", "1");
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        assert!(eng.wal_enabled());
+        let mut ctx = SessionContext::default();
+        eng.execute_sql(
+            "CREATE TABLE defer_commit_flush (k INT PRIMARY KEY)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
+        eng.execute_sql("INSERT INTO defer_commit_flush (k) VALUES (1)", &mut ctx)
+            .unwrap();
+        let pm = table_page_manager(eng.state_for_test(), "defer_commit_flush").unwrap();
+        assert!(pm.lock().unwrap().dirty_page_count() > 0);
+        eng.execute_sql("COMMIT", &mut ctx).unwrap();
+        assert!(
+            pm.lock().unwrap().dirty_page_count() > 0,
+            "COMMIT should skip heap flush when RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT=1"
+        );
+        std::env::remove_var("RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT");
     }
 
     #[test]
