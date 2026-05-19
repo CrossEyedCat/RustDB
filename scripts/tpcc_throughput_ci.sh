@@ -15,7 +15,9 @@
 #   RUSTDB_SQL_PHASE_LOG=1 — rustdb::sql_phases tracing (parse/update/delete timings)
 #   RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=1 — skip flush_dirty_pages after DML when WAL is on;
 #     explicit COMMIT still writes/fsyncs commits.log per durability (independent of defer)
-#   RUSTDB_BENCH_DEFER_HEAP_FSYNC=1 — on COMMIT, write dirty heap pages but skip per-table fsync
+#   RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT=1 — skip synchronous heap flush on explicit COMMIT (WAL on);
+#     bench/CI only; production default still flushes on COMMIT. WAL + commits.log remain durable.
+#   RUSTDB_BENCH_DEFER_HEAP_FSYNC=1 — when heap flush runs, write dirty pages but skip per-table fsync
 #     (throughput CI only; WAL + commits.log remain the durability path for the job)
 #   RUSTDB_GROUP_COMMIT_ENABLED=1 — WAL group commit (default on when unset in engine)
 #   RUSTDB_GROUP_COMMIT_INTERVAL_MS — group commit timer (default 1 ms in container;
@@ -100,6 +102,7 @@ docker run -d --name "$CONTAINER_NAME" \
   -e RUSTDB_GROUP_COMMIT_MAX_BATCH="${RUSTDB_GROUP_COMMIT_MAX_BATCH:-32}" \
   -e RUSTDB_TPCC_DEFER_INDEX_SYNC="${RUSTDB_TPCC_DEFER_INDEX_SYNC:-1}" \
   ${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML:+-e "RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML}"} \
+  -e RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT="${RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT:-1}" \
   -e RUSTDB_BENCH_DEFER_HEAP_FSYNC="${RUSTDB_BENCH_DEFER_HEAP_FSYNC:-1}" \
   ${RUSTDB_SQL_WORKER_COUNT:+-e "RUSTDB_SQL_WORKER_COUNT=${RUSTDB_SQL_WORKER_COUNT}"} \
   -e RUST_LOG="${RUST_LOG:-info}" \
