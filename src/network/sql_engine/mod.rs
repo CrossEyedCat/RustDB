@@ -4723,6 +4723,45 @@ mod tests {
     }
 
     #[test]
+    fn sql_engine_create_insert_survives_reopen_fast_durability() {
+        // Regression for Docker stateful smoke step 3: CREATE in one process, INSERT in another,
+        // SELECT after reopen must see rows (Fast durability + group commit must still flush WAL).
+        let dir = TempDir::new().unwrap();
+        {
+            let eng = SqlEngine::open_with_config(
+                dir.path().to_path_buf(),
+                SqlEngineConfig {
+                    durability: DurabilityMode::Fast,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let mut ctx = SessionContext::default();
+            eng.execute_sql("CREATE TABLE ss_ct (x INTEGER)", &mut ctx)
+                .unwrap();
+            eng.execute_sql("INSERT INTO ss_ct (x) VALUES (100)", &mut ctx)
+                .unwrap();
+        }
+        let eng = SqlEngine::open_with_config(
+            dir.path().to_path_buf(),
+            SqlEngineConfig {
+                durability: DurabilityMode::Fast,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut ctx = SessionContext::default();
+        let out = eng.execute_sql("SELECT x FROM ss_ct", &mut ctx).unwrap();
+        match out {
+            EngineOutput::ResultSet { columns, rows } => {
+                assert_eq!(columns, vec!["x".to_string()]);
+                assert_eq!(rows.len(), 1);
+            }
+            _ => panic!("expected result set"),
+        }
+    }
+
+    #[test]
     fn sql_engine_autocommit_pk_violation_does_not_corrupt_on_reopen() {
         let dir = TempDir::new().unwrap();
         {

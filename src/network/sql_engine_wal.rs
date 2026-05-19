@@ -25,43 +25,48 @@ pub struct SqlEngineWal {
     checkpoint: Mutex<Option<CheckpointManager>>,
 }
 
+/// Applies WAL group-commit tuning from process environment onto `cfg`.
+pub(crate) fn apply_wal_tuning_from_env(cfg: &mut LogWriterConfig, synchronous_commit: bool) {
+    cfg.synchronous_commit = synchronous_commit;
+    // Performance knobs (mainly for Safe mode). Defaults are tuned for throughput while
+    // preserving durability when `synchronous_commit=true`.
+    cfg.group_commit_enabled = std::env::var("RUSTDB_GROUP_COMMIT_ENABLED")
+        .ok()
+        .as_deref()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
+    if let Ok(v) = std::env::var("RUSTDB_GROUP_COMMIT_INTERVAL_MS") {
+        if let Ok(ms) = v.parse::<u64>() {
+            cfg.group_commit_interval_ms = ms.max(1);
+        }
+    }
+    if let Ok(v) = std::env::var("RUSTDB_GROUP_COMMIT_MAX_BATCH")
+        .or_else(|_| std::env::var("RUSTDB_GROUP_COMMIT_COUNT"))
+    {
+        if let Ok(n) = v.parse::<usize>() {
+            cfg.group_commit_max_batch = n.max(1);
+        }
+    }
+    let wal_sync_mode = std::env::var("RUSTDB_WAL_SYNC_MODE").ok();
+    if wal_sync_mode.as_deref() == Some("batch") {
+        cfg.sync_level = SyncLevel::Batch;
+        cfg.force_flush_immediately = false;
+        cfg.group_commit_enabled = true;
+        cfg.synchronous_commit = true;
+    }
+    cfg.force_flush_immediately = std::env::var("RUSTDB_FORCE_FLUSH_IMMEDIATELY")
+        .ok()
+        .as_deref()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+}
+
 impl SqlEngineWal {
     /// Opens WAL under `wal_dir` (e.g. `data_dir/.rustdb/wal`), after recovery has run.
     pub fn open(wal_dir: &Path, synchronous_commit: bool) -> DbResult<Self> {
         let mut cfg = LogWriterConfig::default();
         cfg.log_directory = wal_dir.to_path_buf();
-        cfg.synchronous_commit = synchronous_commit;
-        // Performance knobs (mainly for Safe mode). Defaults are tuned for throughput while
-        // preserving durability when `synchronous_commit=true`.
-        cfg.group_commit_enabled = std::env::var("RUSTDB_GROUP_COMMIT_ENABLED")
-            .ok()
-            .as_deref()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(true);
-        if let Ok(v) = std::env::var("RUSTDB_GROUP_COMMIT_INTERVAL_MS") {
-            if let Ok(ms) = v.parse::<u64>() {
-                cfg.group_commit_interval_ms = ms.max(1);
-            }
-        }
-        if let Ok(v) = std::env::var("RUSTDB_GROUP_COMMIT_MAX_BATCH")
-            .or_else(|_| std::env::var("RUSTDB_GROUP_COMMIT_COUNT"))
-        {
-            if let Ok(n) = v.parse::<usize>() {
-                cfg.group_commit_max_batch = n.max(1);
-            }
-        }
-        let wal_sync_mode = std::env::var("RUSTDB_WAL_SYNC_MODE").ok();
-        if wal_sync_mode.as_deref() == Some("batch") {
-            cfg.sync_level = SyncLevel::Batch;
-            cfg.force_flush_immediately = false;
-            cfg.group_commit_enabled = true;
-            cfg.synchronous_commit = true;
-        }
-        cfg.force_flush_immediately = std::env::var("RUSTDB_FORCE_FLUSH_IMMEDIATELY")
-            .ok()
-            .as_deref()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        apply_wal_tuning_from_env(&mut cfg, synchronous_commit);
         let runtime = Runtime::new().map_err(|e| DbError::database(e.to_string()))?;
         let writer = {
             let _guard = runtime.enter();
@@ -680,6 +685,55 @@ mod tests {
     use crate::network::sql_engine::{table_page_manager, SqlEngine};
     use std::collections::HashSet;
     use tempfile::TempDir;
+
+    fn clear_wal_tuning_env() {
+        for key in [
+            "RUSTDB_GROUP_COMMIT_ENABLED",
+            "RUSTDB_GROUP_COMMIT_INTERVAL_MS",
+            "RUSTDB_GROUP_COMMIT_MAX_BATCH",
+            "RUSTDB_GROUP_COMMIT_COUNT",
+            "RUSTDB_WAL_SYNC_MODE",
+            "RUSTDB_FORCE_FLUSH_IMMEDIATELY",
+        ] {
+            std::env::remove_var(key);
+        }
+    }
+
+    #[test]
+    fn wal_tuning_env_parsing() {
+        clear_wal_tuning_env();
+        std::env::set_var("RUSTDB_GROUP_COMMIT_INTERVAL_MS", "7");
+        std::env::set_var("RUSTDB_GROUP_COMMIT_COUNT", "42");
+
+        let mut cfg = LogWriterConfig::default();
+        apply_wal_tuning_from_env(&mut cfg, false);
+
+        assert_eq!(cfg.group_commit_interval_ms, 7);
+        assert_eq!(cfg.group_commit_max_batch, 42);
+        assert!(!cfg.synchronous_commit);
+
+        clear_wal_tuning_env();
+        std::env::set_var("RUSTDB_GROUP_COMMIT_COUNT", "99");
+        std::env::set_var("RUSTDB_GROUP_COMMIT_MAX_BATCH", "12");
+
+        let mut cfg = LogWriterConfig::default();
+        apply_wal_tuning_from_env(&mut cfg, true);
+
+        assert_eq!(cfg.group_commit_max_batch, 12);
+
+        clear_wal_tuning_env();
+        std::env::set_var("RUSTDB_WAL_SYNC_MODE", "batch");
+
+        let mut cfg = LogWriterConfig::default();
+        apply_wal_tuning_from_env(&mut cfg, false);
+
+        assert_eq!(cfg.sync_level, SyncLevel::Batch);
+        assert!(cfg.group_commit_enabled);
+        assert!(!cfg.force_flush_immediately);
+        assert!(cfg.synchronous_commit);
+
+        clear_wal_tuning_env();
+    }
 
     #[test]
     fn bench_defer_heap_fsync_respects_env() {

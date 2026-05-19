@@ -739,7 +739,8 @@ impl LogWriter {
         let request = LogWriteRequest {
             record: record.clone(),
             response_tx: Some(response_tx),
-            force_sync: self.config.synchronous_commit,
+            // Always wait for a flush; `synchronous_commit` controls fsync inside `write_records_to_file`.
+            force_sync: true,
             force_flush_immediately: self.config.force_flush_immediately,
         };
 
@@ -1093,6 +1094,47 @@ mod tests {
         assert!(stats.total_bytes_written > 0);
         assert!(stats.sync_operations >= 1);
         assert!(stats.average_write_time_us > 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn batch_group_commit_preset_tuning() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cfg = LogWriterConfig::batch_group_commit(dir.path().to_path_buf());
+        assert_eq!(cfg.sync_level, SyncLevel::Batch);
+        assert!(cfg.group_commit_enabled);
+        assert!(!cfg.force_flush_immediately);
+        assert!(cfg.synchronous_commit);
+        assert_eq!(cfg.group_commit_interval_ms, 2);
+        assert_eq!(cfg.group_commit_max_batch, 64);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn write_log_durable_waits_for_group_commit_flush() -> Result<()> {
+        let temp_dir = TempDir::new().unwrap();
+        let mut config = LogWriterConfig::default();
+        config.log_directory = temp_dir.path().to_path_buf();
+        config.synchronous_commit = false;
+        config.group_commit_enabled = true;
+        config.force_flush_immediately = false;
+        config.group_commit_interval_ms = 5;
+        config.group_commit_max_batch = 64;
+
+        let writer = LogWriter::new(config)?;
+
+        let record = LogRecord::new_transaction_commit(0, 1, vec![(1, 10)], None);
+        let lsn = writer.write_log_durable(record).await?;
+        assert!(lsn > 0);
+
+        let stats = writer.get_statistics();
+        assert!(stats.total_records_written >= 1);
+        assert!(stats.total_bytes_written > 0);
+        assert!(
+            stats.sync_operations >= 1,
+            "durable write should complete only after a group-commit flush"
+        );
 
         Ok(())
     }
