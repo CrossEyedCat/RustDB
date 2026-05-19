@@ -20,7 +20,8 @@
 #   RUSTDB_GROUP_COMMIT_ENABLED=1 — WAL group commit (default on when unset in engine)
 #   RUSTDB_GROUP_COMMIT_INTERVAL_MS — group commit timer (default 1 ms in container;
 #     run-20 A/B: GROUP_COMMIT_INTERVAL_MS=2 may reduce WAL fsync pressure vs 1 ms)
-#   RUSTDB_GROUP_COMMIT_MAX_BATCH — max records per group commit batch (default 10)
+#   RUSTDB_GROUP_COMMIT_MAX_BATCH / RUSTDB_GROUP_COMMIT_COUNT — max records per group commit batch
+#   RUSTDB_WAL_SYNC_MODE=batch — group-commit fsync batching (SyncLevel::Batch; safe prod default unchanged)
 #   RUSTDB_SQL_WORKER_COUNT — QUIC connection SQL worker threads (default 16; try 32 via workflow_dispatch)
 #   RUSTDB_TPCC_DEFER_INDEX_SYNC=1 — batch secondary-index updates at COMMIT (native TPC-C)
 #   Commit phase log fields (RUSTDB_SQL_PHASE_LOG=1): commit_table_map_lock_us,
@@ -96,8 +97,9 @@ docker run -d --name "$CONTAINER_NAME" \
   -e NO_COLOR=1 \
   -e RUSTDB_SQL_PHASE_LOG="${RUSTDB_SQL_PHASE_LOG:-1}" \
   -e RUSTDB_GROUP_COMMIT_ENABLED="${RUSTDB_GROUP_COMMIT_ENABLED:-1}" \
-  -e RUSTDB_GROUP_COMMIT_INTERVAL_MS="${RUSTDB_GROUP_COMMIT_INTERVAL_MS:-1}" \
-  -e RUSTDB_GROUP_COMMIT_MAX_BATCH="${RUSTDB_GROUP_COMMIT_MAX_BATCH:-32}" \
+  -e RUSTDB_GROUP_COMMIT_INTERVAL_MS="${RUSTDB_GROUP_COMMIT_INTERVAL_MS:-2}" \
+  -e RUSTDB_GROUP_COMMIT_MAX_BATCH="${RUSTDB_GROUP_COMMIT_MAX_BATCH:-${RUSTDB_GROUP_COMMIT_COUNT:-16}}" \
+  -e RUSTDB_WAL_SYNC_MODE="${RUSTDB_WAL_SYNC_MODE:-batch}" \
   -e RUSTDB_TPCC_DEFER_INDEX_SYNC="${RUSTDB_TPCC_DEFER_INDEX_SYNC:-1}" \
   ${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML:+-e "RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML}"} \
   -e RUSTDB_BENCH_DEFER_HEAP_FSYNC="${RUSTDB_BENCH_DEFER_HEAP_FSYNC:-1}" \

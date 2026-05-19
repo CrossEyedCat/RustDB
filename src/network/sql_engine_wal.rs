@@ -6,7 +6,7 @@ use crate::logging::checkpoint::{CheckpointConfig, CheckpointManager, DirtyPageF
 use crate::logging::log_record::{
     IsolationLevel as LogIsolationLevel, LogOperationData, LogRecord, LogRecordType, TransactionId,
 };
-use crate::logging::log_writer::{LogWriter, LogWriterConfig};
+use crate::logging::log_writer::{LogWriter, LogWriterConfig, SyncLevel};
 use crate::logging::recovery::{RecoveryConfig, RecoveryManager};
 use crate::network::engine::{engine_error_code, EngineError, SqlIsolationLevel, SqlTransaction};
 use crate::storage::page_manager::PageManager;
@@ -43,10 +43,19 @@ impl SqlEngineWal {
                 cfg.group_commit_interval_ms = ms.max(1);
             }
         }
-        if let Ok(v) = std::env::var("RUSTDB_GROUP_COMMIT_MAX_BATCH") {
+        if let Ok(v) = std::env::var("RUSTDB_GROUP_COMMIT_MAX_BATCH")
+            .or_else(|_| std::env::var("RUSTDB_GROUP_COMMIT_COUNT"))
+        {
             if let Ok(n) = v.parse::<usize>() {
                 cfg.group_commit_max_batch = n.max(1);
             }
+        }
+        let wal_sync_mode = std::env::var("RUSTDB_WAL_SYNC_MODE").ok();
+        if wal_sync_mode.as_deref() == Some("batch") {
+            cfg.sync_level = SyncLevel::Batch;
+            cfg.force_flush_immediately = false;
+            cfg.group_commit_enabled = true;
+            cfg.synchronous_commit = true;
         }
         cfg.force_flush_immediately = std::env::var("RUSTDB_FORCE_FLUSH_IMMEDIATELY")
             .ok()
