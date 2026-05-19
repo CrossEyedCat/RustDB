@@ -1632,8 +1632,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bincode-next",
- "bumpalo",
- "bytes",
  "clap",
  "criterion",
  "crossbeam",

@@ -32,7 +32,6 @@ pub mod engine_error_code {
 
 use crate::common::types::RecordId;
 use crate::storage::page_manager::PageManager;
-use bytes::BytesMut;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -147,9 +146,7 @@ pub struct SessionContext {
     /// Set when native `new_order` DML finishes (before `COMMIT`) for `pre_commit_us`.
     pub(crate) tpcc_dml_done_at: Option<std::time::Instant>,
     /// Reused row serialization buffer for native TPC-C inserts in a transaction.
-    pub(crate) tpcc_row_bytes_buf: BytesMut,
-    /// Optional per-txn bump arena for hot `order_line` inserts (see `tpcc_bump_arena_enabled`).
-    pub(crate) tpcc_bump: Option<bumpalo::Bump>,
+    pub(crate) tpcc_row_bytes_buf: Vec<u8>,
     /// Per-transaction page managers (avoids `table_page_managers` map lock on hot DML/COMMIT).
     pub(crate) txn_pm_cache: HashMap<String, Arc<Mutex<PageManager>>>,
     /// Reused buffer for deferred index column maps (native TPC-C inserts).
@@ -184,8 +181,7 @@ impl Default for SessionContext {
             skip_dml_storage_lock: false,
             tpcc_kind: None,
             tpcc_dml_done_at: None,
-            tpcc_row_bytes_buf: BytesMut::new(),
-            tpcc_bump: None,
+            tpcc_row_bytes_buf: Vec::new(),
             txn_pm_cache: HashMap::new(),
             tpcc_index_column_map_buf: HashMap::new(),
             last_commit_flush_phases: None,
