@@ -200,7 +200,6 @@ pub(crate) struct SqlEngineState {
     wal: Option<crate::network::sql_engine_wal::SqlEngineWal>,
     /// Secondary-index column names per table (refreshed on `CREATE INDEX` / open).
     index_columns_by_table: Mutex<HashMap<String, Arc<Vec<String>>>>,
-    bgwriter: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl SqlEngine {
@@ -264,15 +263,7 @@ impl SqlEngine {
             row_locks: RowLockManager::new(),
             wal,
             index_columns_by_table: Mutex::new(HashMap::new()),
-            bgwriter: Mutex::new(None),
         });
-        if crate::network::sql_engine_wal::should_start_heap_bgwriter(state.wal.is_some()) {
-            let handle = crate::network::sql_engine_wal::start_heap_bgwriter(state.clone());
-            *state
-                .bgwriter
-                .lock()
-                .map_err(|_| DbError::database("bgwriter handle lock poisoned"))? = Some(handle);
-        }
         if state.wal.is_some() && wal_dir.is_dir() {
             crate::network::sql_engine_wal::replay_wal_into_engine(
                 state.as_ref(),
