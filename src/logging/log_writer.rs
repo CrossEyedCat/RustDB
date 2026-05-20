@@ -723,7 +723,8 @@ impl LogWriter {
         let request = LogWriteRequest {
             record: record.clone(),
             response_tx: Some(response_tx),
-            force_sync: self.config.synchronous_commit,
+            // Always wait for flush/fsync path; synchronous_commit only gates fsync in the writer.
+            force_sync: true,
             force_flush_immediately: true,
         };
 

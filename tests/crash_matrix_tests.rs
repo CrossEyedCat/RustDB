@@ -65,6 +65,10 @@ fn count_abort_records(recs: &[LogRecord]) -> usize {
         .count()
 }
 
+fn sync_wal(engine: &SqlEngine) {
+    engine.flush_wal_buffer().expect("WAL flush before engine teardown");
+}
+
 #[test]
 fn crash_matrix_dml_undo_redo_invariants() {
     let _guard = env_guard();
@@ -330,6 +334,7 @@ fn crash_matrix_recovery_appends_abort_marker_once() {
         let mut ctx = SessionContext::default();
         exec(&engine, &mut ctx, "BEGIN TRANSACTION");
         exec(&engine, &mut ctx, "INSERT INTO t (a) VALUES (1)");
+        sync_wal(&engine);
     }
 
     let before = wal_records(&data_dir);

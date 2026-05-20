@@ -81,7 +81,8 @@ jobs:
 
       # Full run (lib + integration + doctests) on cold cache and beta may exceed 10 minutes.
       - name: Run tests
-        run: cargo test --verbose ${{ matrix.features }}
+        # crash_matrix_tests share process env; WAL teardown must finish before the next test.
+        run: cargo test --verbose ${{ matrix.features }} -- --test-threads=1
         timeout-minutes: 25
 
       - name: Run integration tests

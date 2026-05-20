@@ -300,6 +300,15 @@ impl SqlEngine {
         wal.checkpoint()
     }
 
+    /// Flush buffered WAL records (integration tests and explicit teardown before drop).
+    pub fn flush_wal_buffer(&self) -> Result<(), DbError> {
+        if let Some(wal) = self.state.wal.as_ref() {
+            wal.flush_buffered()
+                .map_err(|e| DbError::database(e.message))?;
+        }
+        Ok(())
+    }
+
     /// Active durability policy for this engine instance.
     pub fn durability(&self) -> DurabilityMode {
         self.state.durability

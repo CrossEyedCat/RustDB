@@ -287,6 +287,21 @@ impl SqlEngineWal {
             .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))?;
         Ok(())
     }
+
+    /// Flush buffered WAL records (and fsync when `synchronous_commit` is enabled).
+    pub fn flush_buffered(&self) -> std::result::Result<(), EngineError> {
+        self.runtime
+            .block_on(self.writer.flush())
+            .map_err(|e| EngineError::new(engine_error_code::INTERNAL, e.to_string()))
+    }
+}
+
+impl Drop for SqlEngineWal {
+    fn drop(&mut self) {
+        // Do not abort the writer with records still in the in-memory buffer (fixes flaky
+        // crash_matrix recovery tests and data loss on engine teardown).
+        let _ = self.runtime.block_on(self.writer.flush());
+    }
 }
 
 pub fn recover_sql_engine_wal(log_dir: &Path) -> DbResult<()> {
