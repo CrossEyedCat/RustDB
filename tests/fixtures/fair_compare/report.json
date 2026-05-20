@@ -1,0 +1,28 @@
+{
+  "runs": 3,
+  "fair_root": "tpcc-out/fair_compare",
+  "bench": {
+    "valid_runs": 3,
+    "runs_attempted": 3,
+    "ratio_median_pct": 112.1,
+    "ratio_p25_pct": 108.0,
+    "ratio_p75_pct": 115.0,
+    "ratios_pct": [108.0, 112.1, 115.0],
+    "claim_faster_than_pg": true,
+    "per_run": []
+  },
+  "strict": {
+    "valid_runs": 2,
+    "runs_attempted": 3,
+    "ratio_median_pct": 62.5,
+    "ratio_p25_pct": 60.0,
+    "ratio_p75_pct": 65.0,
+    "ratios_pct": [60.0, 62.5, 65.0],
+    "claim_faster_than_pg": false,
+    "per_run": []
+  },
+  "interpretation": {
+    "bench_win": "harness defer commit; not production-comparable to PostgreSQL durability",
+    "strict_win": "claim faster_than_pg only if median ratio > 105% on >= 2 valid runs"
+  }
+}

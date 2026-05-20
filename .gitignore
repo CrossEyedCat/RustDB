@@ -22,6 +22,26 @@ Thumbs.db
 /profile-out/
 /pgbench-out/
 
+# TPC-C / bench artifacts (local, CI downloads, A/B extracts — never commit)
+/tpcc-out/
+/tpcc-local-out/
+/tpcc-artifacts*/
+/tpcc-artifacts-run*/
+/_tpcc/
+/_tpcc*/
+_tpcc/
+_tpcc*/
+/_bench*/
+_bench*/
+*_bench_*
+server.der
+data/ci_tpcc_idx_verify/
+data/ci_tpcc_idx_verify2/
+
+# Python
+__pycache__/
+*.py[cod]
+
 # Database files
 *.db
 *.db-*

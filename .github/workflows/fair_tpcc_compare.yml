@@ -1,0 +1,113 @@
+# Fair TPC-C compare: 3× (strict + bench) paired runs vs PostgreSQL, aggregate median ratios.
+# Manual dispatch or weekly schedule; does not block merge (continue-on-error).
+name: Fair TPC-C compare
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 0"
+
+jobs:
+  docker:
+    name: Resolve RustDB image (GHCR)
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.set_image.outputs.image }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: ./.github/actions/ghcr-login
+        with:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull RustDB image (main digest)
+        id: set_image
+        run: |
+          set -euo pipefail
+          repo="ghcr.io/${{ github.repository }}"
+          image="${repo}:main"
+          if ! docker pull "$image"; then
+            short_sha=$(printf '%s' "${{ github.sha }}" | cut -c1-7)
+            image="${repo}:sha-${short_sha}"
+            docker pull "$image"
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "RUSTDB_IMAGE=$image" >> "$GITHUB_ENV"
+          echo "Using image: $image"
+
+  fair_tpcc_compare:
+    name: Fair TPC-C (3 iterations)
+    runs-on: ubuntu-latest
+    needs: [docker]
+    timeout-minutes: 120
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust (load generators)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Login to GHCR
+        uses: ./.github/actions/ghcr-login
+        with:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull RustDB image
+        env:
+          IMAGE: ${{ needs.docker.outputs.image }}
+        run: |
+          set -euo pipefail
+          test -n "$IMAGE"
+          echo "RUSTDB_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker pull "$IMAGE"
+
+      - name: Fair compare iterations (strict + bench each)
+        env:
+          CONCURRENCY: 64
+          DURATION_SECS: 300
+          MIX: new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04
+          RUSTDB_TPCC_NATIVE: "1"
+        run: |
+          set -euo pipefail
+          chmod +x scripts/fair_tpcc_compare.sh scripts/tpcc_env_presets.sh scripts/bench_postgres_tpcc.sh scripts/tpcc_throughput_ci.sh
+          for i in 1 2 3; do
+            echo "==> fair iteration $i/3"
+            FAIR_RUN_ID="$i" ./scripts/fair_tpcc_compare.sh || echo "::warning::fair_tpcc_compare run $i failed"
+          done
+
+      - name: Aggregate fair compare report
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 scripts/aggregate_fair_tpcc.py tpcc-out/fair_compare --runs 3 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload fair compare artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fair_compare
+          path: |
+            tpcc-out/fair_compare/report.json
+            tpcc-out/fair_compare/report.md
+            tpcc-out/fair_compare/run-*/**/validation.json
+            tpcc-out/fair_compare/run-*/**/tpcc.json
+            tpcc-out/fair_compare/run-*/**/postgres_tpcc.json
+            tpcc-out/fair_compare/run-*/**/phases.txt
+          if-no-files-found: warn

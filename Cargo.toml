@@ -137,3 +137,7 @@ harness = false
 [[bench]]
 name = "e2e_benchmarks"
 harness = false
+
+[[test]]
+name = "fair_tpcc_report"
+path = "tests/integration/fair_tpcc_report_test.rs"

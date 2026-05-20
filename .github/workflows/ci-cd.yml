@@ -713,6 +713,50 @@ jobs:
             echo "::warning::order_status full-mix p50 ${mix_os_p50}ms is more than 3× micro p50 ${micro_os_p50}ms (queue tail)"
           fi
 
+      - name: Validate TPC-C run (bench mode)
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ ! -d tpcc-out ]]; then
+            echo "::warning::tpcc-out missing; skip validation"
+            exit 0
+          fi
+          set +e
+          python3 scripts/validate_tpcc_run.py --mode bench tpcc-out
+          val_rc=$?
+          set -e
+          if [[ "$val_rc" -ne 0 ]]; then
+            echo "::warning::TPC-C bench validation failed (exit $val_rc); see validation.json"
+          fi
+          if [[ -f tpcc-out/validation.json ]]; then
+            python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          v = json.loads(Path("tpcc-out/validation.json").read_text(encoding="utf-8"))
+          m = v.get("metrics", {})
+          print("")
+          print("### TPC-C validation (bench mode)")
+          print("")
+          print(f"- **valid**: {v.get('valid')}")
+          if v.get("reasons"):
+              print("- **reasons**:")
+              for r in v["reasons"]:
+                  print(f"  - {r}")
+          print(f"- postgres txns/s: **{m.get('postgres_txns_per_s', 'n/a')}**")
+          print(f"- PG payment p95 (ms): **{m.get('pg_payment_p95_ms', 'n/a')}**")
+          ratio = m.get("ratio_percent_rustdb_over_postgres")
+          if v.get("valid") and ratio is not None:
+              print(f"- rustdb/postgres ratio: **{ratio:.1f}%** (informational; bench defer profile)")
+          elif ratio is not None:
+              print(f"- rustdb/postgres ratio: {ratio:.1f}% *(not advertised — validation failed)*")
+          else:
+              print("- rustdb/postgres ratio: *(unavailable)*")
+          if not v.get("valid"):
+              print("")
+              print("> Do not treat ratio as «RustDB faster than PostgreSQL» when valid=false.")
+          PY
+          fi
+
       - name: Upload TPC-C artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -736,6 +780,7 @@ jobs:
             tpcc-out/order_status_micro/postgres_tpcc_txn.log
             tpcc-out/order_status_micro/server_full.log
             tpcc-out/order_status_micro/summary.txt
+            tpcc-out/validation.json
       - name: Stop PostgreSQL (docker)
         if: always()
         run: |

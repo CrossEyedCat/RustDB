@@ -146,6 +146,15 @@ assumes `record_offset` (`u16`) addresses a slot within a page.
 - **Limitation**: DDL is currently forbidden inside an explicit transaction (see `README.md`), so
   DDL WAL semantics are not yet formalized as part of user transactions.
 
+### Bench defer vs strict commit flush (TPC-C harness)
+
+Throughput CI and the fair-compare harness use env presets in `scripts/tpcc_env_presets.sh`:
+
+- **bench**: `RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT=1` (and related defer flags) — skips synchronous heap flush on explicit `COMMIT` when WAL is on; WAL + `commits.log` remain the durability path for the job.
+- **strict**: all defer flags `0` — heap pages are flushed on commit (closer to PostgreSQL data-page persistence at commit time).
+
+See [Fair TPC-C compare](tpcc-fair-compare.md) for validity gates, multi-run aggregation, and what ratio claims are allowed.
+
 ### Invariants (for tests / regression gates)
 
 Recommended invariants to cover with tests:

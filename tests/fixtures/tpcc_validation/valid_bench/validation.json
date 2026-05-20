@@ -1,0 +1,103 @@
+{
+  "valid": true,
+  "mode": "bench",
+  "out_dir": "C:\\Users\\Admin\\RustProjects\\RustBD\\tests\\fixtures\\tpcc_validation\\valid_bench",
+  "reasons": [],
+  "gates": {
+    "pg_txns_per_s": true,
+    "pg_payment_p95_ms": true,
+    "postgres_success_rate": true,
+    "postgres_err": true,
+    "rustdb_success_rate": true,
+    "rustdb_err": true,
+    "postgres_new_order_share": true,
+    "rustdb_new_order_share": true,
+    "bench_commit_flush_p50": true,
+    "bench_heap_flush_skipped": true
+  },
+  "thresholds": {
+    "pg_txns_per_s_min": 800.0,
+    "pg_payment_p95_ms_max": 700.0,
+    "success_rate_pct_min": 100.0,
+    "err_max": 0,
+    "new_order_share_min": 0.42,
+    "new_order_share_max": 0.48,
+    "bench_commit_flush_p50_us_max": 1000.0,
+    "bench_heap_flush_skipped_pct_min": 90.0,
+    "strict_commit_flush_p50_us_min": 1.0,
+    "strict_heap_flush_skipped_pct_max": 10.0,
+    "ratio_claim_min_pct": 105.0
+  },
+  "metrics": {
+    "postgres_txns_per_s": 835.0,
+    "rustdb_txns_per_s": 947.0,
+    "ratio_percent_rustdb_over_postgres": 113.41317365269461,
+    "pg_payment_p95_ms": 200.0,
+    "postgres_new_order_share": 0.45,
+    "rustdb_new_order_share": 0.45,
+    "postgres_txn_log": {
+      "total_ok": 1000,
+      "kind_counts": {
+        "new_order": 450,
+        "payment": 430,
+        "order_status": 120
+      },
+      "per_kind": {
+        "new_order": {
+          "n": 450,
+          "p50_ms": 50.0,
+          "p95_ms": 50.0,
+          "p99_ms": 50.0
+        },
+        "payment": {
+          "n": 430,
+          "p50_ms": 200.0,
+          "p95_ms": 200.0,
+          "p99_ms": 200.0
+        },
+        "order_status": {
+          "n": 120,
+          "p50_ms": 30.0,
+          "p95_ms": 30.0,
+          "p99_ms": 30.0
+        }
+      }
+    },
+    "rustdb_txn_log": {
+      "total_ok": 1000,
+      "kind_counts": {
+        "new_order": 450,
+        "payment": 430,
+        "order_status": 120
+      },
+      "per_kind": {
+        "new_order": {
+          "n": 450,
+          "p50_ms": 50.0,
+          "p95_ms": 50.0,
+          "p99_ms": 50.0
+        },
+        "payment": {
+          "n": 430,
+          "p50_ms": 200.0,
+          "p95_ms": 200.0,
+          "p99_ms": 200.0
+        },
+        "order_status": {
+          "n": 120,
+          "p50_ms": 30.0,
+          "p95_ms": 30.0,
+          "p99_ms": 30.0
+        }
+      }
+    },
+    "server_commit": {
+      "commit_flush_samples": 200,
+      "commit_flush_p50_us": 0.0,
+      "commit_flush_p50_ms": 0.0,
+      "heap_flush_skipped_samples": 200,
+      "heap_flush_skipped_pct": 100.0
+    }
+  },
+  "claim_faster_than_pg": true
+}

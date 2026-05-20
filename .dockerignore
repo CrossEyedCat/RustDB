@@ -23,8 +23,16 @@ target/
 *.log
 logs/
 
-# Data
+# Data and TPC-C bench artifacts (must not ship in images)
 data/
+tpcc-out/
+tpcc-local-out/
+tpcc-artifacts*/
+_tpcc*/
+_bench*/
+server.der
+*.pyc
+__pycache__/
 
 # Temporary files
 tmp/
