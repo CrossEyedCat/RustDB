@@ -3,18 +3,13 @@
 use std::path::PathBuf;
 
 fn fixture_report_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/fair_compare/report.json")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fair_compare/report.json")
 }
 
 #[test]
 fn fair_tpcc_report_fixture_schema() {
     let path = fixture_report_path();
-    assert!(
-        path.is_file(),
-        "missing fixture {}",
-        path.display()
-    );
+    assert!(path.is_file(), "missing fixture {}", path.display());
     let raw = std::fs::read_to_string(&path).expect("read report.json");
     let v: serde_json::Value = serde_json::from_str(&raw).expect("parse report.json");
 

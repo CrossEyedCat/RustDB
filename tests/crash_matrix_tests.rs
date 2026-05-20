@@ -66,7 +66,9 @@ fn count_abort_records(recs: &[LogRecord]) -> usize {
 }
 
 fn sync_wal(engine: &SqlEngine) {
-    engine.flush_wal_buffer().expect("WAL flush before engine teardown");
+    engine
+        .flush_wal_buffer()
+        .expect("WAL flush before engine teardown");
 }
 
 #[test]
