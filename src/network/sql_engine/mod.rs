@@ -837,15 +837,15 @@ fn apply_pending_index_inserts(
             batch_end += 1;
         }
         let batch = &ops[batch_start..batch_end];
-        let indexes = table_indexes.get(table).map(|v| v.as_slice()).unwrap_or(&[]);
+        let indexes = table_indexes
+            .get(table)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         for (index_name, _) in indexes {
             for op in batch {
                 ir.insert_into_named_index(table, index_name, op.rid, &op.column_map)
                     .map_err(|e| {
-                        EngineError::new(
-                            engine_error_code::INTERNAL,
-                            format!("index insert: {e}"),
-                        )
+                        EngineError::new(engine_error_code::INTERNAL, format!("index insert: {e}"))
                     })?;
             }
         }
