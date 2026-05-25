@@ -1,4 +1,4 @@
-﻿name: CI/CD Pipeline
+name: CI/CD Pipeline
 
 # Skip the whole pipeline when only non-code paths change (saves minutes on docs/README edits).
 # If a commit touches any path NOT listed here, the workflow runs as usual.
