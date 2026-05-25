@@ -184,6 +184,29 @@ impl IndexRegistry {
         Ok(())
     }
 
+    /// True when every index key on `table_name` is identical in `old_values` and `new_values`.
+    pub fn index_keys_unchanged(
+        &self,
+        table_name: &str,
+        old_values: &HashMap<String, String>,
+        new_values: &HashMap<String, String>,
+    ) -> bool {
+        for ((t, _), entry) in self.indexes.iter().filter(|((t, _), _)| t == table_name) {
+            let old_key = match Self::build_index_key(&entry.columns, old_values) {
+                Ok(k) => k,
+                Err(_) => return false,
+            };
+            let new_key = match Self::build_index_key(&entry.columns, new_values) {
+                Ok(k) => k,
+                Err(_) => return false,
+            };
+            if old_key != new_key {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Updates indexes when a record changes (remove old, add new)
     pub fn update_indexes(
         &self,
@@ -192,6 +215,9 @@ impl IndexRegistry {
         old_values: &HashMap<String, String>,
         new_values: &HashMap<String, String>,
     ) -> Result<()> {
+        if self.index_keys_unchanged(table_name, old_values, new_values) {
+            return Ok(());
+        }
         self.delete_from_indexes(table_name, record_id, old_values)?;
         self.insert_into_indexes(table_name, record_id, new_values)?;
         Ok(())

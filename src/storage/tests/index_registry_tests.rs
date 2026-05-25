@@ -67,6 +67,36 @@ fn test_index_registry_insert_delete_update() -> Result<()> {
 }
 
 #[test]
+fn test_index_keys_unchanged_skips_update() -> Result<()> {
+    let mut registry = IndexRegistry::new();
+    registry.create_index(
+        "district",
+        "idx_district_wd",
+        vec!["d_w_id".to_string(), "d_id".to_string()],
+    )?;
+    let mut old_m = HashMap::new();
+    old_m.insert("d_w_id".to_string(), "1".to_string());
+    old_m.insert("d_id".to_string(), "2".to_string());
+    old_m.insert("d_next_o_id".to_string(), "10".to_string());
+    let mut new_m = old_m.clone();
+    new_m.insert("d_next_o_id".to_string(), "11".to_string());
+    assert!(registry.index_keys_unchanged("district", &old_m, &new_m));
+    registry.insert_into_indexes("district", 1, &old_m)?;
+    registry.update_indexes("district", 1, &old_m, &new_m)?;
+    let (ids, _) = registry
+        .lookup_record_ids_by_equalities(
+            "district",
+            &HashMap::from([
+                ("d_w_id".to_string(), "1".to_string()),
+                ("d_id".to_string(), "2".to_string()),
+            ]),
+        )?
+        .expect("lookup");
+    assert_eq!(ids, vec![1]);
+    Ok(())
+}
+
+#[test]
 fn test_index_registry_named_index_insert() -> Result<()> {
     let mut registry = IndexRegistry::new();
     registry.create_index("t", "idx_k", vec!["k".to_string()])?;

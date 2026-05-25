@@ -3666,6 +3666,8 @@ where
         Vec::new()
     };
 
+    let skip_row_validate = ctx.tpcc_kind.is_some();
+
     let apply = move || -> Result<u64, EngineError> {
         let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
         let mut rows_affected = 0u64;
@@ -3695,7 +3697,9 @@ where
                 }
             }
             update_fn(&mut tuple)?;
-            apply_defaults_and_validate(state, table, &mut tuple)?;
+            if !skip_row_validate {
+                apply_defaults_and_validate(state, table, &mut tuple)?;
+            }
             if tracks {
                 if let Some(ref sch) = schema {
                     let mut rt = state

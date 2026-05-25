@@ -27,6 +27,8 @@ Thumbs.db
 /tpcc-local-out/
 /tpcc-artifacts*/
 /tpcc-artifacts-run*/
+/tpcc-ci-*/
+tpcc-ci-*/
 /_tpcc/
 /_tpcc*/
 _tpcc/

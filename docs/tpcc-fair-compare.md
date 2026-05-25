@@ -52,10 +52,21 @@ for i in 1 2 3; do FAIR_RUN_ID=$i ./scripts/fair_tpcc_compare.sh; done
 python3 scripts/aggregate_fair_tpcc.py tpcc-out/fair_compare --runs 3
 ```
 
+Compare several single CI artifact dirs (median TPS + per-kind `new_order` p50):
+
+```bash
+python3 scripts/aggregate_ci_tpcc_validations.py \
+  tpcc-ci-26165808773/validation.json \
+  tpcc-ci-26130427214/validation.json \
+  tpcc-ci-26394263210/validation.json
+```
+
+Read **`validation.json` → `metrics.rustdb_txn_log.per_kind`**, not only `txns_per_s`. Roughly 45% of the mix is `new_order`; payment/order_status are already fast — regressions often show up as higher `new_order.p50_ms` while aggregate TPS moves a few percent.
+
 Outputs:
 
 - Per mode: `tpcc-out/fair_compare/run-<id>/{strict,bench}/` — JSON, txn logs, `validation.json`, `phases.txt`
-- Aggregate: `tpcc-out/fair_compare/report.json`, `report.md`
+- Aggregate: `tpcc-out/fair_compare/report.json`, `report.md` (includes `per_kind_medians` and `new_order` focus)
 
 ## CI
 
