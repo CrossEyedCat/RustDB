@@ -1,9 +1,7 @@
 //! Text formatting for `EXPLAIN` query plans.
 
 use crate::planner::optimizer::OptimizationResult;
-use crate::planner::planner::{
-    ExecutionPlan, PlanNode, SetOpType,
-};
+use crate::planner::planner::{ExecutionPlan, PlanNode, SetOpType};
 
 /// Options controlling plan text output.
 #[derive(Debug, Clone, Copy, Default)]
@@ -218,10 +216,8 @@ fn format_plan_node(node: &PlanNode, depth: usize, lines: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::planner::planner::{
-        PlanMetadata, PlanStatistics, TableScanNode,
-    };
     use crate::planner::optimizer::{OptimizationResult, OptimizationStatistics};
+    use crate::planner::planner::{PlanMetadata, PlanStatistics, TableScanNode};
     use std::time::SystemTime;
 
     #[test]

@@ -554,8 +554,7 @@ fn test_parse_explain_select() -> Result<()> {
 
 #[test]
 fn test_parse_explain_analyze_insert() -> Result<()> {
-    let mut parser =
-        SqlParser::new("EXPLAIN ANALYZE INSERT INTO users (id) VALUES (1)")?;
+    let mut parser = SqlParser::new("EXPLAIN ANALYZE INSERT INTO users (id) VALUES (1)")?;
     let statement = parser.parse()?;
     match statement {
         SqlStatement::Explain(ex) => {

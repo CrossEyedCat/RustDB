@@ -57,7 +57,10 @@ fn explain_analyze_insert_executes_and_reports_rows_affected() {
     eng.execute_sql("CREATE TABLE ex_a (n INTEGER)", &mut ctx)
         .expect("ddl");
     let out = eng
-        .execute_sql("EXPLAIN ANALYZE INSERT INTO ex_a (n) VALUES (1), (2)", &mut ctx)
+        .execute_sql(
+            "EXPLAIN ANALYZE INSERT INTO ex_a (n) VALUES (1), (2)",
+            &mut ctx,
+        )
         .expect("explain analyze");
     let lines = plan_lines(out);
     let text = lines.join("\n");

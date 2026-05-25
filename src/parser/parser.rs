@@ -1080,9 +1080,9 @@ impl SqlParser {
             | SqlStatement::Insert(_)
             | SqlStatement::Update(_)
             | SqlStatement::Delete(_) => Ok(()),
-            SqlStatement::Explain(_) => Err(Error::parser(
-                "nested EXPLAIN is not supported".to_string(),
-            )),
+            SqlStatement::Explain(_) => {
+                Err(Error::parser("nested EXPLAIN is not supported".to_string()))
+            }
             _ => Err(Error::parser(format!(
                 "EXPLAIN does not support this statement type: {:?}",
                 stmt

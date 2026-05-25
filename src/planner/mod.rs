@@ -12,8 +12,8 @@ pub use advanced_optimizer::{
     AdvancedOptimizationResult, AdvancedOptimizationStatistics, AdvancedOptimizerSettings,
     AdvancedQueryOptimizer,
 };
+pub use explain_format::{format_explain_output, ExplainFormatOptions};
 pub use optimizer::{
     OptimizationResult, OptimizationStatistics, OptimizerSettings, QueryOptimizer,
 };
-pub use explain_format::{ExplainFormatOptions, format_explain_output};
 pub use planner::{CacheStats, ExecutionPlan, PlanNode, PlannerSettings, QueryPlanner};

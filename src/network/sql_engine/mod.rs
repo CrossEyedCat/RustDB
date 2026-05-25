@@ -70,15 +70,15 @@ use crate::network::sql_constraints::{self, ConstraintRuntime};
 use crate::parser::ast::{
     AlterTableOperation, AlterTableStatement, BinaryOperator, ColumnConstraint,
     CreateIndexStatement, CreateTableStatement, DataType as SqlDataType, DeleteStatement,
-    DropTableStatement, Expression, FromClause, InList, InsertStatement, InsertValues, Literal,
-    ExplainStatement, SelectItem, SelectStatement, TableConstraint, TableReference,
+    DropTableStatement, ExplainStatement, Expression, FromClause, InList, InsertStatement,
+    InsertValues, Literal, SelectItem, SelectStatement, TableConstraint, TableReference,
     UpdateStatement,
 };
 use crate::parser::{SqlParser, SqlStatement};
 use crate::planner::planner::IndexScanNode;
 use crate::planner::{
-    ExecutionPlan, ExplainFormatOptions, OptimizationResult, PlanNode, QueryOptimizer,
-    QueryPlanner, format_explain_output,
+    format_explain_output, ExecutionPlan, ExplainFormatOptions, OptimizationResult, PlanNode,
+    QueryOptimizer, QueryPlanner,
 };
 use crate::storage::index_registry::IndexRegistry;
 use crate::storage::page_manager::{PageManager, PageManagerConfig};
@@ -2161,10 +2161,7 @@ fn plan_and_optimize(
             );
         }
     }
-    Ok((
-        optimized.optimized_plan.clone(),
-        optimized,
-    ))
+    Ok((optimized.optimized_plan.clone(), optimized))
 }
 
 fn plan_and_optimize_read(
@@ -2181,10 +2178,9 @@ fn strip_explain_prefix(sql: &str) -> String {
         return rest.to_string();
     }
     rest = rest[7..].trim_start();
-    loop {
-        if rest.len() >= 7 && rest.as_bytes()[..7].eq_ignore_ascii_case(b"ANALYZE") {
-            rest = rest[7..].trim_start();
-        } else if rest.len() >= 7 && rest.as_bytes()[..7].eq_ignore_ascii_case(b"VERBOSE") {
+    while rest.len() >= 7 {
+        let head = &rest.as_bytes()[..7];
+        if head.eq_ignore_ascii_case(b"ANALYZE") || head.eq_ignore_ascii_case(b"VERBOSE") {
             rest = rest[7..].trim_start();
         } else {
             break;
