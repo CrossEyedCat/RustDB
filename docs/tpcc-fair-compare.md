@@ -113,3 +113,7 @@ Aggregate outputs under the sweep root:
 Unit tests: `python3 scripts/test_tpcc_concurrency_plot.py`
 
 **SELECT 1 saturation** (lighter, no Docker TPC-C): `scripts/bench_saturation_rustdb_postgres.py` → `saturation.csv`, `saturation.png`.
+
+## `new_order` optimization branches
+
+Baseline metrics and PR gates: [`tpcc-new-order-baseline.md`](tpcc-new-order-baseline.md), [`tpcc-new-order-pr-checklist.md`](tpcc-new-order-pr-checklist.md). Implement one hypothesis per branch (`opt/no-district-contention`, `opt/no-commit-index-batch`, etc.).
