@@ -472,7 +472,11 @@ jobs:
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && (startsWith(github.head_ref, 'tpcc') || startsWith(github.head_ref, 'docs/tpcc')))
+      (github.event_name == 'pull_request' && (
+        startsWith(github.head_ref, 'tpcc') ||
+        startsWith(github.head_ref, 'opt/') ||
+        startsWith(github.head_ref, 'docs/tpcc')
+      ))
     timeout-minutes: 45
     permissions:
       contents: read
