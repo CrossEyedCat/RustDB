@@ -30,7 +30,8 @@ jobs:
         id: set_image
         run: |
           set -euo pipefail
-          repo="ghcr.io/${{ github.repository }}"
+          repo_lc="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          repo="ghcr.io/${repo_lc}"
           image="${repo}:main"
           if ! docker pull "$image"; then
             short_sha=$(printf '%s' "${{ github.sha }}" | cut -c1-7)

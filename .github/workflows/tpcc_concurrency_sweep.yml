@@ -35,7 +35,9 @@ jobs:
       - id: set_image
         run: |
           set -euo pipefail
-          repo="ghcr.io/${{ github.repository }}"
+          # GHCR image refs must be lowercase (github.repository keeps owner/repo casing).
+          repo_lc="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          repo="ghcr.io/${repo_lc}"
           image="${repo}:main"
           docker pull "$image" || {
             short_sha=$(printf '%s' "${{ github.sha }}" | cut -c1-7)
