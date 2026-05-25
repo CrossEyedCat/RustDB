@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["format_explain_output","format_plan_node","indent"],"struct":["ExplainFormatOptions"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["advanced_optimizer","optimizer","planner"]};
+window.SIDEBAR_ITEMS = {"mod":["advanced_optimizer","explain_format","optimizer","planner"]};
