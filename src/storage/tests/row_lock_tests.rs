@@ -31,5 +31,8 @@ fn district_hot_rids_use_few_shards_at_most() {
     for d_id in 1..=5u64 {
         shards.insert(shard_index_for_test("district", d_id));
     }
-    assert!(!shards.is_empty(), "district hot keys hit at least one shard");
+    assert!(
+        !shards.is_empty(),
+        "district hot keys hit at least one shard"
+    );
 }

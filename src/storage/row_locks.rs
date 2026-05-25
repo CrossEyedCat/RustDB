@@ -73,7 +73,10 @@ impl RowLockManager {
                 .locks
                 .lock()
                 .expect("row lock shard map poisoned");
-            for rid in rids.iter().copied().filter(|rid| shard_index(table, *rid) == shard_idx)
+            for rid in rids
+                .iter()
+                .copied()
+                .filter(|rid| shard_index(table, *rid) == shard_idx)
             {
                 let key = (table.to_string(), rid);
                 arc_by_rid.insert(
@@ -85,10 +88,7 @@ impl RowLockManager {
             }
         }
 
-        let arcs: Vec<Arc<RwLock<()>>> = rids
-            .iter()
-            .map(|rid| arc_by_rid[rid].clone())
-            .collect();
+        let arcs: Vec<Arc<RwLock<()>>> = rids.iter().map(|rid| arc_by_rid[rid].clone()).collect();
         let guards: Vec<_> = arcs.iter().map(|l| l.write()).collect();
         if let Some(t0) = wait_clock {
             info!(
