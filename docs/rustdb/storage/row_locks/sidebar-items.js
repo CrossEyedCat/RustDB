@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["row_lock_phase_log_enabled"],"struct":["RowLockManager"]};
+window.SIDEBAR_ITEMS = {"constant":["ROW_LOCK_SHARD_COUNT"],"fn":["row_lock_phase_log_enabled","shard_index"],"struct":["RowLockManager","RowLockShard"]};
