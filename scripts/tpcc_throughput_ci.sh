@@ -23,7 +23,9 @@
 #   RUSTDB_GROUP_COMMIT_INTERVAL_MS — group commit timer (default 1 ms in container;
 #     run-20 A/B: GROUP_COMMIT_INTERVAL_MS=2 may reduce WAL fsync pressure vs 1 ms)
 #   RUSTDB_GROUP_COMMIT_MAX_BATCH — max records per group commit batch (default 10)
-#   RUSTDB_SQL_WORKER_COUNT — QUIC connection SQL worker threads (default 16; try 32 via workflow_dispatch)
+#   RUSTDB_SQL_WORKER_COUNT — QUIC connection SQL worker threads (CI workflow sets 24;
+#     bench preset via tpcc_env_presets.sh: min(CONCURRENCY, nproc, 64) when unset;
+#     server fallback in query_stream.rs: min(64, available_parallelism()))
 #   RUSTDB_TPCC_DEFER_INDEX_SYNC=1 — batch secondary-index updates at COMMIT (native TPC-C)
 #   Commit phase log fields (RUSTDB_SQL_PHASE_LOG=1): commit_table_map_lock_us,
 #     commit_pm_lock_wait_us, commit_heap_fsync_us, tpcc_kind on sql.commit / sql.execute_tpcc.commit
@@ -38,6 +40,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+# shellcheck source=scripts/tpcc_env_presets.sh
+source "$ROOT/scripts/tpcc_env_presets.sh"
+tpcc_apply_env_preset bench
 
 RUSTDB_IMAGE="${RUSTDB_IMAGE:?RUSTDB_IMAGE must be set (e.g. ghcr.io/org/repo:sha-xxxxxxx)}"
 OUT_DIR="${OUT_DIR:-$ROOT/tpcc-out}"
