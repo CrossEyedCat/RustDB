@@ -6,7 +6,7 @@ name: CI/CD Pipeline
 # otherwise pushes look like “CI stopped working” with no failed run (workflow skipped entirely).
 # Docs-only PRs: when every changed file matches paths-ignore below, GitHub does not start this workflow.
 # To run CI on documentation PRs (e.g. TPC-C validation checklists), touch this file or another non-ignored path.
-# bench_tpcc_throughput stays skipped unless head ref starts with tpcc (see job if:).
+# bench_tpcc_throughput on PR: head ref tpcc* or docs/tpcc* (see job if:).
 on:
   push:
     branches: [main, develop]
@@ -472,7 +472,7 @@ jobs:
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && startsWith(github.head_ref, 'tpcc'))
+      (github.event_name == 'pull_request' && (startsWith(github.head_ref, 'tpcc') || startsWith(github.head_ref, 'docs/tpcc')))
     timeout-minutes: 45
     permissions:
       contents: read
