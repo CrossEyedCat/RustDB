@@ -12,6 +12,7 @@ pub mod file_manager_tests;
 pub mod index_integration_tests;
 pub mod index_performance_tests;
 pub mod index_registry_tests;
+pub mod row_lock_tests;
 pub mod index_tests;
 pub mod page_manager_tests;
 pub mod page_manager_tests_simple;
