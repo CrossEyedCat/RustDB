@@ -21,7 +21,6 @@ tpcc_apply_env_preset() {
       export RUSTDB_GROUP_COMMIT_ENABLED=1
       export RUSTDB_GROUP_COMMIT_INTERVAL_MS="${RUSTDB_GROUP_COMMIT_INTERVAL_MS:-2}"
       export RUSTDB_GROUP_COMMIT_MAX_BATCH="${RUSTDB_GROUP_COMMIT_MAX_BATCH:-64}"
-      fi
       ;;
     strict)
       export RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT=0
