@@ -29,6 +29,7 @@ DURATION_SECS="${DURATION_SECS:-90}"
 TPCC_PRESET="${TPCC_PRESET:-bench}"
 MIX="${MIX:-new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04}"
 RUSTDB_TPCC_NATIVE="${RUSTDB_TPCC_NATIVE:-1}"
+export CONCURRENCY_STEPS DURATION_SECS TPCC_PRESET MIX RUSTDB_IMAGE RUSTDB_TPCC_NATIVE
 
 # shellcheck source=scripts/tpcc_env_presets.sh
 source "$ROOT/scripts/tpcc_env_presets.sh"
@@ -40,11 +41,12 @@ SWEEP_ABS="$(cd "$SWEEP_ROOT" && pwd)"
 python3 - <<PY
 import json, os
 from pathlib import Path
+_default_mix = "new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04"
 cfg = {
-    "concurrency_steps": [int(x) for x in os.environ["CONCURRENCY_STEPS"].split(",") if x.strip()],
-    "duration_secs": int(os.environ["DURATION_SECS"]),
-    "preset": os.environ["TPCC_PRESET"],
-    "mix": os.environ["MIX"],
+    "concurrency_steps": [int(x) for x in os.environ.get("CONCURRENCY_STEPS", "8,16,32,64").split(",") if x.strip()],
+    "duration_secs": int(os.environ.get("DURATION_SECS", "90")),
+    "preset": os.environ.get("TPCC_PRESET", "bench"),
+    "mix": os.environ.get("MIX", _default_mix),
     "rustdb_image": os.environ["RUSTDB_IMAGE"],
 }
 Path(r"${SWEEP_ABS}").joinpath("sweep_config.json").write_text(
