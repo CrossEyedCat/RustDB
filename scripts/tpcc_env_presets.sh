@@ -5,6 +5,15 @@
 #   source scripts/tpcc_env_presets.sh
 #   tpcc_apply_env_preset bench   # or strict
 #
+# Default QUIC SQL worker threads for bench when RUSTDB_SQL_WORKER_COUNT is unset:
+# min(CONCURRENCY, host logical CPUs, 64). Matches load generator concurrency without
+# oversubscribing tiny VMs. Explicit RUSTDB_SQL_WORKER_COUNT in the environment wins.
+tpcc_bench_sql_worker_count_default() {
+  local conc="${CONCURRENCY:-64}"
+  local cpus
+  cpus="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+  python3 -c "print(min(64, int('${conc}'), int('${cpus}')))"
+}
 set -euo pipefail
 
 tpcc_apply_env_preset() {
@@ -14,6 +23,9 @@ tpcc_apply_env_preset() {
       export RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT=1
       export RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=1
       export RUSTDB_BENCH_DEFER_HEAP_FSYNC=1
+        export RUSTDB_SQL_WORKER_COUNT="$(tpcc_bench_sql_worker_count_default)"
+      fi
+      ;;
       ;;
     strict)
       export RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT=0

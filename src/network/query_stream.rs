@@ -379,14 +379,18 @@ fn encode_tpcc_order_status_execution_ok(out: EngineOutput) -> Result<Arc<[u8]>,
     })
 }
 
+/// Per-connection SQL dispatch worker threads (one blocking pool per QUIC connection).
+///
+/// `RUSTDB_SQL_WORKER_COUNT` overrides this when set (bench scripts / CI). When unset, defaults to
+/// `min(64, available_parallelism())` so saturation runs are not capped at 16 workers on large hosts.
 fn connection_sql_worker_count() -> usize {
     if let Ok(s) = std::env::var("RUSTDB_SQL_WORKER_COUNT") {
         if let Ok(n) = s.parse::<usize>() {
-            return n.clamp(1, 32);
+            return n.clamp(1, 64);
         }
     }
     std::thread::available_parallelism()
-        .map(|n| n.get().clamp(1, 16))
+        .map(|n| n.get().clamp(1, 64))
         .unwrap_or(1)
 }
 
