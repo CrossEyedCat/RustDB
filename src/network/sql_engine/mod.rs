@@ -31,8 +31,8 @@
 //!   explicit `COMMIT` and on `ROLLBACK` without undo (`scripts/tpcc_throughput_ci.sh`). WAL and
 //!   `commits.log` remain the CI durability path; checkpoint and `ROLLBACK` with undo still flush.
 //! - WAL group commit knobs: `RUSTDB_GROUP_COMMIT_ENABLED`, `RUSTDB_GROUP_COMMIT_INTERVAL_MS`,
-//!   `RUSTDB_GROUP_COMMIT_MAX_BATCH`, `RUSTDB_FORCE_FLUSH_IMMEDIATELY` (see `crate::network::sql_engine_wal`).
-//! - Implicit auto-commit DML still flushes after each statement by default so standalone heap files
+//!   `RUSTDB_GROUP_COMMIT_MAX_BATCH`, `RUSTDB_FORCE_FLUSH_IMMEDIATELY` (see `crate::network::sql_engine_wal`;
+//!   bench TPC-C preset sets defaults in `scripts/tpcc_env_presets.sh`).
 //!   stay coherent for tests and tooling that reopen without relying on WAL replay ordering.
 //! - DDL (`CREATE` / `DROP` / `ALTER`) is rejected while a transaction is open.
 //!
@@ -793,6 +793,13 @@ fn insert_row_tuple_tpcc_immediate(
     Ok(TpccInsertTimings { wal_us, index_us })
 }
 
+/// Applies deferred secondary-index inserts at `COMMIT`.
+///
+/// Native TPC-C `new_order` (`tpcc_kind=0`) defers three heap inserts (`oorder`, `new_order`,
+/// `order_line`) via [`insert_row_tuple_tpcc_deferred`] and flushes all secondary indexes here in
+/// one batch (see `commit_index_batch_us` on the `sql.commit` span). Ops are sorted by table for
+/// locality; per-table index lists are loaded under a short read lock, then each table batch is
+/// applied index-by-index under one write lock.
 fn apply_pending_index_inserts(
     state: &SqlEngineState,
     pending: &mut Vec<PendingIndexInsert>,
@@ -800,16 +807,49 @@ fn apply_pending_index_inserts(
     if pending.is_empty() {
         return Ok(());
     }
-    let ops = std::mem::take(pending);
+    let mut ops = std::mem::take(pending);
+    ops.sort_unstable_by(|a, b| a.table.cmp(&b.table).then_with(|| a.rid.cmp(&b.rid)));
+
+    let table_indexes: HashMap<String, Vec<(String, Vec<String>)>> = {
+        let ir = state
+            .index_registry
+            .read()
+            .map_err(|_| lock_poisoned_engine())?;
+        let mut tables = HashSet::new();
+        for op in &ops {
+            tables.insert(op.table.as_str());
+        }
+        tables
+            .into_iter()
+            .map(|t| (t.to_string(), ir.list_indexes_for_table(t)))
+            .collect()
+    };
+
     let mut ir = state
         .index_registry
         .write()
         .map_err(|_| lock_poisoned_engine())?;
-    for op in &ops {
-        ir.insert_into_indexes(&op.table, op.rid, &op.column_map)
-            .map_err(|e| {
-                EngineError::new(engine_error_code::INTERNAL, format!("index insert: {e}"))
-            })?;
+    let mut batch_start = 0usize;
+    while batch_start < ops.len() {
+        let table = ops[batch_start].table.as_str();
+        let mut batch_end = batch_start + 1;
+        while batch_end < ops.len() && ops[batch_end].table.as_str() == table {
+            batch_end += 1;
+        }
+        let batch = &ops[batch_start..batch_end];
+        let indexes = table_indexes.get(table).map(|v| v.as_slice()).unwrap_or(&[]);
+        for (index_name, _) in indexes {
+            for op in batch {
+                ir.insert_into_named_index(table, index_name, op.rid, &op.column_map)
+                    .map_err(|e| {
+                        EngineError::new(
+                            engine_error_code::INTERNAL,
+                            format!("index insert: {e}"),
+                        )
+                    })?;
+            }
+        }
+        batch_start = batch_end;
     }
     Ok(())
 }
@@ -1290,6 +1330,7 @@ fn commit_transaction(
     span.record("commit_wal_us", commit_wal_us);
     span.record("commit_log_commit_wait_us", commit_log_commit_wait_us);
 
+    // TPC-C new_order: district/stock DML + three deferred heap inserts; indexes batched here.
     let index_batch_clock = (!tx.pending_index_inserts.is_empty()).then(Instant::now);
     apply_pending_index_inserts(state, &mut tx.pending_index_inserts)?;
     let commit_index_batch_us = index_batch_clock
