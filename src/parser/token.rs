@@ -84,6 +84,9 @@ pub enum TokenType {
     Default,
     Check,
 
+    // EXPLAIN
+    Explain,
+
     // DML (Data Manipulation Language)
     Select,
     Insert,
@@ -439,6 +442,7 @@ impl fmt::Display for TokenType {
             TokenType::NotNull => "NOT NULL",
             TokenType::Default => "DEFAULT",
             TokenType::Check => "CHECK",
+            TokenType::Explain => "EXPLAIN",
             TokenType::Select => "SELECT",
             TokenType::Insert => "INSERT",
             TokenType::Update => "UPDATE",
@@ -570,6 +574,8 @@ pub fn keyword_map() -> std::collections::HashMap<&'static str, TokenType> {
     map.insert("UNIQUE", TokenType::Unique);
     map.insert("DEFAULT", TokenType::Default);
     map.insert("CHECK", TokenType::Check);
+
+    map.insert("EXPLAIN", TokenType::Explain);
 
     // DML
     map.insert("SELECT", TokenType::Select);

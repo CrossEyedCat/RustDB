@@ -39,6 +39,19 @@ pub enum SqlStatement {
     ///
     /// Note: currently represented as a single binary operation at the AST level.
     SetOperation(Box<SetOperationStatement>),
+
+    /// `EXPLAIN [ANALYZE] [VERBOSE] <statement>` — show (and optionally run) query plan.
+    Explain(ExplainStatement),
+}
+
+/// `EXPLAIN` wrapper around a single explainable statement.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExplainStatement {
+    /// When true, execute the inner statement and append execution metrics.
+    pub analyze: bool,
+    /// When true, include optimizer messages in the plan output.
+    pub verbose: bool,
+    pub statement: Box<SqlStatement>,
 }
 
 /// Set operation statement: `<left> (UNION|INTERSECT|EXCEPT) [ALL] <right>`.

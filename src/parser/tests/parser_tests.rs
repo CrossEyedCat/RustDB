@@ -536,3 +536,45 @@ fn test_parse_alter_add_constraint_still_parsed() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn test_parse_explain_select() -> Result<()> {
+    let mut parser = SqlParser::new("EXPLAIN SELECT * FROM users")?;
+    let statement = parser.parse()?;
+    match statement {
+        SqlStatement::Explain(ex) => {
+            assert!(!ex.analyze);
+            assert!(!ex.verbose);
+            assert!(matches!(*ex.statement, SqlStatement::Select(_)));
+        }
+        _ => panic!("expected EXPLAIN"),
+    }
+    Ok(())
+}
+
+#[test]
+fn test_parse_explain_analyze_insert() -> Result<()> {
+    let mut parser =
+        SqlParser::new("EXPLAIN ANALYZE INSERT INTO users (id) VALUES (1)")?;
+    let statement = parser.parse()?;
+    match statement {
+        SqlStatement::Explain(ex) => {
+            assert!(ex.analyze);
+            assert!(matches!(*ex.statement, SqlStatement::Insert(_)));
+        }
+        _ => panic!("expected EXPLAIN"),
+    }
+    Ok(())
+}
+
+#[test]
+fn test_parse_explain_nested_error() {
+    let mut parser = SqlParser::new("EXPLAIN EXPLAIN SELECT 1").unwrap();
+    assert!(parser.parse().is_err());
+}
+
+#[test]
+fn test_parse_explain_create_table_error() {
+    let mut parser = SqlParser::new("EXPLAIN CREATE TABLE t (id INT)").unwrap();
+    assert!(parser.parse().is_err());
+}

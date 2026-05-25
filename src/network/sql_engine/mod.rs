@@ -71,11 +71,15 @@ use crate::parser::ast::{
     AlterTableOperation, AlterTableStatement, BinaryOperator, ColumnConstraint,
     CreateIndexStatement, CreateTableStatement, DataType as SqlDataType, DeleteStatement,
     DropTableStatement, Expression, FromClause, InList, InsertStatement, InsertValues, Literal,
-    SelectItem, SelectStatement, TableConstraint, TableReference, UpdateStatement,
+    ExplainStatement, SelectItem, SelectStatement, TableConstraint, TableReference,
+    UpdateStatement,
 };
 use crate::parser::{SqlParser, SqlStatement};
 use crate::planner::planner::IndexScanNode;
-use crate::planner::{ExecutionPlan, PlanNode, QueryOptimizer, QueryPlanner};
+use crate::planner::{
+    ExecutionPlan, ExplainFormatOptions, OptimizationResult, PlanNode, QueryOptimizer,
+    QueryPlanner, format_explain_output,
+};
 use crate::storage::index_registry::IndexRegistry;
 use crate::storage::page_manager::{PageManager, PageManagerConfig};
 use crate::storage::row_locks::RowLockManager;
@@ -389,6 +393,7 @@ impl SqlEngine {
         }
         let stmt = &stmts[0];
         match stmt {
+            SqlStatement::Explain(ex) => execute_explain(state, sql, ctx, ex),
             SqlStatement::Select(sel) if sel.from.is_none() => {
                 let out = eval_select_without_from(sel)?;
                 if likely_select_without_from(sql) {
@@ -2098,21 +2103,46 @@ fn record_sql_plan_cache(
     }
 }
 
-fn plan_and_optimize_read(
+fn is_explainable_statement(stmt: &SqlStatement) -> bool {
+    matches!(
+        stmt,
+        SqlStatement::Select(_)
+            | SqlStatement::SetOperation(_)
+            | SqlStatement::Insert(_)
+            | SqlStatement::Update(_)
+            | SqlStatement::Delete(_)
+    )
+}
+
+fn plan_and_optimize(
     state: &SqlEngineState,
     sql: &str,
     stmt: &SqlStatement,
-) -> Result<ExecutionPlan, EngineError> {
+    use_read_cache: bool,
+) -> Result<(ExecutionPlan, OptimizationResult), EngineError> {
+    if !is_explainable_statement(stmt) {
+        return Err(EngineError::new(
+            engine_error_code::PROTOCOL,
+            "statement type cannot be planned",
+        ));
+    }
     let cache_key = normalize_sql_for_plan_cache(sql);
-    let epoch = {
+    let epoch = if use_read_cache {
         let cache = state
             .dml_plan_validation_cache
             .lock()
             .map_err(|_| lock_poisoned_engine())?;
         if let Some(plan) = cached_sql_plan(&cache, &cache_key) {
-            return Ok((*plan).clone());
+            let opt = OptimizationResult {
+                optimized_plan: (*plan).clone(),
+                statistics: Default::default(),
+                messages: Vec::new(),
+            };
+            return Ok(((*plan).clone(), opt));
         }
-        cache.schema_epoch
+        Some(cache.schema_epoch)
+    } else {
+        None
     };
     let plan = state.planner.create_plan(stmt).map_err(map_db_err)?;
     let optimized = state
@@ -2121,15 +2151,84 @@ fn plan_and_optimize_read(
         .map_err(|_| lock_poisoned_engine())?
         .optimize(plan)
         .map_err(map_db_err)?;
-    if let Ok(mut cache) = state.dml_plan_validation_cache.lock() {
-        record_sql_plan_cache(
-            &mut cache,
-            cache_key,
-            Arc::new(optimized.optimized_plan.clone()),
-            epoch,
-        );
+    if let Some(epoch) = epoch {
+        if let Ok(mut cache) = state.dml_plan_validation_cache.lock() {
+            record_sql_plan_cache(
+                &mut cache,
+                cache_key,
+                Arc::new(optimized.optimized_plan.clone()),
+                epoch,
+            );
+        }
     }
-    Ok(optimized.optimized_plan)
+    Ok((
+        optimized.optimized_plan.clone(),
+        optimized,
+    ))
+}
+
+fn plan_and_optimize_read(
+    state: &SqlEngineState,
+    sql: &str,
+    stmt: &SqlStatement,
+) -> Result<ExecutionPlan, EngineError> {
+    plan_and_optimize(state, sql, stmt, true).map(|(p, _)| p)
+}
+
+fn strip_explain_prefix(sql: &str) -> String {
+    let mut rest = sql.trim();
+    if rest.len() < 7 || !rest.as_bytes()[..7].eq_ignore_ascii_case(b"EXPLAIN") {
+        return rest.to_string();
+    }
+    rest = rest[7..].trim_start();
+    loop {
+        if rest.len() >= 7 && rest.as_bytes()[..7].eq_ignore_ascii_case(b"ANALYZE") {
+            rest = rest[7..].trim_start();
+        } else if rest.len() >= 7 && rest.as_bytes()[..7].eq_ignore_ascii_case(b"VERBOSE") {
+            rest = rest[7..].trim_start();
+        } else {
+            break;
+        }
+    }
+    rest.to_string()
+}
+
+fn explain_lines_to_output(lines: Vec<String>) -> EngineOutput {
+    EngineOutput::ResultSet {
+        columns: vec!["QUERY PLAN".to_string()],
+        rows: lines.into_iter().map(|l| vec![l]).collect(),
+    }
+}
+
+fn execute_explain(
+    state: &SqlEngineState,
+    sql: &str,
+    ctx: &mut SessionContext,
+    ex: &ExplainStatement,
+) -> Result<EngineOutput, EngineError> {
+    let inner_sql = strip_explain_prefix(sql);
+    let inner = ex.statement.as_ref();
+    let (plan, opt_result) = plan_and_optimize(state, &inner_sql, inner, false)?;
+    let mut format_opts = ExplainFormatOptions {
+        verbose: ex.verbose,
+        analyze: ex.analyze,
+        ..Default::default()
+    };
+    if ex.analyze {
+        let t0 = Instant::now();
+        let out = SqlEngine::execute_sql_inner(state, &inner_sql, ctx)?;
+        format_opts.execution_time_ms = Some(t0.elapsed().as_millis() as u64);
+        match &out {
+            EngineOutput::ResultSet { rows, .. } => {
+                format_opts.rows_returned = Some(rows.len());
+            }
+            EngineOutput::ExecutionOk { rows_affected } => {
+                format_opts.rows_affected = Some(*rows_affected);
+            }
+        }
+    }
+    let lines = format_explain_output(&plan, &opt_result, format_opts);
+    Ok(explain_lines_to_output(lines))
 }
 
 fn index_columns_for_scan(
@@ -2324,7 +2423,7 @@ fn validate_plan(
     sql: &str,
     stmt: &SqlStatement,
 ) -> Result<(), EngineError> {
-    let _ = plan_and_optimize_read(state, sql, stmt)?;
+    let _ = plan_and_optimize(state, sql, stmt, false)?;
     Ok(())
 }
 

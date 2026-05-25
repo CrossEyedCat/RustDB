@@ -1,6 +1,7 @@
 //! Query planner for rustdb
 
 pub mod advanced_optimizer;
+pub mod explain_format;
 pub mod optimizer;
 pub mod planner;
 
@@ -14,4 +15,5 @@ pub use advanced_optimizer::{
 pub use optimizer::{
     OptimizationResult, OptimizationStatistics, OptimizerSettings, QueryOptimizer,
 };
+pub use explain_format::{ExplainFormatOptions, format_explain_output};
 pub use planner::{CacheStats, ExecutionPlan, PlanNode, PlannerSettings, QueryPlanner};

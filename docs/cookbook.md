@@ -74,6 +74,17 @@ docker run --rm "$RUSTDB_IMAGE" rustdb query "SELECT 1" -d mydb
 
 The second form uses `-d` / `--database` to resolve data under `data_directory` from config (default `./data`, i.e. `/app/data` when using the image layout).
 
+### Query plans (`EXPLAIN`)
+
+Inspect the planner/optimizer tree without changing the wire protocol:
+
+```bash
+docker run --rm "$RUSTDB_IMAGE" rustdb query "EXPLAIN SELECT 1"
+docker run --rm "$RUSTDB_IMAGE" rustdb query "EXPLAIN ANALYZE INSERT INTO t (a) VALUES (1)"
+```
+
+See [`docs/sql-explain.md`](sql-explain.md) for syntax, supported statements, and DML caveats.
+
 ### Batch mode (single session, multi-statement)
 
 Use `--batch-file` to run **one statement per line** in a single process, using one `SessionContext`.

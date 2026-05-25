@@ -92,6 +92,7 @@ impl SqlParser {
     fn parse_statement(&mut self) -> Result<SqlStatement> {
         match &self.current_token {
             Some(token) => match &token.token_type {
+                TokenType::Explain => self.parse_explain(),
                 TokenType::Select => self.parse_select(),
                 TokenType::Insert => self.parse_insert(),
                 TokenType::Update => self.parse_update(),
@@ -186,6 +187,7 @@ impl SqlParser {
                         "TRANSACTION" => token.token_type == TokenType::Transaction,
                         "PREPARE" => token.token_type == TokenType::Prepare,
                         "EXECUTE" => token.token_type == TokenType::Execute,
+                        "EXPLAIN" => token.token_type == TokenType::Explain,
                         "AS" => token.token_type == TokenType::As,
                         "KEY" => token.token_type == TokenType::Key,
                         "REFERENCES" => token.token_type == TokenType::References,
@@ -1045,6 +1047,47 @@ impl SqlParser {
             table,
             where_clause,
         }))
+    }
+
+    fn parse_explain(&mut self) -> Result<SqlStatement> {
+        self.expect_keyword("EXPLAIN")?;
+        let mut analyze = false;
+        let mut verbose = false;
+        loop {
+            if self.match_keyword("ANALYZE") {
+                self.advance();
+                analyze = true;
+            } else if self.match_keyword("VERBOSE") {
+                self.advance();
+                verbose = true;
+            } else {
+                break;
+            }
+        }
+        let inner = self.parse_statement()?;
+        Self::validate_explain_inner(&inner)?;
+        Ok(SqlStatement::Explain(ExplainStatement {
+            analyze,
+            verbose,
+            statement: Box::new(inner),
+        }))
+    }
+
+    fn validate_explain_inner(stmt: &SqlStatement) -> Result<()> {
+        match stmt {
+            SqlStatement::Select(_)
+            | SqlStatement::SetOperation(_)
+            | SqlStatement::Insert(_)
+            | SqlStatement::Update(_)
+            | SqlStatement::Delete(_) => Ok(()),
+            SqlStatement::Explain(_) => Err(Error::parser(
+                "nested EXPLAIN is not supported".to_string(),
+            )),
+            _ => Err(Error::parser(format!(
+                "EXPLAIN does not support this statement type: {:?}",
+                stmt
+            ))),
+        }
     }
 
     fn parse_prepare(&mut self) -> Result<SqlStatement> {
