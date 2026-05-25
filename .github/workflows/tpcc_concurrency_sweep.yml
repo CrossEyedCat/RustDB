@@ -1,0 +1,84 @@
+# TPC-C throughput vs concurrency (RustDB + PostgreSQL). Manual only; does not block merge.
+name: TPC-C concurrency sweep
+
+on:
+  workflow_dispatch:
+    inputs:
+      concurrency_steps:
+        description: "Comma-separated worker counts"
+        required: false
+        default: "8,16,32,64"
+      duration_secs:
+        description: "Seconds per engine per step"
+        required: false
+        default: "90"
+      preset:
+        description: "bench or strict"
+        required: false
+        default: "bench"
+
+jobs:
+  docker:
+    name: Resolve RustDB image (GHCR)
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.set_image.outputs.image }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/ghcr-login
+        with:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: set_image
+        run: |
+          set -euo pipefail
+          repo="ghcr.io/${{ github.repository }}"
+          image="${repo}:main"
+          docker pull "$image" || {
+            short_sha=$(printf '%s' "${{ github.sha }}" | cut -c1-7)
+            image="${repo}:sha-${short_sha}"
+            docker pull "$image"
+          }
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+  sweep:
+    name: Concurrency sweep + plots
+    runs-on: ubuntu-latest
+    needs: [docker]
+    timeout-minutes: 90
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Python plot deps
+        run: pip install matplotlib
+      - name: Unit test plot aggregator
+        run: python3 scripts/test_tpcc_concurrency_plot.py -v
+      - name: Run sweep
+        env:
+          RUSTDB_IMAGE: ${{ needs.docker.outputs.image }}
+          CONCURRENCY_STEPS: ${{ inputs.concurrency_steps }}
+          DURATION_SECS: ${{ inputs.duration_secs }}
+          TPCC_PRESET: ${{ inputs.preset }}
+          SWEEP_ROOT: ${{ github.workspace }}/tpcc-out/concurrency_sweep
+        run: bash scripts/tpcc_concurrency_sweep.sh
+      - name: Upload sweep artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tpcc-concurrency-sweep
+          path: |
+            tpcc-out/concurrency_sweep/sweep.csv
+            tpcc-out/concurrency_sweep/sweep_report.md
+            tpcc-out/concurrency_sweep/sweep_config.json
+            tpcc-out/concurrency_sweep/plots/
+            tpcc-out/concurrency_sweep/c*/validation.json
+            tpcc-out/concurrency_sweep/c*/tpcc.json
+            tpcc-out/concurrency_sweep/c*/postgres_tpcc.json
+          if-no-files-found: warn

@@ -78,3 +78,38 @@ Outputs:
 Post–PR #80 bench profile on healthy PG baseline: PG ~835+ TPS, ratio ~113% ([run 26130427214](https://github.com/CrossEyedCat/RustDB/actions/runs/26130427214)-class metrics). Degraded PG (~420 TPS) must **not** be used for ratio claims.
 
 See also [Durability & recovery](durability-and-recovery.md) for defer-on-commit vs strict flush semantics.
+
+## Concurrency sweep (full TPC-C mix)
+
+Unlike `scripts/bench_saturation_rustdb_postgres.py` (single SQL, `rustdb_load` / psycopg), the TPC-C sweep runs the **same native mix** as CI at several worker counts and builds comparison charts.
+
+```bash
+export RUSTDB_IMAGE=ghcr.io/org/repo:sha-abcdef0
+# default: c=8,16,32,64 × 90s; bench preset
+./scripts/tpcc_concurrency_sweep.sh
+
+# Wider sweep (local, ~6× longer)
+DURATION_SECS=120 CONCURRENCY_STEPS=1,4,8,16,32,64 ./scripts/tpcc_concurrency_sweep.sh
+
+# Re-plot after manual edits / partial runs
+python3 scripts/tpcc_concurrency_plot.py tpcc-out/concurrency_sweep
+```
+
+Per step: `tpcc-out/concurrency_sweep/c{N}/` — `tpcc.json`, `postgres_tpcc.json`, txn logs, `validation.json`, server log.
+
+Aggregate outputs under the sweep root:
+
+| File | Content |
+|------|---------|
+| `sweep_config.json` | Steps, duration, preset |
+| `sweep.csv` | TPS, ratio, per-kind p50 |
+| `sweep_report.md` | Table + saturation knee (98% of peak TPS) |
+| `plots/throughput_vs_concurrency.png` | RustDB vs PG TPS |
+| `plots/ratio_vs_concurrency.png` | Ratio % + 100% / 105% lines |
+| `plots/per_kind_p50.png` | new_order, payment, order_status, delivery |
+| `plots/new_order_p50.png` | Dominant mix component |
+| `plots/rustdb_overall_latency.png` | p50 / p95 / p99 vs c |
+
+Unit tests: `python3 scripts/test_tpcc_concurrency_plot.py`
+
+**SELECT 1 saturation** (lighter, no Docker TPC-C): `scripts/bench_saturation_rustdb_postgres.py` → `saturation.csv`, `saturation.png`.
