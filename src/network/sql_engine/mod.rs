@@ -32,6 +32,7 @@
 //!   `commits.log` remain the CI durability path; checkpoint and `ROLLBACK` with undo still flush.
 //! - WAL group commit knobs: `RUSTDB_GROUP_COMMIT_ENABLED`, `RUSTDB_GROUP_COMMIT_INTERVAL_MS`,
 //!   `RUSTDB_GROUP_COMMIT_MAX_BATCH`, `RUSTDB_FORCE_FLUSH_IMMEDIATELY` (see `crate::network::sql_engine_wal`).
+//!   bench TPC-C preset sets defaults in `scripts/tpcc_env_presets.sh`).
 //! - Implicit auto-commit DML still flushes after each statement by default so standalone heap files
 //!   stay coherent for tests and tooling that reopen without relying on WAL replay ordering.
 //! - DDL (`CREATE` / `DROP` / `ALTER`) is rejected while a transaction is open.
@@ -793,6 +794,13 @@ fn insert_row_tuple_tpcc_immediate(
     Ok(TpccInsertTimings { wal_us, index_us })
 }
 
+/// Applies deferred secondary-index inserts at `COMMIT`.
+///
+/// Native TPC-C `new_order` (`tpcc_kind=0`) defers three heap inserts (`oorder`, `new_order`,
+/// `order_line`) via [`insert_row_tuple_tpcc_deferred`] and flushes all secondary indexes here in
+/// one batch (see `commit_index_batch_us` on the `sql.commit` span). Ops are sorted by table for
+/// locality; per-table index lists are loaded under a short read lock, then each table batch is
+/// applied index-by-index under one write lock.
 fn apply_pending_index_inserts(
     state: &SqlEngineState,
     pending: &mut Vec<PendingIndexInsert>,
@@ -3785,6 +3793,113 @@ where
     Ok(rows)
 }
 
+/// Fast path for TPC-C `new_order`: bump `d_next_o_id` on one district row.
+///
+/// Uses index lookup + row lock + heap/WAL update only. Skips `index_registry` write because
+/// `d_next_o_id` is not part of `idx_district_wd` keys. Returns `Ok(None)` when the predicate
+/// is not an exact index key (caller should use [`update_rows_by_equalities`]).
+pub(crate) fn bump_district_next_o_id(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    w_id: i32,
+    d_id: i32,
+    phase_us: Option<&mut RowUpdatePhaseUs>,
+) -> Result<Option<u64>, EngineError> {
+    const TABLE: &str = "district";
+    record_touched_table(ctx, TABLE);
+    let equalities = equalities_map_i32(&[("d_w_id", w_id), ("d_id", d_id)]);
+    let pm_for_table = table_page_manager_cached(state, ctx, TABLE)?;
+
+    let (rid, data) = {
+        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let ir = state
+            .index_registry
+            .read()
+            .map_err(|_| lock_poisoned_engine())?;
+        let Some((rids, exact_key)) = ir
+            .lookup_record_ids_by_equalities(TABLE, &equalities)
+            .map_err(|e| {
+                EngineError::new(engine_error_code::INTERNAL, format!("index lookup: {e}"))
+            })?
+        else {
+            return Ok(None);
+        };
+        if !exact_key || rids.len() != 1 {
+            return Ok(None);
+        }
+        let rid = rids[0];
+        let Some(data) = pm.get_record(rid).map_err(map_db_err)? else {
+            return Ok(Some(0));
+        };
+        (rid, data)
+    };
+
+    let profile_phases = phase_us.is_some() && sql_phase_log_enabled();
+    let mut update_us_acc = 0u64;
+
+    let apply = || -> Result<u64, EngineError> {
+        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let mut tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
+        let next = tuple_i32_field(&tuple, "d_next_o_id")? + 1;
+        tuple.set_value("d_next_o_id", int_column_value(next));
+        let new_bytes = tuple.to_bytes().map_err(map_db_err)?;
+        if let Some(tx) = ctx.transaction.as_mut() {
+            if let Some(ref wal) = state.wal {
+                let page_id = (rid >> 32) as u64;
+                let off = (rid & 0xffff_ffff) as u32;
+                let record_offset: u16 = off.try_into().map_err(|_| {
+                    EngineError::new(
+                        engine_error_code::INTERNAL,
+                        "record offset too large for WAL",
+                    )
+                })?;
+                wal.log_data_update(
+                    tx,
+                    pm.file_id(),
+                    page_id,
+                    record_offset,
+                    data.clone(),
+                    new_bytes.clone(),
+                )?;
+            }
+        }
+        pm.update(rid, &new_bytes).map_err(map_db_err)?;
+        push_undo(
+            ctx,
+            UndoEntry::Update {
+                table: TABLE.to_string(),
+                rid,
+                old_payload: data,
+            },
+        );
+        flush_heap_after_dml_success(state, ctx, &mut pm)?;
+        Ok(1)
+    };
+
+    let timed_apply = || {
+        let update_t0 = profile_phases.then(Instant::now);
+        let rows = apply()?;
+        if profile_phases {
+            update_us_acc = update_t0
+                .map(|t0| t0.elapsed().as_micros() as u64)
+                .unwrap_or(0);
+        }
+        Ok(rows)
+    };
+
+    let lock_t0 = profile_phases.then(Instant::now);
+    let rows = state
+        .row_locks
+        .with_write_locks(TABLE, vec![rid], timed_apply)?;
+    if let Some(out) = phase_us {
+        out.lock_us = lock_t0
+            .map(|t0| t0.elapsed().as_micros() as u64)
+            .unwrap_or(0);
+        out.update_us = update_us_acc;
+    }
+    Ok(Some(rows))
+}
+
 /// Index-backed DELETE; uses row locks on exact single-key lookups.
 pub(crate) fn delete_rows_by_equalities(
     state: &SqlEngineState,
@@ -4917,6 +5032,46 @@ mod tests {
             "composite equality on idx_district_wd must be index_exact for row locks"
         );
         assert_eq!(indexed.0.len(), 1);
+    }
+
+    #[test]
+    fn bump_district_next_o_id_fast_path() {
+        let dir = TempDir::new().unwrap();
+        let eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let state = eng.state_for_test();
+        let mut ctx = SessionContext::default();
+        eng.execute_sql(
+            "CREATE TABLE district (d_w_id INTEGER, d_id INTEGER, d_next_o_id INTEGER)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "CREATE INDEX idx_district_wd ON district (d_w_id, d_id)",
+            &mut ctx,
+        )
+        .unwrap();
+        eng.execute_sql(
+            "INSERT INTO district (d_w_id, d_id, d_next_o_id) VALUES (1, 2, 10)",
+            &mut ctx,
+        )
+        .unwrap();
+        assert_eq!(
+            bump_district_next_o_id(state, &mut ctx, 1, 2, None).unwrap(),
+            Some(1)
+        );
+        let out = eng
+            .execute_sql(
+                "SELECT d_next_o_id FROM district WHERE d_w_id = 1 AND d_id = 2",
+                &mut ctx,
+            )
+            .unwrap();
+        match out {
+            EngineOutput::ResultSet { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "Integer(11)");
+            }
+            _ => panic!("expected result set"),
+        }
     }
 
     /// CI seeds via CLI then starts the server in a new process; secondary indexes must reload from catalog.

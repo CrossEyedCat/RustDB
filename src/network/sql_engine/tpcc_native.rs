@@ -3,9 +3,10 @@
 //! Bypasses per-statement SQL parse/plan/execute; uses index-backed row locks and page latches.
 
 use super::{
-    delete_rows_by_equalities, equalities_map_i32, insert_row_tuple_tpcc_deferred,
-    int_column_value, sql_phase_log_enabled, tpcc_order_status_row_count, tpcc_run_in_transaction,
-    tpcc_stock_level_row_count, tuple_i32_field, update_rows_by_equalities, SqlEngineState,
+    bump_district_next_o_id, delete_rows_by_equalities, equalities_map_i32,
+    insert_row_tuple_tpcc_deferred, int_column_value, sql_phase_log_enabled,
+    tpcc_order_status_row_count, tpcc_run_in_transaction, tpcc_stock_level_row_count,
+    tuple_i32_field, update_rows_by_equalities, SqlEngineState,
 };
 use crate::network::engine::{EngineError, EngineOutput, SessionContext};
 use crate::storage::tuple::Tuple;
@@ -72,22 +73,36 @@ fn run_new_order_native(
 
     let mut rows = 0u64;
     let mut district_phases = super::RowUpdatePhaseUs::default();
-    rows += update_rows_by_equalities(
+    if let Some(n) = bump_district_next_o_id(
         state,
         ctx,
-        "district",
-        &equalities_map_i32(&[("d_w_id", w_id), ("d_id", d_id)]),
-        |tuple| {
-            let next = tuple_i32_field(tuple, "d_next_o_id")? + 1;
-            tuple.set_value("d_next_o_id", int_column_value(next));
-            Ok(())
-        },
+        w_id,
+        d_id,
         if profile {
             Some(&mut district_phases)
         } else {
             None
         },
-    )?;
+    )? {
+        rows += n;
+    } else {
+        rows += update_rows_by_equalities(
+            state,
+            ctx,
+            "district",
+            &equalities_map_i32(&[("d_w_id", w_id), ("d_id", d_id)]),
+            |tuple| {
+                let next = tuple_i32_field(tuple, "d_next_o_id")? + 1;
+                tuple.set_value("d_next_o_id", int_column_value(next));
+                Ok(())
+            },
+            if profile {
+                Some(&mut district_phases)
+            } else {
+                None
+            },
+        )?;
+    }
     if profile {
         district_us = district_phases.lock_us;
         district_update_us = district_phases.update_us;
