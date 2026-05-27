@@ -25,7 +25,15 @@ FAIR_RUN_ID="${FAIR_RUN_ID:-1}"
 CONCURRENCY="${CONCURRENCY:-64}"
 DURATION_SECS="${DURATION_SECS:-300}"
 MIX="${MIX:-new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04}"
+
+if [[ -n "${TPCC_COMPARE_PROFILE:-}" ]]; then
+  # shellcheck source=scripts/tpcc_compare_profiles.sh
+  source "$ROOT/scripts/tpcc_compare_profiles.sh"
+  tpcc_apply_compare_profile "$TPCC_COMPARE_PROFILE"
+fi
+
 RUSTDB_TPCC_NATIVE="${RUSTDB_TPCC_NATIVE:-1}"
+POSTGRES_TPCC_PREPARED="${POSTGRES_TPCC_PREPARED:-0}"
 
 COMPARE_ROOT="$ROOT/tpcc-out/fair_compare/run-${FAIR_RUN_ID}"
 mkdir -p "$COMPARE_ROOT"
@@ -52,6 +60,7 @@ run_mode() {
     CONCURRENCY="$CONCURRENCY" \
     DURATION_SECS="$DURATION_SECS" \
     MIX="$MIX" \
+    POSTGRES_TPCC_PREPARED="$POSTGRES_TPCC_PREPARED" \
     POSTGRES_CONTAINER_NAME="postgres-fair-${FAIR_RUN_ID}-${mode}" \
     POSTGRES_HOST_PORT="$pg_port" \
     bash "$ROOT/scripts/bench_postgres_tpcc.sh"

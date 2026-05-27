@@ -26,10 +26,18 @@ cd "$ROOT"
 SWEEP_ROOT="${SWEEP_ROOT:-$ROOT/tpcc-out/concurrency_sweep}"
 CONCURRENCY_STEPS="${CONCURRENCY_STEPS:-8,16,32,64}"
 DURATION_SECS="${DURATION_SECS:-90}"
-TPCC_PRESET="${TPCC_PRESET:-bench}"
 MIX="${MIX:-new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04}"
+
+if [[ -n "${TPCC_COMPARE_PROFILE:-}" ]]; then
+  # shellcheck source=scripts/tpcc_compare_profiles.sh
+  source "$ROOT/scripts/tpcc_compare_profiles.sh"
+  tpcc_apply_compare_profile "$TPCC_COMPARE_PROFILE"
+fi
+
+TPCC_PRESET="${TPCC_PRESET:-bench}"
 RUSTDB_TPCC_NATIVE="${RUSTDB_TPCC_NATIVE:-1}"
-export CONCURRENCY_STEPS DURATION_SECS TPCC_PRESET MIX RUSTDB_IMAGE RUSTDB_TPCC_NATIVE
+POSTGRES_TPCC_PREPARED="${POSTGRES_TPCC_PREPARED:-0}"
+export CONCURRENCY_STEPS DURATION_SECS TPCC_PRESET MIX RUSTDB_IMAGE RUSTDB_TPCC_NATIVE POSTGRES_TPCC_PREPARED TPCC_COMPARE_PROFILE
 
 # shellcheck source=scripts/tpcc_env_presets.sh
 source "$ROOT/scripts/tpcc_env_presets.sh"
@@ -37,6 +45,9 @@ tpcc_apply_env_preset "$TPCC_PRESET"
 
 mkdir -p "$SWEEP_ROOT"
 SWEEP_ABS="$(cd "$SWEEP_ROOT" && pwd)"
+if command -v cygpath >/dev/null 2>&1; then
+  SWEEP_ABS="$(cygpath -m "$SWEEP_ABS")"
+fi
 
 python3 - <<PY
 import json, os
@@ -46,6 +57,9 @@ cfg = {
     "concurrency_steps": [int(x) for x in os.environ.get("CONCURRENCY_STEPS", "8,16,32,64").split(",") if x.strip()],
     "duration_secs": int(os.environ.get("DURATION_SECS", "90")),
     "preset": os.environ.get("TPCC_PRESET", "bench"),
+    "compare_profile": os.environ.get("TPCC_COMPARE_PROFILE") or None,
+    "rustdb_tpcc_native": os.environ.get("RUSTDB_TPCC_NATIVE", "1") == "1",
+    "postgres_prepared": os.environ.get("POSTGRES_TPCC_PREPARED", "0") == "1",
     "mix": os.environ.get("MIX", _default_mix),
     "rustdb_image": os.environ["RUSTDB_IMAGE"],
 }
@@ -72,6 +86,7 @@ for c in "${STEPS[@]}"; do
     CONCURRENCY="$c" \
     DURATION_SECS="$DURATION_SECS" \
     MIX="$MIX" \
+    POSTGRES_TPCC_PREPARED="$POSTGRES_TPCC_PREPARED" \
     POSTGRES_CONTAINER_NAME="postgres-tpcc-sweep-${c}" \
     POSTGRES_HOST_PORT="$pg_port" \
     bash "$ROOT/scripts/bench_postgres_tpcc.sh"

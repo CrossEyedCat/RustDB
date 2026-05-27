@@ -481,12 +481,13 @@ jobs:
     permissions:
       contents: read
       packages: read
-    # Throughput: defer per-DML heap flush when WAL is on (scripts/tpcc_throughput_ci.sh → docker).
-    # Explicit COMMIT still appends/fsyncs commits.log per durability (orthogonal to defer).
-    # COMMIT heap flush writes pages but skips per-table fsync (WAL + commits.log for the job).
+    # Bench profile (native ExecuteTpcc + defer heap flush) via scripts/tpcc_env_presets.sh.
+    # Load generators: release (scripts/tpcc_host_bins.sh). PG: bench container tuning (POSTGRES_BENCH_TUNING).
     env:
-      RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML: "1"
-      RUSTDB_BENCH_DEFER_HEAP_FSYNC: "1"
+      TPCC_PRESET: bench
+      TPCC_CARGO_PROFILE: release
+      POSTGRES_BENCH_TUNING: "1"
+      POSTGRES_TPCC_PREPARED: "0"
 
     steps:
       - name: Checkout code
@@ -527,7 +528,7 @@ jobs:
           MIX: new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04
         run: |
           set -euo pipefail
-          chmod +x scripts/bench_postgres_tpcc.sh
+          chmod +x scripts/bench_postgres_tpcc.sh scripts/tpcc_host_bins.sh
           ./scripts/bench_postgres_tpcc.sh
           pg_tps="$(python3 -c 'import json,pathlib; p=pathlib.Path("tpcc-out/postgres_tpcc.json"); print(json.loads(p.read_text(encoding="utf-8")).get("txns_per_s", 0.0) if p.is_file() else 0.0)')"
           echo "POSTGRES_TPCC_TXNS_PER_S=$pg_tps" >> "$GITHUB_ENV"
@@ -547,7 +548,7 @@ jobs:
           RUSTDB_SQL_WORKER_COUNT: "24"
         run: |
           set -euo pipefail
-          chmod +x scripts/tpcc_throughput_ci.sh
+          chmod +x scripts/tpcc_throughput_ci.sh scripts/tpcc_env_presets.sh scripts/tpcc_host_bins.sh
           ./scripts/tpcc_throughput_ci.sh
 
       - name: Microbench order_status only (index A/B, 60s)
@@ -564,7 +565,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p tpcc-out/order_status_micro
-          chmod +x scripts/tpcc_order_status_microbench.sh
+          chmod +x scripts/tpcc_order_status_microbench.sh scripts/tpcc_host_bins.sh
           ./scripts/tpcc_order_status_microbench.sh | tee tpcc-out/order_status_micro/summary.txt
 
       - name: Add benchmark summary (RustDB vs PostgreSQL)
@@ -579,8 +580,9 @@ jobs:
           {
             echo "## RustDB vs PostgreSQL (baseline)"
             echo ""
-            echo "- RustDB: **rustdb_tpcc** (TPC-C-ish over QUIC)"
-            echo "- PostgreSQL: **postgres_tpcc** (same SQL mix as rustdb_tpcc, over TCP)"
+            echo "- Profile: **native_bench** (\`TPCC_PRESET=bench\`, \`RUSTDB_TPCC_NATIVE=1\`, PG \`simple_query\`, release load gens, \`POSTGRES_BENCH_TUNING=1\`)"
+            echo "- RustDB: **rustdb_tpcc** (native ExecuteTpcc over QUIC)"
+            echo "- PostgreSQL: **postgres_tpcc** (same SQL mix over TCP; not prepared — see \`fair_sql\` profile locally for SQL-path compare)"
             echo ""
             echo "### RustDB (rustdb_tpcc)"
             echo '```'
@@ -780,6 +782,7 @@ jobs:
             tpcc-out/server.der
             tpcc-out/server_full.log
             tpcc-out/server_tail.log
+            tpcc-out/validation.json
             tpcc-out/order_status_micro/tpcc.json
             tpcc-out/order_status_micro/tpcc.txt
             tpcc-out/order_status_micro/tpcc_txn.log

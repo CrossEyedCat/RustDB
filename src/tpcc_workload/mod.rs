@@ -100,14 +100,36 @@ pub fn reservoir_sample_push(samples: &mut Vec<u128>, seen: &mut u64, rng: &mut 
     }
 }
 
-pub fn txn_sql(kind: TxnKind, seed: u64, global_txn_id: u64) -> Vec<String> {
+pub fn txn_params(seed: u64, global_txn_id: u64) -> TpccTxnParams {
     let mut st = seed ^ (global_txn_id.wrapping_mul(0x9E3779B97F4A7C15));
-    let w_id = 1;
-    let d_id = lcg_next(&mut st) % 5 + 1;
-    let c_id = lcg_next(&mut st) % 5 + 1;
-    let i_id = lcg_next(&mut st) % 5 + 1;
-    let qty = lcg_next(&mut st) % 5 + 1;
-    let o_id = global_txn_id;
+    TpccTxnParams {
+        w_id: 1,
+        d_id: (lcg_next(&mut st) % 5 + 1) as i32,
+        c_id: (lcg_next(&mut st) % 5 + 1) as i32,
+        i_id: (lcg_next(&mut st) % 5 + 1) as i32,
+        qty: (lcg_next(&mut st) % 5 + 1) as i32,
+        o_id: global_txn_id as i64,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TpccTxnParams {
+    pub w_id: i32,
+    pub d_id: i32,
+    pub c_id: i32,
+    pub i_id: i32,
+    pub qty: i32,
+    pub o_id: i64,
+}
+
+pub fn txn_sql(kind: TxnKind, seed: u64, global_txn_id: u64) -> Vec<String> {
+    let p = txn_params(seed, global_txn_id);
+    let w_id = p.w_id;
+    let d_id = p.d_id;
+    let c_id = p.c_id;
+    let i_id = p.i_id;
+    let qty = p.qty;
+    let o_id = p.o_id;
 
     match kind {
         TxnKind::NewOrder => vec![
@@ -267,6 +289,17 @@ pub trait TpccExec: Send + Sync + 'static {
         sqls: &[String],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
+    /// Run one TPC-C txn via the same SQL statements as [`txn_sql`] (override for prepared PG, etc.).
+    async fn run_kind(
+        &self,
+        kind: TxnKind,
+        seed: u64,
+        global_txn_id: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.run_sql_batch(&txn_sql(kind, seed, global_txn_id))
+            .await
+    }
+
     fn native_tpcc_enabled(&self) -> bool {
         false
     }
@@ -353,7 +386,7 @@ pub async fn run_tpcc<E: TpccExec>(
                     let res = if use_native_tpcc && exec.native_tpcc_enabled() {
                         exec.run_native_tpcc(kind, seed, global_tx).await
                     } else {
-                        exec.run_sql_batch(&txn_sql(kind, seed, global_tx)).await
+                        exec.run_kind(kind, seed, global_tx).await
                     };
                     let dt = t0.elapsed();
                     let us = dt.as_micros();
@@ -397,7 +430,7 @@ pub async fn run_tpcc<E: TpccExec>(
                     let res = if use_native_tpcc && exec.native_tpcc_enabled() {
                         exec.run_native_tpcc(kind, seed, global_tx).await
                     } else {
-                        exec.run_sql_batch(&txn_sql(kind, seed, global_tx)).await
+                        exec.run_kind(kind, seed, global_tx).await
                     };
                     let dt = t0.elapsed();
                     let us = dt.as_micros();
@@ -591,6 +624,15 @@ mod tests {
         }
         assert_eq!(samples.len(), MAX_LATENCY_SAMPLES);
         assert_eq!(seen, MAX_LATENCY_SAMPLES as u64 + extra as u64);
+    }
+
+    #[test]
+    fn txn_params_matches_txn_sql_placeholders() {
+        let p = txn_params(99, 42);
+        let no = txn_sql(TxnKind::NewOrder, 99, 42);
+        assert!(no[1].contains(&p.d_id.to_string()));
+        assert!(no[2].contains(&p.o_id.to_string()));
+        assert!(no[4].contains(&p.qty.to_string()));
     }
 
     #[test]

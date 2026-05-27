@@ -40,10 +40,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+export TPCC_ROOT="$ROOT"
 
+# shellcheck source=scripts/tpcc_host_bins.sh
+source "$ROOT/scripts/tpcc_host_bins.sh"
 # shellcheck source=scripts/tpcc_env_presets.sh
 source "$ROOT/scripts/tpcc_env_presets.sh"
-tpcc_apply_env_preset bench
+TPCC_PRESET="${TPCC_PRESET:-bench}"
+tpcc_apply_env_preset "$TPCC_PRESET"
 
 RUSTDB_IMAGE="${RUSTDB_IMAGE:?RUSTDB_IMAGE must be set (e.g. ghcr.io/org/repo:sha-xxxxxxx)}"
 OUT_DIR="${OUT_DIR:-$ROOT/tpcc-out}"
@@ -59,10 +63,24 @@ MIX="${MIX:-new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_le
 mkdir -p "$OUT_DIR"
 # Docker bind mounts require absolute host paths; resolve once.
 OUT_DIR_ABS="$(cd "$OUT_DIR" && pwd)"
+if command -v cygpath >/dev/null 2>&1; then
+  OUT_DIR_ABS="$(cygpath -m "$OUT_DIR_ABS")"
+fi
+docker_host_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    MSYS_NO_PATHCONV=1 cygpath -w "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
 rm -f "$OUT_DIR_ABS"/tpcc.* || true
 
 echo "==> pull image: $RUSTDB_IMAGE"
-docker pull "$RUSTDB_IMAGE" >/dev/null
+if docker image inspect "$RUSTDB_IMAGE" >/dev/null 2>&1; then
+  echo "==> using local image: $RUSTDB_IMAGE"
+else
+  docker pull "$RUSTDB_IMAGE" >/dev/null
+fi
 
 echo "==> prepare volume + seed schema/data"
 docker volume rm -f "$VOL_NAME" >/dev/null 2>&1 || true
@@ -72,10 +90,10 @@ docker volume create "$VOL_NAME" >/dev/null
 # Filter out `-- ...` comments and blank lines for CI robustness.
 SEED_IN="$ROOT/scripts/tpcc_seed.sql"
 SEED_FILTERED="$OUT_DIR_ABS/tpcc_seed.filtered.sql"
-python3 - <<PY
-import pathlib, re
-src = pathlib.Path(r"${SEED_IN}")
-out = pathlib.Path(r"${SEED_FILTERED}")
+python3 - "$SEED_IN" "$SEED_FILTERED" <<'PY'
+import pathlib, sys
+src = pathlib.Path(sys.argv[1])
+out = pathlib.Path(sys.argv[2])
 lines = []
 for line in src.read_text(encoding="utf-8").splitlines():
     s = line.strip()
@@ -91,7 +109,7 @@ PY
 # Seed using CLI path (local engine) before server starts.
 docker run --rm -i \
   -v "$VOL_NAME:/app/data" \
-  -v "$SEED_FILTERED:/tmp/tpcc_seed.sql:ro" \
+  -v "$(docker_host_path "$SEED_FILTERED"):/tmp/tpcc_seed.sql:ro" \
   "$RUSTDB_IMAGE" \
   sh -c 'rustdb query --batch-file /tmp/tpcc_seed.sql' >/dev/null
 
@@ -100,7 +118,7 @@ docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d --name "$CONTAINER_NAME" \
   -p "${UDP_PORT}:5432/udp" \
   -v "$VOL_NAME:/app/data" \
-  -v "$ROOT/config.toml:/app/config/config.toml:ro" \
+  -v "$(docker_host_path "$ROOT/config.toml"):/app/config/config.toml:ro" \
   -e NO_COLOR=1 \
   -e RUSTDB_SQL_PHASE_LOG="${RUSTDB_SQL_PHASE_LOG:-1}" \
   -e RUSTDB_GROUP_COMMIT_ENABLED="${RUSTDB_GROUP_COMMIT_ENABLED:-1}" \
@@ -108,8 +126,8 @@ docker run -d --name "$CONTAINER_NAME" \
   -e RUSTDB_GROUP_COMMIT_MAX_BATCH="${RUSTDB_GROUP_COMMIT_MAX_BATCH:-32}" \
   -e RUSTDB_TPCC_DEFER_INDEX_SYNC="${RUSTDB_TPCC_DEFER_INDEX_SYNC:-1}" \
   ${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML:+-e "RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML=${RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML}"} \
-  -e RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT="${RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT:-1}" \
-  -e RUSTDB_BENCH_DEFER_HEAP_FSYNC="${RUSTDB_BENCH_DEFER_HEAP_FSYNC:-1}" \
+  ${RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT:+-e "RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT=${RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT}"} \
+  ${RUSTDB_BENCH_DEFER_HEAP_FSYNC:+-e "RUSTDB_BENCH_DEFER_HEAP_FSYNC=${RUSTDB_BENCH_DEFER_HEAP_FSYNC}"} \
   ${RUSTDB_SQL_WORKER_COUNT:+-e "RUSTDB_SQL_WORKER_COUNT=${RUSTDB_SQL_WORKER_COUNT}"} \
   -e RUST_LOG="${RUST_LOG:-info}" \
   "$RUSTDB_IMAGE" \
@@ -127,8 +145,8 @@ CERT="$OUT_DIR_ABS/server.der"
 docker cp "$CONTAINER_NAME:/tmp/server.der" "$CERT"
 test -s "$CERT"
 
-echo "==> build rustdb_tpcc (host)"
-cargo build -q --bin rustdb_tpcc
+tpcc_build_bin rustdb_tpcc
+RUSTDB_TPCC_BIN="$(tpcc_bin_path rustdb_tpcc)"
 
 echo "==> run rustdb_tpcc"
 TXN_ARGS=()
@@ -142,7 +160,7 @@ if [[ "${RUSTDB_TPCC_NATIVE:-0}" == "1" ]]; then
   TPCC_EXTRA+=(--native-tpcc)
 fi
 set +e
-./target/debug/rustdb_tpcc \
+"$RUSTDB_TPCC_BIN" \
   --addr "127.0.0.1:${UDP_PORT}" \
   --cert "$CERT" \
   --server-name localhost \
@@ -160,7 +178,7 @@ if [[ "${RUSTDB_TPCC_NATIVE_MICRO:-0}" == "1" && "$rc" -eq 0 ]]; then
   MICRO_TXNS="${TPCC_NATIVE_MICRO_TXNS:-500}"
   MICRO_CONCURRENCY="${TPCC_NATIVE_MICRO_CONCURRENCY:-16}"
   set +e
-  ./target/debug/rustdb_tpcc \
+  "$RUSTDB_TPCC_BIN" \
     --addr "127.0.0.1:${UDP_PORT}" \
     --cert "$CERT" \
     --server-name localhost \

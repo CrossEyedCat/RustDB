@@ -19,6 +19,35 @@ Other env (group commit, `RUSTDB_TPCC_DEFER_INDEX_SYNC`, worker count) matches `
 - **strict**: stricter durability; median ratio is usually **lower** than bench (often ~60–70% when commit heap flush is the bottleneck). That is expected and is **not** a bench-job regression.
 - **`claim_faster_than_pg`** (in `validation.json` / `fair_compare/report.json`): only when the run is **valid** (gates below) **and** median ratio > 105% across ≥ 2 of 3 nightly iterations.
 
+## Compare profiles (`scripts/tpcc_compare_profiles.sh`)
+
+| Profile | RustDB path | PG client | Durability preset |
+|---------|-------------|-----------|-------------------|
+| **native_bench** (default CI/sweep) | native `ExecuteTpcc` | `simple_query` | bench |
+| **sql_path** | SQL / `ExecuteScript` | prepared statements | *(unchanged; use with `fair_tpcc_compare`)* |
+| **fair_sql** | SQL / `ExecuteScript` | prepared statements | **strict** |
+| **fair_sql_bench** | SQL / `ExecuteScript` | prepared statements | bench |
+
+Less cherry-picked sweep (strict + SQL both sides):
+
+```bash
+export RUSTDB_IMAGE=ghcr.io/org/repo:main
+./scripts/tpcc_fair_sql_sweep.sh
+```
+
+Single fair iteration with SQL path in **both** strict and bench legs:
+
+```bash
+export RUSTDB_IMAGE=ghcr.io/org/repo:main
+TPCC_COMPARE_PROFILE=sql_path FAIR_RUN_ID=1 ./scripts/fair_tpcc_compare.sh
+```
+
+Manual overrides:
+
+```bash
+RUSTDB_TPCC_NATIVE=0 POSTGRES_TPCC_PREPARED=1 TPCC_PRESET=strict ./scripts/tpcc_concurrency_sweep.sh
+```
+
 ## Validity gates (`scripts/validate_tpcc_run.py`)
 
 A run is `valid: false` when any gate fails:
@@ -37,6 +66,10 @@ Invalid PostgreSQL runs (slow VM, noisy neighbor) inflate RustDB/PostgreSQL rati
 ## Commands (local)
 
 Prerequisites: Docker, `RUSTDB_IMAGE` (GHCR tag), host Rust toolchain for `rustdb_tpcc` / `postgres_tpcc`.
+
+Load generators default to **`TPCC_CARGO_PROFILE=release`** (`scripts/tpcc_host_bins.sh`). PostgreSQL bench containers enable **`POSTGRES_BENCH_TUNING=1`** (`synchronous_commit=off`, larger `shared_buffers`, etc.) in `scripts/bench_postgres_tpcc.sh`.
+
+**Windows + Docker Desktop:** if validation still reports `PG txns_per_s < 800`, the baseline is degraded (common on WSL2 bind mounts / limited VM CPUs). Prefer running the sweep from **Git Bash** on a clone under the WSL filesystem, or use CI steps `CONCURRENCY_STEPS=8,16,32,64` only (c=1/4 rarely reach 800 TPS even on Linux).
 
 ```bash
 # One iteration (strict then bench, ~2× 300s full mix)

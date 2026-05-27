@@ -7,6 +7,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+export TPCC_ROOT="$ROOT"
+
+# shellcheck source=scripts/tpcc_host_bins.sh
+source "$ROOT/scripts/tpcc_host_bins.sh"
 
 OUT_DIR="${OUT_DIR:-$ROOT/tpcc-out}"
 mkdir -p "$OUT_DIR"
@@ -25,10 +29,10 @@ HOST_PORT="${POSTGRES_HOST_PORT:-15440}"
 
 SEED_IN="$ROOT/scripts/tpcc_seed.sql"
 SEED_FILTERED="$OUT_DIR_ABS/tpcc_seed.postgres.filtered.sql"
-python3 - <<PY
-import pathlib
-src = pathlib.Path(r"${SEED_IN}")
-out = pathlib.Path(r"${SEED_FILTERED}")
+python3 - "$SEED_IN" "$SEED_FILTERED" <<'PY'
+import pathlib, sys
+src = pathlib.Path(sys.argv[1])
+out = pathlib.Path(sys.argv[2])
 lines = []
 for line in src.read_text(encoding="utf-8").splitlines():
     s = line.strip()
@@ -39,13 +43,35 @@ out.write_text("\n".join(lines) + "\n", encoding="utf-8")
 print(f"filtered seed: {out} (lines={len(lines)})")
 PY
 
+# Bench-oriented server flags (same profile as CI; helps slow Docker hosts).
+POSTGRES_BENCH_TUNING="${POSTGRES_BENCH_TUNING:-1}"
+PG_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
+PG_DOCKER_ARGS=(--shm-size=512m)
+if [[ "$POSTGRES_BENCH_TUNING" == "1" ]]; then
+  PG_SERVER_ARGS=(
+    -c max_connections=500
+    -c shared_buffers=256MB
+    -c effective_cache_size=512MB
+    -c synchronous_commit=off
+    -c checkpoint_completion_target=0.9
+    -c wal_buffers=16MB
+    -c random_page_cost=1.1
+    -c effective_io_concurrency=200
+    -c work_mem=8MB
+    -c max_wal_size=2GB
+  )
+else
+  PG_SERVER_ARGS=(-c max_connections=500)
+fi
+
 docker rm -f "$name" >/dev/null 2>&1 || true
 docker run -d --name "$name" -p "${HOST_PORT}:5432" \
+  "${PG_DOCKER_ARGS[@]}" \
   -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
   -e POSTGRES_USER="$POSTGRES_USER" \
   -e POSTGRES_DB="$POSTGRES_DB" \
-  postgres:16-alpine \
-  -c max_connections=500 >/dev/null
+  "$PG_IMAGE" \
+  postgres "${PG_SERVER_ARGS[@]}" >/dev/null
 
 ready=0
 for _ in $(seq 1 240); do
@@ -72,11 +98,12 @@ docker exec -i "$name" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_ST
   echo "concurrency: $CONCURRENCY"
   echo "duration_s: $DURATION_SECS"
   echo "mix: $MIX"
+  echo "postgres_prepared: ${POSTGRES_TPCC_PREPARED:-0}"
   echo ""
 } | tee "$OUT_DIR_ABS/postgres_tpcc.txt"
 
-echo "==> build postgres_tpcc (host)"
-cargo build -q --bin postgres_tpcc
+tpcc_build_bin postgres_tpcc
+POSTGRES_TPCC_BIN="$(tpcc_bin_path postgres_tpcc)"
 
 TXN_ARGS=()
 if [[ -n "${DURATION_SECS:-}" ]]; then
@@ -84,9 +111,13 @@ if [[ -n "${DURATION_SECS:-}" ]]; then
 else
   TXN_ARGS=(--transactions "$TXNS")
 fi
+PREPARED_ARGS=()
+if [[ "${POSTGRES_TPCC_PREPARED:-0}" == "1" ]]; then
+  PREPARED_ARGS=(--prepared)
+fi
 
 set +e
-./target/debug/postgres_tpcc \
+"$POSTGRES_TPCC_BIN" \
   --host 127.0.0.1 \
   --port "$HOST_PORT" \
   --user "$POSTGRES_USER" \
@@ -94,6 +125,7 @@ set +e
   --database "$POSTGRES_DB" \
   --concurrency "$CONCURRENCY" \
   "${TXN_ARGS[@]}" \
+  "${PREPARED_ARGS[@]}" \
   --mix "$MIX" \
   --txn-log "$OUT_DIR_ABS/postgres_tpcc_txn.log" \
   --json > "$OUT_DIR_ABS/postgres_tpcc.json"
@@ -105,9 +137,9 @@ if [[ "$rc" -ne 0 ]]; then
   exit "$rc"
 fi
 
-python3 - <<PY
-import json, pathlib
-out_dir = pathlib.Path(r"$OUT_DIR_ABS")
+python3 - "$OUT_DIR_ABS" <<'PY'
+import json, pathlib, sys
+out_dir = pathlib.Path(sys.argv[1])
 p = out_dir / "postgres_tpcc.json"
 data = json.loads(p.read_text())
 txt_path = out_dir / "postgres_tpcc.txt"
