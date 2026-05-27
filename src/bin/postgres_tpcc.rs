@@ -156,16 +156,17 @@ impl PgExec {
         let c_id = p.c_id;
         let i_id = p.i_id;
         let qty = p.qty;
-        let o_id = i32::try_from(p.o_id).map_err(|_| {
-            format!("o_id {} out of range for PostgreSQL INTEGER", p.o_id)
-        })?;
+        let o_id = i32::try_from(p.o_id)
+            .map_err(|_| format!("o_id {} out of range for PostgreSQL INTEGER", p.o_id))?;
         let amount = qty * 10;
 
         self.client.batch_execute("BEGIN").await?;
         let run = async {
             match kind {
                 TxnKind::NewOrder => {
-                    self.client.execute(&stmts.no_district, &[&w_id, &d_id]).await?;
+                    self.client
+                        .execute(&stmts.no_district, &[&w_id, &d_id])
+                        .await?;
                     self.client
                         .execute(&stmts.no_oorder, &[&o_id, &d_id, &w_id, &c_id])
                         .await?;
@@ -237,12 +238,8 @@ impl TpccExec for PgExec {
         if self.prepared.is_some() {
             self.run_prepared_kind(kind, seed, global_txn_id).await
         } else {
-            self.run_sql_batch(&rustdb::tpcc_workload::txn_sql(
-                kind,
-                seed,
-                global_txn_id,
-            ))
-            .await
+            self.run_sql_batch(&rustdb::tpcc_workload::txn_sql(kind, seed, global_txn_id))
+                .await
         }
     }
 }
