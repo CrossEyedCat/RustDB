@@ -544,6 +544,8 @@ jobs:
           MIX: new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04
           RUSTDB_TPCC_NATIVE: "1"
           RUSTDB_TPCC_NATIVE_MICRO: "1"
+          # Native order_line inserts shard by ol_d_id (5 districts in tpcc_seed.sql).
+          RUSTDB_TPCC_ORDER_LINE_SHARDS: "5"
           # Default 24 workers on push; workflow_dispatch A/B: override RUSTDB_SQL_WORKER_COUNT=32
           # on 4+ vCPU runners (edit env below or set in the manual run inputs).
           RUSTDB_SQL_WORKER_COUNT: "24"

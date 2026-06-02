@@ -784,7 +784,7 @@ fn insert_rows_tuple_tpcc_deferred_inner(
     ctx: &mut SessionContext,
     table: &str,
     tuples: &[Tuple],
-    shard_w_id: i32,
+    heap_shard_key: i32,
     profile: bool,
 ) -> Result<(TpccInsertTimings, TpccDeferredInsertBreakdown), EngineError> {
     let empty = || {
@@ -823,7 +823,7 @@ fn insert_rows_tuple_tpcc_deferred_inner(
     }
     let encode_us = t_encode.map(phase_elapsed_us).unwrap_or(0);
 
-    let storage_key = tpcc_heap_storage_key(table, shard_w_id);
+    let storage_key = tpcc_heap_storage_key(table, heap_shard_key);
     let pm_for_table = table_page_manager_cached_storage(state, ctx, &storage_key)?;
 
     let t_heap = profile.then(Instant::now);
@@ -888,14 +888,14 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
     ctx: &mut SessionContext,
     table: &str,
     tuple: Tuple,
-    shard_w_id: i32,
+    heap_shard_key: i32,
 ) -> Result<TpccInsertTimings, EngineError> {
     let (timings, _) = insert_rows_tuple_tpcc_deferred_inner(
         state,
         ctx,
         table,
         std::slice::from_ref(&tuple),
-        shard_w_id,
+        heap_shard_key,
         false,
     )?;
     Ok(timings)
@@ -907,10 +907,10 @@ pub(crate) fn insert_rows_tuple_tpcc_deferred_batch(
     ctx: &mut SessionContext,
     table: &str,
     tuples: &[Tuple],
-    shard_w_id: i32,
+    heap_shard_key: i32,
 ) -> Result<TpccInsertTimings, EngineError> {
     let (timings, _) =
-        insert_rows_tuple_tpcc_deferred_inner(state, ctx, table, tuples, shard_w_id, false)?;
+        insert_rows_tuple_tpcc_deferred_inner(state, ctx, table, tuples, heap_shard_key, false)?;
     Ok(timings)
 }
 
@@ -920,14 +920,14 @@ pub(crate) fn insert_row_tuple_tpcc_deferred_breakdown(
     ctx: &mut SessionContext,
     table: &str,
     tuple: Tuple,
-    shard_w_id: i32,
+    heap_shard_key: i32,
 ) -> Result<(TpccInsertTimings, TpccDeferredInsertBreakdown), EngineError> {
     insert_rows_tuple_tpcc_deferred_inner(
         state,
         ctx,
         table,
         std::slice::from_ref(&tuple),
-        shard_w_id,
+        heap_shard_key,
         true,
     )
 }
@@ -938,9 +938,9 @@ pub(crate) fn insert_rows_tuple_tpcc_deferred_batch_breakdown(
     ctx: &mut SessionContext,
     table: &str,
     tuples: &[Tuple],
-    shard_w_id: i32,
+    heap_shard_key: i32,
 ) -> Result<(TpccInsertTimings, TpccDeferredInsertBreakdown), EngineError> {
-    insert_rows_tuple_tpcc_deferred_inner(state, ctx, table, tuples, shard_w_id, true)
+    insert_rows_tuple_tpcc_deferred_inner(state, ctx, table, tuples, heap_shard_key, true)
 }
 
 fn insert_row_tuple_tpcc_immediate(
@@ -1769,11 +1769,19 @@ pub(crate) fn tpcc_order_line_shard_count() -> u32 {
         .max(1)
 }
 
+/// Maps a native-bench district id to a physical `order_line~N` heap index.
+pub(crate) fn tpcc_order_line_shard_index(d_id: i32, shards: u32) -> u32 {
+    ((d_id.max(1) as u32).saturating_sub(1)) % shards.max(1)
+}
+
 /// Physical heap key for native TPC-C DML (logical table name unchanged for catalog/index/WAL).
-pub(crate) fn tpcc_heap_storage_key(table: &str, w_id: i32) -> String {
+///
+/// For `order_line` with `RUSTDB_TPCC_ORDER_LINE_SHARDS` > 1, `heap_shard_key` must be the row's
+/// `ol_d_id` (native bench uses `w_id = 1` always, so sharding by `w_id` would not spread load).
+pub(crate) fn tpcc_heap_storage_key(table: &str, heap_shard_key: i32) -> String {
     let shards = tpcc_order_line_shard_count();
     if table == "order_line" && shards > 1 {
-        let shard = ((w_id.max(1) as u32) - 1) % shards;
+        let shard = tpcc_order_line_shard_index(heap_shard_key, shards);
         format!("order_line~{shard}")
     } else {
         table.to_string()
@@ -5546,6 +5554,21 @@ mod tests {
             "COMMIT should skip heap flush when RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT=1"
         );
         std::env::remove_var("RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT");
+    }
+
+    #[test]
+    fn tpcc_order_line_shard_index_by_district() {
+        assert_eq!(tpcc_order_line_shard_index(1, 5), 0);
+        assert_eq!(tpcc_order_line_shard_index(5, 5), 4);
+        assert_eq!(tpcc_order_line_shard_index(3, 16), 2);
+        assert_eq!(tpcc_order_line_shard_index(0, 5), 0);
+
+        std::env::set_var("RUSTDB_TPCC_ORDER_LINE_SHARDS", "5");
+        assert_eq!(tpcc_heap_storage_key("order_line", 1), "order_line~0");
+        assert_eq!(tpcc_heap_storage_key("order_line", 5), "order_line~4");
+        assert_eq!(tpcc_heap_storage_key("oorder", 1), "oorder");
+        std::env::remove_var("RUSTDB_TPCC_ORDER_LINE_SHARDS");
+        assert_eq!(tpcc_heap_storage_key("order_line", 3), "order_line");
     }
 
     #[test]
