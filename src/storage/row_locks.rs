@@ -3,37 +3,16 @@
 //! Table-level locks remain for DDL, heap scan fallback, and `INSERT`.
 
 use crate::common::types::RecordId;
+use dashmap::DashMap;
 use parking_lot::RwLock;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::info;
-
-const ROW_LOCK_SHARD_COUNT: usize = 64;
-
-#[derive(Debug)]
-struct RowLockShard {
-    locks: Mutex<HashMap<(String, RecordId), Arc<RwLock<()>>>>,
-}
-
-impl Default for RowLockShard {
-    fn default() -> Self {
-        Self {
-            locks: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-fn shard_index(table: &str, rid: RecordId) -> usize {
-    let mut h = table.len() as u64 ^ rid;
-    h = h.wrapping_mul(0x9E3779B97F4A7C15);
-    (h as usize) & (ROW_LOCK_SHARD_COUNT - 1)
-}
 
 /// Lazily allocates an exclusive lock per `(table, record_id)`.
 #[derive(Debug)]
 pub struct RowLockManager {
-    shards: [RowLockShard; ROW_LOCK_SHARD_COUNT],
+    locks: DashMap<(String, RecordId), Arc<RwLock<()>>>,
 }
 
 impl Default for RowLockManager {
@@ -45,7 +24,7 @@ impl Default for RowLockManager {
 impl RowLockManager {
     pub fn new() -> Self {
         Self {
-            shards: std::array::from_fn(|_| RowLockShard::default()),
+            locks: DashMap::new(),
         }
     }
 
@@ -62,33 +41,16 @@ impl RowLockManager {
             return f();
         }
         let wait_clock = row_lock_phase_log_enabled().then(Instant::now);
-
-        let mut shard_order: Vec<usize> = rids.iter().map(|rid| shard_index(table, *rid)).collect();
-        shard_order.sort_unstable();
-        shard_order.dedup();
-
-        let mut arc_by_rid: HashMap<RecordId, Arc<RwLock<()>>> = HashMap::with_capacity(rids.len());
-        for shard_idx in shard_order {
-            let mut map = self.shards[shard_idx]
+        let table_owned = table.to_string();
+        let mut arcs: Vec<Arc<RwLock<()>>> = Vec::with_capacity(rids.len());
+        for rid in rids {
+            let lock = self
                 .locks
-                .lock()
-                .expect("row lock shard map poisoned");
-            for rid in rids
-                .iter()
-                .copied()
-                .filter(|rid| shard_index(table, *rid) == shard_idx)
-            {
-                let key = (table.to_string(), rid);
-                arc_by_rid.insert(
-                    rid,
-                    map.entry(key)
-                        .or_insert_with(|| Arc::new(RwLock::new(())))
-                        .clone(),
-                );
-            }
+                .entry((table_owned.clone(), rid))
+                .or_insert_with(|| Arc::new(RwLock::new(())))
+                .clone();
+            arcs.push(lock);
         }
-
-        let arcs: Vec<Arc<RwLock<()>>> = rids.iter().map(|rid| arc_by_rid[rid].clone()).collect();
         let guards: Vec<_> = arcs.iter().map(|l| l.write()).collect();
         if let Some(t0) = wait_clock {
             info!(
@@ -108,7 +70,10 @@ impl RowLockManager {
 
 #[cfg(test)]
 pub(crate) fn shard_index_for_test(table: &str, rid: RecordId) -> usize {
-    shard_index(table, rid)
+    const ROW_LOCK_SHARD_COUNT: usize = 64;
+    let mut h = table.len() as u64 ^ rid;
+    h = h.wrapping_mul(0x9E3779B97F4A7C15);
+    (h as usize) & (ROW_LOCK_SHARD_COUNT - 1)
 }
 
 fn row_lock_phase_log_enabled() -> bool {
@@ -128,9 +93,9 @@ mod tests {
 
     #[test]
     fn shard_index_distributes_keys() {
-        let mut seen = [false; ROW_LOCK_SHARD_COUNT];
+        let mut seen = [false; 64];
         for rid in 0..256u64 {
-            seen[shard_index("district", rid)] = true;
+            seen[shard_index_for_test("district", rid)] = true;
         }
         assert!(
             seen.iter().filter(|&&b| b).count() > 8,

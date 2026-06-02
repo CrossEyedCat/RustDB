@@ -3828,6 +3828,58 @@ pub(crate) struct RowUpdatePhaseUs {
     pub update_us: u64,
 }
 
+/// Native TPC-C heap update under an already-held row lock: re-read, mutate, WAL, heap, undo.
+/// Skips catalog/constraints/index sync — safe when index key columns are unchanged.
+fn tpcc_locked_row_update<F>(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    rid: RecordId,
+    pm_for_table: &Arc<PageManagerMutex>,
+    update_fn: &mut F,
+) -> Result<u64, EngineError>
+where
+    F: FnMut(&mut Tuple) -> Result<(), EngineError>,
+{
+    let mut pm = pm_for_table.lock();
+    let Some(data) = pm.get_record(rid).map_err(map_db_err)? else {
+        return Ok(0);
+    };
+    let mut tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
+    update_fn(&mut tuple)?;
+    let new_bytes = tuple.to_bytes().map_err(map_db_err)?;
+    if let Some(tx) = ctx.transaction.as_mut() {
+        if let Some(ref wal) = state.wal {
+            let page_id = (rid >> 32) as u64;
+            let off = (rid & 0xffff_ffff) as u32;
+            let record_offset: u16 = off.try_into().map_err(|_| {
+                EngineError::new(
+                    engine_error_code::INTERNAL,
+                    "record offset too large for WAL",
+                )
+            })?;
+            wal.log_data_update(
+                tx,
+                pm.file_id(),
+                page_id,
+                record_offset,
+                data.clone(),
+                new_bytes.clone(),
+            )?;
+        }
+    }
+    pm.update(rid, &new_bytes).map_err(map_db_err)?;
+    push_undo(
+        ctx,
+        UndoEntry::Update {
+            table: table.to_string(),
+            rid,
+            old_payload: data,
+        },
+    );
+    Ok(1)
+}
+
 /// Index-backed UPDATE with per-row write locks when the predicate is an exact index key.
 pub(crate) fn update_rows_by_equalities<F>(
     state: &SqlEngineState,
@@ -3872,6 +3924,33 @@ where
     if exact_key && rows.is_empty() {
         return Ok(0);
     }
+
+    if ctx.tpcc_kind.is_some() && exact_key && rows.len() == 1 {
+        let rid = rows[0].0;
+        let profile_phases = phase_us.is_some() && sql_phase_log_enabled();
+        let mut update_us_acc = 0u64;
+        let apply = || -> Result<u64, EngineError> {
+            let update_t0 = profile_phases.then(Instant::now);
+            let rows =
+                tpcc_locked_row_update(state, ctx, table, rid, &pm_for_table, &mut update_fn)?;
+            if profile_phases {
+                update_us_acc = update_t0
+                    .map(|t0| t0.elapsed().as_micros() as u64)
+                    .unwrap_or(0);
+            }
+            Ok(rows)
+        };
+        let lock_t0 = profile_phases.then(Instant::now);
+        let rows = state.row_locks.with_write_locks(table, vec![rid], apply)?;
+        if let Some(out) = phase_us {
+            out.lock_us = lock_t0
+                .map(|t0| t0.elapsed().as_micros() as u64)
+                .unwrap_or(0);
+            out.update_us = update_us_acc;
+        }
+        return Ok(rows);
+    }
+
     let row_lock_rids: Vec<RecordId> = if exact_key {
         rows.iter().map(|(rid, _)| *rid).collect()
     } else {
@@ -4014,7 +4093,7 @@ pub(crate) fn bump_district_next_o_id(
     let equalities = equalities_map_i32(&[("d_w_id", w_id), ("d_id", d_id)]);
     let pm_for_table = table_page_manager_cached(state, ctx, TABLE)?;
 
-    let (rid, data) = {
+    let rid = {
         let mut pm = pm_for_table.lock();
         let ir = state
             .index_registry
@@ -4030,54 +4109,25 @@ pub(crate) fn bump_district_next_o_id(
         };
         if !exact_key || rids.len() != 1 {
             return Ok(None);
-        }
-        let rid = rids[0];
-        let Some(data) = pm.get_record(rid).map_err(map_db_err)? else {
-            return Ok(Some(0));
         };
-        (rid, data)
+        let rid = rids[0];
+        if pm.get_record(rid).map_err(map_db_err)?.is_none() {
+            return Ok(Some(0));
+        }
+        rid
     };
 
     let profile_phases = phase_us.is_some() && sql_phase_log_enabled();
     let mut update_us_acc = 0u64;
 
-    let apply = || -> Result<u64, EngineError> {
-        let mut pm = pm_for_table.lock();
-        let mut tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
-        let next = tuple_i32_field(&tuple, "d_next_o_id")? + 1;
+    let mut bump = |tuple: &mut Tuple| -> Result<(), EngineError> {
+        let next = tuple_i32_field(tuple, "d_next_o_id")? + 1;
         tuple.set_value("d_next_o_id", int_column_value(next));
-        let new_bytes = tuple.to_bytes().map_err(map_db_err)?;
-        if let Some(tx) = ctx.transaction.as_mut() {
-            if let Some(ref wal) = state.wal {
-                let page_id = (rid >> 32) as u64;
-                let off = (rid & 0xffff_ffff) as u32;
-                let record_offset: u16 = off.try_into().map_err(|_| {
-                    EngineError::new(
-                        engine_error_code::INTERNAL,
-                        "record offset too large for WAL",
-                    )
-                })?;
-                wal.log_data_update(
-                    tx,
-                    pm.file_id(),
-                    page_id,
-                    record_offset,
-                    data.clone(),
-                    new_bytes.clone(),
-                )?;
-            }
-        }
-        pm.update(rid, &new_bytes).map_err(map_db_err)?;
-        push_undo(
-            ctx,
-            UndoEntry::Update {
-                table: TABLE.to_string(),
-                rid,
-                old_payload: data,
-            },
-        );
-        flush_heap_after_dml_success(state, ctx, &mut pm)?;
-        Ok(1)
+        Ok(())
+    };
+
+    let mut apply = || -> Result<u64, EngineError> {
+        tpcc_locked_row_update(state, ctx, TABLE, rid, &pm_for_table, &mut bump)
     };
 
     let timed_apply = || {
