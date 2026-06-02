@@ -4,7 +4,8 @@
 
 use super::{
     bump_district_next_o_id, delete_rows_by_equalities, equalities_map_i32,
-    insert_row_tuple_tpcc_deferred, int_column_value, sql_phase_log_enabled,
+    insert_row_tuple_tpcc_deferred, insert_rows_tuple_tpcc_deferred_batch,
+    insert_rows_tuple_tpcc_deferred_batch_breakdown, int_column_value, sql_phase_log_enabled,
     tpcc_order_status_row_count, tpcc_run_in_transaction, tpcc_stock_level_row_count,
     tuple_i32_field, update_rows_by_equalities, SqlEngineState,
 };
@@ -67,10 +68,16 @@ fn run_new_order_native(
     let mut insert_oorder_us = 0u64;
     let mut insert_new_order_us = 0u64;
     let mut insert_order_line_us = 0u64;
+    let mut insert_order_line_encode_us = 0u64;
+    let mut insert_order_line_heap_us = 0u64;
+    let mut insert_order_line_pm_lock_wait_us = 0u64;
+    let mut insert_order_line_pm_insert_us = 0u64;
+    let mut insert_order_line_wal_us = 0u64;
+    let mut insert_order_line_pending_index_us = 0u64;
+    let mut insert_order_line_undo_us = 0u64;
     let mut stock_us = 0u64;
     let mut wal_insert_us = 0u64;
     let mut index_sync_us = 0u64;
-
     let mut rows = 0u64;
     let mut district_phases = super::RowUpdatePhaseUs::default();
     if let Some(n) = bump_district_next_o_id(
@@ -126,6 +133,7 @@ fn run_new_order_native(
                 ("o_ol_cnt", 1),
             ],
         ),
+        w_id,
     )?;
     wal_insert_us += ins.wal_us;
     index_sync_us += ins.index_us;
@@ -150,6 +158,7 @@ fn run_new_order_native(
                 ("no_w_id", w_id),
             ],
         ),
+        w_id,
     )?;
     wal_insert_us += ins.wal_us;
     index_sync_us += ins.index_us;
@@ -179,30 +188,64 @@ fn run_new_order_native(
         stock_us = phase_elapsed_us(t0);
     }
 
-    let t0 = profile.then(Instant::now);
-    let id = state
-        .next_tuple_id
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let ins = insert_row_tuple_tpcc_deferred(
-        state,
-        ctx,
-        "order_line",
-        new_tuple_with_columns(
+    // Default: 1 row (matches SQL-path new_order in tpcc_workload::txn_sql).
+    // Optional stress knob: expand the order_line insert loop to amplify insert cost in microbenches.
+    // (CI uses defaults unless explicitly set by a microbench script.)
+    let order_line_cnt = std::env::var("RUSTDB_TPCC_NEW_ORDER_OL_CNT")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(1)
+        .max(1);
+
+    let mut order_line_tuples = Vec::with_capacity(order_line_cnt as usize);
+    for ol_number in 1..=order_line_cnt {
+        let id = state
+            .next_tuple_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        order_line_tuples.push(new_tuple_with_columns(
             id,
             &[
                 ("ol_o_id", o_id as i32),
                 ("ol_d_id", d_id),
                 ("ol_w_id", w_id),
-                ("ol_number", 1),
+                ("ol_number", ol_number as i32),
                 ("ol_i_id", i_id),
                 ("ol_qty", qty),
                 ("ol_amount", qty * 10),
             ],
-        ),
-    )?;
-    wal_insert_us += ins.wal_us;
-    index_sync_us += ins.index_us;
-    rows += 1;
+        ));
+    }
+
+    let t0 = profile.then(Instant::now);
+    if profile {
+        let (ins, b) = insert_rows_tuple_tpcc_deferred_batch_breakdown(
+            state,
+            ctx,
+            "order_line",
+            &order_line_tuples,
+            w_id,
+        )?;
+        wal_insert_us += ins.wal_us;
+        index_sync_us += ins.index_us;
+        insert_order_line_encode_us += b.encode_us;
+        insert_order_line_heap_us += b.heap_us;
+        insert_order_line_pm_lock_wait_us += b.pm_lock_wait_us;
+        insert_order_line_pm_insert_us += b.pm_insert_us;
+        insert_order_line_wal_us += b.wal_us;
+        insert_order_line_pending_index_us += b.pending_index_us;
+        insert_order_line_undo_us += b.undo_us;
+    } else {
+        let ins = insert_rows_tuple_tpcc_deferred_batch(
+            state,
+            ctx,
+            "order_line",
+            &order_line_tuples,
+            w_id,
+        )?;
+        wal_insert_us += ins.wal_us;
+        index_sync_us += ins.index_us;
+    }
+    rows += order_line_tuples.len() as u64;
     if let Some(t0) = t0 {
         insert_order_line_us = phase_elapsed_us(t0);
     }
@@ -217,6 +260,14 @@ fn run_new_order_native(
             insert_oorder_us,
             insert_new_order_us,
             insert_order_line_us,
+            insert_order_line_encode_us,
+            insert_order_line_heap_us,
+            insert_order_line_pm_lock_wait_us,
+            insert_order_line_pm_insert_us,
+            insert_order_line_wal_us,
+            insert_order_line_pending_index_us,
+            insert_order_line_undo_us,
+            order_line_cnt,
             stock_us,
             wal_insert_us,
             index_sync_us,

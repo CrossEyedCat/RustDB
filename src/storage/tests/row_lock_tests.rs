@@ -1,4 +1,4 @@
-//! Tests for sharded [`crate::storage::row_locks::RowLockManager`].
+//! Tests for [`crate::storage::row_locks::RowLockManager`].
 
 use crate::storage::row_locks::{shard_index_for_test, RowLockManager};
 use std::sync::atomic::{AtomicU32, Ordering};

@@ -39,7 +39,7 @@ fn test_executor_simple_table_scan() -> Result<()> {
     // Insert test data
     {
         let data = b"1\tAlice\t30".to_vec();
-        let mut pm = page_manager.lock().unwrap();
+        let mut pm = page_manager.lock();
         pm.insert(&data)?;
     }
 

@@ -152,7 +152,12 @@ jobs:
           test -s lcov.info
           wc -l lcov.info
 
-      # Only lcov.info; disable_search avoids the CLI picking up *_coverage_tests.rs via *coverage*.
+      - name: Enforce ≥85% lines (local threshold)
+        run: |
+          cargo llvm-cov report --fail-under-lines 85 \
+            --ignore-filename-regex "$COV_REGEX"
+
+      # Codecov CLI GPG verification is flaky on GHA (codecov/codecov-action#1876); upload is informational.
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
         env:
@@ -162,12 +167,8 @@ jobs:
           files: lcov.info
           disable_search: true
           fail_ci_if_error: true
+          skip_validation: true
           verbose: true
-
-      - name: Enforce ≥85% lines (local threshold)
-        run: |
-          cargo llvm-cov report --fail-under-lines 85 \
-            --ignore-filename-regex "$COV_REGEX"
 
   # After tests: code quality and MSRV (in parallel), then release build.
   format:
@@ -715,6 +716,72 @@ jobs:
           else
             echo "::warning::new_order sql.commit commit_flush_us p50 ${new_order_commit_flush_p50}ms exceeds 55ms run-22 stretch target"
           fi
+
+          # Native new_order: order_line insert subphases (informational).
+          # Conservative soft thresholds: treat as a "smoke alarm", not a regression gate.
+          python3 - <<'PY' > tpcc-out/insert_order_line_phase_stats.txt || true
+          import re, statistics
+          from pathlib import Path
+          p = Path("tpcc-out/server_full.log")
+          if not p.is_file():
+              raise SystemExit(0)
+          fields = [
+              "insert_order_line_us",
+              "insert_order_line_encode_us",
+              "insert_order_line_heap_us",
+              "insert_order_line_pm_lock_wait_us",
+              "insert_order_line_pm_insert_us",
+              "insert_order_line_wal_us",
+              "insert_order_line_pending_index_us",
+              "insert_order_line_undo_us",
+              "order_line_cnt",
+          ]
+          xs = {k: [] for k in fields}
+          for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+              if "sql.execute_tpcc.new_order" not in line:
+                  continue
+              for k in fields:
+                  m = re.search(rf"{k}=(\d+)", line)
+                  if m:
+                      xs[k].append(int(m.group(1)))
+          def q(vals, qq):
+              if not vals:
+                  return 0.0
+              s = sorted(vals)
+              idx = (len(s) - 1) * qq
+              lo = int(idx)
+              hi = min(lo + 1, len(s) - 1)
+              frac = idx - lo
+              return s[lo] * (1.0 - frac) + s[hi] * frac
+          for k in fields:
+              vals = xs[k]
+              if not vals:
+                  continue
+              p50 = q(vals, 0.50)
+              p95 = q(vals, 0.95)
+              mean = statistics.fmean(vals)
+              if k == "order_line_cnt":
+                  print(f"{k} n={len(vals)} p50={p50:.1f} p95={p95:.1f} mean={mean:.1f}")
+              else:
+                  print(
+                      f"{k} n={len(vals)} "
+                      f"p50_ms={p50/1000:.3f} p95_ms={p95/1000:.3f} mean_ms={mean/1000:.3f}"
+                  )
+          PY
+
+          insert_ol_p50="$(python3 -c "import re,statistics; from pathlib import Path; p=Path('tpcc-out/server_full.log'); us=[]; [us.append(int(m.group(1))) for line in (p.read_text(encoding='utf-8',errors='replace').splitlines() if p.is_file() else []) if 'sql.execute_tpcc.new_order' in line for m in [re.search(r'insert_order_line_us=(\d+)', line)] if m]; print(f'{statistics.median(us)/1000:.3f}' if us else '0')" 2>/dev/null || echo 0)"
+          insert_ol_p95="$(python3 -c "import re; from pathlib import Path; p=Path('tpcc-out/server_full.log'); us=[]; [us.append(int(m.group(1))) for line in (p.read_text(encoding='utf-8',errors='replace').splitlines() if p.is_file() else []) if 'sql.execute_tpcc.new_order' in line for m in [re.search(r'insert_order_line_us=(\d+)', line)] if m]; us.sort(); i=int((len(us)-1)*0.95) if us else 0; print(f'{(us[i]/1000):.3f}' if us else '0')" 2>/dev/null || echo 0)"
+          if python3 -c "exit(0 if float('${insert_ol_p50}') <= 15.0 or float('${insert_ol_p50}') <= 0 else 1)"; then
+            :
+          else
+            echo "::warning::insert_order_line_us p50 ${insert_ol_p50}ms exceeds 15ms soft threshold (native new_order)"
+          fi
+          if python3 -c "exit(0 if float('${insert_ol_p95}') <= 40.0 or float('${insert_ol_p95}') <= 0 else 1)"; then
+            :
+          else
+            echo "::warning::insert_order_line_us p95 ${insert_ol_p95}ms exceeds 40ms soft threshold (native new_order)"
+          fi
+
           mix_os_p50="$(python3 -c "import csv,statistics; from pathlib import Path; p=Path('tpcc-out/tpcc_txn.log'); rows=[] if not p.is_file() else [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='order_status']; us=[int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]; print(f'{statistics.median(us)/1000:.3f}' if us else '0')" 2>/dev/null || echo 0)"
           micro_os_p50="$(python3 -c "import csv,statistics; from pathlib import Path; p=Path('tpcc-out/order_status_micro/tpcc_txn.log'); rows=[] if not p.is_file() else [r for r in csv.DictReader(p.read_text().splitlines()) if r.get('ok','').lower() in ('true','1') and r.get('kind')=='order_status']; us=[int(r['elapsed_us']) for r in rows if r.get('elapsed_us','').isdigit()]; print(f'{statistics.median(us)/1000:.3f}' if us else '0')" 2>/dev/null || echo 0)"
           if python3 -c "mix=float('${mix_os_p50}'); micro=float('${micro_os_p50}'); exit(0 if mix<=0 or micro<=0 or (mix/micro)<=3.0 else 1)"; then
@@ -739,6 +806,14 @@ jobs:
             echo "### Native new_order phase breakdown"
             echo ""
             echo "> Generated by \`scripts/summarize_tpcc_native_new_order_md.py\` into \`tpcc-out/phases_native_new_order.md\` and uploaded as an artifact."
+            echo ""
+            if [[ -s "tpcc-out/insert_order_line_phase_stats.txt" ]]; then
+              echo "> Native order_line insert subphases (best-effort; informational):"
+              echo ""
+              echo '```'
+              sed -n '1,80p' tpcc-out/insert_order_line_phase_stats.txt || true
+              echo '```'
+            fi
             echo ""
             echo '```'
             sed -n '1,80p' tpcc-out/phases_native_new_order.md || true

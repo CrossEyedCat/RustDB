@@ -4,7 +4,7 @@ Generate a Markdown report for native TPC-C new_order + commit chain timings fro
 
 Parses `rustdb::sql_phases` lines containing `sql.execute_tpcc.new_order` and extracts:
   - district_us, district_update_us, insert_oorder_us, insert_new_order_us,
-    insert_order_line_us, stock_us, wal_insert_us, index_sync_us
+    insert_order_line_us (+ sub-phases), stock_us, wal_insert_us, index_sync_us
 
 Also parses native commit lines (`sql.execute_tpcc.commit`, `tpcc_kind=0`) to extract:
   - commit_us
@@ -38,6 +38,14 @@ NEW_ORDER_FIELDS = (
     "insert_oorder_us",
     "insert_new_order_us",
     "insert_order_line_us",
+    "insert_order_line_encode_us",
+    "insert_order_line_heap_us",
+    "insert_order_line_pm_lock_wait_us",
+    "insert_order_line_pm_insert_us",
+    "insert_order_line_wal_us",
+    "insert_order_line_pending_index_us",
+    "insert_order_line_undo_us",
+    "order_line_cnt",
     "stock_us",
     "wal_insert_us",
     "index_sync_us",
@@ -119,7 +127,12 @@ def parse_file(path: Path) -> tuple[dict[str, int], dict[str, dict[str, list[int
     return counts, out
 
 
-def render_table(fields: tuple[str, ...], by_field: dict[str, list[int]]) -> list[str]:
+def render_table(
+    fields: tuple[str, ...],
+    by_field: dict[str, list[int]],
+    *,
+    count_fields: frozenset[str] = frozenset({"order_line_cnt"}),
+) -> list[str]:
     rows: list[str] = []
     rows.append("| field | samples | p50_ms | p95_ms | p99_ms | mean_ms |\n")
     rows.append("|-------|---------:|-------:|-------:|-------:|--------:|\n")
@@ -132,9 +145,14 @@ def render_table(fields: tuple[str, ...], by_field: dict[str, list[int]]) -> lis
         p95 = quantile(xs, 0.95)
         p99 = quantile(xs, 0.99)
         mean = statistics.fmean(xs)
-        rows.append(
-            f"| `{k}` | {len(xs)} | {fmt_ms(p50)} | {fmt_ms(p95)} | {fmt_ms(p99)} | {fmt_ms(mean)} |\n"
-        )
+        if k in count_fields:
+            rows.append(
+                f"| `{k}` | {len(xs)} | {p50:.0f} | {p95:.0f} | {p99:.0f} | {mean:.1f} |\n"
+            )
+        else:
+            rows.append(
+                f"| `{k}` | {len(xs)} | {fmt_ms(p50)} | {fmt_ms(p95)} | {fmt_ms(p99)} | {fmt_ms(mean)} |\n"
+            )
     return rows
 
 
@@ -150,6 +168,10 @@ def render_md(
     )
     rows.append("\n")
     rows.append("## new_order phases (`sql.execute_tpcc.new_order`)\n\n")
+    rows.append(
+        "Timing fields are in microseconds in the log and milliseconds here. "
+        "`order_line_cnt` is a row count (not a duration).\n\n"
+    )
     rows.extend(render_table(NEW_ORDER_FIELDS, sections.get("new_order", {})))
     rows.append("\n")
     rows.append("## commit phases (`sql.execute_tpcc.commit`, `tpcc_kind=0`)\n\n")
