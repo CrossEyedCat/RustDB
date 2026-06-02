@@ -4,308 +4,359 @@
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use super</span>::{
 <a href=#6 id=6 data-nosnippet>6</a>    bump_district_next_o_id, delete_rows_by_equalities, equalities_map_i32,
-<a href=#7 id=7 data-nosnippet>7</a>    insert_row_tuple_tpcc_deferred, int_column_value, sql_phase_log_enabled,
-<a href=#8 id=8 data-nosnippet>8</a>    tpcc_order_status_row_count, tpcc_run_in_transaction, tpcc_stock_level_row_count,
-<a href=#9 id=9 data-nosnippet>9</a>    tuple_i32_field, update_rows_by_equalities, SqlEngineState,
-<a href=#10 id=10 data-nosnippet>10</a>};
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">crate</span>::network::engine::{EngineError, EngineOutput, SessionContext};
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span><span class="kw">crate</span>::storage::tuple::Tuple;
-<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span><span class="kw">crate</span>::tpcc_workload::{txn_kind_from_u8, TxnKind};
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>std::time::Instant;
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>tracing::info;
-<a href=#16 id=16 data-nosnippet>16</a>
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">fn </span>txn_kind_from_wire(kind: u8) -&gt; <span class="prelude-ty">Result</span>&lt;TxnKind, EngineError&gt; {
-<a href=#18 id=18 data-nosnippet>18</a>    txn_kind_from_u8(kind).ok_or_else(|| {
-<a href=#19 id=19 data-nosnippet>19</a>        EngineError::new(
-<a href=#20 id=20 data-nosnippet>20</a>            <span class="kw">crate</span>::network::engine::engine_error_code::PROTOCOL,
-<a href=#21 id=21 data-nosnippet>21</a>            <span class="macro">format!</span>(<span class="string">"unknown TPC-C kind {kind}"</span>),
-<a href=#22 id=22 data-nosnippet>22</a>        )
-<a href=#23 id=23 data-nosnippet>23</a>    })
-<a href=#24 id=24 data-nosnippet>24</a>}
-<a href=#25 id=25 data-nosnippet>25</a>
-<a href=#26 id=26 data-nosnippet>26</a><span class="kw">fn </span>tpcc_params(seed: u64, global_txn_id: u64) -&gt; (u64, i32, i32, i32, i32, i32, u64) {
-<a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">let </span><span class="kw-2">mut </span>st = seed ^ global_txn_id.wrapping_mul(<span class="number">0x9E3779B97F4A7C15</span>);
-<a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">let </span>w_id = <span class="number">1i32</span>;
-<a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">let </span>d_id = (lcg_next(<span class="kw-2">&amp;mut </span>st) % <span class="number">5 </span>+ <span class="number">1</span>) <span class="kw">as </span>i32;
-<a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">let </span>c_id = (lcg_next(<span class="kw-2">&amp;mut </span>st) % <span class="number">5 </span>+ <span class="number">1</span>) <span class="kw">as </span>i32;
-<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">let </span>i_id = (lcg_next(<span class="kw-2">&amp;mut </span>st) % <span class="number">5 </span>+ <span class="number">1</span>) <span class="kw">as </span>i32;
-<a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">let </span>qty = (lcg_next(<span class="kw-2">&amp;mut </span>st) % <span class="number">5 </span>+ <span class="number">1</span>) <span class="kw">as </span>i32;
-<a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">let </span>o_id = global_txn_id;
-<a href=#34 id=34 data-nosnippet>34</a>    (st, w_id, d_id, c_id, i_id, qty, o_id)
-<a href=#35 id=35 data-nosnippet>35</a>}
-<a href=#36 id=36 data-nosnippet>36</a>
-<a href=#37 id=37 data-nosnippet>37</a><span class="kw">fn </span>lcg_next(state: <span class="kw-2">&amp;mut </span>u64) -&gt; u64 {
-<a href=#38 id=38 data-nosnippet>38</a>    <span class="kw-2">*</span>state = state.wrapping_mul(<span class="number">6364136223846793005</span>).wrapping_add(<span class="number">1</span>);
-<a href=#39 id=39 data-nosnippet>39</a>    <span class="kw-2">*</span>state
-<a href=#40 id=40 data-nosnippet>40</a>}
-<a href=#41 id=41 data-nosnippet>41</a>
-<a href=#42 id=42 data-nosnippet>42</a><span class="kw">fn </span>new_tuple_with_columns(id: u64, cols: <span class="kw-2">&amp;</span>[(<span class="kw-2">&amp;</span>str, i32)]) -&gt; Tuple {
-<a href=#43 id=43 data-nosnippet>43</a>    <span class="kw">let </span><span class="kw-2">mut </span>tuple = Tuple::new(id);
-<a href=#44 id=44 data-nosnippet>44</a>    <span class="kw">for </span>(name, val) <span class="kw">in </span>cols {
-<a href=#45 id=45 data-nosnippet>45</a>        tuple.set_value(name, int_column_value(<span class="kw-2">*</span>val));
-<a href=#46 id=46 data-nosnippet>46</a>    }
-<a href=#47 id=47 data-nosnippet>47</a>    tuple
-<a href=#48 id=48 data-nosnippet>48</a>}
-<a href=#49 id=49 data-nosnippet>49</a>
-<a href=#50 id=50 data-nosnippet>50</a><span class="kw">fn </span>phase_elapsed_us(t0: Instant) -&gt; u64 {
-<a href=#51 id=51 data-nosnippet>51</a>    t0.elapsed().as_micros() <span class="kw">as </span>u64
-<a href=#52 id=52 data-nosnippet>52</a>}
-<a href=#53 id=53 data-nosnippet>53</a>
-<a href=#54 id=54 data-nosnippet>54</a><span class="kw">fn </span>run_new_order_native(
-<a href=#55 id=55 data-nosnippet>55</a>    state: <span class="kw-2">&amp;</span>SqlEngineState,
-<a href=#56 id=56 data-nosnippet>56</a>    ctx: <span class="kw-2">&amp;mut </span>SessionContext,
-<a href=#57 id=57 data-nosnippet>57</a>    w_id: i32,
-<a href=#58 id=58 data-nosnippet>58</a>    d_id: i32,
-<a href=#59 id=59 data-nosnippet>59</a>    c_id: i32,
-<a href=#60 id=60 data-nosnippet>60</a>    i_id: i32,
-<a href=#61 id=61 data-nosnippet>61</a>    qty: i32,
-<a href=#62 id=62 data-nosnippet>62</a>    o_id: u64,
-<a href=#63 id=63 data-nosnippet>63</a>) -&gt; <span class="prelude-ty">Result</span>&lt;u64, EngineError&gt; {
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">let </span>profile = sql_phase_log_enabled();
-<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">let </span><span class="kw-2">mut </span>district_us = <span class="number">0u64</span>;
-<a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">let </span><span class="kw-2">mut </span>district_update_us = <span class="number">0u64</span>;
-<a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">let </span><span class="kw-2">mut </span>insert_oorder_us = <span class="number">0u64</span>;
-<a href=#68 id=68 data-nosnippet>68</a>    <span class="kw">let </span><span class="kw-2">mut </span>insert_new_order_us = <span class="number">0u64</span>;
-<a href=#69 id=69 data-nosnippet>69</a>    <span class="kw">let </span><span class="kw-2">mut </span>insert_order_line_us = <span class="number">0u64</span>;
-<a href=#70 id=70 data-nosnippet>70</a>    <span class="kw">let </span><span class="kw-2">mut </span>stock_us = <span class="number">0u64</span>;
-<a href=#71 id=71 data-nosnippet>71</a>    <span class="kw">let </span><span class="kw-2">mut </span>wal_insert_us = <span class="number">0u64</span>;
-<a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">let </span><span class="kw-2">mut </span>index_sync_us = <span class="number">0u64</span>;
-<a href=#73 id=73 data-nosnippet>73</a>
-<a href=#74 id=74 data-nosnippet>74</a>    <span class="kw">let </span><span class="kw-2">mut </span>rows = <span class="number">0u64</span>;
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span><span class="kw-2">mut </span>district_phases = <span class="kw">super</span>::RowUpdatePhaseUs::default();
-<a href=#76 id=76 data-nosnippet>76</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(n) = bump_district_next_o_id(
-<a href=#77 id=77 data-nosnippet>77</a>        state,
-<a href=#78 id=78 data-nosnippet>78</a>        ctx,
-<a href=#79 id=79 data-nosnippet>79</a>        w_id,
-<a href=#80 id=80 data-nosnippet>80</a>        d_id,
-<a href=#81 id=81 data-nosnippet>81</a>        <span class="kw">if </span>profile {
-<a href=#82 id=82 data-nosnippet>82</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;mut </span>district_phases)
-<a href=#83 id=83 data-nosnippet>83</a>        } <span class="kw">else </span>{
-<a href=#84 id=84 data-nosnippet>84</a>            <span class="prelude-val">None
-<a href=#85 id=85 data-nosnippet>85</a>        </span>},
-<a href=#86 id=86 data-nosnippet>86</a>    )<span class="question-mark">? </span>{
-<a href=#87 id=87 data-nosnippet>87</a>        rows += n;
-<a href=#88 id=88 data-nosnippet>88</a>    } <span class="kw">else </span>{
-<a href=#89 id=89 data-nosnippet>89</a>        rows += update_rows_by_equalities(
-<a href=#90 id=90 data-nosnippet>90</a>            state,
-<a href=#91 id=91 data-nosnippet>91</a>            ctx,
-<a href=#92 id=92 data-nosnippet>92</a>            <span class="string">"district"</span>,
-<a href=#93 id=93 data-nosnippet>93</a>            <span class="kw-2">&amp;</span>equalities_map_i32(<span class="kw-2">&amp;</span>[(<span class="string">"d_w_id"</span>, w_id), (<span class="string">"d_id"</span>, d_id)]),
-<a href=#94 id=94 data-nosnippet>94</a>            |tuple| {
-<a href=#95 id=95 data-nosnippet>95</a>                <span class="kw">let </span>next = tuple_i32_field(tuple, <span class="string">"d_next_o_id"</span>)<span class="question-mark">? </span>+ <span class="number">1</span>;
-<a href=#96 id=96 data-nosnippet>96</a>                tuple.set_value(<span class="string">"d_next_o_id"</span>, int_column_value(next));
-<a href=#97 id=97 data-nosnippet>97</a>                <span class="prelude-val">Ok</span>(())
-<a href=#98 id=98 data-nosnippet>98</a>            },
-<a href=#99 id=99 data-nosnippet>99</a>            <span class="kw">if </span>profile {
-<a href=#100 id=100 data-nosnippet>100</a>                <span class="prelude-val">Some</span>(<span class="kw-2">&amp;mut </span>district_phases)
-<a href=#101 id=101 data-nosnippet>101</a>            } <span class="kw">else </span>{
-<a href=#102 id=102 data-nosnippet>102</a>                <span class="prelude-val">None
-<a href=#103 id=103 data-nosnippet>103</a>            </span>},
-<a href=#104 id=104 data-nosnippet>104</a>        )<span class="question-mark">?</span>;
-<a href=#105 id=105 data-nosnippet>105</a>    }
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">if </span>profile {
-<a href=#107 id=107 data-nosnippet>107</a>        district_us = district_phases.lock_us;
-<a href=#108 id=108 data-nosnippet>108</a>        district_update_us = district_phases.update_us;
-<a href=#109 id=109 data-nosnippet>109</a>    }
-<a href=#110 id=110 data-nosnippet>110</a>
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">let </span>t0 = profile.then(Instant::now);
-<a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">let </span>id = state
-<a href=#113 id=113 data-nosnippet>113</a>        .next_tuple_id
-<a href=#114 id=114 data-nosnippet>114</a>        .fetch_add(<span class="number">1</span>, std::sync::atomic::Ordering::Relaxed);
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">let </span>ins = insert_row_tuple_tpcc_deferred(
-<a href=#116 id=116 data-nosnippet>116</a>        state,
-<a href=#117 id=117 data-nosnippet>117</a>        ctx,
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="string">"oorder"</span>,
-<a href=#119 id=119 data-nosnippet>119</a>        new_tuple_with_columns(
-<a href=#120 id=120 data-nosnippet>120</a>            id,
-<a href=#121 id=121 data-nosnippet>121</a>            <span class="kw-2">&amp;</span>[
-<a href=#122 id=122 data-nosnippet>122</a>                (<span class="string">"o_id"</span>, o_id <span class="kw">as </span>i32),
-<a href=#123 id=123 data-nosnippet>123</a>                (<span class="string">"o_d_id"</span>, d_id),
-<a href=#124 id=124 data-nosnippet>124</a>                (<span class="string">"o_w_id"</span>, w_id),
-<a href=#125 id=125 data-nosnippet>125</a>                (<span class="string">"o_c_id"</span>, c_id),
-<a href=#126 id=126 data-nosnippet>126</a>                (<span class="string">"o_ol_cnt"</span>, <span class="number">1</span>),
-<a href=#127 id=127 data-nosnippet>127</a>            ],
-<a href=#128 id=128 data-nosnippet>128</a>        ),
-<a href=#129 id=129 data-nosnippet>129</a>    )<span class="question-mark">?</span>;
-<a href=#130 id=130 data-nosnippet>130</a>    wal_insert_us += ins.wal_us;
-<a href=#131 id=131 data-nosnippet>131</a>    index_sync_us += ins.index_us;
-<a href=#132 id=132 data-nosnippet>132</a>    rows += <span class="number">1</span>;
-<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(t0) = t0 {
-<a href=#134 id=134 data-nosnippet>134</a>        insert_oorder_us = phase_elapsed_us(t0);
-<a href=#135 id=135 data-nosnippet>135</a>    }
-<a href=#136 id=136 data-nosnippet>136</a>
-<a href=#137 id=137 data-nosnippet>137</a>    <span class="kw">let </span>t0 = profile.then(Instant::now);
-<a href=#138 id=138 data-nosnippet>138</a>    <span class="kw">let </span>id = state
-<a href=#139 id=139 data-nosnippet>139</a>        .next_tuple_id
-<a href=#140 id=140 data-nosnippet>140</a>        .fetch_add(<span class="number">1</span>, std::sync::atomic::Ordering::Relaxed);
-<a href=#141 id=141 data-nosnippet>141</a>    <span class="kw">let </span>ins = insert_row_tuple_tpcc_deferred(
-<a href=#142 id=142 data-nosnippet>142</a>        state,
-<a href=#143 id=143 data-nosnippet>143</a>        ctx,
-<a href=#144 id=144 data-nosnippet>144</a>        <span class="string">"new_order"</span>,
-<a href=#145 id=145 data-nosnippet>145</a>        new_tuple_with_columns(
-<a href=#146 id=146 data-nosnippet>146</a>            id,
-<a href=#147 id=147 data-nosnippet>147</a>            <span class="kw-2">&amp;</span>[
-<a href=#148 id=148 data-nosnippet>148</a>                (<span class="string">"no_o_id"</span>, o_id <span class="kw">as </span>i32),
-<a href=#149 id=149 data-nosnippet>149</a>                (<span class="string">"no_d_id"</span>, d_id),
-<a href=#150 id=150 data-nosnippet>150</a>                (<span class="string">"no_w_id"</span>, w_id),
-<a href=#151 id=151 data-nosnippet>151</a>            ],
-<a href=#152 id=152 data-nosnippet>152</a>        ),
-<a href=#153 id=153 data-nosnippet>153</a>    )<span class="question-mark">?</span>;
-<a href=#154 id=154 data-nosnippet>154</a>    wal_insert_us += ins.wal_us;
-<a href=#155 id=155 data-nosnippet>155</a>    index_sync_us += ins.index_us;
-<a href=#156 id=156 data-nosnippet>156</a>    rows += <span class="number">1</span>;
-<a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(t0) = t0 {
-<a href=#158 id=158 data-nosnippet>158</a>        insert_new_order_us = phase_elapsed_us(t0);
-<a href=#159 id=159 data-nosnippet>159</a>    }
-<a href=#160 id=160 data-nosnippet>160</a>
-<a href=#161 id=161 data-nosnippet>161</a>    <span class="kw">let </span>t0 = profile.then(Instant::now);
-<a href=#162 id=162 data-nosnippet>162</a>    rows += update_rows_by_equalities(
-<a href=#163 id=163 data-nosnippet>163</a>        state,
-<a href=#164 id=164 data-nosnippet>164</a>        ctx,
-<a href=#165 id=165 data-nosnippet>165</a>        <span class="string">"stock"</span>,
-<a href=#166 id=166 data-nosnippet>166</a>        <span class="kw-2">&amp;</span>equalities_map_i32(<span class="kw-2">&amp;</span>[(<span class="string">"s_w_id"</span>, w_id), (<span class="string">"s_i_id"</span>, i_id)]),
-<a href=#167 id=167 data-nosnippet>167</a>        |tuple| {
-<a href=#168 id=168 data-nosnippet>168</a>            <span class="kw">let </span>s_qty = tuple_i32_field(tuple, <span class="string">"s_qty"</span>)<span class="question-mark">? </span>- qty;
-<a href=#169 id=169 data-nosnippet>169</a>            <span class="kw">let </span>s_ytd = tuple_i32_field(tuple, <span class="string">"s_ytd"</span>)<span class="question-mark">? </span>+ qty;
-<a href=#170 id=170 data-nosnippet>170</a>            <span class="kw">let </span>s_order_cnt = tuple_i32_field(tuple, <span class="string">"s_order_cnt"</span>)<span class="question-mark">? </span>+ <span class="number">1</span>;
-<a href=#171 id=171 data-nosnippet>171</a>            tuple.set_value(<span class="string">"s_qty"</span>, int_column_value(s_qty));
-<a href=#172 id=172 data-nosnippet>172</a>            tuple.set_value(<span class="string">"s_ytd"</span>, int_column_value(s_ytd));
-<a href=#173 id=173 data-nosnippet>173</a>            tuple.set_value(<span class="string">"s_order_cnt"</span>, int_column_value(s_order_cnt));
-<a href=#174 id=174 data-nosnippet>174</a>            <span class="prelude-val">Ok</span>(())
-<a href=#175 id=175 data-nosnippet>175</a>        },
-<a href=#176 id=176 data-nosnippet>176</a>        <span class="prelude-val">None</span>,
-<a href=#177 id=177 data-nosnippet>177</a>    )<span class="question-mark">?</span>;
-<a href=#178 id=178 data-nosnippet>178</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(t0) = t0 {
-<a href=#179 id=179 data-nosnippet>179</a>        stock_us = phase_elapsed_us(t0);
-<a href=#180 id=180 data-nosnippet>180</a>    }
-<a href=#181 id=181 data-nosnippet>181</a>
-<a href=#182 id=182 data-nosnippet>182</a>    <span class="kw">let </span>t0 = profile.then(Instant::now);
-<a href=#183 id=183 data-nosnippet>183</a>    <span class="kw">let </span>id = state
-<a href=#184 id=184 data-nosnippet>184</a>        .next_tuple_id
-<a href=#185 id=185 data-nosnippet>185</a>        .fetch_add(<span class="number">1</span>, std::sync::atomic::Ordering::Relaxed);
-<a href=#186 id=186 data-nosnippet>186</a>    <span class="kw">let </span>ins = insert_row_tuple_tpcc_deferred(
-<a href=#187 id=187 data-nosnippet>187</a>        state,
-<a href=#188 id=188 data-nosnippet>188</a>        ctx,
-<a href=#189 id=189 data-nosnippet>189</a>        <span class="string">"order_line"</span>,
-<a href=#190 id=190 data-nosnippet>190</a>        new_tuple_with_columns(
-<a href=#191 id=191 data-nosnippet>191</a>            id,
-<a href=#192 id=192 data-nosnippet>192</a>            <span class="kw-2">&amp;</span>[
-<a href=#193 id=193 data-nosnippet>193</a>                (<span class="string">"ol_o_id"</span>, o_id <span class="kw">as </span>i32),
-<a href=#194 id=194 data-nosnippet>194</a>                (<span class="string">"ol_d_id"</span>, d_id),
-<a href=#195 id=195 data-nosnippet>195</a>                (<span class="string">"ol_w_id"</span>, w_id),
-<a href=#196 id=196 data-nosnippet>196</a>                (<span class="string">"ol_number"</span>, <span class="number">1</span>),
-<a href=#197 id=197 data-nosnippet>197</a>                (<span class="string">"ol_i_id"</span>, i_id),
-<a href=#198 id=198 data-nosnippet>198</a>                (<span class="string">"ol_qty"</span>, qty),
-<a href=#199 id=199 data-nosnippet>199</a>                (<span class="string">"ol_amount"</span>, qty * <span class="number">10</span>),
-<a href=#200 id=200 data-nosnippet>200</a>            ],
-<a href=#201 id=201 data-nosnippet>201</a>        ),
-<a href=#202 id=202 data-nosnippet>202</a>    )<span class="question-mark">?</span>;
-<a href=#203 id=203 data-nosnippet>203</a>    wal_insert_us += ins.wal_us;
-<a href=#204 id=204 data-nosnippet>204</a>    index_sync_us += ins.index_us;
-<a href=#205 id=205 data-nosnippet>205</a>    rows += <span class="number">1</span>;
-<a href=#206 id=206 data-nosnippet>206</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(t0) = t0 {
-<a href=#207 id=207 data-nosnippet>207</a>        insert_order_line_us = phase_elapsed_us(t0);
-<a href=#208 id=208 data-nosnippet>208</a>    }
-<a href=#209 id=209 data-nosnippet>209</a>
-<a href=#210 id=210 data-nosnippet>210</a>    ctx.tpcc_dml_done_at = <span class="prelude-val">Some</span>(Instant::now());
-<a href=#211 id=211 data-nosnippet>211</a>
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">if </span>profile {
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="macro">info!</span>(
-<a href=#214 id=214 data-nosnippet>214</a>            target: <span class="string">"rustdb::sql_phases"</span>,
-<a href=#215 id=215 data-nosnippet>215</a>            district_us,
-<a href=#216 id=216 data-nosnippet>216</a>            district_update_us,
-<a href=#217 id=217 data-nosnippet>217</a>            insert_oorder_us,
-<a href=#218 id=218 data-nosnippet>218</a>            insert_new_order_us,
-<a href=#219 id=219 data-nosnippet>219</a>            insert_order_line_us,
-<a href=#220 id=220 data-nosnippet>220</a>            stock_us,
-<a href=#221 id=221 data-nosnippet>221</a>            wal_insert_us,
-<a href=#222 id=222 data-nosnippet>222</a>            index_sync_us,
-<a href=#223 id=223 data-nosnippet>223</a>            <span class="string">"sql.execute_tpcc.new_order"
-<a href=#224 id=224 data-nosnippet>224</a>        </span>);
-<a href=#225 id=225 data-nosnippet>225</a>    }
-<a href=#226 id=226 data-nosnippet>226</a>    <span class="prelude-val">Ok</span>(rows)
-<a href=#227 id=227 data-nosnippet>227</a>}
-<a href=#228 id=228 data-nosnippet>228</a>
-<a href=#229 id=229 data-nosnippet>229</a><span class="kw">fn </span>run_payment(
-<a href=#230 id=230 data-nosnippet>230</a>    state: <span class="kw-2">&amp;</span>SqlEngineState,
-<a href=#231 id=231 data-nosnippet>231</a>    ctx: <span class="kw-2">&amp;mut </span>SessionContext,
-<a href=#232 id=232 data-nosnippet>232</a>    w_id: i32,
-<a href=#233 id=233 data-nosnippet>233</a>    d_id: i32,
-<a href=#234 id=234 data-nosnippet>234</a>    c_id: i32,
-<a href=#235 id=235 data-nosnippet>235</a>) -&gt; <span class="prelude-ty">Result</span>&lt;u64, EngineError&gt; {
-<a href=#236 id=236 data-nosnippet>236</a>    <span class="kw">let </span><span class="kw-2">mut </span>rows = <span class="number">0u64</span>;
-<a href=#237 id=237 data-nosnippet>237</a>    rows += update_rows_by_equalities(
-<a href=#238 id=238 data-nosnippet>238</a>        state,
-<a href=#239 id=239 data-nosnippet>239</a>        ctx,
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="string">"warehouse"</span>,
-<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw-2">&amp;</span>equalities_map_i32(<span class="kw-2">&amp;</span>[(<span class="string">"w_id"</span>, w_id)]),
-<a href=#242 id=242 data-nosnippet>242</a>        |tuple| {
-<a href=#243 id=243 data-nosnippet>243</a>            <span class="kw">let </span>ytd = tuple_i32_field(tuple, <span class="string">"w_ytd"</span>)<span class="question-mark">? </span>+ <span class="number">1</span>;
-<a href=#244 id=244 data-nosnippet>244</a>            tuple.set_value(<span class="string">"w_ytd"</span>, int_column_value(ytd));
-<a href=#245 id=245 data-nosnippet>245</a>            <span class="prelude-val">Ok</span>(())
-<a href=#246 id=246 data-nosnippet>246</a>        },
-<a href=#247 id=247 data-nosnippet>247</a>        <span class="prelude-val">None</span>,
-<a href=#248 id=248 data-nosnippet>248</a>    )<span class="question-mark">?</span>;
-<a href=#249 id=249 data-nosnippet>249</a>    rows += update_rows_by_equalities(
-<a href=#250 id=250 data-nosnippet>250</a>        state,
-<a href=#251 id=251 data-nosnippet>251</a>        ctx,
-<a href=#252 id=252 data-nosnippet>252</a>        <span class="string">"district"</span>,
-<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw-2">&amp;</span>equalities_map_i32(<span class="kw-2">&amp;</span>[(<span class="string">"d_w_id"</span>, w_id), (<span class="string">"d_id"</span>, d_id)]),
-<a href=#254 id=254 data-nosnippet>254</a>        |tuple| {
-<a href=#255 id=255 data-nosnippet>255</a>            <span class="kw">let </span>ytd = tuple_i32_field(tuple, <span class="string">"d_ytd"</span>)<span class="question-mark">? </span>+ <span class="number">1</span>;
-<a href=#256 id=256 data-nosnippet>256</a>            tuple.set_value(<span class="string">"d_ytd"</span>, int_column_value(ytd));
-<a href=#257 id=257 data-nosnippet>257</a>            <span class="prelude-val">Ok</span>(())
-<a href=#258 id=258 data-nosnippet>258</a>        },
-<a href=#259 id=259 data-nosnippet>259</a>        <span class="prelude-val">None</span>,
-<a href=#260 id=260 data-nosnippet>260</a>    )<span class="question-mark">?</span>;
-<a href=#261 id=261 data-nosnippet>261</a>    rows += update_rows_by_equalities(
-<a href=#262 id=262 data-nosnippet>262</a>        state,
-<a href=#263 id=263 data-nosnippet>263</a>        ctx,
-<a href=#264 id=264 data-nosnippet>264</a>        <span class="string">"customer"</span>,
-<a href=#265 id=265 data-nosnippet>265</a>        <span class="kw-2">&amp;</span>equalities_map_i32(<span class="kw-2">&amp;</span>[(<span class="string">"c_w_id"</span>, w_id), (<span class="string">"c_d_id"</span>, d_id), (<span class="string">"c_id"</span>, c_id)]),
-<a href=#266 id=266 data-nosnippet>266</a>        |tuple| {
-<a href=#267 id=267 data-nosnippet>267</a>            <span class="kw">let </span>bal = tuple_i32_field(tuple, <span class="string">"c_balance"</span>)<span class="question-mark">? </span>- <span class="number">1</span>;
-<a href=#268 id=268 data-nosnippet>268</a>            tuple.set_value(<span class="string">"c_balance"</span>, int_column_value(bal));
-<a href=#269 id=269 data-nosnippet>269</a>            <span class="prelude-val">Ok</span>(())
-<a href=#270 id=270 data-nosnippet>270</a>        },
-<a href=#271 id=271 data-nosnippet>271</a>        <span class="prelude-val">None</span>,
-<a href=#272 id=272 data-nosnippet>272</a>    )<span class="question-mark">?</span>;
-<a href=#273 id=273 data-nosnippet>273</a>    <span class="prelude-val">Ok</span>(rows)
-<a href=#274 id=274 data-nosnippet>274</a>}
-<a href=#275 id=275 data-nosnippet>275</a>
-<a href=#276 id=276 data-nosnippet>276</a><span class="kw">fn </span>run_delivery(
-<a href=#277 id=277 data-nosnippet>277</a>    state: <span class="kw-2">&amp;</span>SqlEngineState,
-<a href=#278 id=278 data-nosnippet>278</a>    ctx: <span class="kw-2">&amp;mut </span>SessionContext,
-<a href=#279 id=279 data-nosnippet>279</a>    w_id: i32,
-<a href=#280 id=280 data-nosnippet>280</a>    d_id: i32,
-<a href=#281 id=281 data-nosnippet>281</a>) -&gt; <span class="prelude-ty">Result</span>&lt;u64, EngineError&gt; {
-<a href=#282 id=282 data-nosnippet>282</a>    delete_rows_by_equalities(
-<a href=#283 id=283 data-nosnippet>283</a>        state,
-<a href=#284 id=284 data-nosnippet>284</a>        ctx,
-<a href=#285 id=285 data-nosnippet>285</a>        <span class="string">"new_order"</span>,
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw-2">&amp;</span>equalities_map_i32(<span class="kw-2">&amp;</span>[(<span class="string">"no_w_id"</span>, w_id), (<span class="string">"no_d_id"</span>, d_id)]),
-<a href=#287 id=287 data-nosnippet>287</a>    )
-<a href=#288 id=288 data-nosnippet>288</a>}
-<a href=#289 id=289 data-nosnippet>289</a>
-<a href=#290 id=290 data-nosnippet>290</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>execute_tpcc(
-<a href=#291 id=291 data-nosnippet>291</a>    state: <span class="kw-2">&amp;</span>SqlEngineState,
-<a href=#292 id=292 data-nosnippet>292</a>    kind: u8,
-<a href=#293 id=293 data-nosnippet>293</a>    seed: u64,
-<a href=#294 id=294 data-nosnippet>294</a>    global_txn_id: u64,
-<a href=#295 id=295 data-nosnippet>295</a>    ctx: <span class="kw-2">&amp;mut </span>SessionContext,
-<a href=#296 id=296 data-nosnippet>296</a>) -&gt; <span class="prelude-ty">Result</span>&lt;EngineOutput, EngineError&gt; {
-<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">let </span>txn_kind = txn_kind_from_wire(kind)<span class="question-mark">?</span>;
-<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">let </span>(_st, w_id, d_id, c_id, i_id, qty, o_id) = tpcc_params(seed, global_txn_id);
-<a href=#299 id=299 data-nosnippet>299</a>    tpcc_run_in_transaction(state, ctx, kind, |state, ctx| {
-<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span>rows = <span class="kw">match </span>txn_kind {
-<a href=#301 id=301 data-nosnippet>301</a>            TxnKind::NewOrder =&gt; {
-<a href=#302 id=302 data-nosnippet>302</a>                run_new_order_native(state, ctx, w_id, d_id, c_id, i_id, qty, o_id)<span class="question-mark">?
-<a href=#303 id=303 data-nosnippet>303</a>            </span>}
-<a href=#304 id=304 data-nosnippet>304</a>            TxnKind::Payment =&gt; run_payment(state, ctx, w_id, d_id, c_id)<span class="question-mark">?</span>,
-<a href=#305 id=305 data-nosnippet>305</a>            TxnKind::OrderStatus =&gt; tpcc_order_status_row_count(state, w_id, d_id, c_id)<span class="question-mark">?</span>,
-<a href=#306 id=306 data-nosnippet>306</a>            TxnKind::Delivery =&gt; run_delivery(state, ctx, w_id, d_id)<span class="question-mark">?</span>,
-<a href=#307 id=307 data-nosnippet>307</a>            TxnKind::StockLevel =&gt; tpcc_stock_level_row_count(state, w_id, <span class="number">20</span>)<span class="question-mark">?</span>,
-<a href=#308 id=308 data-nosnippet>308</a>        };
-<a href=#309 id=309 data-nosnippet>309</a>        <span class="prelude-val">Ok</span>(rows)
-<a href=#310 id=310 data-nosnippet>310</a>    })
-<a href=#311 id=311 data-nosnippet>311</a>}</code></pre></div></section></main></body></html>
+<a href=#7 id=7 data-nosnippet>7</a>    insert_row_tuple_tpcc_deferred, insert_rows_tuple_tpcc_deferred_batch,
+<a href=#8 id=8 data-nosnippet>8</a>    insert_rows_tuple_tpcc_deferred_batch_breakdown, int_column_value, sql_phase_log_enabled,
+<a href=#9 id=9 data-nosnippet>9</a>    tpcc_order_status_row_count, tpcc_run_in_transaction, tpcc_stock_level_row_count,
+<a href=#10 id=10 data-nosnippet>10</a>    tuple_i32_field, update_rows_by_equalities, SqlEngineState,
+<a href=#11 id=11 data-nosnippet>11</a>};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span><span class="kw">crate</span>::network::engine::{EngineError, EngineOutput, SessionContext};
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span><span class="kw">crate</span>::storage::tuple::Tuple;
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span><span class="kw">crate</span>::tpcc_workload::{txn_kind_from_u8, TxnKind};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>std::time::Instant;
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>tracing::info;
+<a href=#17 id=17 data-nosnippet>17</a>
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">fn </span>txn_kind_from_wire(kind: u8) -&gt; <span class="prelude-ty">Result</span>&lt;TxnKind, EngineError&gt; {
+<a href=#19 id=19 data-nosnippet>19</a>    txn_kind_from_u8(kind).ok_or_else(|| {
+<a href=#20 id=20 data-nosnippet>20</a>        EngineError::new(
+<a href=#21 id=21 data-nosnippet>21</a>            <span class="kw">crate</span>::network::engine::engine_error_code::PROTOCOL,
+<a href=#22 id=22 data-nosnippet>22</a>            <span class="macro">format!</span>(<span class="string">"unknown TPC-C kind {kind}"</span>),
+<a href=#23 id=23 data-nosnippet>23</a>        )
+<a href=#24 id=24 data-nosnippet>24</a>    })
+<a href=#25 id=25 data-nosnippet>25</a>}
+<a href=#26 id=26 data-nosnippet>26</a>
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">fn </span>tpcc_params(seed: u64, global_txn_id: u64) -&gt; (u64, i32, i32, i32, i32, i32, u64) {
+<a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">let </span><span class="kw-2">mut </span>st = seed ^ global_txn_id.wrapping_mul(<span class="number">0x9E3779B97F4A7C15</span>);
+<a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">let </span>w_id = <span class="number">1i32</span>;
+<a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">let </span>d_id = (lcg_next(<span class="kw-2">&amp;mut </span>st) % <span class="number">5 </span>+ <span class="number">1</span>) <span class="kw">as </span>i32;
+<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">let </span>c_id = (lcg_next(<span class="kw-2">&amp;mut </span>st) % <span class="number">5 </span>+ <span class="number">1</span>) <span class="kw">as </span>i32;
+<a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">let </span>i_id = (lcg_next(<span class="kw-2">&amp;mut </span>st) % <span class="number">5 </span>+ <span class="number">1</span>) <span class="kw">as </span>i32;
+<a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">let </span>qty = (lcg_next(<span class="kw-2">&amp;mut </span>st) % <span class="number">5 </span>+ <span class="number">1</span>) <span class="kw">as </span>i32;
+<a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">let </span>o_id = global_txn_id;
+<a href=#35 id=35 data-nosnippet>35</a>    (st, w_id, d_id, c_id, i_id, qty, o_id)
+<a href=#36 id=36 data-nosnippet>36</a>}
+<a href=#37 id=37 data-nosnippet>37</a>
+<a href=#38 id=38 data-nosnippet>38</a><span class="kw">fn </span>lcg_next(state: <span class="kw-2">&amp;mut </span>u64) -&gt; u64 {
+<a href=#39 id=39 data-nosnippet>39</a>    <span class="kw-2">*</span>state = state.wrapping_mul(<span class="number">6364136223846793005</span>).wrapping_add(<span class="number">1</span>);
+<a href=#40 id=40 data-nosnippet>40</a>    <span class="kw-2">*</span>state
+<a href=#41 id=41 data-nosnippet>41</a>}
+<a href=#42 id=42 data-nosnippet>42</a>
+<a href=#43 id=43 data-nosnippet>43</a><span class="kw">fn </span>new_tuple_with_columns(id: u64, cols: <span class="kw-2">&amp;</span>[(<span class="kw-2">&amp;</span>str, i32)]) -&gt; Tuple {
+<a href=#44 id=44 data-nosnippet>44</a>    <span class="kw">let </span><span class="kw-2">mut </span>tuple = Tuple::new(id);
+<a href=#45 id=45 data-nosnippet>45</a>    <span class="kw">for </span>(name, val) <span class="kw">in </span>cols {
+<a href=#46 id=46 data-nosnippet>46</a>        tuple.set_value(name, int_column_value(<span class="kw-2">*</span>val));
+<a href=#47 id=47 data-nosnippet>47</a>    }
+<a href=#48 id=48 data-nosnippet>48</a>    tuple
+<a href=#49 id=49 data-nosnippet>49</a>}
+<a href=#50 id=50 data-nosnippet>50</a>
+<a href=#51 id=51 data-nosnippet>51</a><span class="kw">fn </span>phase_elapsed_us(t0: Instant) -&gt; u64 {
+<a href=#52 id=52 data-nosnippet>52</a>    t0.elapsed().as_micros() <span class="kw">as </span>u64
+<a href=#53 id=53 data-nosnippet>53</a>}
+<a href=#54 id=54 data-nosnippet>54</a>
+<a href=#55 id=55 data-nosnippet>55</a><span class="kw">fn </span>run_new_order_native(
+<a href=#56 id=56 data-nosnippet>56</a>    state: <span class="kw-2">&amp;</span>SqlEngineState,
+<a href=#57 id=57 data-nosnippet>57</a>    ctx: <span class="kw-2">&amp;mut </span>SessionContext,
+<a href=#58 id=58 data-nosnippet>58</a>    w_id: i32,
+<a href=#59 id=59 data-nosnippet>59</a>    d_id: i32,
+<a href=#60 id=60 data-nosnippet>60</a>    c_id: i32,
+<a href=#61 id=61 data-nosnippet>61</a>    i_id: i32,
+<a href=#62 id=62 data-nosnippet>62</a>    qty: i32,
+<a href=#63 id=63 data-nosnippet>63</a>    o_id: u64,
+<a href=#64 id=64 data-nosnippet>64</a>) -&gt; <span class="prelude-ty">Result</span>&lt;u64, EngineError&gt; {
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">let </span>profile = sql_phase_log_enabled();
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">let </span><span class="kw-2">mut </span>district_us = <span class="number">0u64</span>;
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">let </span><span class="kw-2">mut </span>district_update_us = <span class="number">0u64</span>;
+<a href=#68 id=68 data-nosnippet>68</a>    <span class="kw">let </span><span class="kw-2">mut </span>insert_oorder_us = <span class="number">0u64</span>;
+<a href=#69 id=69 data-nosnippet>69</a>    <span class="kw">let </span><span class="kw-2">mut </span>insert_new_order_us = <span class="number">0u64</span>;
+<a href=#70 id=70 data-nosnippet>70</a>    <span class="kw">let </span><span class="kw-2">mut </span>insert_order_line_us = <span class="number">0u64</span>;
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="kw">let </span><span class="kw-2">mut </span>insert_order_line_encode_us = <span class="number">0u64</span>;
+<a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">let </span><span class="kw-2">mut </span>insert_order_line_heap_us = <span class="number">0u64</span>;
+<a href=#73 id=73 data-nosnippet>73</a>    <span class="kw">let </span><span class="kw-2">mut </span>insert_order_line_pm_lock_wait_us = <span class="number">0u64</span>;
+<a href=#74 id=74 data-nosnippet>74</a>    <span class="kw">let </span><span class="kw-2">mut </span>insert_order_line_pm_insert_us = <span class="number">0u64</span>;
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span><span class="kw-2">mut </span>insert_order_line_wal_us = <span class="number">0u64</span>;
+<a href=#76 id=76 data-nosnippet>76</a>    <span class="kw">let </span><span class="kw-2">mut </span>insert_order_line_pending_index_us = <span class="number">0u64</span>;
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">let </span><span class="kw-2">mut </span>insert_order_line_undo_us = <span class="number">0u64</span>;
+<a href=#78 id=78 data-nosnippet>78</a>    <span class="kw">let </span><span class="kw-2">mut </span>stock_us = <span class="number">0u64</span>;
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="kw">let </span><span class="kw-2">mut </span>wal_insert_us = <span class="number">0u64</span>;
+<a href=#80 id=80 data-nosnippet>80</a>    <span class="kw">let </span><span class="kw-2">mut </span>index_sync_us = <span class="number">0u64</span>;
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="kw">let </span><span class="kw-2">mut </span>rows = <span class="number">0u64</span>;
+<a href=#82 id=82 data-nosnippet>82</a>    <span class="kw">let </span><span class="kw-2">mut </span>district_phases = <span class="kw">super</span>::RowUpdatePhaseUs::default();
+<a href=#83 id=83 data-nosnippet>83</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(n) = bump_district_next_o_id(
+<a href=#84 id=84 data-nosnippet>84</a>        state,
+<a href=#85 id=85 data-nosnippet>85</a>        ctx,
+<a href=#86 id=86 data-nosnippet>86</a>        w_id,
+<a href=#87 id=87 data-nosnippet>87</a>        d_id,
+<a href=#88 id=88 data-nosnippet>88</a>        <span class="kw">if </span>profile {
+<a href=#89 id=89 data-nosnippet>89</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;mut </span>district_phases)
+<a href=#90 id=90 data-nosnippet>90</a>        } <span class="kw">else </span>{
+<a href=#91 id=91 data-nosnippet>91</a>            <span class="prelude-val">None
+<a href=#92 id=92 data-nosnippet>92</a>        </span>},
+<a href=#93 id=93 data-nosnippet>93</a>    )<span class="question-mark">? </span>{
+<a href=#94 id=94 data-nosnippet>94</a>        rows += n;
+<a href=#95 id=95 data-nosnippet>95</a>    } <span class="kw">else </span>{
+<a href=#96 id=96 data-nosnippet>96</a>        rows += update_rows_by_equalities(
+<a href=#97 id=97 data-nosnippet>97</a>            state,
+<a href=#98 id=98 data-nosnippet>98</a>            ctx,
+<a href=#99 id=99 data-nosnippet>99</a>            <span class="string">"district"</span>,
+<a href=#100 id=100 data-nosnippet>100</a>            <span class="kw-2">&amp;</span>equalities_map_i32(<span class="kw-2">&amp;</span>[(<span class="string">"d_w_id"</span>, w_id), (<span class="string">"d_id"</span>, d_id)]),
+<a href=#101 id=101 data-nosnippet>101</a>            |tuple| {
+<a href=#102 id=102 data-nosnippet>102</a>                <span class="kw">let </span>next = tuple_i32_field(tuple, <span class="string">"d_next_o_id"</span>)<span class="question-mark">? </span>+ <span class="number">1</span>;
+<a href=#103 id=103 data-nosnippet>103</a>                tuple.set_value(<span class="string">"d_next_o_id"</span>, int_column_value(next));
+<a href=#104 id=104 data-nosnippet>104</a>                <span class="prelude-val">Ok</span>(())
+<a href=#105 id=105 data-nosnippet>105</a>            },
+<a href=#106 id=106 data-nosnippet>106</a>            <span class="kw">if </span>profile {
+<a href=#107 id=107 data-nosnippet>107</a>                <span class="prelude-val">Some</span>(<span class="kw-2">&amp;mut </span>district_phases)
+<a href=#108 id=108 data-nosnippet>108</a>            } <span class="kw">else </span>{
+<a href=#109 id=109 data-nosnippet>109</a>                <span class="prelude-val">None
+<a href=#110 id=110 data-nosnippet>110</a>            </span>},
+<a href=#111 id=111 data-nosnippet>111</a>        )<span class="question-mark">?</span>;
+<a href=#112 id=112 data-nosnippet>112</a>    }
+<a href=#113 id=113 data-nosnippet>113</a>    <span class="kw">if </span>profile {
+<a href=#114 id=114 data-nosnippet>114</a>        district_us = district_phases.lock_us;
+<a href=#115 id=115 data-nosnippet>115</a>        district_update_us = district_phases.update_us;
+<a href=#116 id=116 data-nosnippet>116</a>    }
+<a href=#117 id=117 data-nosnippet>117</a>
+<a href=#118 id=118 data-nosnippet>118</a>    <span class="kw">let </span>t0 = profile.then(Instant::now);
+<a href=#119 id=119 data-nosnippet>119</a>    <span class="kw">let </span>id = state
+<a href=#120 id=120 data-nosnippet>120</a>        .next_tuple_id
+<a href=#121 id=121 data-nosnippet>121</a>        .fetch_add(<span class="number">1</span>, std::sync::atomic::Ordering::Relaxed);
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">let </span>ins = insert_row_tuple_tpcc_deferred(
+<a href=#123 id=123 data-nosnippet>123</a>        state,
+<a href=#124 id=124 data-nosnippet>124</a>        ctx,
+<a href=#125 id=125 data-nosnippet>125</a>        <span class="string">"oorder"</span>,
+<a href=#126 id=126 data-nosnippet>126</a>        new_tuple_with_columns(
+<a href=#127 id=127 data-nosnippet>127</a>            id,
+<a href=#128 id=128 data-nosnippet>128</a>            <span class="kw-2">&amp;</span>[
+<a href=#129 id=129 data-nosnippet>129</a>                (<span class="string">"o_id"</span>, o_id <span class="kw">as </span>i32),
+<a href=#130 id=130 data-nosnippet>130</a>                (<span class="string">"o_d_id"</span>, d_id),
+<a href=#131 id=131 data-nosnippet>131</a>                (<span class="string">"o_w_id"</span>, w_id),
+<a href=#132 id=132 data-nosnippet>132</a>                (<span class="string">"o_c_id"</span>, c_id),
+<a href=#133 id=133 data-nosnippet>133</a>                (<span class="string">"o_ol_cnt"</span>, <span class="number">1</span>),
+<a href=#134 id=134 data-nosnippet>134</a>            ],
+<a href=#135 id=135 data-nosnippet>135</a>        ),
+<a href=#136 id=136 data-nosnippet>136</a>        w_id,
+<a href=#137 id=137 data-nosnippet>137</a>    )<span class="question-mark">?</span>;
+<a href=#138 id=138 data-nosnippet>138</a>    wal_insert_us += ins.wal_us;
+<a href=#139 id=139 data-nosnippet>139</a>    index_sync_us += ins.index_us;
+<a href=#140 id=140 data-nosnippet>140</a>    rows += <span class="number">1</span>;
+<a href=#141 id=141 data-nosnippet>141</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(t0) = t0 {
+<a href=#142 id=142 data-nosnippet>142</a>        insert_oorder_us = phase_elapsed_us(t0);
+<a href=#143 id=143 data-nosnippet>143</a>    }
+<a href=#144 id=144 data-nosnippet>144</a>
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">let </span>t0 = profile.then(Instant::now);
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">let </span>id = state
+<a href=#147 id=147 data-nosnippet>147</a>        .next_tuple_id
+<a href=#148 id=148 data-nosnippet>148</a>        .fetch_add(<span class="number">1</span>, std::sync::atomic::Ordering::Relaxed);
+<a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">let </span>ins = insert_row_tuple_tpcc_deferred(
+<a href=#150 id=150 data-nosnippet>150</a>        state,
+<a href=#151 id=151 data-nosnippet>151</a>        ctx,
+<a href=#152 id=152 data-nosnippet>152</a>        <span class="string">"new_order"</span>,
+<a href=#153 id=153 data-nosnippet>153</a>        new_tuple_with_columns(
+<a href=#154 id=154 data-nosnippet>154</a>            id,
+<a href=#155 id=155 data-nosnippet>155</a>            <span class="kw-2">&amp;</span>[
+<a href=#156 id=156 data-nosnippet>156</a>                (<span class="string">"no_o_id"</span>, o_id <span class="kw">as </span>i32),
+<a href=#157 id=157 data-nosnippet>157</a>                (<span class="string">"no_d_id"</span>, d_id),
+<a href=#158 id=158 data-nosnippet>158</a>                (<span class="string">"no_w_id"</span>, w_id),
+<a href=#159 id=159 data-nosnippet>159</a>            ],
+<a href=#160 id=160 data-nosnippet>160</a>        ),
+<a href=#161 id=161 data-nosnippet>161</a>        w_id,
+<a href=#162 id=162 data-nosnippet>162</a>    )<span class="question-mark">?</span>;
+<a href=#163 id=163 data-nosnippet>163</a>    wal_insert_us += ins.wal_us;
+<a href=#164 id=164 data-nosnippet>164</a>    index_sync_us += ins.index_us;
+<a href=#165 id=165 data-nosnippet>165</a>    rows += <span class="number">1</span>;
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(t0) = t0 {
+<a href=#167 id=167 data-nosnippet>167</a>        insert_new_order_us = phase_elapsed_us(t0);
+<a href=#168 id=168 data-nosnippet>168</a>    }
+<a href=#169 id=169 data-nosnippet>169</a>
+<a href=#170 id=170 data-nosnippet>170</a>    <span class="kw">let </span>t0 = profile.then(Instant::now);
+<a href=#171 id=171 data-nosnippet>171</a>    rows += update_rows_by_equalities(
+<a href=#172 id=172 data-nosnippet>172</a>        state,
+<a href=#173 id=173 data-nosnippet>173</a>        ctx,
+<a href=#174 id=174 data-nosnippet>174</a>        <span class="string">"stock"</span>,
+<a href=#175 id=175 data-nosnippet>175</a>        <span class="kw-2">&amp;</span>equalities_map_i32(<span class="kw-2">&amp;</span>[(<span class="string">"s_w_id"</span>, w_id), (<span class="string">"s_i_id"</span>, i_id)]),
+<a href=#176 id=176 data-nosnippet>176</a>        |tuple| {
+<a href=#177 id=177 data-nosnippet>177</a>            <span class="kw">let </span>s_qty = tuple_i32_field(tuple, <span class="string">"s_qty"</span>)<span class="question-mark">? </span>- qty;
+<a href=#178 id=178 data-nosnippet>178</a>            <span class="kw">let </span>s_ytd = tuple_i32_field(tuple, <span class="string">"s_ytd"</span>)<span class="question-mark">? </span>+ qty;
+<a href=#179 id=179 data-nosnippet>179</a>            <span class="kw">let </span>s_order_cnt = tuple_i32_field(tuple, <span class="string">"s_order_cnt"</span>)<span class="question-mark">? </span>+ <span class="number">1</span>;
+<a href=#180 id=180 data-nosnippet>180</a>            tuple.set_value(<span class="string">"s_qty"</span>, int_column_value(s_qty));
+<a href=#181 id=181 data-nosnippet>181</a>            tuple.set_value(<span class="string">"s_ytd"</span>, int_column_value(s_ytd));
+<a href=#182 id=182 data-nosnippet>182</a>            tuple.set_value(<span class="string">"s_order_cnt"</span>, int_column_value(s_order_cnt));
+<a href=#183 id=183 data-nosnippet>183</a>            <span class="prelude-val">Ok</span>(())
+<a href=#184 id=184 data-nosnippet>184</a>        },
+<a href=#185 id=185 data-nosnippet>185</a>        <span class="prelude-val">None</span>,
+<a href=#186 id=186 data-nosnippet>186</a>    )<span class="question-mark">?</span>;
+<a href=#187 id=187 data-nosnippet>187</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(t0) = t0 {
+<a href=#188 id=188 data-nosnippet>188</a>        stock_us = phase_elapsed_us(t0);
+<a href=#189 id=189 data-nosnippet>189</a>    }
+<a href=#190 id=190 data-nosnippet>190</a>
+<a href=#191 id=191 data-nosnippet>191</a>    <span class="comment">// Default: 1 row (matches SQL-path new_order in tpcc_workload::txn_sql).
+<a href=#192 id=192 data-nosnippet>192</a>    // Optional stress knob: expand the order_line insert loop to amplify insert cost in microbenches.
+<a href=#193 id=193 data-nosnippet>193</a>    // (CI uses defaults unless explicitly set by a microbench script.)
+<a href=#194 id=194 data-nosnippet>194</a>    </span><span class="kw">let </span>order_line_cnt = std::env::var(<span class="string">"RUSTDB_TPCC_NEW_ORDER_OL_CNT"</span>)
+<a href=#195 id=195 data-nosnippet>195</a>        .ok()
+<a href=#196 id=196 data-nosnippet>196</a>        .and_then(|s| s.parse::&lt;u64&gt;().ok())
+<a href=#197 id=197 data-nosnippet>197</a>        .unwrap_or(<span class="number">1</span>)
+<a href=#198 id=198 data-nosnippet>198</a>        .max(<span class="number">1</span>);
+<a href=#199 id=199 data-nosnippet>199</a>
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">let </span><span class="kw-2">mut </span>order_line_tuples = Vec::with_capacity(order_line_cnt <span class="kw">as </span>usize);
+<a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">for </span>ol_number <span class="kw">in </span><span class="number">1</span>..=order_line_cnt {
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">let </span>id = state
+<a href=#203 id=203 data-nosnippet>203</a>            .next_tuple_id
+<a href=#204 id=204 data-nosnippet>204</a>            .fetch_add(<span class="number">1</span>, std::sync::atomic::Ordering::Relaxed);
+<a href=#205 id=205 data-nosnippet>205</a>        order_line_tuples.push(new_tuple_with_columns(
+<a href=#206 id=206 data-nosnippet>206</a>            id,
+<a href=#207 id=207 data-nosnippet>207</a>            <span class="kw-2">&amp;</span>[
+<a href=#208 id=208 data-nosnippet>208</a>                (<span class="string">"ol_o_id"</span>, o_id <span class="kw">as </span>i32),
+<a href=#209 id=209 data-nosnippet>209</a>                (<span class="string">"ol_d_id"</span>, d_id),
+<a href=#210 id=210 data-nosnippet>210</a>                (<span class="string">"ol_w_id"</span>, w_id),
+<a href=#211 id=211 data-nosnippet>211</a>                (<span class="string">"ol_number"</span>, ol_number <span class="kw">as </span>i32),
+<a href=#212 id=212 data-nosnippet>212</a>                (<span class="string">"ol_i_id"</span>, i_id),
+<a href=#213 id=213 data-nosnippet>213</a>                (<span class="string">"ol_qty"</span>, qty),
+<a href=#214 id=214 data-nosnippet>214</a>                (<span class="string">"ol_amount"</span>, qty * <span class="number">10</span>),
+<a href=#215 id=215 data-nosnippet>215</a>            ],
+<a href=#216 id=216 data-nosnippet>216</a>        ));
+<a href=#217 id=217 data-nosnippet>217</a>    }
+<a href=#218 id=218 data-nosnippet>218</a>
+<a href=#219 id=219 data-nosnippet>219</a>    <span class="kw">let </span>t0 = profile.then(Instant::now);
+<a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">if </span>profile {
+<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">let </span>(ins, b) = insert_rows_tuple_tpcc_deferred_batch_breakdown(
+<a href=#222 id=222 data-nosnippet>222</a>            state,
+<a href=#223 id=223 data-nosnippet>223</a>            ctx,
+<a href=#224 id=224 data-nosnippet>224</a>            <span class="string">"order_line"</span>,
+<a href=#225 id=225 data-nosnippet>225</a>            <span class="kw-2">&amp;</span>order_line_tuples,
+<a href=#226 id=226 data-nosnippet>226</a>            w_id,
+<a href=#227 id=227 data-nosnippet>227</a>        )<span class="question-mark">?</span>;
+<a href=#228 id=228 data-nosnippet>228</a>        wal_insert_us += ins.wal_us;
+<a href=#229 id=229 data-nosnippet>229</a>        index_sync_us += ins.index_us;
+<a href=#230 id=230 data-nosnippet>230</a>        insert_order_line_encode_us += b.encode_us;
+<a href=#231 id=231 data-nosnippet>231</a>        insert_order_line_heap_us += b.heap_us;
+<a href=#232 id=232 data-nosnippet>232</a>        insert_order_line_pm_lock_wait_us += b.pm_lock_wait_us;
+<a href=#233 id=233 data-nosnippet>233</a>        insert_order_line_pm_insert_us += b.pm_insert_us;
+<a href=#234 id=234 data-nosnippet>234</a>        insert_order_line_wal_us += b.wal_us;
+<a href=#235 id=235 data-nosnippet>235</a>        insert_order_line_pending_index_us += b.pending_index_us;
+<a href=#236 id=236 data-nosnippet>236</a>        insert_order_line_undo_us += b.undo_us;
+<a href=#237 id=237 data-nosnippet>237</a>    } <span class="kw">else </span>{
+<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>ins = insert_rows_tuple_tpcc_deferred_batch(
+<a href=#239 id=239 data-nosnippet>239</a>            state,
+<a href=#240 id=240 data-nosnippet>240</a>            ctx,
+<a href=#241 id=241 data-nosnippet>241</a>            <span class="string">"order_line"</span>,
+<a href=#242 id=242 data-nosnippet>242</a>            <span class="kw-2">&amp;</span>order_line_tuples,
+<a href=#243 id=243 data-nosnippet>243</a>            w_id,
+<a href=#244 id=244 data-nosnippet>244</a>        )<span class="question-mark">?</span>;
+<a href=#245 id=245 data-nosnippet>245</a>        wal_insert_us += ins.wal_us;
+<a href=#246 id=246 data-nosnippet>246</a>        index_sync_us += ins.index_us;
+<a href=#247 id=247 data-nosnippet>247</a>    }
+<a href=#248 id=248 data-nosnippet>248</a>    rows += order_line_tuples.len() <span class="kw">as </span>u64;
+<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(t0) = t0 {
+<a href=#250 id=250 data-nosnippet>250</a>        insert_order_line_us = phase_elapsed_us(t0);
+<a href=#251 id=251 data-nosnippet>251</a>    }
+<a href=#252 id=252 data-nosnippet>252</a>
+<a href=#253 id=253 data-nosnippet>253</a>    ctx.tpcc_dml_done_at = <span class="prelude-val">Some</span>(Instant::now());
+<a href=#254 id=254 data-nosnippet>254</a>
+<a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">if </span>profile {
+<a href=#256 id=256 data-nosnippet>256</a>        <span class="macro">info!</span>(
+<a href=#257 id=257 data-nosnippet>257</a>            target: <span class="string">"rustdb::sql_phases"</span>,
+<a href=#258 id=258 data-nosnippet>258</a>            district_us,
+<a href=#259 id=259 data-nosnippet>259</a>            district_update_us,
+<a href=#260 id=260 data-nosnippet>260</a>            insert_oorder_us,
+<a href=#261 id=261 data-nosnippet>261</a>            insert_new_order_us,
+<a href=#262 id=262 data-nosnippet>262</a>            insert_order_line_us,
+<a href=#263 id=263 data-nosnippet>263</a>            insert_order_line_encode_us,
+<a href=#264 id=264 data-nosnippet>264</a>            insert_order_line_heap_us,
+<a href=#265 id=265 data-nosnippet>265</a>            insert_order_line_pm_lock_wait_us,
+<a href=#266 id=266 data-nosnippet>266</a>            insert_order_line_pm_insert_us,
+<a href=#267 id=267 data-nosnippet>267</a>            insert_order_line_wal_us,
+<a href=#268 id=268 data-nosnippet>268</a>            insert_order_line_pending_index_us,
+<a href=#269 id=269 data-nosnippet>269</a>            insert_order_line_undo_us,
+<a href=#270 id=270 data-nosnippet>270</a>            order_line_cnt,
+<a href=#271 id=271 data-nosnippet>271</a>            stock_us,
+<a href=#272 id=272 data-nosnippet>272</a>            wal_insert_us,
+<a href=#273 id=273 data-nosnippet>273</a>            index_sync_us,
+<a href=#274 id=274 data-nosnippet>274</a>            <span class="string">"sql.execute_tpcc.new_order"
+<a href=#275 id=275 data-nosnippet>275</a>        </span>);
+<a href=#276 id=276 data-nosnippet>276</a>    }
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="prelude-val">Ok</span>(rows)
+<a href=#278 id=278 data-nosnippet>278</a>}
+<a href=#279 id=279 data-nosnippet>279</a>
+<a href=#280 id=280 data-nosnippet>280</a><span class="kw">fn </span>run_payment(
+<a href=#281 id=281 data-nosnippet>281</a>    state: <span class="kw-2">&amp;</span>SqlEngineState,
+<a href=#282 id=282 data-nosnippet>282</a>    ctx: <span class="kw-2">&amp;mut </span>SessionContext,
+<a href=#283 id=283 data-nosnippet>283</a>    w_id: i32,
+<a href=#284 id=284 data-nosnippet>284</a>    d_id: i32,
+<a href=#285 id=285 data-nosnippet>285</a>    c_id: i32,
+<a href=#286 id=286 data-nosnippet>286</a>) -&gt; <span class="prelude-ty">Result</span>&lt;u64, EngineError&gt; {
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="kw">let </span><span class="kw-2">mut </span>rows = <span class="number">0u64</span>;
+<a href=#288 id=288 data-nosnippet>288</a>    rows += update_rows_by_equalities(
+<a href=#289 id=289 data-nosnippet>289</a>        state,
+<a href=#290 id=290 data-nosnippet>290</a>        ctx,
+<a href=#291 id=291 data-nosnippet>291</a>        <span class="string">"warehouse"</span>,
+<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw-2">&amp;</span>equalities_map_i32(<span class="kw-2">&amp;</span>[(<span class="string">"w_id"</span>, w_id)]),
+<a href=#293 id=293 data-nosnippet>293</a>        |tuple| {
+<a href=#294 id=294 data-nosnippet>294</a>            <span class="kw">let </span>ytd = tuple_i32_field(tuple, <span class="string">"w_ytd"</span>)<span class="question-mark">? </span>+ <span class="number">1</span>;
+<a href=#295 id=295 data-nosnippet>295</a>            tuple.set_value(<span class="string">"w_ytd"</span>, int_column_value(ytd));
+<a href=#296 id=296 data-nosnippet>296</a>            <span class="prelude-val">Ok</span>(())
+<a href=#297 id=297 data-nosnippet>297</a>        },
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="prelude-val">None</span>,
+<a href=#299 id=299 data-nosnippet>299</a>    )<span class="question-mark">?</span>;
+<a href=#300 id=300 data-nosnippet>300</a>    rows += update_rows_by_equalities(
+<a href=#301 id=301 data-nosnippet>301</a>        state,
+<a href=#302 id=302 data-nosnippet>302</a>        ctx,
+<a href=#303 id=303 data-nosnippet>303</a>        <span class="string">"district"</span>,
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw-2">&amp;</span>equalities_map_i32(<span class="kw-2">&amp;</span>[(<span class="string">"d_w_id"</span>, w_id), (<span class="string">"d_id"</span>, d_id)]),
+<a href=#305 id=305 data-nosnippet>305</a>        |tuple| {
+<a href=#306 id=306 data-nosnippet>306</a>            <span class="kw">let </span>ytd = tuple_i32_field(tuple, <span class="string">"d_ytd"</span>)<span class="question-mark">? </span>+ <span class="number">1</span>;
+<a href=#307 id=307 data-nosnippet>307</a>            tuple.set_value(<span class="string">"d_ytd"</span>, int_column_value(ytd));
+<a href=#308 id=308 data-nosnippet>308</a>            <span class="prelude-val">Ok</span>(())
+<a href=#309 id=309 data-nosnippet>309</a>        },
+<a href=#310 id=310 data-nosnippet>310</a>        <span class="prelude-val">None</span>,
+<a href=#311 id=311 data-nosnippet>311</a>    )<span class="question-mark">?</span>;
+<a href=#312 id=312 data-nosnippet>312</a>    rows += update_rows_by_equalities(
+<a href=#313 id=313 data-nosnippet>313</a>        state,
+<a href=#314 id=314 data-nosnippet>314</a>        ctx,
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="string">"customer"</span>,
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw-2">&amp;</span>equalities_map_i32(<span class="kw-2">&amp;</span>[(<span class="string">"c_w_id"</span>, w_id), (<span class="string">"c_d_id"</span>, d_id), (<span class="string">"c_id"</span>, c_id)]),
+<a href=#317 id=317 data-nosnippet>317</a>        |tuple| {
+<a href=#318 id=318 data-nosnippet>318</a>            <span class="kw">let </span>bal = tuple_i32_field(tuple, <span class="string">"c_balance"</span>)<span class="question-mark">? </span>- <span class="number">1</span>;
+<a href=#319 id=319 data-nosnippet>319</a>            tuple.set_value(<span class="string">"c_balance"</span>, int_column_value(bal));
+<a href=#320 id=320 data-nosnippet>320</a>            <span class="prelude-val">Ok</span>(())
+<a href=#321 id=321 data-nosnippet>321</a>        },
+<a href=#322 id=322 data-nosnippet>322</a>        <span class="prelude-val">None</span>,
+<a href=#323 id=323 data-nosnippet>323</a>    )<span class="question-mark">?</span>;
+<a href=#324 id=324 data-nosnippet>324</a>    <span class="prelude-val">Ok</span>(rows)
+<a href=#325 id=325 data-nosnippet>325</a>}
+<a href=#326 id=326 data-nosnippet>326</a>
+<a href=#327 id=327 data-nosnippet>327</a><span class="kw">fn </span>run_delivery(
+<a href=#328 id=328 data-nosnippet>328</a>    state: <span class="kw-2">&amp;</span>SqlEngineState,
+<a href=#329 id=329 data-nosnippet>329</a>    ctx: <span class="kw-2">&amp;mut </span>SessionContext,
+<a href=#330 id=330 data-nosnippet>330</a>    w_id: i32,
+<a href=#331 id=331 data-nosnippet>331</a>    d_id: i32,
+<a href=#332 id=332 data-nosnippet>332</a>) -&gt; <span class="prelude-ty">Result</span>&lt;u64, EngineError&gt; {
+<a href=#333 id=333 data-nosnippet>333</a>    delete_rows_by_equalities(
+<a href=#334 id=334 data-nosnippet>334</a>        state,
+<a href=#335 id=335 data-nosnippet>335</a>        ctx,
+<a href=#336 id=336 data-nosnippet>336</a>        <span class="string">"new_order"</span>,
+<a href=#337 id=337 data-nosnippet>337</a>        <span class="kw-2">&amp;</span>equalities_map_i32(<span class="kw-2">&amp;</span>[(<span class="string">"no_w_id"</span>, w_id), (<span class="string">"no_d_id"</span>, d_id)]),
+<a href=#338 id=338 data-nosnippet>338</a>    )
+<a href=#339 id=339 data-nosnippet>339</a>}
+<a href=#340 id=340 data-nosnippet>340</a>
+<a href=#341 id=341 data-nosnippet>341</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>execute_tpcc(
+<a href=#342 id=342 data-nosnippet>342</a>    state: <span class="kw-2">&amp;</span>SqlEngineState,
+<a href=#343 id=343 data-nosnippet>343</a>    kind: u8,
+<a href=#344 id=344 data-nosnippet>344</a>    seed: u64,
+<a href=#345 id=345 data-nosnippet>345</a>    global_txn_id: u64,
+<a href=#346 id=346 data-nosnippet>346</a>    ctx: <span class="kw-2">&amp;mut </span>SessionContext,
+<a href=#347 id=347 data-nosnippet>347</a>) -&gt; <span class="prelude-ty">Result</span>&lt;EngineOutput, EngineError&gt; {
+<a href=#348 id=348 data-nosnippet>348</a>    <span class="kw">let </span>txn_kind = txn_kind_from_wire(kind)<span class="question-mark">?</span>;
+<a href=#349 id=349 data-nosnippet>349</a>    <span class="kw">let </span>(_st, w_id, d_id, c_id, i_id, qty, o_id) = tpcc_params(seed, global_txn_id);
+<a href=#350 id=350 data-nosnippet>350</a>    tpcc_run_in_transaction(state, ctx, kind, |state, ctx| {
+<a href=#351 id=351 data-nosnippet>351</a>        <span class="kw">let </span>rows = <span class="kw">match </span>txn_kind {
+<a href=#352 id=352 data-nosnippet>352</a>            TxnKind::NewOrder =&gt; {
+<a href=#353 id=353 data-nosnippet>353</a>                run_new_order_native(state, ctx, w_id, d_id, c_id, i_id, qty, o_id)<span class="question-mark">?
+<a href=#354 id=354 data-nosnippet>354</a>            </span>}
+<a href=#355 id=355 data-nosnippet>355</a>            TxnKind::Payment =&gt; run_payment(state, ctx, w_id, d_id, c_id)<span class="question-mark">?</span>,
+<a href=#356 id=356 data-nosnippet>356</a>            TxnKind::OrderStatus =&gt; tpcc_order_status_row_count(state, w_id, d_id, c_id)<span class="question-mark">?</span>,
+<a href=#357 id=357 data-nosnippet>357</a>            TxnKind::Delivery =&gt; run_delivery(state, ctx, w_id, d_id)<span class="question-mark">?</span>,
+<a href=#358 id=358 data-nosnippet>358</a>            TxnKind::StockLevel =&gt; tpcc_stock_level_row_count(state, w_id, <span class="number">20</span>)<span class="question-mark">?</span>,
+<a href=#359 id=359 data-nosnippet>359</a>        };
+<a href=#360 id=360 data-nosnippet>360</a>        <span class="prelude-val">Ok</span>(rows)
+<a href=#361 id=361 data-nosnippet>361</a>    })
+<a href=#362 id=362 data-nosnippet>362</a>}</code></pre></div></section></main></body></html>

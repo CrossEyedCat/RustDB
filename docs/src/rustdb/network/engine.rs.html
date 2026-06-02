@@ -148,7 +148,7 @@
 <a href=#148 id=148 data-nosnippet>148</a>    <span class="doccomment">/// Reused row serialization buffer for native TPC-C inserts in a transaction.
 <a href=#149 id=149 data-nosnippet>149</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) tpcc_row_bytes_buf: Vec&lt;u8&gt;,
 <a href=#150 id=150 data-nosnippet>150</a>    <span class="doccomment">/// Per-transaction page managers (avoids `table_page_managers` map lock on hot DML/COMMIT).
-<a href=#151 id=151 data-nosnippet>151</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) txn_pm_cache: HashMap&lt;String, Arc&lt;Mutex&lt;PageManager&gt;&gt;&gt;,
+<a href=#151 id=151 data-nosnippet>151</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) txn_pm_cache: HashMap&lt;String, Arc&lt;<span class="kw">crate</span>::storage::page_manager::PageManagerMutex&gt;&gt;,
 <a href=#152 id=152 data-nosnippet>152</a>    <span class="doccomment">/// Reused buffer for deferred index column maps (native TPC-C inserts).
 <a href=#153 id=153 data-nosnippet>153</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) tpcc_index_column_map_buf: HashMap&lt;String, String&gt;,
 <a href=#154 id=154 data-nosnippet>154</a>    <span class="doccomment">/// Last `COMMIT` flush breakdown (native TPC-C gap accounting).
