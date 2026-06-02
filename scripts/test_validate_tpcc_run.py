@@ -91,6 +91,28 @@ class ValidateTpccRunTests(unittest.TestCase):
             report["metrics"]["ratio_percent_rustdb_over_postgres"],
             GATES["ratio_claim_min_pct"],
         )
+        # Raw ratio > 105% but PG below reference median -> claim stays false.
+        self.assertFalse(report["claim_faster_than_pg"])
+
+    def test_claim_rejects_slow_pg_spike(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            _write_pair(d, pg_tps=1317.0, rd_tps=1389.0, server_lines=_bench_server_lines())
+            valid, report = validate_run(d, "bench")
+            self.assertTrue(valid)
+            self.assertGreater(
+                report["metrics"]["ratio_percent_rustdb_over_postgres"],
+                GATES["ratio_claim_min_pct"],
+            )
+            self.assertFalse(report["claim_faster_than_pg"])
+
+    def test_claim_true_when_above_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            _write_pair(d, pg_tps=1400.0, rd_tps=1500.0, server_lines=_bench_server_lines())
+            valid, report = validate_run(d, "bench")
+            self.assertTrue(valid)
+            self.assertTrue(report["claim_faster_than_pg"])
 
     def test_fixture_degraded_pg_fails(self) -> None:
         d = FIXTURES / "degraded_pg"
