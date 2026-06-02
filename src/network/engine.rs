@@ -148,7 +148,7 @@ pub struct SessionContext {
     /// Reused row serialization buffer for native TPC-C inserts in a transaction.
     pub(crate) tpcc_row_bytes_buf: Vec<u8>,
     /// Per-transaction page managers (avoids `table_page_managers` map lock on hot DML/COMMIT).
-    pub(crate) txn_pm_cache: HashMap<String, Arc<Mutex<PageManager>>>,
+    pub(crate) txn_pm_cache: HashMap<String, Arc<crate::storage::page_manager::PageManagerMutex>>,
     /// Reused buffer for deferred index column maps (native TPC-C inserts).
     pub(crate) tpcc_index_column_map_buf: HashMap<String, String>,
     /// Last `COMMIT` flush breakdown (native TPC-C gap accounting).

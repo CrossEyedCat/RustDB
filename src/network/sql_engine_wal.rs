@@ -343,11 +343,9 @@ pub(crate) struct CommitFlushPhaseUs {
     pub heap_fsync_us: u64,
 }
 
-fn flush_pm_writes_only(pm: &Arc<Mutex<PageManager>>) -> DbResult<(usize, Option<u32>, u64)> {
+fn flush_pm_writes_only(pm: &Arc<crate::storage::page_manager::PageManagerMutex>) -> DbResult<(usize, Option<u32>, u64)> {
     let lock_t0 = Instant::now();
-    let mut guard = pm
-        .lock()
-        .map_err(|_| DbError::database("table page manager lock poisoned"))?;
+    let mut guard = pm.lock();
     let pm_lock_wait_us = lock_t0.elapsed().as_micros() as u64;
     if guard.dirty_page_count() == 0 {
         return Ok((0, None, pm_lock_wait_us));
@@ -360,7 +358,7 @@ fn flush_pm_writes_only(pm: &Arc<Mutex<PageManager>>) -> DbResult<(usize, Option
 }
 
 fn sync_heap_files_after_coalesced_flush(
-    sync_targets: Vec<(u32, Arc<Mutex<PageManager>>)>,
+    sync_targets: Vec<(u32, Arc<crate::storage::page_manager::PageManagerMutex>)>,
 ) -> DbResult<u64> {
     if bench_defer_heap_fsync_enabled() {
         return Ok(0);
@@ -373,7 +371,6 @@ fn sync_heap_files_after_coalesced_flush(
         }
         let lock_t0 = Instant::now();
         pm.lock()
-            .map_err(|_| DbError::database("table page manager lock poisoned"))?
             .sync_heap_file()
             .map_err(|e| DbError::database(e.to_string()))?;
         let _ = lock_t0;
@@ -381,7 +378,7 @@ fn sync_heap_files_after_coalesced_flush(
     Ok(fsync_t0.elapsed().as_micros() as u64)
 }
 
-fn coalesced_flush_page_managers(pms: Vec<Arc<Mutex<PageManager>>>) -> DbResult<(usize, u64, u64)> {
+fn coalesced_flush_page_managers(pms: Vec<Arc<crate::storage::page_manager::PageManagerMutex>>) -> DbResult<(usize, u64, u64)> {
     if pms.is_empty() {
         return Ok((0, 0, 0));
     }
@@ -435,14 +432,14 @@ pub(crate) fn flush_page_managers_for_tables(
         .lock()
         .map_err(|_| DbError::database("table pm map lock poisoned"))?;
     let table_map_lock_us = map_t0.elapsed().as_micros() as u64;
-    let mut pms: Vec<Arc<Mutex<PageManager>>> = Vec::with_capacity(sorted.len());
+    let mut pms: Vec<Arc<crate::storage::page_manager::PageManagerMutex>> = Vec::with_capacity(sorted.len());
     let mut pm_lock_wait_us = 0u64;
     for name in &sorted {
         let Some(pm) = map.get(name) else {
             continue;
         };
         let lock_t0 = Instant::now();
-        let dirty = pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false);
+        let dirty = pm.lock().dirty_page_count() > 0;
         pm_lock_wait_us += lock_t0.elapsed().as_micros() as u64;
         if dirty {
             pms.push(pm.clone());
@@ -464,22 +461,22 @@ pub(crate) fn flush_page_managers_for_tables(
 ///
 /// Skips managers with no dirty pages. `CommitFlushPhaseUs::table_map_lock_us` is always zero.
 pub(crate) fn flush_page_managers_cached(
-    pms: &[Arc<Mutex<PageManager>>],
+    pms: &[Arc<crate::storage::page_manager::PageManagerMutex>],
 ) -> DbResult<(usize, CommitFlushPhaseUs)> {
     if pms.is_empty() {
         return Ok((0, CommitFlushPhaseUs::default()));
     }
-    let mut dirty_pms: Vec<Arc<Mutex<PageManager>>> = Vec::new();
+    let mut dirty_pms: Vec<Arc<crate::storage::page_manager::PageManagerMutex>> = Vec::new();
     let mut pm_lock_wait_us = 0u64;
     for pm in pms {
         let lock_t0 = Instant::now();
-        let dirty = pm.lock().map(|g| g.dirty_page_count() > 0).unwrap_or(false);
+        let dirty = pm.lock().dirty_page_count() > 0;
         pm_lock_wait_us += lock_t0.elapsed().as_micros() as u64;
         if dirty {
             dirty_pms.push(pm.clone());
         }
     }
-    dirty_pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
+    dirty_pms.sort_by_key(|pm| pm.lock().file_id());
     let (flushed, flush_pm_wait, heap_fsync_us) = coalesced_flush_page_managers(dirty_pms)?;
     Ok((
         flushed,
@@ -494,7 +491,7 @@ pub(crate) fn flush_page_managers_cached(
 pub(crate) fn flush_all_page_managers(
     state: &crate::network::sql_engine::SqlEngineState,
 ) -> DbResult<usize> {
-    let mut pms: Vec<Arc<Mutex<PageManager>>> = Vec::new();
+    let mut pms: Vec<Arc<crate::storage::page_manager::PageManagerMutex>> = Vec::new();
     pms.push(state.default_page_manager.clone());
     let map = state
         .table_page_managers
@@ -538,13 +535,10 @@ pub fn replay_wal_into_engine(
     // Applying every record to every page manager relies on filtering inside PageManager and
     // becomes incorrect if multiple managers reference the same file_id (which can happen during
     // open + catalog/table PM wiring).
-    let mut pm_by_file_id: HashMap<u32, Arc<Mutex<PageManager>>> = HashMap::new();
+    let mut pm_by_file_id: HashMap<u32, Arc<crate::storage::page_manager::PageManagerMutex>> = HashMap::new();
     {
         let default = state.default_page_manager.clone();
-        let fid = default
-            .lock()
-            .map_err(|_| DbError::database("page manager lock poisoned"))?
-            .file_id();
+        let fid = default.lock().file_id();
         pm_by_file_id.insert(fid, default);
     }
     {
@@ -553,10 +547,7 @@ pub fn replay_wal_into_engine(
             .lock()
             .map_err(|_| DbError::database("table pm map lock poisoned"))?;
         for (_name, pm) in map.iter() {
-            let fid = pm
-                .lock()
-                .map_err(|_| DbError::database("table page manager lock poisoned"))?
-                .file_id();
+            let fid = pm.lock().file_id();
             pm_by_file_id.entry(fid).or_insert_with(|| pm.clone());
         }
     }
@@ -574,9 +565,7 @@ pub fn replay_wal_into_engine(
         for r in &redo {
             if let Some(fid) = record_file_id(r) {
                 if let Some(pm) = pm_by_file_id.get(&fid) {
-                    let mut g = pm
-                        .lock()
-                        .map_err(|_| DbError::database("page manager lock poisoned"))?;
+                    let mut g = pm.lock();
                     let _ = g.apply_log_record_recovery(r, true);
                 }
             }
@@ -596,9 +585,7 @@ pub fn replay_wal_into_engine(
             }
             if let Some(fid) = record_file_id(r) {
                 if let Some(pm) = pm_by_file_id.get(&fid) {
-                    let mut g = pm
-                        .lock()
-                        .map_err(|_| DbError::database("page manager lock poisoned"))?;
+                    let mut g = pm.lock();
                     let _ = g.apply_log_record_recovery(r, false);
                 }
             }
@@ -736,16 +723,16 @@ mod tests {
 
         let pm_clean = table_page_manager(state, "t_clean").unwrap();
         let pm_dirty = table_page_manager(state, "t_dirty").unwrap();
-        assert_eq!(pm_clean.lock().unwrap().dirty_page_count(), 0);
-        assert!(pm_dirty.lock().unwrap().dirty_page_count() > 0);
+        assert_eq!(pm_clean.lock().dirty_page_count(), 0);
+        assert!(pm_dirty.lock().dirty_page_count() > 0);
 
         let mut tables = HashSet::new();
         tables.insert("t_clean".to_string());
         tables.insert("t_dirty".to_string());
         let (flushed, _metrics) = flush_page_managers_for_tables(state, &tables).unwrap();
         assert!(flushed > 0);
-        assert_eq!(pm_clean.lock().unwrap().dirty_page_count(), 0);
-        assert_eq!(pm_dirty.lock().unwrap().dirty_page_count(), 0);
+        assert_eq!(pm_clean.lock().dirty_page_count(), 0);
+        assert_eq!(pm_dirty.lock().dirty_page_count(), 0);
 
         eng.execute_sql("COMMIT", &mut ctx).unwrap();
     }
@@ -776,15 +763,15 @@ mod tests {
 
         let pm_clean = table_page_manager(state, "t_clean").unwrap();
         let pm_dirty = table_page_manager(state, "t_dirty").unwrap();
-        assert_eq!(pm_clean.lock().unwrap().dirty_page_count(), 0);
-        assert!(pm_dirty.lock().unwrap().dirty_page_count() > 0);
+        assert_eq!(pm_clean.lock().dirty_page_count(), 0);
+        assert!(pm_dirty.lock().dirty_page_count() > 0);
 
         let pms = vec![pm_clean.clone(), pm_dirty.clone()];
         let (flushed, phases) = flush_page_managers_cached(&pms).unwrap();
         assert!(flushed > 0);
         assert_eq!(phases.table_map_lock_us, 0);
-        assert_eq!(pm_clean.lock().unwrap().dirty_page_count(), 0);
-        assert_eq!(pm_dirty.lock().unwrap().dirty_page_count(), 0);
+        assert_eq!(pm_clean.lock().dirty_page_count(), 0);
+        assert_eq!(pm_dirty.lock().dirty_page_count(), 0);
 
         eng.execute_sql("COMMIT", &mut ctx).unwrap();
     }

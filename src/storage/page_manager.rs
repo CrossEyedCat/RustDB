@@ -23,7 +23,10 @@ use parking_lot::RwLock;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+/// Hot-path mutex for [`PageManager`] (used by the SQL engine and WAL flush).
+pub type PageManagerMutex = parking_lot::Mutex<PageManager>;
 
 /// Page manager configuration
 #[derive(Debug, Clone)]
@@ -175,6 +178,8 @@ pub struct PageManager {
     dirty_pages: HashMap<PageId, Page>,
     /// Per-page latches for fine-grained locking (lock ordering: ascending page_id)
     page_latches: DashMap<PageId, PageLatch>,
+    /// Last page that accepted an insert (append-heavy tables try this first).
+    last_insert_page: Option<PageId>,
     /// Operation statistics
     statistics: PageManagerStatistics,
 }
@@ -204,6 +209,7 @@ impl PageManager {
             preallocated_pages: Vec::new(),
             dirty_pages: HashMap::new(),
             page_latches: DashMap::new(),
+            last_insert_page: None,
             statistics: PageManagerStatistics::default(),
         };
 
@@ -232,6 +238,7 @@ impl PageManager {
             preallocated_pages: Vec::new(),
             dirty_pages: HashMap::new(),
             page_latches: DashMap::new(),
+            last_insert_page: None,
             statistics: PageManagerStatistics::default(),
         };
 
@@ -251,12 +258,17 @@ impl PageManager {
         // (HashMap iteration order), causing `add_record` to fail and every insert to pay for
         // `split_page_and_insert`. Prefer pages with the most reported free space first, and try
         // every eligible page before splitting or allocating.
-        for page_id in self.sorted_insert_candidate_pages(required) {
+        for page_id in self.insert_candidate_page_ids(required) {
             match self.try_insert_into_page(page_id, data)? {
-                InsertPageOutcome::Committed(r) => return Ok(r),
+                InsertPageOutcome::Committed(r) => {
+                    self.last_insert_page = Some(r.page_id);
+                    return Ok(r);
+                }
                 InsertPageOutcome::RetryAnotherPage => continue,
                 InsertPageOutcome::NeedsSplit => {
-                    return self.split_page_and_insert(page_id, data);
+                    let r = self.split_page_and_insert(page_id, data)?;
+                    self.last_insert_page = Some(r.page_id);
+                    return Ok(r);
                 }
             }
         }
@@ -264,12 +276,21 @@ impl PageManager {
         let page_id = self.take_fresh_page_for_insert()?;
 
         match self.try_insert_into_page(page_id, data)? {
-            InsertPageOutcome::Committed(r) => Ok(r),
-            InsertPageOutcome::NeedsSplit => self.split_page_and_insert(page_id, data),
+            InsertPageOutcome::Committed(r) => {
+                self.last_insert_page = Some(r.page_id);
+                Ok(r)
+            }
+            InsertPageOutcome::NeedsSplit => {
+                let r = self.split_page_and_insert(page_id, data)?;
+                self.last_insert_page = Some(r.page_id);
+                Ok(r)
+            }
             InsertPageOutcome::RetryAnotherPage => {
                 // Empty / newly allocated page should always have a contiguous run for any
                 // `add_record`-legal payload; treat as overflow and split the target page.
-                self.split_page_and_insert(page_id, data)
+                let r = self.split_page_and_insert(page_id, data)?;
+                self.last_insert_page = Some(r.page_id);
+                Ok(r)
             }
         }
     }
@@ -700,6 +721,28 @@ impl PageManager {
         Ok(())
     }
 
+    /// Pages to try for insert: append hint first, then free-space order (no duplicate hint).
+    fn insert_candidate_page_ids(&self, required_size: usize) -> Vec<PageId> {
+        let sorted = self.sorted_insert_candidate_pages(required_size);
+        let Some(hint) = self.last_insert_page else {
+            return sorted;
+        };
+        if !self.page_eligible_for_insert(hint, required_size) {
+            return sorted;
+        }
+        let mut out = Vec::with_capacity(sorted.len().saturating_add(1));
+        out.push(hint);
+        out.extend(sorted.into_iter().filter(|&pid| pid != hint));
+        out
+    }
+
+    fn page_eligible_for_insert(&self, page_id: PageId, required_size: usize) -> bool {
+        self.page_cache.get(&page_id).is_some_and(|info| {
+            info.record_count < MAX_RECORDS_PER_PAGE
+                && info.free_space as usize >= required_size
+        })
+    }
+
     /// Cached pages that might accept `required_size` bytes (by header), most free space first.
     fn sorted_insert_candidate_pages(&self, required_size: usize) -> Vec<PageId> {
         let mut candidates: Vec<PageId> = self
@@ -1084,7 +1127,7 @@ impl PageManager {
 /// Spawns a background task that flushes dirty pages every `interval_ms` ms.
 /// Use when `defer_data_flush` is true. Returns a handle to abort the task when done.
 pub fn spawn_deferred_flush_task(
-    pm: Arc<Mutex<PageManager>>,
+    pm: Arc<PageManagerMutex>,
     interval_ms: u64,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -1092,9 +1135,8 @@ pub fn spawn_deferred_flush_task(
             tokio::time::interval(tokio::time::Duration::from_millis(interval_ms.max(1)));
         loop {
             interval.tick().await;
-            if let Ok(mut guard) = pm.lock() {
-                let _ = guard.flush_dirty_pages();
-            }
+            let mut guard = pm.lock();
+            let _ = guard.flush_dirty_pages();
         }
     })
 }

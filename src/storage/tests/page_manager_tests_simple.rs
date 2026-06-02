@@ -58,6 +58,27 @@ fn test_page_manager_config() {
 }
 
 #[test]
+fn test_insert_hint_reuses_last_page_for_appends() {
+    let Ok((mut manager, _temp_dir)) = create_test_page_manager() else {
+        return;
+    };
+    let payload = b"x";
+    let first = manager.insert(payload).expect("first insert");
+    let mut same_page = 0usize;
+    for _ in 0..20 {
+        let r = manager.insert(payload).expect("append insert");
+        if r.page_id == first.page_id {
+            same_page += 1;
+        }
+    }
+    assert!(
+        same_page >= 15,
+        "expected append hint to keep most inserts on page {}, got {same_page}/20 on same page",
+        first.page_id
+    );
+}
+
+#[test]
 fn test_insert_operation_safe() {
     let result = create_test_page_manager();
     if let Ok((mut manager, _temp_dir)) = result {

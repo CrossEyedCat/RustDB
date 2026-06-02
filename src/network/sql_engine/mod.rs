@@ -82,7 +82,8 @@ use crate::planner::{
     QueryOptimizer, QueryPlanner,
 };
 use crate::storage::index_registry::IndexRegistry;
-use crate::storage::page_manager::{PageManager, PageManagerConfig};
+use crate::storage::page_manager::{PageManager, PageManagerConfig, PageManagerMutex};
+use crate::storage::page_manager::InsertResult;
 use crate::storage::row_locks::RowLockManager;
 use crate::storage::tuple::Tuple;
 use crate::Row;
@@ -111,6 +112,10 @@ static STRONG_ISO_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 // Note: env vars are read dynamically so integration tests can toggle them per-test.
 static SIM_CRASH_DML_OP_COUNTER: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
+
+fn phase_elapsed_us(t0: Instant) -> u64 {
+    t0.elapsed().as_micros() as u64
+}
 
 fn maybe_simulate_dml_crash(point: &'static str) {
     let target = match std::env::var("RUSTDB_SIMULATE_CRASH_AFTER_DML_OPS") {
@@ -178,8 +183,8 @@ impl Default for SqlEngineConfig {
 pub(crate) struct SqlEngineState {
     data_dir: PathBuf,
     durability: DurabilityMode,
-    pub(crate) default_page_manager: Arc<Mutex<PageManager>>,
-    pub(crate) table_page_managers: Arc<Mutex<HashMap<String, Arc<Mutex<PageManager>>>>>,
+    pub(crate) default_page_manager: Arc<PageManagerMutex>,
+    pub(crate) table_page_managers: Arc<Mutex<HashMap<String, Arc<PageManagerMutex>>>>,
     /// Monotonic id assigned to inserted [`Tuple`] rows (persisted in tuple bytes).
     next_tuple_id: AtomicU64,
     planner: QueryPlanner,
@@ -238,8 +243,8 @@ impl SqlEngine {
             Ok(pm) => pm,
             Err(_) => PageManager::new(data_dir.clone(), "default", PageManagerConfig::default())?,
         };
-        let pm = Arc::new(Mutex::new(pm));
-        let table_pms: Arc<Mutex<HashMap<String, Arc<Mutex<PageManager>>>>> =
+        let pm = Arc::new(PageManagerMutex::new(pm));
+        let table_pms: Arc<Mutex<HashMap<String, Arc<PageManagerMutex>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let index_registry = Arc::new(RwLock::new(IndexRegistry::new()));
         let factory = Arc::new(ScanOperatorFactory::with_tables(
@@ -659,6 +664,27 @@ pub(crate) struct TpccInsertTimings {
     pub index_us: u64,
 }
 
+/// Finer-grained timing for native TPC-C heap inserts (deferred index sync).
+///
+/// These are best-effort microsecond counters intended for CI diagnostics; they are only used
+/// when `RUSTDB_SQL_PHASE_LOG=1` is enabled for native `new_order`.
+pub(crate) struct TpccDeferredInsertBreakdown {
+    /// Tuple serialization + buffer copy.
+    pub encode_us: u64,
+    /// Page-manager lookup + `Mutex` wait + `PageManager::insert`.
+    pub heap_us: u64,
+    /// Time blocked on `Arc<PageManagerMutex>::lock` for the table.
+    pub pm_lock_wait_us: u64,
+    /// Time in `PageManager::insert` while holding the table mutex.
+    pub pm_insert_us: u64,
+    /// WAL `log_data_insert` (also exposed as `TpccInsertTimings.wal_us`).
+    pub wal_us: u64,
+    /// Column-map extraction + pending index insert push (or immediate sync when no tx).
+    pub pending_index_us: u64,
+    /// Undo push (including payload move).
+    pub undo_us: u64,
+}
+
 /// When true (default), native TPC-C heap inserts defer secondary-index sync until `COMMIT`.
 pub(crate) fn tpcc_defer_index_sync_enabled() -> bool {
     match std::env::var("RUSTDB_TPCC_DEFER_INDEX_SYNC") {
@@ -679,7 +705,7 @@ pub(crate) fn insert_row_tuple_tpcc(
         return insert_row_tuple(state, ctx, table, tuple);
     }
     if tpcc_defer_index_sync_enabled() {
-        let _ = insert_row_tuple_tpcc_deferred(state, ctx, table, tuple)?;
+        let _ = insert_row_tuple_tpcc_deferred(state, ctx, table, tuple, 1)?;
         return Ok(());
     }
     let timings = insert_row_tuple_tpcc_immediate(state, ctx, table, tuple)?;
@@ -687,29 +713,18 @@ pub(crate) fn insert_row_tuple_tpcc(
     Ok(())
 }
 
-/// Heap + WAL + undo; secondary indexes applied at `COMMIT` (see [`apply_pending_index_inserts`]).
-pub(crate) fn insert_row_tuple_tpcc_deferred(
+struct TpccHeapInsertRow {
+    ins: InsertResult,
+    payload: Vec<u8>,
+}
+
+fn tpcc_log_heap_insert_wal(
     state: &SqlEngineState,
     ctx: &mut SessionContext,
-    table: &str,
-    tuple: Tuple,
-) -> Result<TpccInsertTimings, EngineError> {
-    if table_has_primary_key(state, table) {
-        insert_row_tuple(state, ctx, table, tuple)?;
-        return Ok(TpccInsertTimings {
-            wal_us: 0,
-            index_us: 0,
-        });
-    }
-    record_touched_table(ctx, table);
-    let row_bytes = tuple.to_bytes().map_err(map_db_err)?;
-    ctx.tpcc_row_bytes_buf.clear();
-    ctx.tpcc_row_bytes_buf.extend_from_slice(&row_bytes);
-    let pm_for_table = table_page_manager_cached(state, ctx, table)?;
-    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
-    let ins = pm.insert(&ctx.tpcc_row_bytes_buf).map_err(map_db_err)?;
-    maybe_simulate_dml_crash("insert_row");
-    let mut payload = std::mem::take(&mut ctx.tpcc_row_bytes_buf);
+    file_id: u32,
+    ins: &InsertResult,
+    payload: &[u8],
+) -> Result<u64, EngineError> {
     let wal_clock = state.wal.is_some().then(Instant::now);
     if let Some(tx) = ctx.transaction.as_mut() {
         if let Some(ref wal) = state.wal {
@@ -721,10 +736,26 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
                     "record offset too large for WAL",
                 )
             })?;
-            wal.log_data_insert(tx, pm.file_id(), page_id, record_offset, &payload)?;
+            wal.log_data_insert(tx, file_id, page_id, record_offset, payload)?;
         }
     }
-    let column_map = tpcc_pending_index_column_map(state, ctx, table, &tuple)?;
+    Ok(wal_clock
+        .map(|t0| t0.elapsed().as_micros() as u64)
+        .unwrap_or(0))
+}
+
+fn tpcc_finish_deferred_insert_row(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuple: &Tuple,
+    file_id: u32,
+    ins: &InsertResult,
+    payload: Vec<u8>,
+) -> Result<(u64, u64, u64), EngineError> {
+    let wal_us = tpcc_log_heap_insert_wal(state, ctx, file_id, ins, &payload)?;
+    let t_pending = Instant::now();
+    let column_map = tpcc_pending_index_column_map(state, ctx, table, tuple)?;
     if let Some(tx) = ctx.transaction.as_mut() {
         tx.pending_index_inserts.push(PendingIndexInsert {
             table: table.to_string(),
@@ -732,11 +763,10 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
             column_map,
         });
     } else {
-        sync_index_after_insert(state, table, ins.record_id, &tuple)?;
+        sync_index_after_insert(state, table, ins.record_id, tuple)?;
     }
-    let wal_us = wal_clock
-        .map(|t0| t0.elapsed().as_micros() as u64)
-        .unwrap_or(0);
+    let pending_index_us = t_pending.elapsed().as_micros() as u64;
+    let t_undo = Instant::now();
     push_undo(
         ctx,
         UndoEntry::Insert {
@@ -745,10 +775,162 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
             payload,
         },
     );
-    Ok(TpccInsertTimings {
-        wal_us,
-        index_us: 0,
-    })
+    let undo_us = t_undo.elapsed().as_micros() as u64;
+    Ok((wal_us, pending_index_us, undo_us))
+}
+
+fn insert_rows_tuple_tpcc_deferred_inner(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuples: &[Tuple],
+    shard_w_id: i32,
+    profile: bool,
+) -> Result<(TpccInsertTimings, TpccDeferredInsertBreakdown), EngineError> {
+    let empty = || {
+        Ok((
+            TpccInsertTimings {
+                wal_us: 0,
+                index_us: 0,
+            },
+            TpccDeferredInsertBreakdown {
+                encode_us: 0,
+                heap_us: 0,
+                pm_lock_wait_us: 0,
+                pm_insert_us: 0,
+                wal_us: 0,
+                pending_index_us: 0,
+                undo_us: 0,
+            },
+        ))
+    };
+    if tuples.is_empty() {
+        return empty();
+    }
+    if table_has_primary_key(state, table) {
+        for tuple in tuples {
+            insert_row_tuple(state, ctx, table, tuple.clone())?;
+        }
+        return empty();
+    }
+
+    record_touched_table(ctx, table);
+
+    let t_encode = profile.then(Instant::now);
+    let mut encoded: Vec<Vec<u8>> = Vec::with_capacity(tuples.len());
+    for tuple in tuples {
+        encoded.push(tuple.to_bytes().map_err(map_db_err)?);
+    }
+    let encode_us = t_encode.map(phase_elapsed_us).unwrap_or(0);
+
+    let storage_key = tpcc_heap_storage_key(table, shard_w_id);
+    let pm_for_table = table_page_manager_cached_storage(state, ctx, &storage_key)?;
+
+    let t_heap = profile.then(Instant::now);
+    let t_lock = Instant::now();
+    let (heap_rows, file_id, pm_lock_wait_us, pm_insert_us) = {
+        let mut pm = pm_for_table.lock();
+        let pm_lock_wait_us = t_lock.elapsed().as_micros() as u64;
+        let t_insert = Instant::now();
+        let file_id = pm.file_id();
+        let mut heap_rows = Vec::with_capacity(encoded.len());
+        for bytes in encoded {
+            let ins = pm.insert(&bytes).map_err(map_db_err)?;
+            maybe_simulate_dml_crash("insert_row");
+            heap_rows.push(TpccHeapInsertRow { ins, payload: bytes });
+        }
+        let pm_insert_us = t_insert.elapsed().as_micros() as u64;
+        (heap_rows, file_id, pm_lock_wait_us, pm_insert_us)
+    };
+    let heap_us = t_heap.map(phase_elapsed_us).unwrap_or(0);
+
+    let mut wal_us = 0u64;
+    let mut pending_index_us = 0u64;
+    let mut undo_us = 0u64;
+    for (tuple, row) in tuples.iter().zip(heap_rows) {
+        let (w, p, u) = tpcc_finish_deferred_insert_row(
+            state,
+            ctx,
+            table,
+            tuple,
+            file_id,
+            &row.ins,
+            row.payload,
+        )?;
+        wal_us += w;
+        pending_index_us += p;
+        undo_us += u;
+    }
+
+    Ok((
+        TpccInsertTimings {
+            wal_us,
+            index_us: 0,
+        },
+        TpccDeferredInsertBreakdown {
+            encode_us,
+            heap_us,
+            pm_lock_wait_us,
+            pm_insert_us,
+            wal_us,
+            pending_index_us,
+            undo_us,
+        },
+    ))
+}
+
+/// Heap + WAL + undo; secondary indexes applied at `COMMIT` (see [`apply_pending_index_inserts`]).
+pub(crate) fn insert_row_tuple_tpcc_deferred(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuple: Tuple,
+    shard_w_id: i32,
+) -> Result<TpccInsertTimings, EngineError> {
+    let (timings, _) =
+        insert_rows_tuple_tpcc_deferred_inner(state, ctx, table, std::slice::from_ref(&tuple), shard_w_id, false)?;
+    Ok(timings)
+}
+
+/// Batch native TPC-C heap inserts under one page-manager lock (see [`insert_rows_tuple_tpcc_deferred_inner`]).
+pub(crate) fn insert_rows_tuple_tpcc_deferred_batch(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuples: &[Tuple],
+    shard_w_id: i32,
+) -> Result<TpccInsertTimings, EngineError> {
+    let (timings, _) = insert_rows_tuple_tpcc_deferred_inner(state, ctx, table, tuples, shard_w_id, false)?;
+    Ok(timings)
+}
+
+/// Same as [`insert_row_tuple_tpcc_deferred`], but also returns a breakdown of sub-phases.
+pub(crate) fn insert_row_tuple_tpcc_deferred_breakdown(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuple: Tuple,
+    shard_w_id: i32,
+) -> Result<(TpccInsertTimings, TpccDeferredInsertBreakdown), EngineError> {
+    insert_rows_tuple_tpcc_deferred_inner(
+        state,
+        ctx,
+        table,
+        std::slice::from_ref(&tuple),
+        shard_w_id,
+        true,
+    )
+}
+
+/// Batch deferred insert with phase breakdown (one `pm` lock for all rows).
+pub(crate) fn insert_rows_tuple_tpcc_deferred_batch_breakdown(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    table: &str,
+    tuples: &[Tuple],
+    shard_w_id: i32,
+) -> Result<(TpccInsertTimings, TpccDeferredInsertBreakdown), EngineError> {
+    insert_rows_tuple_tpcc_deferred_inner(state, ctx, table, tuples, shard_w_id, true)
 }
 
 fn insert_row_tuple_tpcc_immediate(
@@ -760,7 +942,7 @@ fn insert_row_tuple_tpcc_immediate(
     record_touched_table(ctx, table);
     let bytes = tuple.to_bytes().map_err(map_db_err)?;
     let pm_for_table = table_page_manager(state, table)?;
-    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    let mut pm = pm_for_table.lock();
     let ins = pm.insert(&bytes).map_err(map_db_err)?;
     maybe_simulate_dml_crash("insert_row");
     let wal_clock = state.wal.is_some().then(Instant::now);
@@ -1318,8 +1500,8 @@ fn commit_transaction(
             crate::network::sql_engine_wal::CommitFlushPhaseUs::default(),
         )
     } else if !ctx.txn_pm_cache.is_empty() {
-        let mut pms: Vec<Arc<Mutex<PageManager>>> = ctx.txn_pm_cache.values().cloned().collect();
-        pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
+        let mut pms: Vec<Arc<PageManagerMutex>> = ctx.txn_pm_cache.values().cloned().collect();
+        pms.sort_by_key(|pm| pm.lock().file_id());
         crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map_err(map_db_err)?
     } else if touched.is_empty() {
         (
@@ -1414,12 +1596,9 @@ fn rollback_transaction(
         && !had_undo;
     let _ = if skip_heap_flush {
         Ok(0)
-    } else if !ctx.txn_pm_cache.is_empty() && !flush_tables.is_empty() {
-        let mut pms: Vec<Arc<Mutex<PageManager>>> = flush_tables
-            .iter()
-            .filter_map(|t| ctx.txn_pm_cache.get(t).cloned())
-            .collect();
-        pms.sort_by_key(|pm| pm.lock().map(|g| g.file_id()).unwrap_or(u32::MAX));
+    } else if !ctx.txn_pm_cache.is_empty() {
+        let mut pms: Vec<Arc<PageManagerMutex>> = ctx.txn_pm_cache.values().cloned().collect();
+        pms.sort_by_key(|pm| pm.lock().file_id());
         crate::network::sql_engine_wal::flush_page_managers_cached(&pms).map(|(n, _)| n)
     } else {
         crate::network::sql_engine_wal::flush_page_managers_for_tables(state, &flush_tables)
@@ -1487,7 +1666,7 @@ fn apply_undo(state: &SqlEngineState, op: UndoEntry) -> Result<(), EngineError> 
                     .map_err(|_| lock_poisoned_engine())?;
                 sql_constraints::unregister_row(&mut rt, &table, rid, &tuple, s, &cat_clone)?;
             }
-            let mut g = pm.lock().map_err(|_| lock_poisoned_engine())?;
+            let mut g = pm.lock();
             match g.delete(rid) {
                 Ok(_) => {}
                 Err(e) => {
@@ -1518,7 +1697,7 @@ fn apply_undo(state: &SqlEngineState, op: UndoEntry) -> Result<(), EngineError> 
             payload,
         } => {
             let pm = table_page_manager(state, &table)?;
-            let mut g = pm.lock().map_err(|_| lock_poisoned_engine())?;
+            let mut g = pm.lock();
             let _ins = g.insert(&payload).map_err(map_db_err)?;
         }
         UndoEntry::Update {
@@ -1527,7 +1706,7 @@ fn apply_undo(state: &SqlEngineState, op: UndoEntry) -> Result<(), EngineError> 
             old_payload,
         } => {
             let pm = table_page_manager(state, &table)?;
-            let mut g = pm.lock().map_err(|_| lock_poisoned_engine())?;
+            let mut g = pm.lock();
             g.update(rid, &old_payload).map_err(map_db_err)?;
         }
     }
@@ -1538,16 +1717,14 @@ pub(crate) fn table_has_dirty_heap_pages(state: &SqlEngineState, table: &str) ->
     let Ok(pm) = table_page_manager(state, table) else {
         return false;
     };
-    let Ok(guard) = pm.lock() else {
-        return false;
-    };
+    let guard = pm.lock();
     guard.dirty_page_count() > 0
 }
 
 pub(crate) fn table_page_manager(
     state: &SqlEngineState,
     table: &str,
-) -> Result<Arc<Mutex<PageManager>>, EngineError> {
+) -> Result<Arc<PageManagerMutex>, EngineError> {
     {
         let g = state
             .table_page_managers
@@ -1562,7 +1739,7 @@ pub(crate) fn table_page_manager(
         Err(_) => PageManager::new(state.data_dir.clone(), table, PageManagerConfig::default())
             .map_err(map_db_err)?,
     };
-    let pm = Arc::new(Mutex::new(pm));
+    let pm = Arc::new(PageManagerMutex::new(pm));
     {
         let mut g = state
             .table_page_managers
@@ -1573,18 +1750,47 @@ pub(crate) fn table_page_manager(
     Ok(pm)
 }
 
+/// Shard count for native `order_line` heap files (`order_line~N.tbl`). Default `1` = single heap.
+pub(crate) fn tpcc_order_line_shard_count() -> u32 {
+    std::env::var("RUSTDB_TPCC_ORDER_LINE_SHARDS")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(1)
+        .max(1)
+}
+
+/// Physical heap key for native TPC-C DML (logical table name unchanged for catalog/index/WAL).
+pub(crate) fn tpcc_heap_storage_key(table: &str, w_id: i32) -> String {
+    let shards = tpcc_order_line_shard_count();
+    if table == "order_line" && shards > 1 {
+        let shard = ((w_id.max(1) as u32) - 1) % shards;
+        format!("order_line~{shard}")
+    } else {
+        table.to_string()
+    }
+}
+
+/// Cached page manager for a physical heap key (see [`tpcc_heap_storage_key`]).
+pub(crate) fn table_page_manager_cached_storage(
+    state: &SqlEngineState,
+    ctx: &mut SessionContext,
+    storage_key: &str,
+) -> Result<Arc<PageManagerMutex>, EngineError> {
+    if let Some(pm) = ctx.txn_pm_cache.get(storage_key) {
+        return Ok(pm.clone());
+    }
+    let pm = table_page_manager(state, storage_key)?;
+    ctx.txn_pm_cache.insert(storage_key.to_string(), pm.clone());
+    Ok(pm)
+}
+
 /// Returns the page manager for `table`, caching in [`SessionContext::txn_pm_cache`] for the txn.
 pub(crate) fn table_page_manager_cached(
     state: &SqlEngineState,
     ctx: &mut SessionContext,
     table: &str,
-) -> Result<Arc<Mutex<PageManager>>, EngineError> {
-    if let Some(pm) = ctx.txn_pm_cache.get(table) {
-        return Ok(pm.clone());
-    }
-    let pm = table_page_manager(state, table)?;
-    ctx.txn_pm_cache.insert(table.to_string(), pm.clone());
-    Ok(pm)
+) -> Result<Arc<PageManagerMutex>, EngineError> {
+    table_page_manager_cached_storage(state, ctx, table)
 }
 
 fn index_columns_for_table(state: &SqlEngineState, table: &str) -> Arc<Vec<String>> {
@@ -1743,10 +1949,7 @@ fn physical_drop_table(state: &SqlEngineState, table: &str) -> Result<(), Engine
     };
     if let Some(ref sch) = schema {
         let pm = table_page_manager(state, table)?;
-        let snapshot = pm
-            .lock()
-            .map_err(|_| lock_poisoned_engine())?
-            .select(None)
+        let snapshot = pm.lock().select(None)
             .map_err(map_db_err)?;
         let mut rt = state
             .constraint_runtime
@@ -2402,10 +2605,7 @@ fn backfill_index_from_heap(
     index_name: &str,
 ) -> Result<(), EngineError> {
     let pm = table_page_manager(state, table)?;
-    let snapshot = pm
-        .lock()
-        .map_err(|_| lock_poisoned_engine())?
-        .select(None)
+    let snapshot = pm.lock().select(None)
         .map_err(map_db_err)?;
     let mut ir = state
         .index_registry
@@ -2473,7 +2673,7 @@ fn execute_insert(
                 )?;
             }
             {
-                let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+                let mut pm = pm_for_table.lock();
                 flush_heap_after_dml_success(state, ctx, &mut pm)?;
             }
             Ok(EngineOutput::ExecutionOk { rows_affected })
@@ -2492,7 +2692,7 @@ fn execute_insert(
                 )?;
             }
             {
-                let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+                let mut pm = pm_for_table.lock();
                 flush_heap_after_dml_success(state, ctx, &mut pm)?;
             }
             Ok(EngineOutput::ExecutionOk { rows_affected })
@@ -2573,7 +2773,7 @@ fn execute_update(
     validate_plan(state, sql, stmt)?;
     record_touched_table(ctx, &update.table);
     let pm_for_table = table_page_manager(state, &update.table)?;
-    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    let mut pm = pm_for_table.lock();
     let scan_clock = sql_phase_log_enabled().then(Instant::now);
     let (snapshot, where_pre_filtered) = match &update.where_clause {
         None => (pm.select(None).map_err(map_db_err)?, false),
@@ -2735,7 +2935,7 @@ fn execute_delete(
     validate_plan(state, sql, stmt)?;
     record_touched_table(ctx, &delete.table);
     let pm_for_table = table_page_manager(state, &delete.table)?;
-    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    let mut pm = pm_for_table.lock();
     let scan_clock = sql_phase_log_enabled().then(Instant::now);
     let (snapshot, where_pre_filtered) = match &delete.where_clause {
         None => (pm.select(None).map_err(map_db_err)?, false),
@@ -3197,10 +3397,7 @@ fn rebuild_all_constraint_runtime(state: &SqlEngineState) -> Result<(), EngineEr
     for t in order {
         let schema = cat.schema(&t).expect("schema").clone();
         let pm = table_page_manager(state, &t)?;
-        let snapshot = pm
-            .lock()
-            .map_err(|_| lock_poisoned_engine())?
-            .select(None)
+        let snapshot = pm.lock().select(None)
             .map_err(map_db_err)?;
         let mut rt = state
             .constraint_runtime
@@ -3419,7 +3616,7 @@ fn insert_row_tuple_inner(
     record_touched_table(ctx, table);
     let bytes = tuple.to_bytes().map_err(map_db_err)?;
     let pm_for_table = table_page_manager(state, table)?;
-    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    let mut pm = pm_for_table.lock();
     let ins = pm.insert(&bytes).map_err(map_db_err)?;
     maybe_simulate_dml_crash("insert_row");
     if let Some(tx) = ctx.transaction.as_mut() {
@@ -3522,7 +3719,7 @@ fn insert_heap_row_pk_serialized(
     ctx: &mut SessionContext,
     table: &str,
     tuple: &Tuple,
-    pm_for_table: &Arc<Mutex<PageManager>>,
+    pm_for_table: &Arc<PageManagerMutex>,
 ) -> Result<u64, EngineError> {
     let mut rt = state
         .constraint_runtime
@@ -3533,7 +3730,7 @@ fn insert_heap_row_pk_serialized(
         drop(cat);
         drop(rt);
         let bytes = tuple.to_bytes().map_err(map_db_err)?;
-        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let mut pm = pm_for_table.lock();
         let ins = pm.insert(&bytes).map_err(map_db_err)?;
         insert_heap_row_after_bytes(state, ctx, table, tuple, &mut pm, bytes, ins)?;
         return Ok(1);
@@ -3544,7 +3741,7 @@ fn insert_heap_row_pk_serialized(
     sql_constraints::validate_new_row_for_insert(&rt, table, tuple, &schema, &snapshot)?;
 
     let bytes = tuple.to_bytes().map_err(map_db_err)?;
-    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    let mut pm = pm_for_table.lock();
     let ins = pm.insert(&bytes).map_err(map_db_err)?;
     maybe_simulate_dml_crash("insert_row");
     if let Some(tx) = ctx.transaction.as_mut() {
@@ -3603,14 +3800,14 @@ fn insert_heap_row_in_execute_insert(
     ctx: &mut SessionContext,
     table: &str,
     tuple: &Tuple,
-    pm_for_table: &Arc<Mutex<PageManager>>,
+    pm_for_table: &Arc<PageManagerMutex>,
 ) -> Result<u64, EngineError> {
     if table_has_primary_key(state, table) {
         return insert_heap_row_pk_serialized(state, ctx, table, tuple, pm_for_table);
     }
     insert_row_with_optional_pk_lock(state, table, tuple, || {
         let bytes = tuple.to_bytes().map_err(map_db_err)?;
-        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let mut pm = pm_for_table.lock();
         let ins = pm.insert(&bytes).map_err(map_db_err)?;
         insert_heap_row_after_bytes(state, ctx, table, tuple, &mut pm, bytes, ins)?;
         Ok(1u64)
@@ -3638,7 +3835,7 @@ where
 {
     record_touched_table(ctx, table);
     let pm_for_table = table_page_manager_cached(state, ctx, table)?;
-    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    let mut pm = pm_for_table.lock();
     let (rows, exact_key) = {
         let ir = state
             .index_registry
@@ -3677,7 +3874,7 @@ where
     let skip_row_validate = ctx.tpcc_kind.is_some();
 
     let apply = move || -> Result<u64, EngineError> {
-        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let mut pm = pm_for_table.lock();
         let mut rows_affected = 0u64;
         for (rid, data) in rows {
             let mut tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
@@ -3811,7 +4008,7 @@ pub(crate) fn bump_district_next_o_id(
     let pm_for_table = table_page_manager_cached(state, ctx, TABLE)?;
 
     let (rid, data) = {
-        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let mut pm = pm_for_table.lock();
         let ir = state
             .index_registry
             .read()
@@ -3838,7 +4035,7 @@ pub(crate) fn bump_district_next_o_id(
     let mut update_us_acc = 0u64;
 
     let apply = || -> Result<u64, EngineError> {
-        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let mut pm = pm_for_table.lock();
         let mut tuple = Tuple::from_bytes(&data).map_err(map_db_err)?;
         let next = tuple_i32_field(&tuple, "d_next_o_id")? + 1;
         tuple.set_value("d_next_o_id", int_column_value(next));
@@ -3909,7 +4106,7 @@ pub(crate) fn delete_rows_by_equalities(
 ) -> Result<u64, EngineError> {
     record_touched_table(ctx, table);
     let pm_for_table = table_page_manager_cached(state, ctx, table)?;
-    let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+    let mut pm = pm_for_table.lock();
     let (rows, exact_key) = {
         let ir = state
             .index_registry
@@ -3947,7 +4144,7 @@ pub(crate) fn delete_rows_by_equalities(
 
     let batch_index = !exact_key && rows.len() > 1;
     let apply = move || -> Result<u64, EngineError> {
-        let mut pm = pm_for_table.lock().map_err(|_| lock_poisoned_engine())?;
+        let mut pm = pm_for_table.lock();
         let cat_snapshot = {
             let cat = state.catalog.lock().map_err(|_| lock_poisoned_engine())?;
             cat.clone()
@@ -4057,7 +4254,7 @@ pub(crate) fn tpcc_order_status_row_count(
     }
     drop(ir);
     let pm = table_page_manager(state, "oorder")?;
-    let mut pm = pm.lock().map_err(|_| lock_poisoned_engine())?;
+    let mut pm = pm.lock();
     let mut count = 0u64;
     for rid in rids {
         if pm.get_record(rid).map_err(map_db_err)?.is_some() {
@@ -4086,7 +4283,7 @@ pub(crate) fn tpcc_stock_level_row_count(
     };
     drop(ir);
     let pm = table_page_manager(state, "stock")?;
-    let mut pm = pm.lock().map_err(|_| lock_poisoned_engine())?;
+    let mut pm = pm.lock();
     let mut count = 0u64;
     for rid in rids {
         let Some(data) = pm.get_record(rid).map_err(map_db_err)? else {
@@ -4648,14 +4845,14 @@ mod tests {
             t.set_value("k", int_column_value(10));
             t.set_value("v", int_column_value(1));
             t
-        })
+        }, 1)
         .unwrap();
         insert_row_tuple_tpcc_deferred(state, &mut ctx, "bench_row", {
             let mut t = Tuple::new(2);
             t.set_value("k", int_column_value(20));
             t.set_value("v", int_column_value(2));
             t
-        })
+        }, 1)
         .unwrap();
         assert_eq!(index_lookup_count(state, "bench_row", "k", "10"), 0);
         assert_eq!(index_lookup_count(state, "bench_row", "k", "20"), 0);
@@ -4680,7 +4877,7 @@ mod tests {
             t.set_value("k", int_column_value(99));
             t.set_value("v", int_column_value(1));
             t
-        })
+        }, 1)
         .unwrap();
         eng.execute_sql("ROLLBACK", &mut ctx).unwrap();
         assert_eq!(index_lookup_count(state, "bench_row", "k", "99"), 0);
@@ -5205,24 +5402,24 @@ mod tests {
         eng.execute_sql("INSERT INTO tb (k) VALUES (0)", &mut ctx)
             .unwrap();
         let pm_b = table_page_manager(eng.state_for_test(), "tb").unwrap();
-        assert_eq!(pm_b.lock().unwrap().dirty_page_count(), 0);
+        assert_eq!(pm_b.lock().dirty_page_count(), 0);
 
         eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
         eng.execute_sql("INSERT INTO ta (k) VALUES (1)", &mut ctx)
             .unwrap();
         let pm_a = table_page_manager(eng.state_for_test(), "ta").unwrap();
         assert!(
-            pm_a.lock().unwrap().dirty_page_count() > 0,
+            pm_a.lock().dirty_page_count() > 0,
             "touched table ta should have dirty pages before COMMIT"
         );
         assert_eq!(
-            pm_b.lock().unwrap().dirty_page_count(),
+            pm_b.lock().dirty_page_count(),
             0,
             "untouched table tb should not be flushed mid-txn"
         );
         eng.execute_sql("COMMIT", &mut ctx).unwrap();
-        assert_eq!(pm_a.lock().unwrap().dirty_page_count(), 0);
-        assert_eq!(pm_b.lock().unwrap().dirty_page_count(), 0);
+        assert_eq!(pm_a.lock().dirty_page_count(), 0);
+        assert_eq!(pm_b.lock().dirty_page_count(), 0);
     }
 
     #[test]
@@ -5238,13 +5435,13 @@ mod tests {
         eng.execute_sql("INSERT INTO defer_flush (k) VALUES (2)", &mut ctx)
             .unwrap();
         let pm = table_page_manager(eng.state_for_test(), "defer_flush").unwrap();
-        let dirty_mid_txn = pm.lock().expect("page manager lock").dirty_page_count();
+        let dirty_mid_txn = pm.lock().dirty_page_count();
         assert!(
             dirty_mid_txn > 0,
             "expected dirty heap pages before COMMIT, got {dirty_mid_txn}"
         );
         eng.execute_sql("COMMIT", &mut ctx).unwrap();
-        let dirty_after_commit = pm.lock().unwrap().dirty_page_count();
+        let dirty_after_commit = pm.lock().dirty_page_count();
         assert_eq!(
             dirty_after_commit, 0,
             "COMMIT should flush dirty heap pages"
@@ -5267,10 +5464,10 @@ mod tests {
         eng.execute_sql("INSERT INTO defer_commit_flush (k) VALUES (1)", &mut ctx)
             .unwrap();
         let pm = table_page_manager(eng.state_for_test(), "defer_commit_flush").unwrap();
-        assert!(pm.lock().unwrap().dirty_page_count() > 0);
+        assert!(pm.lock().dirty_page_count() > 0);
         eng.execute_sql("COMMIT", &mut ctx).unwrap();
         assert!(
-            pm.lock().unwrap().dirty_page_count() > 0,
+            pm.lock().dirty_page_count() > 0,
             "COMMIT should skip heap flush when RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT=1"
         );
         std::env::remove_var("RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT");

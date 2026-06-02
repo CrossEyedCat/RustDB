@@ -187,7 +187,6 @@ where
     let pm = table_page_manager(state, table)?;
     let snapshot = pm
         .lock()
-        .map_err(|_| lock_poisoned_engine())?
         .select(None)
         .map_err(map_db_err)?;
     for (rid, data) in snapshot {
@@ -195,12 +194,10 @@ where
         f(&mut t)?;
         let bytes = t.to_bytes().map_err(map_db_err)?;
         pm.lock()
-            .map_err(|_| lock_poisoned_engine())?
             .update(rid, &bytes)
             .map_err(map_db_err)?;
     }
     pm.lock()
-        .map_err(|_| lock_poisoned_engine())?
         .flush_dirty_pages()
         .map_err(map_db_err)?;
     Ok(())
@@ -210,7 +207,6 @@ fn row_count(state: &SqlEngineState, table: &str) -> Result<usize, EngineError> 
     let pm = table_page_manager(state, table)?;
     let n = pm
         .lock()
-        .map_err(|_| lock_poisoned_engine())?
         .select(None)
         .map_err(map_db_err)?
         .len();
@@ -647,10 +643,7 @@ pub(super) fn modify_column(
 
     if new_col.not_null && !old_snap.not_null {
         let pm = table_page_manager(state, table)?;
-        let snapshot = pm
-            .lock()
-            .map_err(|_| lock_poisoned_engine())?
-            .select(None)
+        let snapshot = pm.lock().select(None)
             .map_err(map_db_err)?;
         for (_, data) in snapshot {
             let t = Tuple::from_bytes(&data).map_err(map_db_err)?;
