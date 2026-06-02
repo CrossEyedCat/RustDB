@@ -152,7 +152,12 @@ jobs:
           test -s lcov.info
           wc -l lcov.info
 
-      # Only lcov.info; disable_search avoids the CLI picking up *_coverage_tests.rs via *coverage*.
+      - name: Enforce ≥85% lines (local threshold)
+        run: |
+          cargo llvm-cov report --fail-under-lines 85 \
+            --ignore-filename-regex "$COV_REGEX"
+
+      # Codecov CLI GPG verification is flaky on GHA (codecov/codecov-action#1876); upload is informational.
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
         env:
@@ -162,12 +167,8 @@ jobs:
           files: lcov.info
           disable_search: true
           fail_ci_if_error: true
+          skip_validation: true
           verbose: true
-
-      - name: Enforce ≥85% lines (local threshold)
-        run: |
-          cargo llvm-cov report --fail-under-lines 85 \
-            --ignore-filename-regex "$COV_REGEX"
 
   # After tests: code quality and MSRV (in parallel), then release build.
   format:
