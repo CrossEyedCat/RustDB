@@ -5,21 +5,21 @@ use rustdb::executor::{
     HashJoinOperator, JoinCondition, JoinOperator, JoinType, MergeJoinOperator,
     NestedLoopJoinOperator, Operator, TableScanOperator,
 };
-use rustdb::storage::page_manager::{PageManager, PageManagerConfig};
+use rustdb::storage::page_manager::{PageManager, PageManagerConfig, PageManagerMutex};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 fn main() -> Result<()> {
     println!("=== Example of using join operators ===\n");
 
     // Creating page managers for different tables
-    let users_page_manager = Arc::new(Mutex::new(PageManager::new(
+    let users_page_manager = Arc::new(PageManagerMutex::new(PageManager::new(
         PathBuf::from("./data"),
         "users",
         PageManagerConfig::default(),
     )?));
 
-    let emails_page_manager = Arc::new(Mutex::new(PageManager::new(
+    let emails_page_manager = Arc::new(PageManagerMutex::new(PageManager::new(
         PathBuf::from("./data"),
         "emails",
         PageManagerConfig::default(),
