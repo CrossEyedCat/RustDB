@@ -1760,7 +1760,7 @@ pub(crate) fn table_page_manager(
     Ok(pm)
 }
 
-/// Shard count for native `order_line` heap files (`order_line~N.tbl`). Default `1` = single heap.
+/// Shard count for native TPC-C heap files (`order_line~N`, `oorder~N`). Default `1` = single heap.
 pub(crate) fn tpcc_order_line_shard_count() -> u32 {
     std::env::var("RUSTDB_TPCC_ORDER_LINE_SHARDS")
         .ok()
@@ -1769,20 +1769,20 @@ pub(crate) fn tpcc_order_line_shard_count() -> u32 {
         .max(1)
 }
 
-/// Maps a native-bench district id to a physical `order_line~N` heap index.
+/// Maps a native-bench district id to a physical sharded heap index (`~N` suffix).
 pub(crate) fn tpcc_order_line_shard_index(d_id: i32, shards: u32) -> u32 {
     ((d_id.max(1) as u32).saturating_sub(1)) % shards.max(1)
 }
 
 /// Physical heap key for native TPC-C DML (logical table name unchanged for catalog/index/WAL).
 ///
-/// For `order_line` with `RUSTDB_TPCC_ORDER_LINE_SHARDS` > 1, `heap_shard_key` must be the row's
-/// `ol_d_id` (native bench uses `w_id = 1` always, so sharding by `w_id` would not spread load).
+/// For `order_line` / `oorder` with `RUSTDB_TPCC_ORDER_LINE_SHARDS` > 1, `heap_shard_key` must be
+/// the row's district id (`ol_d_id` / `o_d_id`; native bench uses `w_id = 1` always).
 pub(crate) fn tpcc_heap_storage_key(table: &str, heap_shard_key: i32) -> String {
     let shards = tpcc_order_line_shard_count();
-    if table == "order_line" && shards > 1 {
+    if shards > 1 && (table == "order_line" || table == "oorder") {
         let shard = tpcc_order_line_shard_index(heap_shard_key, shards);
-        format!("order_line~{shard}")
+        format!("{table}~{shard}")
     } else {
         table.to_string()
     }
@@ -5566,9 +5566,11 @@ mod tests {
         std::env::set_var("RUSTDB_TPCC_ORDER_LINE_SHARDS", "5");
         assert_eq!(tpcc_heap_storage_key("order_line", 1), "order_line~0");
         assert_eq!(tpcc_heap_storage_key("order_line", 5), "order_line~4");
-        assert_eq!(tpcc_heap_storage_key("oorder", 1), "oorder");
+        assert_eq!(tpcc_heap_storage_key("oorder", 1), "oorder~0");
+        assert_eq!(tpcc_heap_storage_key("oorder", 5), "oorder~4");
         std::env::remove_var("RUSTDB_TPCC_ORDER_LINE_SHARDS");
         assert_eq!(tpcc_heap_storage_key("order_line", 3), "order_line");
+        assert_eq!(tpcc_heap_storage_key("oorder", 3), "oorder");
     }
 
     #[test]
