@@ -343,7 +343,9 @@ pub(crate) struct CommitFlushPhaseUs {
     pub heap_fsync_us: u64,
 }
 
-fn flush_pm_writes_only(pm: &Arc<crate::storage::page_manager::PageManagerMutex>) -> DbResult<(usize, Option<u32>, u64)> {
+fn flush_pm_writes_only(
+    pm: &Arc<crate::storage::page_manager::PageManagerMutex>,
+) -> DbResult<(usize, Option<u32>, u64)> {
     let lock_t0 = Instant::now();
     let mut guard = pm.lock();
     let pm_lock_wait_us = lock_t0.elapsed().as_micros() as u64;
@@ -378,7 +380,9 @@ fn sync_heap_files_after_coalesced_flush(
     Ok(fsync_t0.elapsed().as_micros() as u64)
 }
 
-fn coalesced_flush_page_managers(pms: Vec<Arc<crate::storage::page_manager::PageManagerMutex>>) -> DbResult<(usize, u64, u64)> {
+fn coalesced_flush_page_managers(
+    pms: Vec<Arc<crate::storage::page_manager::PageManagerMutex>>,
+) -> DbResult<(usize, u64, u64)> {
     if pms.is_empty() {
         return Ok((0, 0, 0));
     }
@@ -432,7 +436,8 @@ pub(crate) fn flush_page_managers_for_tables(
         .lock()
         .map_err(|_| DbError::database("table pm map lock poisoned"))?;
     let table_map_lock_us = map_t0.elapsed().as_micros() as u64;
-    let mut pms: Vec<Arc<crate::storage::page_manager::PageManagerMutex>> = Vec::with_capacity(sorted.len());
+    let mut pms: Vec<Arc<crate::storage::page_manager::PageManagerMutex>> =
+        Vec::with_capacity(sorted.len());
     let mut pm_lock_wait_us = 0u64;
     for name in &sorted {
         let Some(pm) = map.get(name) else {
@@ -535,7 +540,8 @@ pub fn replay_wal_into_engine(
     // Applying every record to every page manager relies on filtering inside PageManager and
     // becomes incorrect if multiple managers reference the same file_id (which can happen during
     // open + catalog/table PM wiring).
-    let mut pm_by_file_id: HashMap<u32, Arc<crate::storage::page_manager::PageManagerMutex>> = HashMap::new();
+    let mut pm_by_file_id: HashMap<u32, Arc<crate::storage::page_manager::PageManagerMutex>> =
+        HashMap::new();
     {
         let default = state.default_page_manager.clone();
         let fid = default.lock().file_id();

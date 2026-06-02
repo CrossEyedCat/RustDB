@@ -82,8 +82,8 @@ use crate::planner::{
     QueryOptimizer, QueryPlanner,
 };
 use crate::storage::index_registry::IndexRegistry;
-use crate::storage::page_manager::{PageManager, PageManagerConfig, PageManagerMutex};
 use crate::storage::page_manager::InsertResult;
+use crate::storage::page_manager::{PageManager, PageManagerConfig, PageManagerMutex};
 use crate::storage::row_locks::RowLockManager;
 use crate::storage::tuple::Tuple;
 use crate::Row;
@@ -837,7 +837,10 @@ fn insert_rows_tuple_tpcc_deferred_inner(
         for bytes in encoded {
             let ins = pm.insert(&bytes).map_err(map_db_err)?;
             maybe_simulate_dml_crash("insert_row");
-            heap_rows.push(TpccHeapInsertRow { ins, payload: bytes });
+            heap_rows.push(TpccHeapInsertRow {
+                ins,
+                payload: bytes,
+            });
         }
         let pm_insert_us = t_insert.elapsed().as_micros() as u64;
         (heap_rows, file_id, pm_lock_wait_us, pm_insert_us)
@@ -887,8 +890,14 @@ pub(crate) fn insert_row_tuple_tpcc_deferred(
     tuple: Tuple,
     shard_w_id: i32,
 ) -> Result<TpccInsertTimings, EngineError> {
-    let (timings, _) =
-        insert_rows_tuple_tpcc_deferred_inner(state, ctx, table, std::slice::from_ref(&tuple), shard_w_id, false)?;
+    let (timings, _) = insert_rows_tuple_tpcc_deferred_inner(
+        state,
+        ctx,
+        table,
+        std::slice::from_ref(&tuple),
+        shard_w_id,
+        false,
+    )?;
     Ok(timings)
 }
 
@@ -900,7 +909,8 @@ pub(crate) fn insert_rows_tuple_tpcc_deferred_batch(
     tuples: &[Tuple],
     shard_w_id: i32,
 ) -> Result<TpccInsertTimings, EngineError> {
-    let (timings, _) = insert_rows_tuple_tpcc_deferred_inner(state, ctx, table, tuples, shard_w_id, false)?;
+    let (timings, _) =
+        insert_rows_tuple_tpcc_deferred_inner(state, ctx, table, tuples, shard_w_id, false)?;
     Ok(timings)
 }
 
@@ -1949,8 +1959,7 @@ fn physical_drop_table(state: &SqlEngineState, table: &str) -> Result<(), Engine
     };
     if let Some(ref sch) = schema {
         let pm = table_page_manager(state, table)?;
-        let snapshot = pm.lock().select(None)
-            .map_err(map_db_err)?;
+        let snapshot = pm.lock().select(None).map_err(map_db_err)?;
         let mut rt = state
             .constraint_runtime
             .lock()
@@ -2605,8 +2614,7 @@ fn backfill_index_from_heap(
     index_name: &str,
 ) -> Result<(), EngineError> {
     let pm = table_page_manager(state, table)?;
-    let snapshot = pm.lock().select(None)
-        .map_err(map_db_err)?;
+    let snapshot = pm.lock().select(None).map_err(map_db_err)?;
     let mut ir = state
         .index_registry
         .write()
@@ -3397,8 +3405,7 @@ fn rebuild_all_constraint_runtime(state: &SqlEngineState) -> Result<(), EngineEr
     for t in order {
         let schema = cat.schema(&t).expect("schema").clone();
         let pm = table_page_manager(state, &t)?;
-        let snapshot = pm.lock().select(None)
-            .map_err(map_db_err)?;
+        let snapshot = pm.lock().select(None).map_err(map_db_err)?;
         let mut rt = state
             .constraint_runtime
             .lock()
@@ -4840,19 +4847,31 @@ mod tests {
         eng.execute_sql("CREATE INDEX idx_bench_k ON bench_row (k)", &mut ctx)
             .unwrap();
         eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
-        insert_row_tuple_tpcc_deferred(state, &mut ctx, "bench_row", {
-            let mut t = Tuple::new(1);
-            t.set_value("k", int_column_value(10));
-            t.set_value("v", int_column_value(1));
-            t
-        }, 1)
+        insert_row_tuple_tpcc_deferred(
+            state,
+            &mut ctx,
+            "bench_row",
+            {
+                let mut t = Tuple::new(1);
+                t.set_value("k", int_column_value(10));
+                t.set_value("v", int_column_value(1));
+                t
+            },
+            1,
+        )
         .unwrap();
-        insert_row_tuple_tpcc_deferred(state, &mut ctx, "bench_row", {
-            let mut t = Tuple::new(2);
-            t.set_value("k", int_column_value(20));
-            t.set_value("v", int_column_value(2));
-            t
-        }, 1)
+        insert_row_tuple_tpcc_deferred(
+            state,
+            &mut ctx,
+            "bench_row",
+            {
+                let mut t = Tuple::new(2);
+                t.set_value("k", int_column_value(20));
+                t.set_value("v", int_column_value(2));
+                t
+            },
+            1,
+        )
         .unwrap();
         assert_eq!(index_lookup_count(state, "bench_row", "k", "10"), 0);
         assert_eq!(index_lookup_count(state, "bench_row", "k", "20"), 0);
@@ -4872,12 +4891,18 @@ mod tests {
         eng.execute_sql("CREATE INDEX idx_bench_k ON bench_row (k)", &mut ctx)
             .unwrap();
         eng.execute_sql("BEGIN TRANSACTION", &mut ctx).unwrap();
-        insert_row_tuple_tpcc_deferred(state, &mut ctx, "bench_row", {
-            let mut t = Tuple::new(1);
-            t.set_value("k", int_column_value(99));
-            t.set_value("v", int_column_value(1));
-            t
-        }, 1)
+        insert_row_tuple_tpcc_deferred(
+            state,
+            &mut ctx,
+            "bench_row",
+            {
+                let mut t = Tuple::new(1);
+                t.set_value("k", int_column_value(99));
+                t.set_value("v", int_column_value(1));
+                t
+            },
+            1,
+        )
         .unwrap();
         eng.execute_sql("ROLLBACK", &mut ctx).unwrap();
         assert_eq!(index_lookup_count(state, "bench_row", "k", "99"), 0);

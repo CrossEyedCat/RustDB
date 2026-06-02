@@ -369,9 +369,7 @@ impl TableScanOperator {
             table = %self.table_name
         );
         let _g = span.enter();
-        let mut pm = self
-            .page_manager
-            .lock();
+        let mut pm = self.page_manager.lock();
         let ids = pm.all_page_ids()?;
         self.statistics.io_operations = self.statistics.io_operations.saturating_add(1);
         self.page_ids = Some(ids);
@@ -398,9 +396,7 @@ impl TableScanOperator {
         );
         let _g = span.enter();
 
-        let mut pm = self
-            .page_manager
-            .lock();
+        let mut pm = self.page_manager.lock();
         self.page_records = pm.records_from_page(page_id)?;
         self.record_pos = 0;
         self.statistics.io_operations = self.statistics.io_operations.saturating_add(1);
@@ -708,9 +704,7 @@ impl IndexScanOperator {
 
     /// Load record by ID from PageManager
     fn load_record(&mut self, record_id: RecordId) -> Result<Option<Row>> {
-        let mut pm = self
-            .page_manager
-            .lock();
+        let mut pm = self.page_manager.lock();
         let data = pm.get_record(record_id)?;
         self.statistics.io_operations += 1;
 

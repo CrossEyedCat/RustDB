@@ -738,8 +738,7 @@ impl PageManager {
 
     fn page_eligible_for_insert(&self, page_id: PageId, required_size: usize) -> bool {
         self.page_cache.get(&page_id).is_some_and(|info| {
-            info.record_count < MAX_RECORDS_PER_PAGE
-                && info.free_space as usize >= required_size
+            info.record_count < MAX_RECORDS_PER_PAGE && info.free_space as usize >= required_size
         })
     }
 
