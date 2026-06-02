@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import statistics
 import sys
@@ -34,6 +35,22 @@ GATES = {
     "strict_heap_flush_skipped_pct_max": 10.0,
     "ratio_claim_min_pct": 105.0,
 }
+
+# Median PG full-mix TPS from recent CI runs (c=64, 300s). Used so a single slow-PG run
+# does not inflate claim_faster_than_pg. Override with TPCC_PG_REFERENCE_TPS.
+PG_REFERENCE_TPS_DEFAULT = 1380.0
+
+
+def pg_reference_tps() -> float:
+    raw = os.environ.get("TPCC_PG_REFERENCE_TPS")
+    if raw:
+        return float(raw)
+    return PG_REFERENCE_TPS_DEFAULT
+
+
+def pg_tps_for_claim_denominator(pg_tps: float) -> float:
+    """Conservative PG baseline: max(actual, reference median)."""
+    return max(pg_tps, pg_reference_tps())
 
 
 def quantile_ns(samples: list[int], q: float) -> float:
@@ -164,6 +181,11 @@ def validate_run(out_dir: Path, mode: str) -> tuple[bool, dict[str, Any]]:
     pg_tps = num(pg_json, "txns_per_s")
     rd_tps = num(rd_json, "txns_per_s")
     ratio = (100.0 * rd_tps / pg_tps) if pg_tps > 0 else None
+    pg_ref = pg_reference_tps()
+    claim_pg_tps = pg_tps_for_claim_denominator(pg_tps)
+    ratio_vs_pg_reference = (
+        (100.0 * rd_tps / claim_pg_tps) if claim_pg_tps > 0 else None
+    )
 
     pg_stats = txn_kind_stats(pg_log)
     rd_stats = txn_kind_stats(rd_log)
@@ -278,8 +300,8 @@ def validate_run(out_dir: Path, mode: str) -> tuple[bool, dict[str, Any]]:
     valid = len(reasons) == 0
     claim_faster = (
         valid
-        and ratio is not None
-        and ratio > GATES["ratio_claim_min_pct"]
+        and ratio_vs_pg_reference is not None
+        and ratio_vs_pg_reference > GATES["ratio_claim_min_pct"]
     )
 
     report: dict[str, Any] = {
@@ -293,6 +315,9 @@ def validate_run(out_dir: Path, mode: str) -> tuple[bool, dict[str, Any]]:
             "postgres_txns_per_s": pg_tps,
             "rustdb_txns_per_s": rd_tps,
             "ratio_percent_rustdb_over_postgres": ratio,
+            "pg_reference_tps_for_claim": pg_ref,
+            "pg_tps_for_claim_denominator": claim_pg_tps,
+            "ratio_percent_vs_pg_reference": ratio_vs_pg_reference,
             "pg_payment_p95_ms": pg_payment_p95,
             "postgres_new_order_share": pg_share,
             "rustdb_new_order_share": rd_share,

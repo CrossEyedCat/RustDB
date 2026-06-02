@@ -35,6 +35,8 @@
 #     engine fast path: direct index/heap ops + single COMMIT, not 7× SQL per new_order)
 #   RUSTDB_TPCC_NATIVE_MICRO=1 — after the main run, run a short native-only micro leg
 #     (order_status-heavy mix, fewer txns) written to tpcc-native-micro.json
+#   RUSTDB_TPCC_ORDER_LINE_SHARDS — native order_line heap shards by ol_d_id (default 1;
+#     CI/microbench use 5 to match tpcc_seed districts)
 #
 set -euo pipefail
 

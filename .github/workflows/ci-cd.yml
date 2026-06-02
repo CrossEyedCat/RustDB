@@ -544,6 +544,8 @@ jobs:
           MIX: new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04
           RUSTDB_TPCC_NATIVE: "1"
           RUSTDB_TPCC_NATIVE_MICRO: "1"
+          # Native order_line inserts shard by ol_d_id (5 districts in tpcc_seed.sql).
+          RUSTDB_TPCC_ORDER_LINE_SHARDS: "5"
           # Default 24 workers on push; workflow_dispatch A/B: override RUSTDB_SQL_WORKER_COUNT=32
           # on 4+ vCPU runners (edit env below or set in the manual run inputs).
           RUSTDB_SQL_WORKER_COUNT: "24"
@@ -852,12 +854,20 @@ jobs:
           print(f"- postgres txns/s: **{m.get('postgres_txns_per_s', 'n/a')}**")
           print(f"- PG payment p95 (ms): **{m.get('pg_payment_p95_ms', 'n/a')}**")
           ratio = m.get("ratio_percent_rustdb_over_postgres")
+          ratio_ref = m.get("ratio_percent_vs_pg_reference")
           if v.get("valid") and ratio is not None:
-              print(f"- rustdb/postgres ratio: **{ratio:.1f}%** (informational; bench defer profile)")
+              print(f"- rustdb/postgres ratio (raw): **{ratio:.1f}%** (informational; bench defer profile)")
           elif ratio is not None:
-              print(f"- rustdb/postgres ratio: {ratio:.1f}% *(not advertised — validation failed)*")
+              print(f"- rustdb/postgres ratio (raw): {ratio:.1f}% *(not advertised — validation failed)*")
           else:
-              print("- rustdb/postgres ratio: *(unavailable)*")
+              print("- rustdb/postgres ratio (raw): *(unavailable)*")
+          if ratio_ref is not None:
+              pg_ref = m.get("pg_reference_tps_for_claim", "n/a")
+              print(
+                  f"- rustdb/postgres ratio vs PG reference ({pg_ref} TPS): "
+                  f"**{ratio_ref:.1f}%** (used for claim_faster_than_pg)"
+              )
+          print(f"- **claim_faster_than_pg**: {v.get('claim_faster_than_pg')}")
           if not v.get("valid"):
               print("")
               print("> Do not treat ratio as «RustDB faster than PostgreSQL» when valid=false.")
