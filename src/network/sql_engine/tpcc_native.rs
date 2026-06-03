@@ -133,7 +133,7 @@ fn run_new_order_native(
                 ("o_ol_cnt", 1),
             ],
         ),
-        w_id,
+        d_id,
     )?;
     wal_insert_us += ins.wal_us;
     index_sync_us += ins.index_us;
