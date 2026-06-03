@@ -1760,7 +1760,7 @@
 <a href=#1760 id=1760 data-nosnippet>1760</a>    <span class="prelude-val">Ok</span>(pm)
 <a href=#1761 id=1761 data-nosnippet>1761</a>}
 <a href=#1762 id=1762 data-nosnippet>1762</a>
-<a href=#1763 id=1763 data-nosnippet>1763</a><span class="doccomment">/// Shard count for native `order_line` heap files (`order_line~N.tbl`). Default `1` = single heap.
+<a href=#1763 id=1763 data-nosnippet>1763</a><span class="doccomment">/// Shard count for native TPC-C heap files (`order_line~N`, `oorder~N`). Default `1` = single heap.
 <a href=#1764 id=1764 data-nosnippet>1764</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>tpcc_order_line_shard_count() -&gt; u32 {
 <a href=#1765 id=1765 data-nosnippet>1765</a>    std::env::var(<span class="string">"RUSTDB_TPCC_ORDER_LINE_SHARDS"</span>)
 <a href=#1766 id=1766 data-nosnippet>1766</a>        .ok()
@@ -1769,20 +1769,20 @@
 <a href=#1769 id=1769 data-nosnippet>1769</a>        .max(<span class="number">1</span>)
 <a href=#1770 id=1770 data-nosnippet>1770</a>}
 <a href=#1771 id=1771 data-nosnippet>1771</a>
-<a href=#1772 id=1772 data-nosnippet>1772</a><span class="doccomment">/// Maps a native-bench district id to a physical `order_line~N` heap index.
+<a href=#1772 id=1772 data-nosnippet>1772</a><span class="doccomment">/// Maps a native-bench district id to a physical sharded heap index (`~N` suffix).
 <a href=#1773 id=1773 data-nosnippet>1773</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>tpcc_order_line_shard_index(d_id: i32, shards: u32) -&gt; u32 {
 <a href=#1774 id=1774 data-nosnippet>1774</a>    ((d_id.max(<span class="number">1</span>) <span class="kw">as </span>u32).saturating_sub(<span class="number">1</span>)) % shards.max(<span class="number">1</span>)
 <a href=#1775 id=1775 data-nosnippet>1775</a>}
 <a href=#1776 id=1776 data-nosnippet>1776</a>
 <a href=#1777 id=1777 data-nosnippet>1777</a><span class="doccomment">/// Physical heap key for native TPC-C DML (logical table name unchanged for catalog/index/WAL).
 <a href=#1778 id=1778 data-nosnippet>1778</a>///
-<a href=#1779 id=1779 data-nosnippet>1779</a>/// For `order_line` with `RUSTDB_TPCC_ORDER_LINE_SHARDS` &gt; 1, `heap_shard_key` must be the row's
-<a href=#1780 id=1780 data-nosnippet>1780</a>/// `ol_d_id` (native bench uses `w_id = 1` always, so sharding by `w_id` would not spread load).
+<a href=#1779 id=1779 data-nosnippet>1779</a>/// For `order_line` / `oorder` with `RUSTDB_TPCC_ORDER_LINE_SHARDS` &gt; 1, `heap_shard_key` must be
+<a href=#1780 id=1780 data-nosnippet>1780</a>/// the row's district id (`ol_d_id` / `o_d_id`; native bench uses `w_id = 1` always).
 <a href=#1781 id=1781 data-nosnippet>1781</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>tpcc_heap_storage_key(table: <span class="kw-2">&amp;</span>str, heap_shard_key: i32) -&gt; String {
 <a href=#1782 id=1782 data-nosnippet>1782</a>    <span class="kw">let </span>shards = tpcc_order_line_shard_count();
-<a href=#1783 id=1783 data-nosnippet>1783</a>    <span class="kw">if </span>table == <span class="string">"order_line" </span>&amp;&amp; shards &gt; <span class="number">1 </span>{
+<a href=#1783 id=1783 data-nosnippet>1783</a>    <span class="kw">if </span>shards &gt; <span class="number">1 </span>&amp;&amp; (table == <span class="string">"order_line" </span>|| table == <span class="string">"oorder"</span>) {
 <a href=#1784 id=1784 data-nosnippet>1784</a>        <span class="kw">let </span>shard = tpcc_order_line_shard_index(heap_shard_key, shards);
-<a href=#1785 id=1785 data-nosnippet>1785</a>        <span class="macro">format!</span>(<span class="string">"order_line~{shard}"</span>)
+<a href=#1785 id=1785 data-nosnippet>1785</a>        <span class="macro">format!</span>(<span class="string">"{table}~{shard}"</span>)
 <a href=#1786 id=1786 data-nosnippet>1786</a>    } <span class="kw">else </span>{
 <a href=#1787 id=1787 data-nosnippet>1787</a>        table.to_string()
 <a href=#1788 id=1788 data-nosnippet>1788</a>    }
@@ -5566,121 +5566,123 @@
 <a href=#5566 id=5566 data-nosnippet>5566</a>        std::env::set_var(<span class="string">"RUSTDB_TPCC_ORDER_LINE_SHARDS"</span>, <span class="string">"5"</span>);
 <a href=#5567 id=5567 data-nosnippet>5567</a>        <span class="macro">assert_eq!</span>(tpcc_heap_storage_key(<span class="string">"order_line"</span>, <span class="number">1</span>), <span class="string">"order_line~0"</span>);
 <a href=#5568 id=5568 data-nosnippet>5568</a>        <span class="macro">assert_eq!</span>(tpcc_heap_storage_key(<span class="string">"order_line"</span>, <span class="number">5</span>), <span class="string">"order_line~4"</span>);
-<a href=#5569 id=5569 data-nosnippet>5569</a>        <span class="macro">assert_eq!</span>(tpcc_heap_storage_key(<span class="string">"oorder"</span>, <span class="number">1</span>), <span class="string">"oorder"</span>);
-<a href=#5570 id=5570 data-nosnippet>5570</a>        std::env::remove_var(<span class="string">"RUSTDB_TPCC_ORDER_LINE_SHARDS"</span>);
-<a href=#5571 id=5571 data-nosnippet>5571</a>        <span class="macro">assert_eq!</span>(tpcc_heap_storage_key(<span class="string">"order_line"</span>, <span class="number">3</span>), <span class="string">"order_line"</span>);
-<a href=#5572 id=5572 data-nosnippet>5572</a>    }
-<a href=#5573 id=5573 data-nosnippet>5573</a>
-<a href=#5574 id=5574 data-nosnippet>5574</a>    <span class="attr">#[test]
-<a href=#5575 id=5575 data-nosnippet>5575</a>    </span><span class="kw">fn </span>table_page_manager_cached_reuses_arc_in_transaction() {
-<a href=#5576 id=5576 data-nosnippet>5576</a>        <span class="kw">let </span>dir = TempDir::new().unwrap();
-<a href=#5577 id=5577 data-nosnippet>5577</a>        <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
-<a href=#5578 id=5578 data-nosnippet>5578</a>        <span class="kw">let </span>state = eng.state_for_test();
-<a href=#5579 id=5579 data-nosnippet>5579</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
-<a href=#5580 id=5580 data-nosnippet>5580</a>        eng.execute_sql(<span class="string">"CREATE TABLE pm_cache (k INT)"</span>, <span class="kw-2">&amp;mut </span>ctx)
-<a href=#5581 id=5581 data-nosnippet>5581</a>            .unwrap();
-<a href=#5582 id=5582 data-nosnippet>5582</a>        eng.execute_sql(<span class="string">"BEGIN TRANSACTION"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
-<a href=#5583 id=5583 data-nosnippet>5583</a>        <span class="kw">let </span>pm1 = table_page_manager_cached(state, <span class="kw-2">&amp;mut </span>ctx, <span class="string">"pm_cache"</span>).unwrap();
-<a href=#5584 id=5584 data-nosnippet>5584</a>        <span class="kw">let </span>pm2 = table_page_manager_cached(state, <span class="kw-2">&amp;mut </span>ctx, <span class="string">"pm_cache"</span>).unwrap();
-<a href=#5585 id=5585 data-nosnippet>5585</a>        <span class="macro">assert!</span>(Arc::ptr_eq(<span class="kw-2">&amp;</span>pm1, <span class="kw-2">&amp;</span>pm2));
-<a href=#5586 id=5586 data-nosnippet>5586</a>        <span class="macro">assert_eq!</span>(ctx.txn_pm_cache.len(), <span class="number">1</span>);
-<a href=#5587 id=5587 data-nosnippet>5587</a>        eng.execute_sql(<span class="string">"COMMIT"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
-<a href=#5588 id=5588 data-nosnippet>5588</a>        <span class="macro">assert!</span>(ctx.txn_pm_cache.is_empty());
-<a href=#5589 id=5589 data-nosnippet>5589</a>    }
-<a href=#5590 id=5590 data-nosnippet>5590</a>
-<a href=#5591 id=5591 data-nosnippet>5591</a>    <span class="attr">#[test]
-<a href=#5592 id=5592 data-nosnippet>5592</a>    </span><span class="kw">fn </span>explicit_transaction_multi_insert_commit_survives_reopen() {
-<a href=#5593 id=5593 data-nosnippet>5593</a>        <span class="kw">let </span>dir = TempDir::new().unwrap();
-<a href=#5594 id=5594 data-nosnippet>5594</a>        {
-<a href=#5595 id=5595 data-nosnippet>5595</a>            <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
-<a href=#5596 id=5596 data-nosnippet>5596</a>            <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
-<a href=#5597 id=5597 data-nosnippet>5597</a>            eng.execute_sql(<span class="string">"CREATE TABLE txn_persist (k INT PRIMARY KEY)"</span>, <span class="kw-2">&amp;mut </span>ctx)
-<a href=#5598 id=5598 data-nosnippet>5598</a>                .unwrap();
-<a href=#5599 id=5599 data-nosnippet>5599</a>            eng.execute_sql(<span class="string">"BEGIN TRANSACTION"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
-<a href=#5600 id=5600 data-nosnippet>5600</a>            <span class="kw">for </span>k <span class="kw">in </span><span class="number">1</span>..=<span class="number">3 </span>{
-<a href=#5601 id=5601 data-nosnippet>5601</a>                <span class="kw">let </span>sql = <span class="macro">format!</span>(<span class="string">"INSERT INTO txn_persist (k) VALUES ({k})"</span>);
-<a href=#5602 id=5602 data-nosnippet>5602</a>                eng.execute_sql(<span class="kw-2">&amp;</span>sql, <span class="kw-2">&amp;mut </span>ctx).unwrap();
-<a href=#5603 id=5603 data-nosnippet>5603</a>            }
-<a href=#5604 id=5604 data-nosnippet>5604</a>            eng.execute_sql(<span class="string">"COMMIT"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
-<a href=#5605 id=5605 data-nosnippet>5605</a>        }
-<a href=#5606 id=5606 data-nosnippet>5606</a>        <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
-<a href=#5607 id=5607 data-nosnippet>5607</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
-<a href=#5608 id=5608 data-nosnippet>5608</a>        <span class="kw">let </span>out = eng
-<a href=#5609 id=5609 data-nosnippet>5609</a>            .execute_sql(<span class="string">"SELECT k FROM txn_persist ORDER BY k"</span>, <span class="kw-2">&amp;mut </span>ctx)
-<a href=#5610 id=5610 data-nosnippet>5610</a>            .unwrap();
-<a href=#5611 id=5611 data-nosnippet>5611</a>        <span class="kw">match </span>out {
-<a href=#5612 id=5612 data-nosnippet>5612</a>            EngineOutput::ResultSet { rows, .. } =&gt; <span class="macro">assert_eq!</span>(rows.len(), <span class="number">3</span>),
-<a href=#5613 id=5613 data-nosnippet>5613</a>            <span class="kw">_ </span>=&gt; <span class="macro">panic!</span>(<span class="string">"expected result set"</span>),
-<a href=#5614 id=5614 data-nosnippet>5614</a>        }
-<a href=#5615 id=5615 data-nosnippet>5615</a>    }
-<a href=#5616 id=5616 data-nosnippet>5616</a>
-<a href=#5617 id=5617 data-nosnippet>5617</a>    <span class="attr">#[test]
-<a href=#5618 id=5618 data-nosnippet>5618</a>    </span><span class="kw">fn </span>sql_engine_repeated_dml_plan_validation_cache() {
-<a href=#5619 id=5619 data-nosnippet>5619</a>        <span class="comment">// Regression: repeated INSERT/UPDATE/DELETE must stay correct when plan validation is cached.
-<a href=#5620 id=5620 data-nosnippet>5620</a>        </span><span class="kw">let </span>dir = TempDir::new().unwrap();
-<a href=#5621 id=5621 data-nosnippet>5621</a>        <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
-<a href=#5622 id=5622 data-nosnippet>5622</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
-<a href=#5623 id=5623 data-nosnippet>5623</a>        eng.execute_sql(<span class="string">"CREATE TABLE tc (id INT, n INT)"</span>, <span class="kw-2">&amp;mut </span>ctx)
-<a href=#5624 id=5624 data-nosnippet>5624</a>            .unwrap();
-<a href=#5625 id=5625 data-nosnippet>5625</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">32 </span>{
-<a href=#5626 id=5626 data-nosnippet>5626</a>            <span class="kw">let </span>ins = <span class="macro">format!</span>(<span class="string">"INSERT INTO tc (id, n) VALUES ({}, {})"</span>, i, i);
-<a href=#5627 id=5627 data-nosnippet>5627</a>            <span class="kw">let </span>out = eng.execute_sql(<span class="kw-2">&amp;</span>ins, <span class="kw-2">&amp;mut </span>ctx).unwrap();
-<a href=#5628 id=5628 data-nosnippet>5628</a>            <span class="macro">assert_eq!</span>(out, EngineOutput::ExecutionOk { rows_affected: <span class="number">1 </span>});
-<a href=#5629 id=5629 data-nosnippet>5629</a>        }
-<a href=#5630 id=5630 data-nosnippet>5630</a>        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">8 </span>{
-<a href=#5631 id=5631 data-nosnippet>5631</a>            <span class="kw">let </span>out = eng
-<a href=#5632 id=5632 data-nosnippet>5632</a>                .execute_sql(<span class="string">"UPDATE tc SET n = n + 1 WHERE id = 0"</span>, <span class="kw-2">&amp;mut </span>ctx)
-<a href=#5633 id=5633 data-nosnippet>5633</a>                .unwrap();
-<a href=#5634 id=5634 data-nosnippet>5634</a>            <span class="macro">assert_eq!</span>(out, EngineOutput::ExecutionOk { rows_affected: <span class="number">1 </span>});
-<a href=#5635 id=5635 data-nosnippet>5635</a>        }
-<a href=#5636 id=5636 data-nosnippet>5636</a>        <span class="kw">let </span>del = eng
-<a href=#5637 id=5637 data-nosnippet>5637</a>            .execute_sql(<span class="string">"DELETE FROM tc WHERE id = 0"</span>, <span class="kw-2">&amp;mut </span>ctx)
-<a href=#5638 id=5638 data-nosnippet>5638</a>            .unwrap();
-<a href=#5639 id=5639 data-nosnippet>5639</a>        <span class="macro">assert_eq!</span>(del, EngineOutput::ExecutionOk { rows_affected: <span class="number">1 </span>});
-<a href=#5640 id=5640 data-nosnippet>5640</a>    }
-<a href=#5641 id=5641 data-nosnippet>5641</a>
-<a href=#5642 id=5642 data-nosnippet>5642</a>    <span class="attr">#[test]
-<a href=#5643 id=5643 data-nosnippet>5643</a>    </span><span class="kw">fn </span>sql_engine_dml_plan_cache_invalidated_after_ddl() {
-<a href=#5644 id=5644 data-nosnippet>5644</a>        <span class="kw">let </span>dir = TempDir::new().unwrap();
-<a href=#5645 id=5645 data-nosnippet>5645</a>        <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
-<a href=#5646 id=5646 data-nosnippet>5646</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
-<a href=#5647 id=5647 data-nosnippet>5647</a>        eng.execute_sql(<span class="string">"CREATE TABLE tddl (a INT)"</span>, <span class="kw-2">&amp;mut </span>ctx)
-<a href=#5648 id=5648 data-nosnippet>5648</a>            .unwrap();
-<a href=#5649 id=5649 data-nosnippet>5649</a>        eng.execute_sql(<span class="string">"INSERT INTO tddl (a) VALUES (1)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#5569 id=5569 data-nosnippet>5569</a>        <span class="macro">assert_eq!</span>(tpcc_heap_storage_key(<span class="string">"oorder"</span>, <span class="number">1</span>), <span class="string">"oorder~0"</span>);
+<a href=#5570 id=5570 data-nosnippet>5570</a>        <span class="macro">assert_eq!</span>(tpcc_heap_storage_key(<span class="string">"oorder"</span>, <span class="number">5</span>), <span class="string">"oorder~4"</span>);
+<a href=#5571 id=5571 data-nosnippet>5571</a>        std::env::remove_var(<span class="string">"RUSTDB_TPCC_ORDER_LINE_SHARDS"</span>);
+<a href=#5572 id=5572 data-nosnippet>5572</a>        <span class="macro">assert_eq!</span>(tpcc_heap_storage_key(<span class="string">"order_line"</span>, <span class="number">3</span>), <span class="string">"order_line"</span>);
+<a href=#5573 id=5573 data-nosnippet>5573</a>        <span class="macro">assert_eq!</span>(tpcc_heap_storage_key(<span class="string">"oorder"</span>, <span class="number">3</span>), <span class="string">"oorder"</span>);
+<a href=#5574 id=5574 data-nosnippet>5574</a>    }
+<a href=#5575 id=5575 data-nosnippet>5575</a>
+<a href=#5576 id=5576 data-nosnippet>5576</a>    <span class="attr">#[test]
+<a href=#5577 id=5577 data-nosnippet>5577</a>    </span><span class="kw">fn </span>table_page_manager_cached_reuses_arc_in_transaction() {
+<a href=#5578 id=5578 data-nosnippet>5578</a>        <span class="kw">let </span>dir = TempDir::new().unwrap();
+<a href=#5579 id=5579 data-nosnippet>5579</a>        <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+<a href=#5580 id=5580 data-nosnippet>5580</a>        <span class="kw">let </span>state = eng.state_for_test();
+<a href=#5581 id=5581 data-nosnippet>5581</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
+<a href=#5582 id=5582 data-nosnippet>5582</a>        eng.execute_sql(<span class="string">"CREATE TABLE pm_cache (k INT)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#5583 id=5583 data-nosnippet>5583</a>            .unwrap();
+<a href=#5584 id=5584 data-nosnippet>5584</a>        eng.execute_sql(<span class="string">"BEGIN TRANSACTION"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#5585 id=5585 data-nosnippet>5585</a>        <span class="kw">let </span>pm1 = table_page_manager_cached(state, <span class="kw-2">&amp;mut </span>ctx, <span class="string">"pm_cache"</span>).unwrap();
+<a href=#5586 id=5586 data-nosnippet>5586</a>        <span class="kw">let </span>pm2 = table_page_manager_cached(state, <span class="kw-2">&amp;mut </span>ctx, <span class="string">"pm_cache"</span>).unwrap();
+<a href=#5587 id=5587 data-nosnippet>5587</a>        <span class="macro">assert!</span>(Arc::ptr_eq(<span class="kw-2">&amp;</span>pm1, <span class="kw-2">&amp;</span>pm2));
+<a href=#5588 id=5588 data-nosnippet>5588</a>        <span class="macro">assert_eq!</span>(ctx.txn_pm_cache.len(), <span class="number">1</span>);
+<a href=#5589 id=5589 data-nosnippet>5589</a>        eng.execute_sql(<span class="string">"COMMIT"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#5590 id=5590 data-nosnippet>5590</a>        <span class="macro">assert!</span>(ctx.txn_pm_cache.is_empty());
+<a href=#5591 id=5591 data-nosnippet>5591</a>    }
+<a href=#5592 id=5592 data-nosnippet>5592</a>
+<a href=#5593 id=5593 data-nosnippet>5593</a>    <span class="attr">#[test]
+<a href=#5594 id=5594 data-nosnippet>5594</a>    </span><span class="kw">fn </span>explicit_transaction_multi_insert_commit_survives_reopen() {
+<a href=#5595 id=5595 data-nosnippet>5595</a>        <span class="kw">let </span>dir = TempDir::new().unwrap();
+<a href=#5596 id=5596 data-nosnippet>5596</a>        {
+<a href=#5597 id=5597 data-nosnippet>5597</a>            <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+<a href=#5598 id=5598 data-nosnippet>5598</a>            <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
+<a href=#5599 id=5599 data-nosnippet>5599</a>            eng.execute_sql(<span class="string">"CREATE TABLE txn_persist (k INT PRIMARY KEY)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#5600 id=5600 data-nosnippet>5600</a>                .unwrap();
+<a href=#5601 id=5601 data-nosnippet>5601</a>            eng.execute_sql(<span class="string">"BEGIN TRANSACTION"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#5602 id=5602 data-nosnippet>5602</a>            <span class="kw">for </span>k <span class="kw">in </span><span class="number">1</span>..=<span class="number">3 </span>{
+<a href=#5603 id=5603 data-nosnippet>5603</a>                <span class="kw">let </span>sql = <span class="macro">format!</span>(<span class="string">"INSERT INTO txn_persist (k) VALUES ({k})"</span>);
+<a href=#5604 id=5604 data-nosnippet>5604</a>                eng.execute_sql(<span class="kw-2">&amp;</span>sql, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#5605 id=5605 data-nosnippet>5605</a>            }
+<a href=#5606 id=5606 data-nosnippet>5606</a>            eng.execute_sql(<span class="string">"COMMIT"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#5607 id=5607 data-nosnippet>5607</a>        }
+<a href=#5608 id=5608 data-nosnippet>5608</a>        <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+<a href=#5609 id=5609 data-nosnippet>5609</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
+<a href=#5610 id=5610 data-nosnippet>5610</a>        <span class="kw">let </span>out = eng
+<a href=#5611 id=5611 data-nosnippet>5611</a>            .execute_sql(<span class="string">"SELECT k FROM txn_persist ORDER BY k"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#5612 id=5612 data-nosnippet>5612</a>            .unwrap();
+<a href=#5613 id=5613 data-nosnippet>5613</a>        <span class="kw">match </span>out {
+<a href=#5614 id=5614 data-nosnippet>5614</a>            EngineOutput::ResultSet { rows, .. } =&gt; <span class="macro">assert_eq!</span>(rows.len(), <span class="number">3</span>),
+<a href=#5615 id=5615 data-nosnippet>5615</a>            <span class="kw">_ </span>=&gt; <span class="macro">panic!</span>(<span class="string">"expected result set"</span>),
+<a href=#5616 id=5616 data-nosnippet>5616</a>        }
+<a href=#5617 id=5617 data-nosnippet>5617</a>    }
+<a href=#5618 id=5618 data-nosnippet>5618</a>
+<a href=#5619 id=5619 data-nosnippet>5619</a>    <span class="attr">#[test]
+<a href=#5620 id=5620 data-nosnippet>5620</a>    </span><span class="kw">fn </span>sql_engine_repeated_dml_plan_validation_cache() {
+<a href=#5621 id=5621 data-nosnippet>5621</a>        <span class="comment">// Regression: repeated INSERT/UPDATE/DELETE must stay correct when plan validation is cached.
+<a href=#5622 id=5622 data-nosnippet>5622</a>        </span><span class="kw">let </span>dir = TempDir::new().unwrap();
+<a href=#5623 id=5623 data-nosnippet>5623</a>        <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+<a href=#5624 id=5624 data-nosnippet>5624</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
+<a href=#5625 id=5625 data-nosnippet>5625</a>        eng.execute_sql(<span class="string">"CREATE TABLE tc (id INT, n INT)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#5626 id=5626 data-nosnippet>5626</a>            .unwrap();
+<a href=#5627 id=5627 data-nosnippet>5627</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">32 </span>{
+<a href=#5628 id=5628 data-nosnippet>5628</a>            <span class="kw">let </span>ins = <span class="macro">format!</span>(<span class="string">"INSERT INTO tc (id, n) VALUES ({}, {})"</span>, i, i);
+<a href=#5629 id=5629 data-nosnippet>5629</a>            <span class="kw">let </span>out = eng.execute_sql(<span class="kw-2">&amp;</span>ins, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#5630 id=5630 data-nosnippet>5630</a>            <span class="macro">assert_eq!</span>(out, EngineOutput::ExecutionOk { rows_affected: <span class="number">1 </span>});
+<a href=#5631 id=5631 data-nosnippet>5631</a>        }
+<a href=#5632 id=5632 data-nosnippet>5632</a>        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">8 </span>{
+<a href=#5633 id=5633 data-nosnippet>5633</a>            <span class="kw">let </span>out = eng
+<a href=#5634 id=5634 data-nosnippet>5634</a>                .execute_sql(<span class="string">"UPDATE tc SET n = n + 1 WHERE id = 0"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#5635 id=5635 data-nosnippet>5635</a>                .unwrap();
+<a href=#5636 id=5636 data-nosnippet>5636</a>            <span class="macro">assert_eq!</span>(out, EngineOutput::ExecutionOk { rows_affected: <span class="number">1 </span>});
+<a href=#5637 id=5637 data-nosnippet>5637</a>        }
+<a href=#5638 id=5638 data-nosnippet>5638</a>        <span class="kw">let </span>del = eng
+<a href=#5639 id=5639 data-nosnippet>5639</a>            .execute_sql(<span class="string">"DELETE FROM tc WHERE id = 0"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#5640 id=5640 data-nosnippet>5640</a>            .unwrap();
+<a href=#5641 id=5641 data-nosnippet>5641</a>        <span class="macro">assert_eq!</span>(del, EngineOutput::ExecutionOk { rows_affected: <span class="number">1 </span>});
+<a href=#5642 id=5642 data-nosnippet>5642</a>    }
+<a href=#5643 id=5643 data-nosnippet>5643</a>
+<a href=#5644 id=5644 data-nosnippet>5644</a>    <span class="attr">#[test]
+<a href=#5645 id=5645 data-nosnippet>5645</a>    </span><span class="kw">fn </span>sql_engine_dml_plan_cache_invalidated_after_ddl() {
+<a href=#5646 id=5646 data-nosnippet>5646</a>        <span class="kw">let </span>dir = TempDir::new().unwrap();
+<a href=#5647 id=5647 data-nosnippet>5647</a>        <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+<a href=#5648 id=5648 data-nosnippet>5648</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
+<a href=#5649 id=5649 data-nosnippet>5649</a>        eng.execute_sql(<span class="string">"CREATE TABLE tddl (a INT)"</span>, <span class="kw-2">&amp;mut </span>ctx)
 <a href=#5650 id=5650 data-nosnippet>5650</a>            .unwrap();
-<a href=#5651 id=5651 data-nosnippet>5651</a>        eng.execute_sql(<span class="string">"ALTER TABLE tddl ADD COLUMN b INT"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#5651 id=5651 data-nosnippet>5651</a>        eng.execute_sql(<span class="string">"INSERT INTO tddl (a) VALUES (1)"</span>, <span class="kw-2">&amp;mut </span>ctx)
 <a href=#5652 id=5652 data-nosnippet>5652</a>            .unwrap();
-<a href=#5653 id=5653 data-nosnippet>5653</a>        <span class="kw">let </span>out = eng
-<a href=#5654 id=5654 data-nosnippet>5654</a>            .execute_sql(<span class="string">"INSERT INTO tddl (a, b) VALUES (2, 3)"</span>, <span class="kw-2">&amp;mut </span>ctx)
-<a href=#5655 id=5655 data-nosnippet>5655</a>            .unwrap();
-<a href=#5656 id=5656 data-nosnippet>5656</a>        <span class="macro">assert_eq!</span>(out, EngineOutput::ExecutionOk { rows_affected: <span class="number">1 </span>});
-<a href=#5657 id=5657 data-nosnippet>5657</a>    }
-<a href=#5658 id=5658 data-nosnippet>5658</a>
-<a href=#5659 id=5659 data-nosnippet>5659</a>    <span class="attr">#[test]
-<a href=#5660 id=5660 data-nosnippet>5660</a>    </span><span class="kw">fn </span>sql_engine_rollback_survives_page_splits() {
-<a href=#5661 id=5661 data-nosnippet>5661</a>        <span class="comment">// Regression: record ids encode byte offsets, so page split/merge can invalidate them.
-<a href=#5662 id=5662 data-nosnippet>5662</a>        // Rollback must still remove all uncommitted rows, even if their offsets moved.
-<a href=#5663 id=5663 data-nosnippet>5663</a>        </span><span class="kw">let </span>dir = TempDir::new().unwrap();
-<a href=#5664 id=5664 data-nosnippet>5664</a>        {
-<a href=#5665 id=5665 data-nosnippet>5665</a>            <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
-<a href=#5666 id=5666 data-nosnippet>5666</a>            <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
-<a href=#5667 id=5667 data-nosnippet>5667</a>            eng.execute_sql(<span class="string">"CREATE TABLE t (a INTEGER)"</span>, <span class="kw-2">&amp;mut </span>ctx)
-<a href=#5668 id=5668 data-nosnippet>5668</a>                .unwrap();
-<a href=#5669 id=5669 data-nosnippet>5669</a>            eng.execute_sql(<span class="string">"BEGIN TRANSACTION"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
-<a href=#5670 id=5670 data-nosnippet>5670</a>            <span class="comment">// Insert enough rows to force at least one page split (MAX_RECORDS_PER_PAGE=100).
-<a href=#5671 id=5671 data-nosnippet>5671</a>            </span><span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">180 </span>{
-<a href=#5672 id=5672 data-nosnippet>5672</a>                <span class="kw">let </span>sql = <span class="macro">format!</span>(<span class="string">"INSERT INTO t (a) VALUES ({})"</span>, i);
-<a href=#5673 id=5673 data-nosnippet>5673</a>                eng.execute_sql(<span class="kw-2">&amp;</span>sql, <span class="kw-2">&amp;mut </span>ctx).unwrap();
-<a href=#5674 id=5674 data-nosnippet>5674</a>            }
-<a href=#5675 id=5675 data-nosnippet>5675</a>            eng.execute_sql(<span class="string">"ROLLBACK"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
-<a href=#5676 id=5676 data-nosnippet>5676</a>        }
-<a href=#5677 id=5677 data-nosnippet>5677</a>        <span class="comment">// After reopen, no rows should remain.
-<a href=#5678 id=5678 data-nosnippet>5678</a>        </span><span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
-<a href=#5679 id=5679 data-nosnippet>5679</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
-<a href=#5680 id=5680 data-nosnippet>5680</a>        <span class="kw">let </span>out = eng.execute_sql(<span class="string">"SELECT a FROM t"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
-<a href=#5681 id=5681 data-nosnippet>5681</a>        <span class="kw">match </span>out {
-<a href=#5682 id=5682 data-nosnippet>5682</a>            EngineOutput::ResultSet { rows, .. } =&gt; <span class="macro">assert_eq!</span>(rows.len(), <span class="number">0</span>),
-<a href=#5683 id=5683 data-nosnippet>5683</a>            <span class="kw">_ </span>=&gt; <span class="macro">panic!</span>(<span class="string">"expected result set"</span>),
-<a href=#5684 id=5684 data-nosnippet>5684</a>        }
-<a href=#5685 id=5685 data-nosnippet>5685</a>    }
-<a href=#5686 id=5686 data-nosnippet>5686</a>}</code></pre></div></section></main></body></html>
+<a href=#5653 id=5653 data-nosnippet>5653</a>        eng.execute_sql(<span class="string">"ALTER TABLE tddl ADD COLUMN b INT"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#5654 id=5654 data-nosnippet>5654</a>            .unwrap();
+<a href=#5655 id=5655 data-nosnippet>5655</a>        <span class="kw">let </span>out = eng
+<a href=#5656 id=5656 data-nosnippet>5656</a>            .execute_sql(<span class="string">"INSERT INTO tddl (a, b) VALUES (2, 3)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#5657 id=5657 data-nosnippet>5657</a>            .unwrap();
+<a href=#5658 id=5658 data-nosnippet>5658</a>        <span class="macro">assert_eq!</span>(out, EngineOutput::ExecutionOk { rows_affected: <span class="number">1 </span>});
+<a href=#5659 id=5659 data-nosnippet>5659</a>    }
+<a href=#5660 id=5660 data-nosnippet>5660</a>
+<a href=#5661 id=5661 data-nosnippet>5661</a>    <span class="attr">#[test]
+<a href=#5662 id=5662 data-nosnippet>5662</a>    </span><span class="kw">fn </span>sql_engine_rollback_survives_page_splits() {
+<a href=#5663 id=5663 data-nosnippet>5663</a>        <span class="comment">// Regression: record ids encode byte offsets, so page split/merge can invalidate them.
+<a href=#5664 id=5664 data-nosnippet>5664</a>        // Rollback must still remove all uncommitted rows, even if their offsets moved.
+<a href=#5665 id=5665 data-nosnippet>5665</a>        </span><span class="kw">let </span>dir = TempDir::new().unwrap();
+<a href=#5666 id=5666 data-nosnippet>5666</a>        {
+<a href=#5667 id=5667 data-nosnippet>5667</a>            <span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+<a href=#5668 id=5668 data-nosnippet>5668</a>            <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
+<a href=#5669 id=5669 data-nosnippet>5669</a>            eng.execute_sql(<span class="string">"CREATE TABLE t (a INTEGER)"</span>, <span class="kw-2">&amp;mut </span>ctx)
+<a href=#5670 id=5670 data-nosnippet>5670</a>                .unwrap();
+<a href=#5671 id=5671 data-nosnippet>5671</a>            eng.execute_sql(<span class="string">"BEGIN TRANSACTION"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#5672 id=5672 data-nosnippet>5672</a>            <span class="comment">// Insert enough rows to force at least one page split (MAX_RECORDS_PER_PAGE=100).
+<a href=#5673 id=5673 data-nosnippet>5673</a>            </span><span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">180 </span>{
+<a href=#5674 id=5674 data-nosnippet>5674</a>                <span class="kw">let </span>sql = <span class="macro">format!</span>(<span class="string">"INSERT INTO t (a) VALUES ({})"</span>, i);
+<a href=#5675 id=5675 data-nosnippet>5675</a>                eng.execute_sql(<span class="kw-2">&amp;</span>sql, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#5676 id=5676 data-nosnippet>5676</a>            }
+<a href=#5677 id=5677 data-nosnippet>5677</a>            eng.execute_sql(<span class="string">"ROLLBACK"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#5678 id=5678 data-nosnippet>5678</a>        }
+<a href=#5679 id=5679 data-nosnippet>5679</a>        <span class="comment">// After reopen, no rows should remain.
+<a href=#5680 id=5680 data-nosnippet>5680</a>        </span><span class="kw">let </span>eng = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+<a href=#5681 id=5681 data-nosnippet>5681</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = SessionContext::default();
+<a href=#5682 id=5682 data-nosnippet>5682</a>        <span class="kw">let </span>out = eng.execute_sql(<span class="string">"SELECT a FROM t"</span>, <span class="kw-2">&amp;mut </span>ctx).unwrap();
+<a href=#5683 id=5683 data-nosnippet>5683</a>        <span class="kw">match </span>out {
+<a href=#5684 id=5684 data-nosnippet>5684</a>            EngineOutput::ResultSet { rows, .. } =&gt; <span class="macro">assert_eq!</span>(rows.len(), <span class="number">0</span>),
+<a href=#5685 id=5685 data-nosnippet>5685</a>            <span class="kw">_ </span>=&gt; <span class="macro">panic!</span>(<span class="string">"expected result set"</span>),
+<a href=#5686 id=5686 data-nosnippet>5686</a>        }
+<a href=#5687 id=5687 data-nosnippet>5687</a>    }
+<a href=#5688 id=5688 data-nosnippet>5688</a>}</code></pre></div></section></main></body></html>
