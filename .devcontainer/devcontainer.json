@@ -1,6 +1,6 @@
 {
   "name": "RustDB Sandbox",
-  "image": "mcr.microsoft.com/devcontainers/rust:1.90",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-bookworm",
   "workspaceFolder": "/workspaces/RustDB",
   "remoteEnv": {
     "RUSTDB_SANDBOX_DATA": "./sandbox-data",
