@@ -37,7 +37,8 @@ bincode-next = { version = "2.1.0", features = ["serde", "std"] }
 # >=1.23.1 addresses RUSTSEC-2023-0001 (tokio / Windows named pipes).
 tokio = { version = "1.52.1", features = ["full"] }
 async-trait = "0.1"
-tokio-postgres = "0.7"
+# >=0.7.18 addresses RUSTSEC-2026-0178; pulls postgres-protocol >=0.6.12 (RUSTSEC-2026-0179/0180).
+tokio-postgres = "0.7.18"
 anyhow = "1.0"
 thiserror = "2.0"
 

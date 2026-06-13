@@ -39,6 +39,7 @@ _bench*/
 server.der
 data/ci_tpcc_idx_verify/
 data/ci_tpcc_idx_verify2/
+/sandbox-data/
 
 # Python
 __pycache__/

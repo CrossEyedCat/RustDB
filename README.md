@@ -1,5 +1,6 @@
 # RustDB
 
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/CrossEyedCat/RustDB?quickstart=1)
 [![CI/CD](https://github.com/CrossEyedCat/RustDB/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/CrossEyedCat/RustDB/actions/workflows/ci-cd.yml)
 [![codecov](https://codecov.io/gh/CrossEyedCat/RustDB/branch/main/graph/badge.svg)](https://codecov.io/gh/CrossEyedCat/RustDB)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -11,6 +12,18 @@
 **RustDB** is a relational database engine written in **Rust**: SQL parsing and analysis, planning and execution, storage (pages, tables, indexes), logging (WAL, checkpointing), and an **experimental QUIC** wire path (UDP, ALPN `rustdb-v1`). The project targets **learning**, **research**, and **controlled experimentation** with OLTP-style workloads—not a drop-in production replacement for PostgreSQL or SQLite.
 
 **Contributions are welcome.** See [CONTRIBUTING.md](CONTRIBUTING.md) for workflow rules, CI job descriptions, and how to open issues and pull requests.
+
+## Try it (GitHub Codespaces)
+
+Open this repository in a **GitHub Codespace** to run SQL immediately via the CLI — no Docker or QUIC setup. After the dev container builds RustDB and seeds demo data (~3–5 minutes on first open):
+
+```bash
+./target/release/rustdb --config sandbox-data/.sandbox-config.toml query "SELECT w_id FROM warehouse"
+```
+
+Reset to the demo dataset anytime: `./scripts/sandbox-reset.sh`.
+
+Full guide: **[docs/sandbox.md](docs/sandbox.md)** · [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/CrossEyedCat/RustDB?quickstart=1)
 
 **SQL-92 compatibility:** RustDB implements a **SQL-92-compatible core subset** (see the **SQL-92 compatibility** section below for what is supported today and what is intentionally out of scope).
 
