@@ -1,0 +1,32 @@
+{
+  "name": "RustDB Sandbox",
+  "image": "mcr.microsoft.com/devcontainers/rust:1.90",
+  "workspaceFolder": "/workspaces/RustDB",
+  "remoteEnv": {
+    "RUSTDB_SANDBOX_DATA": "./sandbox-data",
+    "RUSTDB_CONFIG": "config/sandbox.toml"
+  },
+  "postCreateCommand": "chmod +x scripts/sandbox-init.sh scripts/sandbox-reset.sh && ./scripts/sandbox-init.sh",
+  "postStartCommand": "if [ ! -d sandbox-data ] || [ -z \"$(ls -A sandbox-data 2>/dev/null)\" ]; then ./scripts/sandbox-init.sh; else echo 'RustDB sandbox ready: ./target/release/rustdb --config sandbox-data/.sandbox-config.toml query \"SELECT w_id FROM warehouse\"'; fi",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "RustDB Sandbox",
+        "terminal.integrated.profiles.linux": {
+          "RustDB Sandbox": {
+            "path": "/bin/bash",
+            "args": ["-l"],
+            "icon": "database",
+            "env": {
+              "PROMPT_COMMAND": "echo 'RustDB sandbox: ./target/release/rustdb --config sandbox-data/.sandbox-config.toml query \"...\"  |  ./scripts/sandbox-reset.sh to re-seed';"
+            }
+          }
+        }
+      }
+    }
+  },
+  "forwardPorts": []
+}

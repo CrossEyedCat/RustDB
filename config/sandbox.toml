@@ -1,0 +1,14 @@
+# RustDB sandbox configuration (GitHub Codespaces / dev container).
+# `scripts/sandbox-init.sh` writes an effective copy into the data directory.
+
+name = "rustdb-sandbox"
+data_directory = "./sandbox-data"
+max_connections = 100
+connection_timeout = 30
+query_timeout = 60
+language = "en"
+
+[network]
+host = "127.0.0.1"
+port = 5432
+max_connections = 100

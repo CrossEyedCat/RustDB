@@ -170,6 +170,43 @@ jobs:
           skip_validation: true
           verbose: true
 
+  # Codespaces sandbox: build + seed script smoke (no Codespaces billing required).
+  sandbox-smoke:
+    name: Sandbox init smoke
+    runs-on: ubuntu-latest
+    needs: [test]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install dependencies (Ubuntu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Run sandbox-init.sh
+        run: |
+          chmod +x scripts/sandbox-init.sh scripts/sandbox-reset.sh
+          RUSTDB_SANDBOX_DATA=/tmp/sandbox-test ./scripts/sandbox-init.sh
+
+      - name: Verify seeded query
+        run: |
+          ./target/release/rustdb --config /tmp/sandbox-test/.sandbox-config.toml query "SELECT w_id FROM warehouse"
+
+      - name: Verify sandbox-reset.sh
+        run: |
+          RUSTDB_SANDBOX_DATA=/tmp/sandbox-test ./scripts/sandbox-reset.sh
+          ./target/release/rustdb --config /tmp/sandbox-test/.sandbox-config.toml query "SELECT COUNT(*) FROM district"
+
   # After tests: code quality and MSRV (in parallel), then release build.
   format:
     name: Format Check

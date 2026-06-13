@@ -10,6 +10,8 @@ This cookbook focuses on:
 - Common workflows (batch SQL, QUIC server, smoke scripts, benchmarks)
 - Using RustDB **embedded / in-process** (library API) for tests and tools
 
+For a browser-based try-it flow without Docker, see the interactive sandbox: **[sandbox.md](sandbox.md)** (GitHub Codespaces).
+
 ## Image and tags
 
 CI publishes several tag styles (see [`.github/workflows/ci-cd.yml`](../.github/workflows/ci-cd.yml) and `docker/metadata-action`):
@@ -335,6 +337,7 @@ For CI-style flame graphs and tracing, see [CONTRIBUTING.md](../CONTRIBUTING.md)
 
 ## See also
 
+- [sandbox.md](sandbox.md) — try RustDB in GitHub Codespaces (CLI, ephemeral seed data)
 - [README.md](../README.md) — goals, status, and test limitations  
 - [Network (QUIC)](network/README.md) — protocol and client/server boundary  
 - [Dockerfile](../Dockerfile), [`docker-compose.yml`](../docker-compose.yml) — build and optional orchestration  
