@@ -319,9 +319,20 @@ impl LogWriter {
         // Sort files by creation time
         files.sort_by_key(|f| f.created_at);
 
-        // Set the last file as the current file
+        // Set the last file as the current file and resume appending to it.
         if let Some(latest_file) = files.last() {
             *self.current_file.write().unwrap() = Some(latest_file.clone());
+            if let Ok(file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&latest_file.path)
+            {
+                *self.log_file_state.lock().unwrap() = Some(LogFileState {
+                    writer: BufWriter::new(file),
+                    path: latest_file.path.clone(),
+                    size: latest_file.size,
+                });
+            }
         }
 
         *self.log_files.write().unwrap() = files;
@@ -343,14 +354,19 @@ impl LogWriter {
             .unwrap_or("unknown")
             .to_string();
 
-        // Simplified implementation — real system should read file header
+        // Simplified metadata from file; LSN bounds come from actual records.
+        let records = LogRecord::read_log_records_from_file(path).unwrap_or_default();
+        let first_lsn = records.first().map(|r| r.lsn).unwrap_or(0);
+        let last_lsn = records.iter().map(|r| r.lsn).max().unwrap_or(0);
+        let record_count = records.len() as u64;
+
         let file_info = LogFileInfo {
             filename,
             path: path.to_path_buf(),
             size: metadata.len(),
-            record_count: 0, // Requires file reading
-            first_lsn: 0,    // Requires file reading
-            last_lsn: 0,     // Requires file reading
+            record_count,
+            first_lsn,
+            last_lsn,
             created_at: metadata
                 .created()
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)

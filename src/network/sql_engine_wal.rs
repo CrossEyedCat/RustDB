@@ -518,7 +518,7 @@ pub fn replay_wal_into_engine(
     use crate::logging::log_record::LogRecordType;
     use std::collections::HashMap;
 
-    let (redo, undo_per_tx) = analyze_wal_for_replay(wal_dir)?;
+    let (redo, undo_per_tx, pending_abort) = analyze_wal_for_replay(wal_dir)?;
 
     // Ensure table page managers exist for all catalog tables so WAL file_ids can match.
     let mut table_names = {
@@ -579,6 +579,7 @@ pub fn replay_wal_into_engine(
     }
 
     // Apply UNDO for active txs (reverse order per tx).
+    let mut aborted_during_undo = HashSet::new();
     for tx_ops in undo_per_tx {
         let tx_id = tx_ops.first().and_then(|r| r.transaction_id);
         let last_lsn = tx_ops.first().map(|r| r.lsn);
@@ -608,20 +609,42 @@ pub fn replay_wal_into_engine(
             wal.log_abort_by_id(tid, last_lsn).map_err(|e| {
                 DbError::database(format!("append recovery abort marker: {}", e.message))
             })?;
+            aborted_during_undo.insert(tid);
+        }
+    }
+
+    // BEGIN-without-COMMIT/ABORT (and no DML ops recovered) still needs an abort marker so
+    // subsequent opens do not treat the transaction as active forever.
+    for (tid, last_lsn) in pending_abort {
+        if aborted_during_undo.contains(&tid) {
+            continue;
+        }
+        if let Some(wal) = wal {
+            wal.log_abort_by_id(tid, last_lsn).map_err(|e| {
+                DbError::database(format!("append recovery abort marker: {}", e.message))
+            })?;
         }
     }
 
     Ok(())
 }
 
-/// Returns `(redo_records_in_lsn_order, undo_records_per_active_tx_in_reverse_lsn_order)`.
-pub fn analyze_wal_for_replay(wal_dir: &Path) -> DbResult<(Vec<LogRecord>, Vec<Vec<LogRecord>>)> {
+/// Returns `(redo_records, undo_groups, pending_abort_markers)`.
+pub fn analyze_wal_for_replay(
+    wal_dir: &Path,
+) -> DbResult<(
+    Vec<LogRecord>,
+    Vec<Vec<LogRecord>>,
+    Vec<(TransactionId, Option<u64>)>,
+)> {
     let recs = LogRecord::read_log_records_from_directory(wal_dir)?;
 
     #[derive(Default)]
     struct TxBuf {
         committed: bool,
         aborted: bool,
+        begun: bool,
+        last_lsn: Option<u64>,
         ops: Vec<LogRecord>,
     }
     use std::collections::HashMap;
@@ -633,10 +656,12 @@ pub fn analyze_wal_for_replay(wal_dir: &Path) -> DbResult<(Vec<LogRecord>, Vec<V
         };
         let entry = txs.entry(tid).or_default();
         match r.record_type {
+            LogRecordType::TransactionBegin => entry.begun = true,
             LogRecordType::TransactionCommit => entry.committed = true,
             LogRecordType::TransactionAbort => entry.aborted = true,
             _ => {}
         }
+        entry.last_lsn = Some(r.lsn);
         if matches!(
             r.record_type,
             LogRecordType::DataInsert | LogRecordType::DataUpdate | LogRecordType::DataDelete
@@ -647,20 +672,27 @@ pub fn analyze_wal_for_replay(wal_dir: &Path) -> DbResult<(Vec<LogRecord>, Vec<V
 
     let mut redo: Vec<LogRecord> = Vec::new();
     let mut undo: Vec<Vec<LogRecord>> = Vec::new();
+    let mut pending_abort: Vec<(TransactionId, Option<u64>)> = Vec::new();
 
-    for (_tid, buf) in txs {
+    for (tid, buf) in txs {
         if buf.committed && !buf.aborted {
             redo.extend(buf.ops);
-        } else if !buf.committed && !buf.aborted && !buf.ops.is_empty() {
-            let mut ops = buf.ops;
-            ops.sort_by_key(|r| r.lsn);
-            ops.reverse();
-            undo.push(ops);
+        } else if !buf.committed && !buf.aborted {
+            let needs_abort = buf.begun || !buf.ops.is_empty();
+            if !buf.ops.is_empty() {
+                let mut ops = buf.ops;
+                ops.sort_by_key(|r| r.lsn);
+                ops.reverse();
+                undo.push(ops);
+            }
+            if needs_abort {
+                pending_abort.push((tid, buf.last_lsn));
+            }
         }
     }
 
     redo.sort_by_key(|r| r.lsn);
-    Ok((redo, undo))
+    Ok((redo, undo, pending_abort))
 }
 
 pub fn log_record_operation_parts(

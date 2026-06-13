@@ -340,6 +340,12 @@ fn crash_matrix_recovery_appends_abort_marker_once() {
     }
 
     let before = wal_records(&data_dir);
+    assert!(
+        before
+            .iter()
+            .any(|r| r.record_type == LogRecordType::DataInsert),
+        "crash scenario must persist INSERT to WAL before recovery"
+    );
     let before_abort = count_abort_records(&before);
 
     // First reopen performs UNDO and should append exactly one abort marker for the active tx.
