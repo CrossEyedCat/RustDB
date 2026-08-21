@@ -180,3 +180,77 @@ fn wal_replay_undo_uncommitted_mixed_dml_on_reopen() {
         assert_eq!(n2, 1);
     }
 }
+
+/// Known defect (reproduction kept as documentation, not yet fixed).
+///
+/// With the bench durability preset the heap file stays many pages shorter than the WAL, and WAL
+/// REDO is physical: it addresses `(file_id, page_id, offset)`. Records pointing at a page the
+/// file never materialised fail in `PageManager::recovery_apply_record_operation` with
+/// "Block N does not exist" (`FileManager::read_block` rejects `block_id >= header.total_blocks`,
+/// while `write_block` would have extended the file), so recovery truncates the table at its
+/// first page: 500 committed TPC-C new_orders come back as 171 `oorder` rows, 400 committed rows
+/// here come back as ~171, independently of how many were committed.
+///
+/// `replay_wal_into_engine` now counts and logs those drops (`redo_lost`), so the loss is at least
+/// visible; set `RUSTDB_STRICT_RECOVERY=1` to make it fail the open.
+///
+/// Fixing it is not just "materialise the missing page". A prototype that did so recovered all
+/// 400 rows, but the pages it created are not registered in the file's free-page map, so the very
+/// next `AdvancedFileManager::allocate_pages` hands those ids straight back out and post-recovery
+/// inserts overwrite recovered rows: inserting 50 more rows after recovery moved the table from
+/// 394 rows to 400 instead of 450. A real fix has to reserve the recovered pages in the free-page
+/// map (and advance `header.total_pages`) as part of replay.
+#[test]
+#[ignore = "known defect: WAL replay truncates a table at its first page when heap flush is deferred"]
+fn wal_replay_restores_every_committed_row() {
+    let (before, after) = crash_with_deferred_heap_flush(400);
+    assert_eq!(before, 400, "rows missing before the crash");
+    assert_eq!(after, before, "WAL replay lost committed rows");
+}
+
+/// Commits `rows` wide rows with the bench durability preset (nothing reaches the heap file), then
+/// drops the engine with every heap page still dirty — the crash — and reopens.
+/// Returns `(rows visible before the crash, rows visible after recovery)`.
+fn crash_with_deferred_heap_flush(rows: usize) -> (usize, usize) {
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
+    std::env::set_var("RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT", "1");
+    std::env::set_var("RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML", "1");
+    std::env::set_var("RUSTDB_BENCH_DEFER_HEAP_FSYNC", "1");
+
+    let dir = TempDir::new().unwrap();
+    // Wide rows so a few hundred inserts run well past the first page.
+    let pad = "x".repeat(180);
+    let before = {
+        let engine = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        exec(
+            &engine,
+            &mut ctx,
+            "CREATE TABLE t (a INTEGER, pad VARCHAR(200))",
+        );
+        for i in 0..rows {
+            exec(
+                &engine,
+                &mut ctx,
+                &format!("INSERT INTO t (a, pad) VALUES ({i}, '{pad}')"),
+            );
+        }
+        row_count(&engine, &mut ctx, "SELECT * FROM t")
+    };
+    let after = {
+        let engine = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        row_count(&engine, &mut ctx, "SELECT * FROM t")
+    };
+
+    for var in [
+        "RUSTDB_DEFER_HEAP_FLUSH_ON_COMMIT",
+        "RUSTDB_DEFER_HEAP_FLUSH_AFTER_DML",
+        "RUSTDB_BENCH_DEFER_HEAP_FSYNC",
+    ] {
+        std::env::remove_var(var);
+    }
+    (before, after)
+}

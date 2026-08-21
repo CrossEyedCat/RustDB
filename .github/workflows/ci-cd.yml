@@ -601,8 +601,13 @@ jobs:
           MIX: new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04
           RUSTDB_TPCC_NATIVE: "1"
           RUSTDB_TPCC_NATIVE_MICRO: "1"
-          # Native order_line inserts shard by ol_d_id (5 districts in tpcc_seed.sql).
-          RUSTDB_TPCC_ORDER_LINE_SHARDS: "5"
+          # Native order_line/oorder inserts can shard by ol_d_id (5 districts in tpcc_seed.sql),
+          # but sharding writes to `oorder~N.tbl` / `order_line~N.tbl`, which are not catalog
+          # tables: `SELECT * FROM oorder` never sees those rows and WAL replay has no page
+          # manager for their file_ids, so every sharded row is lost on reopen (redo_unmapped=998
+          # of 2516 records in a 500-txn run). Pinned to 1 until that is fixed — otherwise the
+          # benchmark times inserts whose result does not survive the run.
+          RUSTDB_TPCC_ORDER_LINE_SHARDS: "1"
           # Default 24 workers on push; workflow_dispatch A/B: override RUSTDB_SQL_WORKER_COUNT=32
           # on 4+ vCPU runners (edit env below or set in the manual run inputs).
           RUSTDB_SQL_WORKER_COUNT: "24"

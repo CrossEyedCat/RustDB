@@ -510,6 +510,17 @@ pub(crate) fn flush_all_page_managers(
     Ok(n)
 }
 
+/// When set, an incomplete WAL REDO fails `SqlEngine::open` instead of only logging.
+///
+/// Off by default so an already-damaged data directory can still be opened and inspected; CI
+/// benchmark and durability runs should set it so lost commits stop the run.
+pub(crate) fn strict_recovery_enabled() -> bool {
+    matches!(
+        std::env::var("RUSTDB_STRICT_RECOVERY").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
+    )
+}
+
 pub fn replay_wal_into_engine(
     state: &crate::network::sql_engine::SqlEngineState,
     wal_dir: &Path,
@@ -567,15 +578,65 @@ pub fn replay_wal_into_engine(
     };
 
     // Apply REDO.
+    //
+    // A record that cannot be applied means a committed transaction is silently missing from the
+    // recovered database, so the outcome is counted and reported rather than discarded. This is
+    // how the deferred-heap-flush bench preset was found to lose committed rows: physical REDO
+    // targets (file_id, page_id, offset), and every record pointing at a page the heap file never
+    // materialised failed here without a trace.
+    let mut redo_applied = 0usize;
+    let mut redo_lost = 0usize;
+    let mut redo_unmapped = 0usize;
+    let mut redo_failures: Vec<String> = Vec::new();
     {
         for r in &redo {
-            if let Some(fid) = record_file_id(r) {
-                if let Some(pm) = pm_by_file_id.get(&fid) {
-                    let mut g = pm.lock();
-                    let _ = g.apply_log_record_recovery(r, true);
+            let Some(fid) = record_file_id(r) else {
+                redo_unmapped += 1;
+                continue;
+            };
+            let Some(pm) = pm_by_file_id.get(&fid) else {
+                redo_unmapped += 1;
+                continue;
+            };
+            let mut g = pm.lock();
+            match g.apply_log_record_recovery(r, true) {
+                Ok(()) => redo_applied += 1,
+                Err(e) => {
+                    if redo_failures.len() < 8 {
+                        redo_failures.push(format!(
+                            "lsn={} tx={:?} type={:?} file_id={} err={}",
+                            r.lsn, r.transaction_id, r.record_type, fid, e
+                        ));
+                    }
+                    redo_lost += 1;
                 }
             }
         }
+    }
+    if redo_lost > 0 || redo_unmapped > 0 {
+        tracing::error!(
+            target: "rustdb::recovery",
+            redo_total = redo.len(),
+            redo_applied,
+            redo_lost,
+            redo_unmapped,
+            examples = ?redo_failures,
+            "WAL REDO could not be fully applied: committed data is missing from the recovered database"
+        );
+        if strict_recovery_enabled() {
+            return Err(DbError::database(format!(
+                "WAL REDO incomplete: {redo_lost} record(s) failed and {redo_unmapped} had no page manager \
+                 (of {} committed records); first failures: {redo_failures:?}",
+                redo.len()
+            )));
+        }
+    } else {
+        tracing::debug!(
+            target: "rustdb::recovery",
+            redo_total = redo.len(),
+            redo_applied,
+            "WAL REDO applied"
+        );
     }
 
     // Apply UNDO for active txs (reverse order per tx).
