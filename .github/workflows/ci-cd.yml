@@ -96,16 +96,22 @@ jobs:
         run: cargo test --doc --verbose ${{ matrix.features }}
         timeout-minutes: 10
 
+      # Install outside the repo: `rust-toolchain.toml` pins the MSRV (1.90) and would be applied
+      # to `cargo install` too, so tool dependencies that raise their own MSRV break the install
+      # (e.g. cargo-audit 0.22 → kstring 2.0.4 needs 1.96). `--locked` uses the tool's published
+      # lockfile instead of re-resolving to whatever was published since.
       - name: Install cargo-audit
         if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
-        run: cargo install cargo-audit
+        run: cargo install cargo-audit --locked
+        working-directory: /tmp
 
       - name: Run cargo audit
         if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
         run: cargo audit
 
+      # `!cancelled()` so a cargo-audit finding does not hide the license / ban / source checks.
       - name: Run cargo-deny
-        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' && matrix.rust == 'stable' }}
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
@@ -526,6 +532,9 @@ jobs:
       TPCC_CARGO_PROFILE: release
       POSTGRES_BENCH_TUNING: "1"
       POSTGRES_TPCC_PREPARED: "0"
+      # One round trip per transaction on the PG side too (postgres_tpcc default), matching
+      # rustdb_tpcc's ExecuteTpcc/ExecuteScript. Set to "0" to measure the round-trip effect.
+      POSTGRES_TPCC_BATCH: "1"
 
     steps:
       - name: Checkout code
@@ -620,9 +629,9 @@ jobs:
           {
             echo "## RustDB vs PostgreSQL (baseline)"
             echo ""
-            echo "- Profile: **native_bench** (\`TPCC_PRESET=bench\`, \`RUSTDB_TPCC_NATIVE=1\`, PG \`simple_query\`, release load gens, \`POSTGRES_BENCH_TUNING=1\`)"
+            echo "- Profile: **native_bench** (\`TPCC_PRESET=bench\`, \`RUSTDB_TPCC_NATIVE=1\`, PG \`simple_query\` batched, release load gens, \`POSTGRES_BENCH_TUNING=1\`)"
             echo "- RustDB: **rustdb_tpcc** (native ExecuteTpcc over QUIC)"
-            echo "- PostgreSQL: **postgres_tpcc** (same SQL mix over TCP; not prepared — see \`fair_sql\` profile locally for SQL-path compare)"
+            echo "- PostgreSQL: **postgres_tpcc** (same SQL mix over TCP; one round trip per txn like \`rustdb_tpcc\`; not prepared — see \`fair_sql\` profile locally for SQL-path compare)"
             echo ""
             echo "### RustDB (rustdb_tpcc)"
             echo '```'

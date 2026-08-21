@@ -21,11 +21,23 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Install outside the repo: `rust-toolchain.toml` pins the MSRV (1.90) and would apply to
+      # `cargo install` too, so a tool dependency that raises its own MSRV kills the install and
+      # the audit silently stops running (this job failed for days on
+      # `kstring 2.0.4 requires rustc 1.96.0`). `--locked` uses cargo-audit's published lockfile.
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        run: cargo install cargo-audit --locked
+        working-directory: /tmp
 
       - name: Run security audit
         run: cargo audit
+
+      # Advisory DB + licenses + banned/unknown sources, from deny.toml.
+      - name: Run cargo-deny
+        if: ${{ !cancelled() }}
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
 
   # Dependency license check
   license_check:
@@ -38,8 +50,10 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Same reason as cargo-audit above: keep the MSRV pin out of the tool build.
       - name: Install cargo-license
-        run: cargo install cargo-license
+        run: cargo install cargo-license --locked
+        working-directory: /tmp
 
       - name: Check licenses
         run: cargo license --json > licenses.json
@@ -66,10 +80,14 @@ jobs:
       # Install outside the repo so `rust-toolchain.toml` (MSRV 1.90) does not build `cargo-geiger`
       # against 1.90 — latest geiger pulls `cargo` crates that require Rust 1.92+.
       - name: Install cargo-geiger
-        run: cargo install cargo-geiger
+        run: cargo install cargo-geiger --locked
         working-directory: /tmp
 
       - name: Check unsafe code usage
+        # `rust-toolchain.toml` would pin the scan itself back to the MSRV; geiger needs the
+        # newer toolchain it was built against.
+        env:
+          RUSTUP_TOOLCHAIN: nightly
         run: |
           cd "${{ github.workspace }}"
           # Run cargo geiger and capture output
@@ -92,17 +110,26 @@ jobs:
             grep -v "^     Removed" | \
             grep -v "^error:" > geiger_filtered.log || true
           
-          # Write to GitHub step summary
+          # Write to GitHub step summary. Report the real exit code: an empty filtered log after a
+          # non-zero exit means the scan did not run, which must not be rendered as a clean result.
           {
             echo "# Cargo Geiger Report"
+            echo ""
+            echo "\`cargo geiger\` exit code: \`${EXIT_CODE}\`"
             echo ""
             if [ -s geiger_filtered.log ]; then
               # Show the report, which should contain markdown tables
               cat geiger_filtered.log
-            else
+            elif [ "$EXIT_CODE" -eq 0 ]; then
               echo "✅ Cargo Geiger scan completed."
               echo ""
               echo "**Note:** Some dependency parsing warnings were filtered as they are benign."
+            else
+              echo "⚠️ Cargo Geiger produced no report. Raw output:"
+              echo ""
+              echo '```'
+              tail -n 40 geiger_full.log
+              echo '```'
             fi
           } >> $GITHUB_STEP_SUMMARY || true
           
@@ -126,11 +153,17 @@ jobs:
 
       # Same as cargo-geiger: avoid MSRV toolchain when compiling the `cargo install` binary.
       - name: Install cargo-semver-checks
-        run: cargo install cargo-semver-checks
+        run: cargo install cargo-semver-checks --locked
         working-directory: /tmp
 
       - name: Check semver compatibility
+        # Without this the run aborts on "rustc version is not high enough: >=1.93.0 needed,
+        # got 1.90.0" (`rust-toolchain.toml`), and `continue-on-error` turns the job green
+        # without any semver check having happened.
+        env:
+          RUSTUP_TOOLCHAIN: nightly
         run: |
           cd "${{ github.workspace }}"
           cargo semver-checks check-release
+        # Pre-1.0 crate: breaking changes are expected, so this reports rather than gates.
         continue-on-error: true

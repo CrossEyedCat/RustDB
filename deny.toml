@@ -6,11 +6,10 @@
 
 [advisories]
 # Vulnerability checks using the RustSec Advisory Database.
-ignore = [
-    # RUSTSEC-2025-0141: bincode unmaintained (not a CVE — upstream maintenance ended).
-    # This project uses bincode-next + legacy(); original crates.io bincode 1.x is unmaintained (RUSTSEC).
-    "RUSTSEC-2025-0141",
-]
+# Keep this list empty unless an advisory is genuinely not actionable — every entry here is a
+# check that no longer runs. Stale entries (`advisory-not-detected`) must be removed:
+# RUSTSEC-2025-0141 (unmaintained bincode 1.x) was dropped once the tree moved to bincode-next.
+ignore = []
 
 [licenses]
 # Allowed licenses (SPDX 3.11). Permissive only; no copyleft.

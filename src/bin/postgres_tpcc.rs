@@ -2,6 +2,18 @@
 //!
 //! Uses the same statement mix and parameters as `rustdb_tpcc` (`rustdb::tpcc_workload`).
 //! Schema: apply `scripts/tpcc_seed.sql` (same minimal tables as RustDB CI).
+//!
+//! # Round trips per transaction
+//!
+//! `rustdb_tpcc` sends a whole transaction in **one** network round trip (`ExecuteTpcc`, and
+//! `ExecuteScript` on the SQL path). Sending `BEGIN` / each statement / `COMMIT` one at a time
+//! would therefore charge PostgreSQL 3–7 round trips for the same work — and because PostgreSQL
+//! holds row locks until `COMMIT`, every extra in-transaction round trip also lengthens the
+//! serialized section on the hot `warehouse` / `district` rows. That is a property of the driver,
+//! not of the engine, so batching is **on by default** here: each transaction is one round trip.
+//!
+//! `--no-batch` (or `POSTGRES_TPCC_BATCH=0`) restores the legacy statement-per-round-trip
+//! behaviour, which is useful for measuring the round-trip effect on purpose.
 
 use async_trait::async_trait;
 use clap::Parser;
@@ -9,7 +21,11 @@ use rustdb::tpcc_workload::{run_tpcc, txn_params, Mix, TpccExec, TpccRunConfig, 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, NoTls, Statement};
+
+/// Bound query parameters for one prepared statement.
+type Params<'a, const N: usize> = [&'a (dyn ToSql + Sync); N];
 
 #[derive(Parser, Debug)]
 #[command(name = "postgres_tpcc")]
@@ -48,6 +64,11 @@ struct Args {
     #[arg(long, default_value_t = false)]
     prepared: bool,
 
+    /// Send every statement of a transaction in its own round trip (legacy behaviour).
+    /// Default is one round trip per transaction, matching `rustdb_tpcc`.
+    #[arg(long, default_value_t = false)]
+    no_batch: bool,
+
     #[arg(long, default_value_t = false)]
     json: bool,
 
@@ -72,6 +93,45 @@ struct PgStmts {
 struct PgExec {
     client: Client,
     prepared: Option<PgStmts>,
+    /// One network round trip per transaction (see module docs). `false` restores the
+    /// legacy statement-per-round-trip behaviour.
+    batched: bool,
+}
+
+/// Per-transaction parameters, already converted to the PostgreSQL column types.
+struct PgTxnArgs {
+    w_id: i32,
+    d_id: i32,
+    c_id: i32,
+    i_id: i32,
+    qty: i32,
+    o_id: i32,
+    amount: i32,
+}
+
+/// Whole `BEGIN` .. `COMMIT` transaction as one simple-query script — the same shape
+/// `rustdb_tpcc` sends over `ExecuteScript`. PostgreSQL still parses, plans, executes and streams
+/// the result rows for every statement; only the round trips are collapsed.
+fn batched_script(sqls: &[String]) -> String {
+    sqls.join(";\n")
+}
+
+fn pg_txn_args(
+    seed: u64,
+    global_txn_id: u64,
+) -> Result<PgTxnArgs, Box<dyn std::error::Error + Send + Sync>> {
+    let p = txn_params(seed, global_txn_id);
+    let o_id = i32::try_from(p.o_id)
+        .map_err(|_| format!("o_id {} out of range for PostgreSQL INTEGER", p.o_id))?;
+    Ok(PgTxnArgs {
+        w_id: p.w_id,
+        d_id: p.d_id,
+        c_id: p.c_id,
+        i_id: p.i_id,
+        qty: p.qty,
+        o_id,
+        amount: p.qty * 10,
+    })
 }
 
 impl PgExec {
@@ -81,6 +141,7 @@ impl PgExec {
         user: &str,
         password: &str,
         database: &str,
+        batched: bool,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let client = connect_worker(host, port, user, password, database).await?;
         let stmts = PgStmts {
@@ -137,7 +198,14 @@ impl PgExec {
         Ok(Self {
             client,
             prepared: Some(stmts),
+            batched,
         })
+    }
+
+    fn stmts(&self) -> Result<&PgStmts, Box<dyn std::error::Error + Send + Sync>> {
+        self.prepared
+            .as_ref()
+            .ok_or_else(|| "prepared statements not initialized".into())
     }
 
     async fn run_prepared_kind(
@@ -146,19 +214,118 @@ impl PgExec {
         seed: u64,
         global_txn_id: u64,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let stmts = self
-            .prepared
-            .as_ref()
-            .ok_or("prepared statements not initialized")?;
-        let p = txn_params(seed, global_txn_id);
-        let w_id = p.w_id;
-        let d_id = p.d_id;
-        let c_id = p.c_id;
-        let i_id = p.i_id;
-        let qty = p.qty;
-        let o_id = i32::try_from(p.o_id)
-            .map_err(|_| format!("o_id {} out of range for PostgreSQL INTEGER", p.o_id))?;
-        let amount = qty * 10;
+        if self.batched {
+            self.run_prepared_pipelined(kind, seed, global_txn_id).await
+        } else {
+            self.run_prepared_sequential(kind, seed, global_txn_id)
+                .await
+        }
+    }
+
+    /// One round trip per transaction: `BEGIN`, the statement body and `COMMIT` are enqueued in a
+    /// single flush. `tokio::try_join!` polls its arguments in order and `tokio-postgres` enqueues
+    /// a request the first time its future is polled, so the wire order matches the argument order.
+    async fn run_prepared_pipelined(
+        &self,
+        kind: TxnKind,
+        seed: u64,
+        global_txn_id: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let s = self.stmts()?;
+        let a = pg_txn_args(seed, global_txn_id)?;
+        let c = &self.client;
+
+        // `try_join!` moves the futures it is given, so the parameter slices must outlive the
+        // macro invocation — hence the explicit bindings.
+        let res = match kind {
+            TxnKind::NewOrder => {
+                let district: Params<2> = [&a.w_id, &a.d_id];
+                let oorder: Params<4> = [&a.o_id, &a.d_id, &a.w_id, &a.c_id];
+                let new_order: Params<3> = [&a.o_id, &a.d_id, &a.w_id];
+                let stock: Params<3> = [&a.qty, &a.w_id, &a.i_id];
+                let order_line: Params<6> = [&a.o_id, &a.d_id, &a.w_id, &a.i_id, &a.qty, &a.amount];
+                tokio::try_join!(
+                    c.batch_execute("BEGIN"),
+                    c.execute(&s.no_district, &district),
+                    c.execute(&s.no_oorder, &oorder),
+                    c.execute(&s.no_new_order, &new_order),
+                    c.execute(&s.no_stock, &stock),
+                    c.execute(&s.no_order_line, &order_line),
+                    c.batch_execute("COMMIT"),
+                )
+                .map(|_| ())
+            }
+            TxnKind::Payment => {
+                let warehouse: Params<1> = [&a.w_id];
+                let district: Params<2> = [&a.w_id, &a.d_id];
+                let customer: Params<3> = [&a.w_id, &a.d_id, &a.c_id];
+                tokio::try_join!(
+                    c.batch_execute("BEGIN"),
+                    c.execute(&s.pay_warehouse, &warehouse),
+                    c.execute(&s.pay_district, &district),
+                    c.execute(&s.pay_customer, &customer),
+                    c.batch_execute("COMMIT"),
+                )
+                .map(|_| ())
+            }
+            TxnKind::OrderStatus => {
+                let oorder: Params<3> = [&a.w_id, &a.d_id, &a.c_id];
+                tokio::try_join!(
+                    c.batch_execute("BEGIN"),
+                    c.query(&s.os_oorder, &oorder),
+                    c.batch_execute("COMMIT"),
+                )
+                .map(|_| ())
+            }
+            TxnKind::Delivery => {
+                let new_order: Params<2> = [&a.w_id, &a.d_id];
+                tokio::try_join!(
+                    c.batch_execute("BEGIN"),
+                    c.execute(&s.del_new_order, &new_order),
+                    c.batch_execute("COMMIT"),
+                )
+                .map(|_| ())
+            }
+            TxnKind::StockLevel => {
+                let stock: Params<1> = [&a.w_id];
+                tokio::try_join!(
+                    c.batch_execute("BEGIN"),
+                    c.query(&s.sl_stock, &stock),
+                    c.batch_execute("COMMIT"),
+                )
+                .map(|_| ())
+            }
+        };
+
+        if let Err(e) = res {
+            // `try_join!` drops the remaining futures on the first error, so the pipelined
+            // `COMMIT` may never be observed. PostgreSQL turns `COMMIT` on an aborted transaction
+            // into a rollback anyway; this makes sure the session is not left inside one either
+            // way (a no-op `ROLLBACK` outside a transaction is only a notice).
+            let _ = self.client.batch_execute("ROLLBACK").await;
+            return Err(e.into());
+        }
+        Ok(())
+    }
+
+    /// Legacy path (`--no-batch`): one round trip per statement.
+    async fn run_prepared_sequential(
+        &self,
+        kind: TxnKind,
+        seed: u64,
+        global_txn_id: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let stmts = self.stmts()?;
+        let a = pg_txn_args(seed, global_txn_id)?;
+        let PgTxnArgs {
+            w_id,
+            d_id,
+            c_id,
+            i_id,
+            qty,
+            o_id,
+            amount,
+        } = a;
 
         self.client.batch_execute("BEGIN").await?;
         let run = async {
@@ -223,8 +390,12 @@ impl TpccExec for PgExec {
         &self,
         sqls: &[String],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        for sql in sqls {
-            self.client.simple_query(sql).await?;
+        if self.batched {
+            self.client.batch_execute(&batched_script(sqls)).await?;
+        } else {
+            for sql in sqls {
+                self.client.simple_query(sql).await?;
+            }
         }
         Ok(())
     }
@@ -262,14 +433,33 @@ async fn connect_worker(
     Ok(client)
 }
 
+fn env_flag(name: &str) -> Option<bool> {
+    match std::env::var(name)
+        .ok()?
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
 fn prepared_from_env(args: &Args) -> bool {
     if args.prepared {
         return true;
     }
-    matches!(
-        std::env::var("POSTGRES_TPCC_PREPARED").ok().as_deref(),
-        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
-    )
+    env_flag("POSTGRES_TPCC_PREPARED").unwrap_or(false)
+}
+
+/// One round trip per transaction unless explicitly disabled via `--no-batch` or
+/// `POSTGRES_TPCC_BATCH=0`.
+fn batched_from_env(args: &Args) -> bool {
+    if args.no_batch {
+        return false;
+    }
+    env_flag("POSTGRES_TPCC_BATCH").unwrap_or(true)
 }
 
 #[tokio::main]
@@ -277,6 +467,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = Args::parse();
     let mix = Mix::parse(&args.mix).map_err(|e| format!("invalid --mix: {e}"))?;
     let use_prepared = prepared_from_env(&args);
+    let batched = batched_from_env(&args);
 
     let concurrency = args.concurrency.max(1);
     let mut workers: Vec<Arc<PgExec>> = Vec::with_capacity(concurrency);
@@ -288,6 +479,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 &args.user,
                 &args.password,
                 &args.database,
+                batched,
             )
             .await?
         } else {
@@ -302,6 +494,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             PgExec {
                 client,
                 prepared: None,
+                batched,
             }
         };
         workers.push(Arc::new(exec));
@@ -328,6 +521,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("== postgres_tpcc ==");
         println!("concurrency: {}", report.concurrency);
         println!("prepared: {use_prepared}");
+        println!("batched (1 round trip per txn): {batched}");
         println!("txn_attempts: {}", report.txn_attempts);
         println!("txn_successes: {}", report.txn_successes);
         println!("success_rate_pct: {:.2}", report.success_rate_pct);
@@ -348,4 +542,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustdb::tpcc_workload::txn_sql;
+
+    const KINDS: [TxnKind; 5] = [
+        TxnKind::NewOrder,
+        TxnKind::Payment,
+        TxnKind::OrderStatus,
+        TxnKind::Delivery,
+        TxnKind::StockLevel,
+    ];
+
+    fn args_from(argv: &[&str]) -> Args {
+        Args::parse_from(std::iter::once("postgres_tpcc").chain(argv.iter().copied()))
+    }
+
+    /// One test function: `POSTGRES_TPCC_*` is process-global state.
+    #[test]
+    fn batching_defaults_on_and_flag_beats_env() {
+        std::env::remove_var("POSTGRES_TPCC_BATCH");
+        assert!(batched_from_env(&args_from(&[])));
+        assert!(!batched_from_env(&args_from(&["--no-batch"])));
+
+        for on in ["1", "true", "YES", "on"] {
+            std::env::set_var("POSTGRES_TPCC_BATCH", on);
+            assert!(batched_from_env(&args_from(&[])), "{on}");
+        }
+        for off in ["0", "false", "NO", "off"] {
+            std::env::set_var("POSTGRES_TPCC_BATCH", off);
+            assert!(!batched_from_env(&args_from(&[])), "{off}");
+        }
+
+        // Unparseable value falls back to the default; `--no-batch` still wins.
+        std::env::set_var("POSTGRES_TPCC_BATCH", "maybe");
+        assert!(batched_from_env(&args_from(&[])));
+        assert!(!batched_from_env(&args_from(&["--no-batch"])));
+        std::env::remove_var("POSTGRES_TPCC_BATCH");
+    }
+
+    #[test]
+    fn batched_script_is_a_single_begin_commit_block() {
+        for kind in KINDS {
+            let sqls = txn_sql(kind, 0xC0FF_EE00, 7);
+            let script = batched_script(&sqls);
+            assert!(
+                script.starts_with("BEGIN TRANSACTION"),
+                "{kind:?}: {script}"
+            );
+            assert!(script.ends_with("COMMIT"), "{kind:?}: {script}");
+            // Exactly one separator per statement boundary: the whole transaction is one message,
+            // so PostgreSQL pays the same number of round trips as `rustdb_tpcc` (one).
+            assert_eq!(script.matches(";\n").count(), sqls.len() - 1, "{kind:?}");
+            for sql in &sqls {
+                assert!(script.contains(sql.as_str()), "{kind:?}: missing {sql}");
+            }
+        }
+    }
 }

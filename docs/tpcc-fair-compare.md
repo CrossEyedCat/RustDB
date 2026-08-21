@@ -28,6 +28,13 @@ Other env (group commit, `RUSTDB_TPCC_DEFER_INDEX_SYNC`, worker count) matches `
 | **fair_sql** | SQL / `ExecuteScript` | prepared statements | **strict** |
 | **fair_sql_bench** | SQL / `ExecuteScript` | prepared statements | bench |
 
+In every profile `postgres_tpcc` sends **one round trip per transaction** (`BEGIN`..`COMMIT` in a
+single simple-query message; pipelined `BEGIN` + body + `COMMIT` with `--prepared`), matching
+`rustdb_tpcc`'s `ExecuteTpcc` / `ExecuteScript`. This is deliberate: PostgreSQL holds row locks
+until `COMMIT`, so each extra in-transaction round trip stretches the serialized section on the
+single hot `warehouse` row that 43% of the mix updates — a driver property, not an engine one.
+Set `POSTGRES_TPCC_BATCH=0` (or pass `--no-batch`) to measure that effect on purpose.
+
 Less cherry-picked sweep (strict + SQL both sides):
 
 ```bash

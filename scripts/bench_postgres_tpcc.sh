@@ -99,6 +99,9 @@ docker exec -i "$name" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_ST
   echo "duration_s: $DURATION_SECS"
   echo "mix: $MIX"
   echo "postgres_prepared: ${POSTGRES_TPCC_PREPARED:-0}"
+  # Batched (default) = one round trip per transaction, matching rustdb_tpcc's
+  # ExecuteTpcc/ExecuteScript. Set POSTGRES_TPCC_BATCH=0 for the legacy statement-per-RTT run.
+  echo "postgres_batched: ${POSTGRES_TPCC_BATCH:-1}"
   echo ""
 } | tee "$OUT_DIR_ABS/postgres_tpcc.txt"
 
@@ -115,6 +118,11 @@ PREPARED_ARGS=()
 if [[ "${POSTGRES_TPCC_PREPARED:-0}" == "1" ]]; then
   PREPARED_ARGS=(--prepared)
 fi
+# postgres_tpcc batches by default; only pass the opt-out explicitly.
+BATCH_ARGS=()
+if [[ "${POSTGRES_TPCC_BATCH:-1}" == "0" ]]; then
+  BATCH_ARGS=(--no-batch)
+fi
 
 set +e
 "$POSTGRES_TPCC_BIN" \
@@ -126,6 +134,7 @@ set +e
   --concurrency "$CONCURRENCY" \
   "${TXN_ARGS[@]}" \
   "${PREPARED_ARGS[@]}" \
+  "${BATCH_ARGS[@]}" \
   --mix "$MIX" \
   --txn-log "$OUT_DIR_ABS/postgres_tpcc_txn.log" \
   --json > "$OUT_DIR_ABS/postgres_tpcc.json"

@@ -165,7 +165,16 @@ This repository’s CI runs a lightweight **baseline comparison** to track perfo
 - **RustDB**: `rustdb_tpcc` (TPC‑C-ish mix) over **QUIC**
 - **PostgreSQL**: `postgres_tpcc` (same SQL mix and `scripts/tpcc_seed.sql` schema) over **TCP**
 
-Protocols still differ (QUIC vs TCP), but the **transaction mix and statements** match; treat absolute numbers as **trend indicators**, not a formal audit.
+The **transaction mix, parameters and driver loop** match (both load generators share
+`rustdb::tpcc_workload`), and both send **one round trip per transaction** — `postgres_tpcc`
+batches `BEGIN`..`COMMIT` into a single message by default, because extra in-transaction round
+trips also lengthen PostgreSQL's row-lock hold time on the hot `warehouse`/`district` rows and so
+measure the driver rather than the engine (`--no-batch` restores statement-per-round-trip).
+
+What still differs: protocols (QUIC vs TCP) and, in the default CI profile, the **execution path** —
+`RUSTDB_TPCC_NATIVE=1` runs a server-side TPC-C procedure that executes no SQL, while PostgreSQL
+parses and plans every statement. Treat absolute numbers as **trend indicators**, not a formal
+audit; see [`docs/tpcc-fair-compare.md`](docs/tpcc-fair-compare.md) for the SQL-path profiles.
 
 CI reports in the GitHub Actions step summary (workflow `CI/CD Pipeline`):
 
