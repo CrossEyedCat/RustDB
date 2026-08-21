@@ -190,6 +190,7 @@ if [[ "${RUSTDB_TPCC_NATIVE_MICRO:-0}" == "1" && "$rc" -eq 0 ]]; then
     --transactions "$MICRO_TXNS" \
     --mix "order_status=0.7,payment=0.3" \
     --native-tpcc \
+    --txn-log "$OUT_DIR_ABS/tpcc_native_micro_txn.log" \
     --json > "$OUT_DIR_ABS/tpcc-native-micro.json"
   micro_rc=$?
   set -e

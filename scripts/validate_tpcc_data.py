@@ -10,9 +10,15 @@ d_ytd and -1 on c_balance per payment).
 
 Inputs per engine, written by the bench scripts:
   postgres: tpcc-out/postgres_tpcc_data.json  (psql, exact aggregates)
-  rustdb:   tpcc-out/rustdb_data_check.txt    (raw `rustdb query --batch-file` output, replayed
-            against the volume *after* the server stopped — so it also proves the bench preset's
-            deferred heap flush is still durable)
+  rustdb:   tpcc-out/rustdb_data_check.txt    (raw `rustdb query --batch-file` output)
+
+The two sides are NOT read under the same conditions and a mismatch has to be read accordingly:
+PostgreSQL is queried live, on the still-running server, so it is purely a "did the engine apply
+the work" check. RustDB is queried by a fresh engine over the volume after `docker rm -f` killed
+the server, so it is simultaneously a crash-recovery check — the only place the bench preset's
+deferred heap flush has to make good on "WAL + commits.log remain durable". Rows missing on the
+RustDB side therefore mean either work not done or work not recovered; the legs in
+`docs/tpcc-fair-compare.md` tell the two apart.
 
 Usage:
   python3 scripts/validate_tpcc_data.py tpcc-out
@@ -60,15 +66,23 @@ class Observed:
     new_order_count: int | None = None
 
 
-def txn_counts(txn_log: Path) -> TxnCounts:
+def txn_counts(*txn_logs: Path) -> TxnCounts:
+    """Successful transactions across every load-generator leg that touched the same database.
+
+    `tpcc_throughput_ci.sh` runs an extra native micro leg after the main run, so its transactions
+    have to be counted too or the final table state legitimately exceeds the main log.
+    """
     counts = TxnCounts()
-    with txn_log.open(encoding="utf-8", errors="replace", newline="") as fh:
-        for row in csv.DictReader(fh):
-            if (row.get("ok") or "").strip().lower() not in ("1", "true"):
-                continue
-            kind = (row.get("kind") or "").strip()
-            if hasattr(counts, kind):
-                setattr(counts, kind, getattr(counts, kind) + 1)
+    for txn_log in txn_logs:
+        if not txn_log.is_file():
+            continue
+        with txn_log.open(encoding="utf-8", errors="replace", newline="") as fh:
+            for row in csv.DictReader(fh):
+                if (row.get("ok") or "").strip().lower() not in ("1", "true"):
+                    continue
+                kind = (row.get("kind") or "").strip()
+                if hasattr(counts, kind):
+                    setattr(counts, kind, getattr(counts, kind) + 1)
     return counts
 
 
@@ -261,18 +275,18 @@ def engine_report(engine: str, out_dir: Path) -> dict[str, Any] | None:
     """None when the engine's inputs are absent (leg not run)."""
     if engine == "postgres":
         data_path = out_dir / "postgres_tpcc_data.json"
-        log_path = out_dir / "postgres_tpcc_txn.log"
-        if not data_path.is_file() or not log_path.is_file():
+        log_paths = [out_dir / "postgres_tpcc_txn.log"]
+        if not data_path.is_file() or not log_paths[0].is_file():
             return None
         observed = observed_from_postgres(json.loads(data_path.read_text(encoding="utf-8")))
     else:
         data_path = out_dir / "rustdb_data_check.txt"
-        log_path = out_dir / "tpcc_txn.log"
-        if not data_path.is_file() or not log_path.is_file():
+        log_paths = [out_dir / "tpcc_txn.log", out_dir / "tpcc_native_micro_txn.log"]
+        if not data_path.is_file() or not log_paths[0].is_file():
             return None
         observed = observed_from_rustdb(data_path.read_text(encoding="utf-8", errors="replace"))
 
-    counts = txn_counts(log_path)
+    counts = txn_counts(*log_paths)
     problems = check(observed, counts)
     return {
         "engine": engine,

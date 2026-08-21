@@ -178,6 +178,33 @@ class EngineReportTests(unittest.TestCase):
         self.assertIsNone(observed.order_line_count)
 
 
+class MultiLegTests(unittest.TestCase):
+    def test_native_micro_leg_is_counted(self) -> None:
+        """The extra native micro leg writes to the same database as the main run."""
+        header = "worker_id,global_attempt_id,kind,ok,elapsed_us,error\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "tpcc_txn.log").write_text(
+                header + "0,0,payment,1,10,\n", encoding="utf-8"
+            )
+            (d / "tpcc_native_micro_txn.log").write_text(
+                header + "0,0,payment,1,10,\n0,1,order_status,1,10,\n",
+                encoding="utf-8",
+            )
+            (d / "rustdb_data_check.txt").write_text(
+                "Information [batch:1]: SELECT * FROM warehouse WHERE w_id = 1\n"
+                'columns: ["w_ytd"]\n'
+                '["Integer(2)"]\n',
+                encoding="utf-8",
+            )
+            report = engine_report("rustdb", d)
+        assert report is not None
+        # Both legs' payments counted: w_ytd == 2 must not read as a mismatch against 1.
+        # (The trimmed transcript leaves the other invariants uncollected; only w_ytd matters here.)
+        self.assertEqual(report["txn_counts"]["payment"], 2)
+        self.assertEqual([p for p in report["problems"] if p.startswith("warehouse.w_ytd")], [])
+
+
 if __name__ == "__main__":
     try:
         import pytest  # noqa: F401
