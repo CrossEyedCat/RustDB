@@ -96,6 +96,15 @@ jobs:
         run: cargo test --doc --verbose ${{ matrix.features }}
         timeout-minutes: 10
 
+      # The benchmark validators are Python and were never executed by CI, so
+      # test_validate_tpcc_run.py had been failing unnoticed on a fresh clone.
+      - name: Run benchmark validator tests (python)
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        run: |
+          set -euo pipefail
+          python3 scripts/test_validate_tpcc_run.py
+          python3 scripts/test_validate_tpcc_data.py
+
       # Install outside the repo: `rust-toolchain.toml` pins the MSRV (1.90) and would be applied
       # to `cargo install` too, so tool dependencies that raise their own MSRV break the install
       # (e.g. cargo-audit 0.22 → kstring 2.0.4 needs 1.96). `--locked` uses the tool's published
@@ -569,7 +578,9 @@ jobs:
           POSTGRES_CONTAINER_NAME: postgres-tpcc-bench
           POSTGRES_HOST_PORT: 15440
           POSTGRES_DB: tpcc_bench
-          POSTGRES_TPCC_KEEP_CONTAINER: "1"
+          # Tear the container down as soon as the PG leg (and its data check) is done: leaving it
+          # up meant the RustDB run overlapped PostgreSQL's post-benchmark checkpointer/autovacuum.
+          POSTGRES_TPCC_KEEP_CONTAINER: "0"
           CONCURRENCY: 64
           DURATION_SECS: 300
           MIX: new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,stock_level=0.04
@@ -868,6 +879,40 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Throughput numbers cannot tell a fast engine from one that does less work, so hold both
+      # engines to the same invariants over their final table state. On the RustDB side this also
+      # re-reads the volume with the server stopped, which is what proves the bench preset's
+      # deferred heap flush is still durable.
+      - name: Post-run data check (RustDB + PostgreSQL)
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ ! -d tpcc-out ]]; then
+            echo "::warning::tpcc-out missing; skip data check"
+            exit 0
+          fi
+          set +e
+          python3 scripts/validate_tpcc_data.py tpcc-out
+          data_rc=$?
+          set -e
+          {
+            echo ""
+            echo "### Post-run data check"
+            echo ""
+            if [[ "$data_rc" -eq 0 ]]; then
+              echo "Final table state matches the client txn log on both engines."
+            else
+              echo "⚠️ Mismatch between final table state and the client txn log — see \`validation_data.json\`."
+            fi
+            echo ""
+            echo '```json'
+            cat tpcc-out/validation_data.json 2>/dev/null || echo "(missing)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$data_rc" -ne 0 ]]; then
+            echo "::warning::TPC-C post-run data check failed; see validation_data.json"
+          fi
+
       - name: Validate TPC-C run (bench mode)
         if: always()
         run: |
@@ -946,6 +991,9 @@ jobs:
             tpcc-out/order_status_micro/server_full.log
             tpcc-out/order_status_micro/summary.txt
             tpcc-out/validation.json
+            tpcc-out/validation_data.json
+            tpcc-out/postgres_tpcc_data.json
+            tpcc-out/rustdb_data_check.txt
       - name: Stop PostgreSQL (docker)
         if: always()
         run: |

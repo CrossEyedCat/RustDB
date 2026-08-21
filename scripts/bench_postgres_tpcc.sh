@@ -45,7 +45,9 @@ PY
 
 # Bench-oriented server flags (same profile as CI; helps slow Docker hosts).
 POSTGRES_BENCH_TUNING="${POSTGRES_BENCH_TUNING:-1}"
-PG_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
+# Debian-based image, not `-alpine`: the musl allocator costs a few percent on this workload and
+# the glibc build is the representative PostgreSQL deployment.
+PG_IMAGE="${POSTGRES_IMAGE:-postgres:16}"
 PG_DOCKER_ARGS=(--shm-size=512m)
 if [[ "$POSTGRES_BENCH_TUNING" == "1" ]]; then
   PG_SERVER_ARGS=(
@@ -89,6 +91,12 @@ fi
 
 docker exec -i "$name" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
   < "$SEED_FILTERED" >/dev/null
+
+# The planner otherwise runs the first thousands of statements on default estimates for freshly
+# created tables; every statement is re-planned here (no prepared statements by default), so stale
+# stats show up as plan noise in the measurement rather than as engine behaviour.
+docker exec "$name" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
+  -c 'ANALYZE' >/dev/null
 
 {
   echo "== postgres_tpcc =="
@@ -145,6 +153,21 @@ if [[ "$rc" -ne 0 ]]; then
   echo "postgres_tpcc failed (exit $rc)"
   exit "$rc"
 fi
+
+# Post-run data check input: final table state vs. what the client counted (see
+# scripts/validate_tpcc_data.py). Must run while the container is still up.
+docker exec "$name" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 -c "
+SELECT json_build_object(
+  'w_ytd',            (SELECT COALESCE(sum(w_ytd), 0) FROM warehouse),
+  'd_ytd_sum',        (SELECT COALESCE(sum(d_ytd), 0) FROM district),
+  'd_next_o_id_sum',  (SELECT COALESCE(sum(d_next_o_id), 0) FROM district),
+  'c_balance_sum',    (SELECT COALESCE(sum(c_balance), 0) FROM customer),
+  's_order_cnt_sum',  (SELECT COALESCE(sum(s_order_cnt), 0) FROM stock),
+  'oorder_count',     (SELECT count(*) FROM oorder),
+  'order_line_count', (SELECT count(*) FROM order_line),
+  'new_order_count',  (SELECT count(*) FROM new_order)
+)" > "$OUT_DIR_ABS/postgres_tpcc_data.json"
+echo "==> wrote $OUT_DIR_ABS/postgres_tpcc_data.json"
 
 python3 - "$OUT_DIR_ABS" <<'PY'
 import json, pathlib, sys

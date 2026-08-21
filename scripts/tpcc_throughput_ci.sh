@@ -209,8 +209,32 @@ else
   : >"$OUT_DIR_ABS/server_tail.log"
 fi
 
-echo "==> stop server + volume"
+echo "==> stop server"
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+
+# Post-run data check input (see scripts/validate_tpcc_data.py): replay read-only queries with a
+# fresh CLI engine over the same volume, with the server already stopped. Besides answering "did
+# the engine actually apply what the client counted", this is the only place the bench preset's
+# deferred heap flush (RUSTDB_BENCH_DEFER_HEAP_FLUSH*) has to prove it is still durable.
+if [[ "$rc" -eq 0 ]]; then
+  echo "==> post-run data check (fresh CLI over the same volume)"
+  DATA_CHECK_SQL="$OUT_DIR_ABS/rustdb_data_check.sql"
+  python3 - "$ROOT" "$DATA_CHECK_SQL" <<'PY'
+import pathlib, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "scripts"))
+from validate_tpcc_data import rustdb_data_check_sql
+pathlib.Path(sys.argv[2]).write_text(rustdb_data_check_sql(), encoding="utf-8")
+PY
+  docker run --rm -i \
+    -v "$VOL_NAME:/app/data" \
+    -v "$(docker_host_path "$DATA_CHECK_SQL"):/tmp/data_check.sql:ro" \
+    "$RUSTDB_IMAGE" \
+    sh -c 'rustdb query --batch-file /tmp/data_check.sql' \
+    > "$OUT_DIR_ABS/rustdb_data_check.txt" 2>&1 \
+    || echo "WARN: data check query failed; see $OUT_DIR/rustdb_data_check.txt"
+fi
+
+echo "==> drop volume"
 docker volume rm -f "$VOL_NAME" >/dev/null 2>&1 || true
 
 if [[ "$rc" -ne 0 ]]; then

@@ -17,6 +17,10 @@ Thumbs.db
 
 # Logs
 *.log
+# ...except checked-in test fixtures: the blanket `*.log` above silently kept the txn/server logs
+# of tests/fixtures/tpcc_validation out of the repo, so validate_tpcc_run's fixture test could
+# never pass on a fresh clone.
+!tests/fixtures/**/*.log
 /logs/
 /test_logs/
 /profile-out/
