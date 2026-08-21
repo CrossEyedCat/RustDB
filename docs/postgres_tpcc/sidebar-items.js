@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["connect_worker","main","prepared_from_env"],"struct":["Args","PgExec","PgStmts"]};
+window.SIDEBAR_ITEMS = {"fn":["batched_from_env","batched_script","connect_worker","env_flag","main","pg_txn_args","prepared_from_env"],"struct":["Args","PgExec","PgStmts","PgTxnArgs"],"type":["Params"]};
