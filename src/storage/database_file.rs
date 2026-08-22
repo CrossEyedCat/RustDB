@@ -414,28 +414,30 @@ impl FreePageMap {
 
         // Find a suitable block (first-fit algorithm)
         for i in 0..self.entries.len() {
-            let entry = &self.entries[i];
+            let entry_start = self.entries[i].start_page;
+            let entry_end = entry_start + self.entries[i].page_count as u64;
 
-            if entry.page_count >= page_count {
-                let allocated_start = entry.start_page;
-
-                if entry.page_count == page_count {
-                    // Remove entry completely
-                    self.entries.remove(i);
-                } else {
-                    // Decrease block size
-                    self.entries[i].start_page += page_count as u64;
-                    self.entries[i].page_count -= page_count;
-                }
-
-                self.update_statistics();
-                // Make sure we don't return page_id = 0
-                return Some(if allocated_start == 0 {
-                    1
-                } else {
-                    allocated_start
-                });
+            // Page id 0 is never handed out, so a block starting there has one fewer usable page.
+            // Accounting for that here matters: the previous version trimmed the entry as if page
+            // 0 had been allocated but returned 1 instead, so the next allocation from the same
+            // block handed out page 1 a second time and two different pages of data ended up
+            // sharing one physical page.
+            let allocated_start = entry_start.max(1);
+            if entry_end.saturating_sub(allocated_start) < page_count as u64 {
+                continue;
             }
+            let allocated_end = allocated_start + page_count as u64;
+
+            if allocated_end >= entry_end {
+                // Whole block consumed (page 0, when present, is dropped with it).
+                self.entries.remove(i);
+            } else {
+                self.entries[i].start_page = allocated_end;
+                self.entries[i].page_count = (entry_end - allocated_end) as u32;
+            }
+
+            self.update_statistics();
+            return Some(allocated_start);
         }
 
         None
@@ -858,5 +860,39 @@ mod tests {
         assert!(result.is_err());
 
         Ok(())
+    }
+
+    /// Page id 0 is never handed out, so a free block starting at 0 has one fewer usable page.
+    /// The allocator used to trim the entry as if page 0 had been taken while returning 1, so the
+    /// next allocation from the same block returned page 1 again and two different pages of data
+    /// ended up sharing one physical page.
+    #[test]
+    fn test_allocate_pages_never_repeats_a_page_id() {
+        let mut map = FreePageMap::new();
+        map.add_free_block(0, 10).unwrap();
+        let ids: Vec<PageId> = (0..5).map(|_| map.allocate_pages(1).unwrap()).collect();
+        assert_eq!(
+            ids,
+            vec![1, 2, 3, 4, 5],
+            "allocator handed out a page id twice"
+        );
+
+        // A block that does not start at 0 is unaffected.
+        let mut map = FreePageMap::new();
+        map.add_free_block(5, 4).unwrap();
+        let ids: Vec<PageId> = (0..4).map(|_| map.allocate_pages(1).unwrap()).collect();
+        assert_eq!(ids, vec![5, 6, 7, 8]);
+        assert!(map.allocate_pages(1).is_none(), "block should be exhausted");
+
+        // Multi-page allocation out of a block starting at 0 also skips page 0 exactly once.
+        let mut map = FreePageMap::new();
+        map.add_free_block(0, 8).unwrap();
+        assert_eq!(map.allocate_pages(3), Some(1));
+        assert_eq!(map.allocate_pages(3), Some(4));
+        assert_eq!(
+            map.allocate_pages(3),
+            None,
+            "only 7 usable pages in a 0..8 block"
+        );
     }
 }
