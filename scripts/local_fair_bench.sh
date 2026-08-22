@@ -15,7 +15,11 @@ export MIX="${MIX:-new_order=0.45,payment=0.43,order_status=0.04,delivery=0.04,s
 export POSTGRES_BENCH_TUNING=1
 export POSTGRES_TPCC_PREPARED=0
 export RUSTDB_TPCC_NATIVE=1
-export RUSTDB_TPCC_ORDER_LINE_SHARDS="${RUSTDB_TPCC_ORDER_LINE_SHARDS:-5}"
+# Sharding is pinned to 1: RUSTDB_TPCC_ORDER_LINE_SHARDS>1 writes `oorder~N.tbl` /
+# `order_line~N.tbl`, which are not catalog tables, so those rows are invisible to
+# `SELECT * FROM oorder` and are never recovered from the WAL (redo_unmapped). Benchmarking
+# with them on times inserts whose result does not survive the run.
+export RUSTDB_TPCC_ORDER_LINE_SHARDS="${RUSTDB_TPCC_ORDER_LINE_SHARDS:-1}"
 export RUSTDB_SQL_PHASE_LOG="${RUSTDB_SQL_PHASE_LOG:-0}"
 export RUSTDB_TPCC_NATIVE_MICRO="${RUSTDB_TPCC_NATIVE_MICRO:-0}"
 export RUSTDB_IMAGE="${RUSTDB_IMAGE:-rustdb:local}"

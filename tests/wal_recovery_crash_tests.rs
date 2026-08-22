@@ -254,3 +254,35 @@ fn crash_with_deferred_heap_flush(rows: usize) -> (usize, usize) {
     }
     (before, after)
 }
+
+/// `redo_unmapped` must not read as data loss. `file_id` is derived from the heap filename and the
+/// WAL directory is replayed whole with no checkpoint trim, so records belonging to a table that
+/// was later dropped or renamed stay unmapped forever — the table is intentionally gone. Counting
+/// that as a failed apply made every open after an ordinary `DROP TABLE` log an ERROR-level
+/// "committed data is missing", and under `RUSTDB_STRICT_RECOVERY=1` it made the directory
+/// permanently un-openable.
+#[test]
+fn strict_recovery_tolerates_dropped_and_renamed_tables() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("RUSTDB_DISABLE_WAL");
+    std::env::set_var("RUSTDB_FSYNC_COMMIT", "1");
+    let dir = TempDir::new().unwrap();
+    {
+        let engine = SqlEngine::open(dir.path().to_path_buf()).unwrap();
+        let mut ctx = SessionContext::default();
+        exec(&engine, &mut ctx, "CREATE TABLE t (a INTEGER)");
+        exec(&engine, &mut ctx, "INSERT INTO t (a) VALUES (1)");
+        exec(&engine, &mut ctx, "INSERT INTO t (a) VALUES (2)");
+        exec(&engine, &mut ctx, "DROP TABLE t");
+        exec(&engine, &mut ctx, "CREATE TABLE u (b INTEGER)");
+        exec(&engine, &mut ctx, "INSERT INTO u (b) VALUES (3)");
+    }
+
+    std::env::set_var("RUSTDB_STRICT_RECOVERY", "1");
+    let opened = SqlEngine::open(dir.path().to_path_buf());
+    std::env::remove_var("RUSTDB_STRICT_RECOVERY");
+
+    let engine = opened.expect("strict recovery must not fail over a dropped table's WAL records");
+    let mut ctx = SessionContext::default();
+    assert_eq!(row_count(&engine, &mut ctx, "SELECT * FROM u"), 1);
+}

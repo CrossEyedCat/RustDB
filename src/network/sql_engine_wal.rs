@@ -613,7 +613,23 @@ pub fn replay_wal_into_engine(
             }
         }
     }
-    if redo_lost > 0 || redo_unmapped > 0 {
+    // Unmapped is reported separately and never fails the open. `analyze_wal_for_replay` re-reads
+    // the whole WAL directory with no checkpoint trim, and file_id is derived from the heap
+    // filename, so records of a table that was later dropped or renamed stay unmapped forever —
+    // that is the table being intentionally gone, not data loss, and treating it as a failure made
+    // every open after an ordinary DROP TABLE cry wolf (and, under strict mode, refuse to open the
+    // directory ever again). A live table whose writes went to a file the catalog does not know
+    // about — sharded native inserts into `oorder~N.tbl` — also lands here, hence the warning.
+    if redo_unmapped > 0 {
+        tracing::warn!(
+            target: "rustdb::recovery",
+            redo_total = redo.len(),
+            redo_unmapped,
+            "WAL REDO skipped records whose file_id has no page manager (dropped/renamed tables, \
+             or writes to files outside the catalog)"
+        );
+    }
+    if redo_lost > 0 {
         tracing::error!(
             target: "rustdb::recovery",
             redo_total = redo.len(),
@@ -625,8 +641,8 @@ pub fn replay_wal_into_engine(
         );
         if strict_recovery_enabled() {
             return Err(DbError::database(format!(
-                "WAL REDO incomplete: {redo_lost} record(s) failed and {redo_unmapped} had no page manager \
-                 (of {} committed records); first failures: {redo_failures:?}",
+                "WAL REDO incomplete: {redo_lost} of {} committed record(s) failed to apply; \
+                 first failures: {redo_failures:?}",
                 redo.len()
             )));
         }

@@ -29,8 +29,12 @@ export MIX="new_order=1.0"
 export RUSTDB_TPCC_NATIVE=1
 export RUSTDB_SQL_PHASE_LOG="${RUSTDB_SQL_PHASE_LOG:-1}"
 export RUSTDB_TPCC_NEW_ORDER_OL_CNT="${ORDER_LINE_CNT}"
-# Optional: shard native order_line heap by ol_d_id (default 5 = districts in tpcc_seed.sql).
-export RUSTDB_TPCC_ORDER_LINE_SHARDS="${RUSTDB_TPCC_ORDER_LINE_SHARDS:-5}"
+# Optional: shard native order_line heap by ol_d_id.
+# Sharding is pinned to 1: RUSTDB_TPCC_ORDER_LINE_SHARDS>1 writes `oorder~N.tbl` /
+# `order_line~N.tbl`, which are not catalog tables, so those rows are invisible to
+# `SELECT * FROM oorder` and are never recovered from the WAL (redo_unmapped). Benchmarking
+# with them on times inserts whose result does not survive the run.
+export RUSTDB_TPCC_ORDER_LINE_SHARDS="${RUSTDB_TPCC_ORDER_LINE_SHARDS:-1}"
 
 chmod +x scripts/tpcc_throughput_ci.sh
 ./scripts/tpcc_throughput_ci.sh

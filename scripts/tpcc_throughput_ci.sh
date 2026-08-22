@@ -36,7 +36,8 @@
 #   RUSTDB_TPCC_NATIVE_MICRO=1 — after the main run, run a short native-only micro leg
 #     (order_status-heavy mix, fewer txns) written to tpcc-native-micro.json
 #   RUSTDB_TPCC_ORDER_LINE_SHARDS — native order_line/oorder heap shards by district id (default 1;
-#     CI/microbench use 5 to match tpcc_seed districts)
+#     keep it at 1: >1 writes `oorder~N.tbl` / `order_line~N.tbl`, which are not catalog tables, so
+#     those rows are invisible to SELECT and are never recovered from the WAL)
 #
 set -euo pipefail
 
