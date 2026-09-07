@@ -26,7 +26,7 @@ jobs:
 
       # Use MSRV-aligned toolchain; repo `rust-toolchain.toml` also pins 1.90.0 for `cargo doc`.
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.90.0
+        uses: dtolnay/rust-toolchain@1.120.0
         with:
           components: rust-docs
 
